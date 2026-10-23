@@ -120,6 +120,15 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
             lyrics_v        TEXT NOT NULL,
             created_at      TEXT NOT NULL
         );
+        -- Artists whose profile did not come out (no usable answer, nothing
+        -- to show): retried on a backoff, not first in line every tick.
+        CREATE TABLE IF NOT EXISTS profile_failures (
+            artist_key      TEXT PRIMARY KEY,
+            attempts        INTEGER NOT NULL,
+            last_at         TEXT NOT NULL,
+            with_text       INTEGER NOT NULL DEFAULT 0,
+            lyrics_v        TEXT NOT NULL
+        );
     """)
     # additive columns for a DB created before 2026-09-15 (a scratch run)
     have = {r[1] for r in con.execute("PRAGMA table_info(track_lyrics)")}
@@ -595,10 +604,68 @@ def _store_profile(a: dict, profile: dict, based_on: dict, db_path: Optional[Pat
         con.close()
 
 
-def eligible_artists(db_path: Optional[Path] = None) -> list:
+# A failed profile waits 1, 2, 4 … days (capped) before it is tried again.
+# Before 2026-10-23 it stayed first in line: the same ~20 artists failed every
+# tick, a third of the budget, and the task could never report done.
+_FAIL_BACKOFF_MAX_DAYS = 30
+
+
+def _failure_backoff_days(attempts: int) -> float:
+    return float(min(_FAIL_BACKOFF_MAX_DAYS, 2 ** max(0, int(attempts or 1) - 1)))
+
+
+def _profile_failures(db_path: Optional[Path] = None) -> dict:
+    con = _connect(db_path)
+    try:
+        return {r["artist_key"]: dict(r) for r in con.execute("SELECT * FROM profile_failures")}
+    finally:
+        con.close()
+
+
+def _note_failure(a: dict, db_path: Optional[Path], now: datetime) -> None:
+    con = _connect(db_path)
+    try:
+        con.execute(
+            "INSERT INTO profile_failures (artist_key, attempts, last_at, with_text, lyrics_v)"
+            " VALUES (?, 1, ?, ?, ?) ON CONFLICT(artist_key) DO UPDATE SET"
+            " attempts = CASE WHEN lyrics_v = excluded.lyrics_v THEN attempts + 1 ELSE 1 END,"
+            " last_at = excluded.last_at, with_text = excluded.with_text, lyrics_v = excluded.lyrics_v",
+            (a["artist_key"], now.isoformat(), int(a.get("with_text") or 0), _LYRICS_PROMPT_VERSION))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _clear_failure(artist_key: str, db_path: Optional[Path]) -> None:
+    con = _connect(db_path)
+    try:
+        con.execute("DELETE FROM profile_failures WHERE artist_key = ?", (artist_key,))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _cooling(a: dict, fail: Optional[dict], now: datetime) -> bool:
+    """A failed artist waits out its backoff - unless the rules changed or
+    its texts on file grew by _REGROW since (then it is a new attempt)."""
+    if not fail or fail.get("lyrics_v") != _LYRICS_PROMPT_VERSION:
+        return False
+    if a["with_text"] >= max(int(fail.get("with_text") or 0), 1) * _REGROW:
+        return False
+    try:
+        last = datetime.fromisoformat(fail["last_at"])
+    except (TypeError, ValueError):
+        return False
+    return (now - last).total_seconds() < _failure_backoff_days(fail.get("attempts")) * 86400
+
+
+def eligible_artists(db_path: Optional[Path] = None, now: Optional[datetime] = None) -> list:
     """Artists with enough lyrics on file and no profile under the rules in
-    force today, or whose texts on file grew by ``_REGROW`` since theirs."""
+    force today, or whose texts on file grew by ``_REGROW`` since theirs.
+    One whose last profile failed waits out its backoff first."""
     have = {p["artist_key"]: p for p in all_profiles(db_path)}
+    fails = _profile_failures(db_path)
+    now = now or datetime.utcnow()
     out = []
     for a in artist_index(db_path):
         enough = (a["with_text"] >= _MIN_TRACKS
@@ -609,7 +676,8 @@ def eligible_artists(db_path: Optional[Path] = None) -> list:
         p = have.get(a["artist_key"])
         if (p is None or p["lyrics_v"] != _LYRICS_PROMPT_VERSION
                 or a["with_text"] >= max(p["based_on"].get("with_text", 0), 1) * _REGROW):
-            out.append(a)
+            if not _cooling(a, fails.get(a["artist_key"]), now):
+                out.append(a)
     return out
 
 
@@ -837,7 +905,7 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
             pass
 
     reattached += await asyncio.to_thread(_cached, _reattach)
-    todo = await asyncio.to_thread(eligible_artists, db_path)
+    todo = await asyncio.to_thread(eligible_artists, db_path, now)
     _report(f"{len(todo):,} artists eligible, {reattached} profiles re-attached")
     yield_warned = False
     for a in todo[:budget]:
@@ -855,12 +923,17 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
         # _listen_counts inside reads the watch history.
         block, shown, used = await run_read(_profile_input, a["artist_key"], db_path)
         if not shown:
+            # Nothing to show the model: the same answer next tick, so it
+            # waits like a failure instead of holding a place in line.
+            await asyncio.to_thread(_note_failure, a, db_path, now)
+            failed += 1
             continue
         prompt = LYRICS_PROFILE_PROMPT.format(
             artist=a["artist"], with_text=a["with_text"], tracks=a["tracks"], shown=shown,
             max_quote_words=_MAX_QUOTE_WORDS, lyrics=block, moods=", ".join(_MOODS))
         prof = _clean_profile(await call_llm(prompt), block)
         if prof is None:
+            await asyncio.to_thread(_note_failure, a, db_path, now)
             failed += 1
             _report(f"{a['artist']}: no usable profile")
             continue
@@ -868,6 +941,7 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
 
         def _store(c):
             _store_profile(a, prof, based_on, db_path, now)
+            _clear_failure(a["artist_key"], db_path)
             targets = _raw_targets(c, a["artist"], a["artist_key"])
             mbid = next((r.get("mbid") for _, r in targets if r.get("mbid")), None)
             attach_profile(c, a["artist"], a["artist_key"], prof, based_on)

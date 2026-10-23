@@ -577,6 +577,23 @@ programs again: a split install had been asking about the NAS container's.
 It now also waits in the bell until answered, card-drawing programs first.
 The PC's checkout needs this version for the agent's new reading.
 
+**Needs attention and maintenance that could never finish.**
+- A wrong-entity finding no longer fires when a shared TMDB, TVDB or IMDb id
+  says it is the same work. 39 of the owner's 65 were translated titles
+  ("Mad Max 2" / "The Road Warrior") or regional years (The Evil Dead
+  1983 / 1981). Anime keep the title check, but against AniList's own names
+  and synonyms. The 26 that remain are real: an AniList entry for another
+  work (Golgo 13, the 2008 series, filed under the 1983 film).
+- Anime that AniList's search misses under their English arr title resolve
+  through the offline snapshot's names. This needs exactly one match within
+  a year, and never goes through the drifting AniDB ids. 10 of 19 "not
+  found" titles resolve this way.
+- Wikidata's top-up reached zero outstanding: an anime row was looked up
+  under the wrong category, and a title with one stamped row of two never
+  wrote the other.
+- A lyrics profile that fails waits on a backoff of 1, 2, 4 days and so on,
+  instead of taking the same third of every tick's budget for good.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

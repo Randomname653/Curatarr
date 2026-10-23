@@ -841,6 +841,51 @@ def _audit_norm(s: str) -> str:
     return _re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+def _audit_title(s: str) -> str:
+    """_audit_norm without a trailing "(1931)": "M" and "M (1931)" are one title."""
+    import re as _re
+    return _audit_norm(_re.sub(r"\s*\(\d{4}\)\s*$", "", s or ""))
+
+
+_AUDIT_ID_KEYS = ("tmdb_id", "tvdb_id", "imdb_id")
+
+
+def _anime_names_verdict(profile: dict, arr: dict) -> Optional[str]:
+    """The offline snapshot's word on an anime profile's AniList entry: ""
+    when the arr's title is one of the entry's names (title or synonym) in
+    the right year, "wrong_entity:year" when it is a name but decades off
+    (the same title, another work), None when the snapshot cannot say (no
+    entry, or the title is not among its names - the plain check decides)."""
+    from src.services.anime_offline import _norm, names_for
+    got = names_for(profile.get("anilist_id"))
+    if not got:
+        return None
+    names, year = got
+    if _norm(arr.get("title") or "") not in names:
+        return None
+    try:
+        ay = int(arr.get("year") or 0)
+    except (TypeError, ValueError):
+        ay = 0
+    if ay and year and abs(ay - int(year)) > 1:
+        return "wrong_entity:year"
+    return ""
+
+
+def _ids_agree(profile: dict, arr: dict) -> Optional[bool]:
+    """True when an external id on both sides matches, False when one on both
+    sides differs (and none matches), None when no id is on both."""
+    seen = False
+    for k in _AUDIT_ID_KEYS:
+        a, p = arr.get(k), profile.get(k)
+        if a in (None, "", 0) or p in (None, "", 0):
+            continue
+        if str(a).strip().lower() == str(p).strip().lower():
+            return True
+        seen = True
+    return False if seen else None
+
+
 def _entity_divergence_reason(profile: dict, category: str, arr: dict) -> Optional[str]:
     """Flag a cached profile that resolved to the WRONG same-named work — its
     title / year / MusicBrainz id diverge from the arr's ground truth (Lupin III
@@ -855,9 +900,32 @@ def _entity_divergence_reason(profile: dict, category: str, arr: dict) -> Option
         if a_mbid and p_mbid and a_mbid != p_mbid:
             return "wrong_entity:mbid"
         return None
+    # An external id both sides carry settles it (2026-10-23): the same TMDB
+    # / TVDB / IMDb id is the same work, whatever the title or year says. 65
+    # of the owner's findings were exactly that - a translated or romanised
+    # title ("Mad Max 2" / "The Road Warrior", "Heavenly Delusion" /
+    # "Tengoku Daimakyo", "Liar Game" in Japanese script) or a regional
+    # release year (The Evil Dead 1983 / 1981) - each escalated to Needs
+    # attention for the owner to dismiss by hand. A shared id that differs
+    # is the strongest wrong-entity signal there is.
+    #
+    # Not for anime: there the profile's title and data come from AniList,
+    # resolved on their own, while its TMDB id is the arr's - an AniList
+    # entry for the wrong work (Golgo 13, the 2008 series, filed under the
+    # 1983 film) still agrees on TMDB. Anime ask AniList's own names.
+    if category == "anime":
+        verdict = _anime_names_verdict(profile, arr)
+        if verdict is not None:
+            return verdict or None
+    else:
+        agree = _ids_agree(profile, arr)
+        if agree is True:
+            return None
+        if agree is False:
+            return "wrong_entity:id"
     a_title, p_title = arr.get("title") or "", profile.get("title") or ""
     if a_title and p_title and SequenceMatcher(
-        None, _audit_norm(a_title), _audit_norm(p_title)
+        None, _audit_title(a_title), _audit_title(p_title)
     ).ratio() < 0.5:
         return "wrong_entity:title"
     try:
