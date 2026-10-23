@@ -593,6 +593,12 @@ The PC's checkout needs this version for the agent's new reading.
   wrote the other.
 - A lyrics profile that fails waits on a backoff of 1, 2, 4 days and so on,
   instead of taking the same third of every tick's budget for good.
+- "No id in the arr" no longer applies to Plex-index artists (Lidarr off).
+  Plex has no id to give, and music resolves by name. These were 336 of the
+  owner's 426 Needs-attention rows: collaboration credits ("Armin van Buuren
+  & Vini Vici") and stray tags ("00", ".dev") among them. A row without an
+  error is explained by its own state; "Never processed" no longer reads
+  "a full profile was written".
 
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves

@@ -157,5 +157,27 @@ finally:
     wd.fetch_wikidata_facts = saved_fetch
     cache.close()
 
+# ── music from the Plex index: "no id in the arr" cannot apply ──────────────
+from src.services import enrichment_state as ES  # noqa: E402
+from src.services import kb_overview as kb  # noqa: E402
+plex_artist = {"source": "plex", "mbid": None, "title": "Armin van Buuren & Vini Vici"}
+lidarr_artist = {"source": "lidarr", "mbid": None, "title": "Some Band"}
+check("a Plex-index artist without an MBID is not 'no id in the arr' (Plex has none to give)",
+      kb.has_external_id(plex_artist) is True
+      and "no_external_id" not in ES.attention_reasons("never_processed", None,
+                                                       has_external_id=kb.has_external_id(plex_artist)))
+check("...a Lidarr artist without one still is", kb.has_external_id(lidarr_artist) is False
+      and "no_external_id" in ES.attention_reasons("never_processed", None,
+                                                   has_external_id=kb.has_external_id(lidarr_artist)))
+kb_src = (ROOT / "src/services/kb_overview.py").read_text(encoding="utf-8")
+en_src = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
+check("the page and the sidebar count share the one rule",
+      "has_external_id=has_external_id(it)" in kb_src and "has_external_id=_kb.has_external_id(i)" in en_src
+      and '"source": raw.get("_source") or svc' in kb_src)
+row = en._serialize_item({"plex_rating_key": "lidarr:1", "service": "lidarr", "arr_id": 1,
+                          "category": "music", "title": "X", "state": "never_processed"})
+check("a never-processed row is explained as never processed, not as 'a full profile was written'",
+      row["reason"] == ES.STATE_DEFINITIONS["never_processed"]["explainer"])
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

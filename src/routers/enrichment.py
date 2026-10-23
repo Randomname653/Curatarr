@@ -1806,7 +1806,10 @@ def _serialize_item(i: dict, det=None, pin=None, now=None) -> dict:
         reason = (f"Matched '{hit['title']}'" + (f" ({hit['year']})" if hit and hit.get("year") else "")
                   if hit else "Matched") + \
                  f" by title search at {conf:.0%} similarity — confirm by pinning, or exclude it"
-    elif state in _ES.DONE_STATES:
+    elif state in _ES.DONE_STATES or not (i.get("error") or "").strip():
+        # A row with no error is explained by its own state. open_reason
+        # explains error strings, and without one it said "a full profile
+        # was written" under "Never processed".
         reason = _ES.STATE_DEFINITIONS[state]["explainer"]
     else:
         reason = _ES.open_reason(i.get("error"), ss, attempt_count=i.get("attempt_count") or 0,
@@ -1902,7 +1905,7 @@ async def enrichment_unmatched(
         reasons = _ES.attention_reasons(
             i["state"], i.get("error"), i.get("attempt_count") or 0,
             i.get("match_basis"), i.get("match_confidence"),
-            has_external_id=any(i.get(k) for k in ("tmdb_id", "tvdb_id", "imdb_id", "mbid")),
+            has_external_id=_kb.has_external_id(i),
             findings=pend_dicts.get(prk, ()))
         if reasons:
             rows.append((reasons, i))

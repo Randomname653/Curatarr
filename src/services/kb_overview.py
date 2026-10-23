@@ -123,6 +123,18 @@ def _category_of(svc: str, raw: dict) -> str:
     return "anime" if "anime" in root else "show"
 
 
+_ID_FIELDS = ("tmdb_id", "tvdb_id", "imdb_id", "mbid")
+
+
+def has_external_id(it: dict) -> bool:
+    """Whether "No id in the arr" can apply. A Plex-index artist (Lidarr
+    off) never can: Plex has no id to give, and music resolves by name - 336
+    of the owner's 426 Needs-attention rows were exactly that, collaboration
+    credits and stray tags included (2026-10-23). The page and the sidebar
+    count call this one function."""
+    return it.get("source") == "plex" or any(it.get(k) for k in _ID_FIELDS)
+
+
 async def classified_items() -> list[dict]:
     """Every arr item with its ONE state — the list behind every KB number.
 
@@ -203,6 +215,7 @@ async def classified_items() -> list[dict]:
             item = {
                 "category": cat, "service": svc, "arr_id": arr_id,
                 "plex_rating_key": f"{svc}:{arr_id}",
+                "source": raw.get("_source") or svc,
                 "title": title, "year": raw.get("year"),
                 "tmdb_id": raw.get("tmdbId"), "tvdb_id": raw.get("tvdbId"),
                 "imdb_id": raw.get("imdbId"), "mbid": raw.get("foreignArtistId"),
@@ -325,7 +338,7 @@ async def build_overview() -> dict:
         o = c["open"]
         if attention_reasons(state, it.get("error"), it.get("attempt_count") or 0,
                              it.get("match_basis"), it.get("match_confidence"),
-                             has_external_id=any(it.get(k) for k in ("tmdb_id", "tvdb_id", "imdb_id", "mbid")),
+                             has_external_id=has_external_id(it),
                              findings=pend.get(it["plex_rating_key"], ())):
             o["needs_attention"] += 1
         if state in ("not_found", "retry_due"):
