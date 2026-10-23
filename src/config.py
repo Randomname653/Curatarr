@@ -295,6 +295,9 @@ class Settings(BaseSettings):
     #              Curatarr's LAN address, for the shutdown notice).
     # On the NAS:  PC_AGENT_TOKEN, PC_AGENT_URL (http://<pc>:<port>).
     PC_AGENT_TOKEN: Optional[SecretStr] = None
+    # On the PC once Curatarr runs on the NAS: the tray starts only the agent
+    # (no server, no database) and "Open Curatarr" opens PC_AGENT_NOTIFY_URL.
+    PC_AGENT_ONLY: bool = False
     PC_AGENT_PORT: int = 11435
     PC_AGENT_NOTIFY_URL: str = ""
     PC_AGENT_URL: str = ""

@@ -532,6 +532,13 @@ embedding weights the stored vectors come from. A host where the same
 model name carries other weights is reported before it can write vectors
 that do not compare.
 
+**The PC after the move.** `PC_AGENT_ONLY=true` makes the PC's tray run
+only the agent: no server and no database. "Open Curatarr" opens the NAS,
+and a logoff, shutdown or Quit tells the NAS first. A Curatarr started on
+that PC anyway refuses to run, so the same Plex and arrs are never
+synced twice. `docs/NAS_MOVE.md` walks the move step by step, rollback
+included.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex

@@ -235,7 +235,10 @@ Apps → Custom App → Install via YAML.
   household watch, principle or model update means a fresh verdict.
 - **Moving an existing install:** stop the old one, then copy its `data/`
   folder and its `.env` into the volume. Never run two instances against the
-  same Plex and arrs.
+  same Plex and arrs. [NAS_MOVE.md](NAS_MOVE.md) walks the whole move,
+  rollback included, for a NAS with the gaming PC as a second host. That PC
+  then runs only the agent (`PC_AGENT_ONLY=true`), and its start.bat refuses
+  to start a second Curatarr.
 - **Updates** come with a new image (pull and redeploy). The in-app restart
   exits the process, and `restart: unless-stopped` brings it back.
 
