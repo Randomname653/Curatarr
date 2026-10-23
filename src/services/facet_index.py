@@ -159,11 +159,12 @@ async def compact_facets_if_needed(task=None) -> bool:
     True when nothing is left to do, False when a try failed (the custodian
     backs off and retries). One-shot for a store the old writer inflated;
     afterwards a no-op check of one small file."""
-    import os
-    if os.environ.get("CURATARR_FACET_COMPACT", "1") == "0":
-        # A rebuilt graph answers a little differently (measured recall@20
-        # against exact search 0.81, from 0.89 on the grown index) for 450 MB
-        # less memory; this switches the trade off.
+    from src.config import settings
+    if not getattr(settings, "FACET_COMPACT", False):
+        # Off unless asked for (owner's call, 2026-10-23): a rebuilt graph
+        # answered worse (recall@20 against exact search 0.81, from 0.89 on
+        # the grown index) for 450 MB less memory. The in-place writer alone
+        # stops the growth; FACET_COMPACT=true takes the trade.
         return True
     from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
     chroma = get_chroma_db()

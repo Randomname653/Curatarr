@@ -276,6 +276,10 @@ fi._COMPACT_MIN_LIVE = 10
 stats = {"v": (live_before + 10, live_before)}
 wr.facets_slot_stats = lambda: stats["v"]
 cw.get_chroma_db = lambda: wr
+check("compaction is off by default (it costs recall), whatever the dead share",
+      settings.FACET_COMPACT is False
+      and "FACET_COMPACT: bool = False" in (ROOT / "src/config.py").read_text(encoding="utf-8"))
+settings.FACET_COMPACT = True       # the rest of this section runs it
 check("a healthy index is left alone (dead share below the threshold)",
       asyncio.run(fi.compact_facets_if_needed()) is True
       and wr._compact is None and wr.facets_count() == live_before)
