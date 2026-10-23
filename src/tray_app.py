@@ -352,6 +352,70 @@ def _toggle_autostart(icon, _item):
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+def _agent_only(settings, mutex) -> None:
+    """PC_AGENT_ONLY: this PC no longer runs Curatarr - the NAS does - and
+    lends it its card. The tray keeps only the PC agent (src/pc_agent.py):
+    no server, no database, no scheduler. "Open Curatarr" opens the NAS's
+    address (PC_AGENT_NOTIFY_URL); a logoff, a shutdown or Quit tells the
+    NAS first, so nothing more is sent to this card."""
+    import pystray
+    from src import pc_agent
+    from src.services.model_check import ollama_answers
+
+    agent = pc_agent.start_from_settings(settings)
+    if agent is None:
+        logger.error("PC_AGENT_ONLY is set but the agent did not start "
+                     "(PC_AGENT_TOKEN missing or shorter than 16, or the port is taken).")
+        if mutex:
+            ctypes.windll.kernel32.CloseHandle(mutex)
+        sys.exit(1)
+    nas = (settings.PC_AGENT_NOTIFY_URL or "").strip().rstrip("/")
+    warning = (None if ollama_answers(creationflags=_CREATE_NO_WINDOW) else
+               "Ollama is not answering - Curatarr on the NAS cannot use this PC's card.")
+    icon = None
+
+    def _stop_for_good():
+        agent.announce_shutdown()
+        if icon is not None:
+            icon.stop()
+
+    icon = pystray.Icon(
+        "curatarr", _draw_eye(64), "Curatarr agent (lends this PC's card)",
+        menu=pystray.Menu(
+            pystray.MenuItem("Open Curatarr", lambda: webbrowser.open(nas),
+                             default=True, enabled=bool(nas)),
+            pystray.MenuItem("Open logs", lambda: os.startfile(LOG_DIR)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Start with Windows", _toggle_autostart,
+                             checked=_autostart_enabled),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit agent", lambda: _stop_for_good()),
+        ),
+    )
+    # The session hook joins a "server" before Windows may end the session;
+    # there is none here, so a thread that has already finished.
+    nothing = threading.Thread(target=lambda: None, name="curatarr-no-server")
+    nothing.start()
+    nothing.join()
+    _install_endsession_hook(_stop_for_good, nothing)
+    logger.info("Agent-only mode: reporting to %s", nas or "(no PC_AGENT_NOTIFY_URL)")
+    if warning:
+        def _late_notify(i):
+            i.visible = True
+            try:
+                i.notify(warning, "Curatarr")
+            except Exception as e:  # noqa: BLE001 - toast only; the warning is logged too
+                logger.warning("%s (tray notification failed: %s)", warning, e)
+        logger.warning(warning)
+        icon.run(setup=_late_notify)
+    else:
+        icon.run()
+    agent.stop()
+    if mutex:
+        ctypes.windll.kernel32.CloseHandle(mutex)
+    logger.info("Agent-only tray exiting.")
+
+
 def main() -> None:
     os.chdir(ROOT)   # belt-and-braces on top of src/paths anchoring
 
@@ -365,6 +429,8 @@ def main() -> None:
     from src.config import settings
 
     mutex = _acquire_mutex()
+    if getattr(settings, "PC_AGENT_ONLY", False) and mutex is not None:
+        return _agent_only(settings, mutex)
     if mutex is None or _port_in_use(settings.PORT):
         # Another tray instance or a dev console already serves — focus that.
         logger.info("Curatarr already running — opening browser instead.")

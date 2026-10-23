@@ -27,6 +27,15 @@ logger = logging.getLogger("curatarr")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # A PC set up as the NAS's card lender (PC_AGENT_ONLY) must not run a
+    # second Curatarr: two schedulers against one Plex and the same arrs
+    # write playlists, watchlists and deletions twice. Refused before
+    # anything opens - start.bat on that PC fails loudly instead.
+    if getattr(settings, "PC_AGENT_ONLY", False):
+        logger.error("PC_AGENT_ONLY is set: this PC only lends its card to the Curatarr "
+                     "on the NAS (%s). Not starting a second Curatarr here - the tray "
+                     "runs the agent.", settings.PC_AGENT_NOTIFY_URL or "PC_AGENT_NOTIFY_URL")
+        raise SystemExit(1)
     # Pass 100: stop Syncthing from touching the live SQLite DB. Syncing an
     # open WAL-mode database causes "database is locked" errors and risks
     # corruption. The guard excludes data/ in the enclosing Syncthing
