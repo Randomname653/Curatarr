@@ -6,6 +6,24 @@ Condensed release history, newest first.
 
 ## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
 
+**Memory: the container held 4 GB of anonymous heap; the measured owners are smaller now.**
+The NAS view (3.3 GB, then 4.1 GB after a few hours) was real heap, not page cache. Measured
+on a copy of the real data: the facet index rewrote a title with delete + add, and Chroma never
+reuses a deleted slot, so 333k slots held 199k live points in a 1.2 GB resident index. Titles
+are now replaced in place (an unchanged id keeps its slot): that stops the growth, which came
+from re-enrichment (~25 MB per 1,000 titles re-enriched, never returned). A weekly
+`facet_compact` task can rebuild an index whose dead share passes a quarter (200 s on the real
+store, queries stay served, writes made during the copy are replayed, then a fresh client
+returns the old index's memory: 1.3 GB of indexes became 0.85 GB). It is off by default
+(`FACET_COMPACT=true` turns it on): the rebuilt graph's recall against exact search was 0.81
+where the grown one had 0.89. The image sets `MALLOC_ARENA_MAX=2`. Every pooled SQLite connection held up to 64 MB of page cache
+next to the OS cache: 8 MB now (12 warm connections: 840 MB down to ~100 MB, a 0.6 s bulk read
+gets 0.3 s slower). The enrichment cycle loaded all 384k plays as ORM entities (722 MB peak)
+to dedupe them to 18k titles: it streams columns and dedupes while reading (12 MB peak). The
+taste rebuild shares equal strings between its play rows and reads enrichment profiles a chunk
+at a time (peak 730 to 277 MB). The arr library cache drops fields nothing reads (about 26 MB
+for Sonarr and Radarr, 88 MB if Lidarr is on). Tests: `tests/test_ram_footprint.py`.
+
 **Light instead of lines: a calmer, more tactile interface.**
 - Panels, cards and dialogs are lit from above (a hairline edge, a faint top highlight,
   soft layered shadows) instead of outlined; the topbar and sidebar are frosted glass,
@@ -576,6 +594,15 @@ the 45-second GPU-pressure hold. Ollama's own runners and programs answered
 programs again: a split install had been asking about the NAS container's.
 It now also waits in the bell until answered, card-drawing programs first.
 The PC's checkout needs this version for the agent's new reading.
+
+**The Windows install updates itself.** The tray has "Check for updates" and
+"Update now": a fast-forward of the checkout to main, then the usual restart
+(its preflight installs what the lock asks for). Nothing is merged or
+overwritten. A branch, local changes or local commits stop it, and the tray
+says why. The PC agent checks every 6 hours and reports where it stands, so
+the NAS's bell says when the gaming PC runs an older Curatarr. "Update the
+PC" there has the agent update and restart. The NAS sends only the token,
+and the agent fetches from its own origin.
 
 **Needs attention and maintenance that could never finish.**
 - A wrong-entity finding no longer fires when a shared TMDB, TVDB or IMDb id

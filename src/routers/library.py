@@ -571,6 +571,28 @@ import time
 from src.services.http_client import tls_context
 
 _LIB_CACHE: dict[str, dict] = {}
+
+# Fields of the arr's raw items that nothing in Curatarr reads (grep over src/,
+# frontend/ and tests/), and that make up about half of the cached bytes:
+# Sonarr's per-language translations, Radarr's file/mediaInfo block, Lidarr's
+# last/next album and link lists. The cache holds every library item in RAM
+# as Python objects (~110 MB for Sonarr + Radarr before this).
+_ARR_UNREAD_FIELDS = {
+    "sonarr": ("translations",),
+    "radarr": ("movieFile", "translations"),
+    "lidarr": ("lastAlbum", "nextAlbum", "links"),
+}
+
+
+def _slim_arr_items(service: str, items_raw: list) -> list:
+    """``items_raw`` without the fields in _ARR_UNREAD_FIELDS (in place)."""
+    drop = _ARR_UNREAD_FIELDS.get(service, ())
+    if drop:
+        for it in items_raw:
+            if isinstance(it, dict):
+                for f in drop:
+                    it.pop(f, None)
+    return items_raw
 _LIB_CACHE_TTL = 900       # 15 min freshness window (after which we re-fetch)
 _LIB_DB_TTL_DAYS = 30      # how long to keep the persisted blob — long enough
                            # that a several-day outage of the arr still has
@@ -645,7 +667,8 @@ def _load_lib_cache_from_db() -> int:
                 cur = _LIB_CACHE.get(svc)
                 if cur is not None and (cur.get("at") or 0) >= at:
                     continue
-                _LIB_CACHE[svc] = {"items_raw": items_raw, "tags": tags, "at": at}
+                _LIB_CACHE[svc] = {"items_raw": _slim_arr_items(svc, items_raw),
+                                   "tags": tags, "at": at}
                 restored += 1
                 age = max(0, time.time() - at)
                 logger.info(
@@ -750,7 +773,8 @@ async def _live_arr_library(service: str, url: str, api_key: str,
             tags = (hit or {}).get("tags", [])
     # L1 (in-memory) + L2 (persisted DB row) populated together so the
     # next process restart starts warm.
-    _LIB_CACHE[service] = {"items_raw": items_raw, "tags": tags, "at": now}
+    _slim_arr_items(service, items_raw)
+    _LIB_CACHE[service]= {"items_raw": items_raw, "tags": tags, "at": now}
     await asyncio.to_thread(_persist_lib_cache, service, items_raw, tags, now)
     return items_raw, tags
 

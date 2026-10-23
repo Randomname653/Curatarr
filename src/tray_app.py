@@ -350,6 +350,62 @@ def _toggle_autostart(icon, _item):
         logger.warning("Autostart toggle failed: %s", e)
 
 
+# ── updates (src/self_update) ────────────────────────────────────────────────
+
+def _check_text(st: dict) -> str:
+    """The toast for "Check for updates"."""
+    behind = st.get("behind") or 0
+    if behind and st.get("reason"):
+        return f"{behind} update(s) on main, but this install cannot take them: {st['reason']}."
+    if st.get("reason"):
+        return f"Could not check for updates: {st['reason']}."
+    if behind:
+        return f"{behind} update(s) available - choose Update now."
+    return "Curatarr is up to date."
+
+
+def _update_items(restart):
+    """The tray's two update entries. ``restart(result)`` runs after a
+    fast-forward. Both work in a thread: a fetch takes seconds."""
+    import pystray
+    from src import self_update
+
+    def _notify(icon, text):
+        try:
+            icon.notify(text, "Curatarr")
+        except Exception as e:  # noqa: BLE001 - toast only; the log has it too
+            logger.warning("%s (tray notification failed: %s)", text, e)
+
+    def _check(icon, _item):
+        def run():
+            st = self_update.check()
+            logger.info("[update] check: %s", {k: st.get(k) for k in ("behind", "ahead", "reason")})
+            _notify(icon, _check_text(st))
+        threading.Thread(target=run, name="curatarr-update-check", daemon=True).start()
+
+    def _apply(icon, _item):
+        def run():
+            res = self_update.apply()
+            if res.get("updated"):
+                _notify(icon, f"Updated to {(res.get('to') or '')[:7]} - restarting.")
+                restart(res)
+            elif res.get("ok"):
+                _notify(icon, "Curatarr is up to date.")
+            else:
+                logger.warning("[update] not updated: %s", res.get("reason"))
+                _notify(icon, f"Not updated: {res.get('reason')}.")
+        threading.Thread(target=run, name="curatarr-update", daemon=True).start()
+
+    return [pystray.MenuItem("Check for updates", _check),
+            pystray.MenuItem("Update now", _apply)]
+
+
+def _reexec() -> None:
+    logger.info("Restarting tray launcher (re-exec).")
+    subprocess.Popen([_pythonw(), str(ROOT / "curatarr_tray.pyw")],
+                     cwd=str(ROOT), creationflags=_CREATE_NO_WINDOW)
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def _agent_only(settings, mutex) -> None:
@@ -362,7 +418,16 @@ def _agent_only(settings, mutex) -> None:
     from src import pc_agent
     from src.services.model_check import ollama_answers
 
-    agent = pc_agent.start_from_settings(settings)
+    restart = threading.Event()
+    icon = None
+
+    def _restart_after_update(_res=None):
+        # The NAS hears a goodbye first, so nothing new is sent to the card
+        # during the few seconds the agent is away.
+        restart.set()
+        _stop_for_good()
+
+    agent = pc_agent.start_from_settings(settings, on_updated=_restart_after_update)
     if agent is None:
         logger.error("PC_AGENT_ONLY is set but the agent did not start "
                      "(PC_AGENT_TOKEN missing or shorter than 16, or the port is taken).")
@@ -372,7 +437,6 @@ def _agent_only(settings, mutex) -> None:
     nas = (settings.PC_AGENT_NOTIFY_URL or "").strip().rstrip("/")
     warning = (None if ollama_answers(creationflags=_CREATE_NO_WINDOW) else
                "Ollama is not answering - Curatarr on the NAS cannot use this PC's card.")
-    icon = None
 
     def _stop_for_good():
         agent.announce_shutdown()
@@ -388,6 +452,7 @@ def _agent_only(settings, mutex) -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Start with Windows", _toggle_autostart,
                              checked=_autostart_enabled),
+            *_update_items(_restart_after_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit agent", lambda: _stop_for_good()),
         ),
@@ -412,7 +477,9 @@ def _agent_only(settings, mutex) -> None:
         icon.run()
     agent.stop()
     if mutex:
-        ctypes.windll.kernel32.CloseHandle(mutex)
+        ctypes.windll.kernel32.CloseHandle(mutex)   # BEFORE the re-exec
+    if restart.is_set():
+        _reexec()
     logger.info("Agent-only tray exiting.")
 
 
@@ -469,7 +536,12 @@ def main() -> None:
     # The PC agent (src/pc_agent.py): reports this PC's processes and GPU to
     # a Curatarr on the NAS. Only with PC_AGENT_TOKEN set; None otherwise.
     from src import pc_agent
-    agent = pc_agent.start_from_settings(settings)
+
+    def _restart_after_update(_res=None):
+        restart_requested.set()
+        _initiate_stop()
+
+    agent = pc_agent.start_from_settings(settings, on_updated=_restart_after_update)
 
     def _stop_for_good():
         """The PC (or the tray) is going away, not restarting: tell the NAS
@@ -489,6 +561,7 @@ def main() -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Start with Windows", _toggle_autostart,
                              checked=_autostart_enabled),
+            *_update_items(_restart_after_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart",
                              lambda: (restart_requested.set(), _initiate_stop())),
@@ -543,7 +616,5 @@ def main() -> None:
         ctypes.windll.kernel32.CloseHandle(mutex)   # BEFORE any re-exec
 
     if restart_requested.is_set():
-        logger.info("Restarting tray launcher (re-exec).")
-        subprocess.Popen([_pythonw(), str(ROOT / "curatarr_tray.pyw")],
-                         cwd=str(ROOT), creationflags=_CREATE_NO_WINDOW)
+        _reexec()
     logger.info("Tray launcher exiting.")

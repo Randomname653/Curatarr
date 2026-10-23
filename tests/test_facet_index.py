@@ -28,7 +28,8 @@ def check(name, cond):
 class FakeChroma:
     def __init__(self):
         self.deleted = []
-        self.added = []          # (ids, metadatas, documents)
+        self.replaced = []
+        self.added = []         # (ids, metadatas, documents)
         self.count = 1000
         self.pages = {}          # offset -> {"ids": [...], "metadatas": [...]}
         self.page_error_at = None
@@ -40,6 +41,11 @@ class FakeChroma:
         return True
 
     def facets_add(self, documents, embeddings, metadatas, ids):
+        self.added.append((ids, metadatas, documents))
+        return True
+
+    def facets_replace(self, parent_id, documents, embeddings, metadatas, ids):
+        self.replaced.append(parent_id)
         self.added.append((ids, metadatas, documents))
         return True
 
@@ -83,8 +89,9 @@ ast.set_state = lambda k, v: STATE.__setitem__(k, v)
 n = asyncio.run(fi.write_facets("sonarr:1", "Gleipnir", "anime", "Action",
                                 ["death game", "femdom", "  ", "x"]))
 check("writes one point per usable phrase (short/blank dropped)", n == 2)
-check("delete-by-parent runs BEFORE add (true upsert)",
-      fake.deleted == ["sonarr:1"] and len(fake.added) == 1)
+check("a rewrite replaces the title's points in place - no delete + add "
+      "(that burned an HNSW slot per point, measured 40% dead)",
+      fake.deleted == [] and fake.replaced == ["sonarr:1"] and len(fake.added) == 1)
 ids, metas, docs = fake.added[0]
 check("facet id schema parent::fN",
       ids == ["sonarr:1::f0", "sonarr:1::f1"])

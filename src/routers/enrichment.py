@@ -230,6 +230,58 @@ async def enrichment_status(
     }
 
 
+def _history_dedupe_key(cat: str, series_title, title) -> Optional[str]:
+    """The enrichment run's one-per-title key (the dedupe step), or None for
+    a row it drops: an episode or track with no series/artist, a movie with
+    no title."""
+    if cat in ("show", "anime", "music"):
+        if not series_title:
+            return None
+        return f"{cat}:{series_title.lower().strip()}"
+    if not title:
+        return None
+    return f"movie:{title.lower().strip()}"
+
+
+def _collect_history_items(user_id: int, categories: list) -> tuple:
+    """(items, watch_keys): one pitem per title from the user's watch history,
+    plus the lower-cased (series_title or title) of EVERY row for the arr
+    merge. Blocking: run it on a worker thread.
+
+    This used to load every play as an ORM entity (about 384,000 for the
+    owner's music) before the dedupe collapsed them to ~18,000 titles: a
+    500 MB spike on every enrichment cycle. Columns are streamed and the
+    one-per-title rule is applied while reading, so only the titles are kept."""
+    items: list = []
+    watch_keys: set = set()
+    seen: set = set()
+    W = WatchHistoryEntry
+    with get_db_session() as db:
+        for cat in categories:
+            q = (db.query(W.plex_item_id, W.title, W.series_title, W.tmdb_id)
+                 .filter(W.user_id == user_id, W.media_type == cat)
+                 .execution_options(yield_per=2000))
+            for plex_item_id, title, series_title, tmdb_id in q:
+                wk = (series_title or title or "")
+                if wk:
+                    watch_keys.add(wk.lower().strip())
+                key = _history_dedupe_key(cat, series_title, title)
+                if key is None or key in seen:
+                    continue
+                seen.add(key)
+                items.append({
+                    "plex_rating_key": plex_item_id,
+                    "title": title,
+                    "series_title": series_title,
+                    "media_type": cat,
+                    "tmdb_id": tmdb_id,
+                    "tvdb_id": None,
+                    "imdb_id": None,
+                    "source": "watch_history",
+                })
+    return items, watch_keys
+
+
 def _plex_music_counts(count_vectors=None) -> dict:
     """The Knowledge Base's music row when Lidarr is not configured (Lidarr
     optional, 2026-09-15): the same keys the Lidarr branch fills, from the
@@ -2885,35 +2937,15 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         else:
             # Step 1: collect from watch history (skip when arr-only)
             items = []
+            watch_keys: set = set()
             if source in ("watch_history", "both"):
-                def _collect_history():
-                    with get_db_session() as db:
-                        for cat in categories:
-                            for e in db.query(WatchHistoryEntry).filter(
-                                WatchHistoryEntry.user_id == user_id,
-                                WatchHistoryEntry.media_type == cat,
-                            ).all():
-                                items.append({
-                                    "plex_rating_key": e.plex_item_id,
-                                    "title": e.title,
-                                    "series_title": e.series_title,
-                                    "media_type": cat,
-                                    "tmdb_id": e.tmdb_id,
-                                    "tvdb_id": None,
-                                    "imdb_id": None,
-                                    "source": "watch_history",
-                                })
-
-                await run_read(_collect_history)
+                items, watch_keys = await run_read(
+                    _collect_history_items, user_id, categories)
 
             # Step 2: merge ARR items when source includes arr
             if source in ("arr", "both"):
                 task_monitor.update(setup_task, message="Fetching ARR libraries...")
                 arr_items = await _collect_arr_items(categories)
-                watch_keys = {
-                    (i.get("series_title") or i["title"]).lower().strip()
-                    for i in items
-                }
                 for ai in arr_items:
                     key = (ai.get("series_title") or ai["title"]).lower().strip()
                     if key and key not in watch_keys:

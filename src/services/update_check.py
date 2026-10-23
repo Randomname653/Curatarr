@@ -33,7 +33,8 @@ HOW = {
                  "ghcr.io/randomname653/curatarr:latest (TrueNAS shell) and edit + save the app, "
                  "or docker compose pull && docker compose up -d. With pull_policy: always "
                  "in the app's YAML, edit + save alone does both.",
-    "git": "git pull in the Curatarr folder, then restart Curatarr.",
+    "git": "In the tray menu: Update now (a fast-forward to main, then a restart). "
+           "Or git pull in the Curatarr folder and restart.",
 }
 
 _running = {"task": None}
