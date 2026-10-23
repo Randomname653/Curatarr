@@ -95,7 +95,7 @@ considerably more. No progress indication beyond a busy button.
 | **Letterboxd Year in Review** | Hours, most-watched actor/director, highest-rated, **most-watched week and weekday**, **first and last film of the year**; it lives as a stats page you can open at any time, per year |
 | **Steam Replay 2025** | Top titles by playtime, **longest session**, monthly breakdown, genre mix, **share of time on this year's releases vs 1–7 vs 8+ years old**, comparison with the average player |
 | **Wrapperr** (self-hosted, Plex + Tautulli) | The direct self-hosted competitor: custom timeframes, Plex login, movies/shows/music, expiring share links, a "viewing age" estimate. Purely statistical — no curator, no opinions, no deletions |
-| **Apple Music Replay** (from memory, not re-checked) | Updates **all year**, not only in December — the recap as a living page |
+| **Apple Music Replay** | See §1.6 — updates all year; 2025 added Discovery / Loyalty / **Comebacks** |
 
 ### 1.5 Top 5 lessons we bring into Curatarr
 
@@ -120,6 +120,133 @@ And the one thing nobody else can do: **the narrator has opinions.**
 Wrapperr has no curator; Spotify has no deletion debates. Curatarr's wrap-up is
 told by the curator that argued with you all year — The Graveyard, The
 Shield and Roast & Toast are its signature.
+
+### 1.6 Extended market scan — every recap worth knowing (2025 season)
+
+Second research pass, across music, video, self-hosted, games and
+habit apps. "Steal" is what Curatarr takes; "Skip" is a deliberate no.
+
+**Music streaming**
+
+| Product (2025 launch) | What it does | Steal / Skip |
+|---|---|---|
+| **YouTube Music Recap** (~24 Nov) | Story with a section carousel; listening time, longest streak, top 5; **"Musical Passport"** (where your artists were played); a **listening calendar** marking the days you played your top artist; **"Ask about your listening"** — an AI chat whose every answer becomes a shareable graphic | **Steal:** the calendar (→ *Top-Title Calendar* tile) and, above all, **Ask-your-wrap-up** — Curatarr already has the chat, so a chat thread seeded with the guarded fact sheet is cheap and unique for self-hosted. Skip the passport (no geodata) |
+| **Deezer — My Deezer Year** (1 Dec) | Romcom theme in three "episodes": new artists discovered, top 3 artists, top tracks + playlist; a **quiz** to challenge friends on your taste | **Steal:** the **quiz before the reveal** ("Which title got the most hours? Pick one of four") — makes the hero reveal earned. Episodes = our chapters |
+| **Apple Music Replay** (2 Dec) | Total minutes, artist count, **longest artist streak**, top genres; new categories **Discovery** (new artists), **Loyalty** (artists you return to every year), **Comebacks** (artists back in rotation); monthly Replay all year | **Steal:** **Comebacks** (→ new fact: a title/artist back after ≥ 12 months of silence) and **per-title streak** (most consecutive days with one title). Discovery/Loyalty = our Scout/Loyalist |
+| **Amazon Music — 2025 Delivered** (2 Dec) | Festival theme: virtual wristband, **personalised festival poster** of your top artists as the share visual, top-songs playlist; earnable credentials **"Trendsetter", "Headliner"**; monthly "Insights" all year | **Steal:** the **lineup poster** as a second snapshot layout (top titles set like a festival bill, #1 as headliner) and **badges** — secondary traits shown as small credentials under the archetype |
+| **Spotify Wrapped** (3 Dec) | Listening Age, Clubs (Scout/Loyalist…), Top Albums, fan leaderboard, five memorable days, Wrapped Party, Top Song Quiz | Already in §1.4; adds the quiz evidence to Deezer's |
+| **SoundCloud Playback** (3 Dec) | Top artists/tracks/genres, listening time, **mood tracking**, **"Listening Time Persona"** (when you're most active), **"Genre Discovery Count"**, **"Music Doppelgänger"** (taste match); artists get fan stats | **Steal:** Listening-Time Persona = our Night Owl/Matinee (confirms the idea); **Genre Discovery Count** (→ genres played for the first time ever); Doppelgänger → household taste twin, **opt-in only** |
+| **Tidal** | No 2025 recap found | — |
+| **Last.fm** (permanent) | Yearly/weekly listening reports: scrobbles vs last year (+25 %), monthly counts, top artists, tags, **listening clock**, busiest weekday, first track of the year | **Steal:** **"vs the same period last year"** delta on Hours (cheap, honest yardstick). Clock = our 24-bar tile |
+
+**Video & self-hosted** — the gap Curatarr fills
+
+| Product | What it does | Steal / Skip |
+|---|---|---|
+| **Netflix** | **No personal recap** — 2025 was a global "Spoiled" spot and an editorial Tudum guide; only an unofficial third-party "Netflix Wrapped" exists | The big streamers leave **personal video recaps** to others — a real gap |
+| **Plex Rewind** (18 Dec, Plex Pass) | **Platform-wide** blog post: top movies per month by minutes streamed, popular genres — **no personal stats** found | Plex users have no personal recap from Plex. Curatarr reads the same Plex data and does it per person |
+| **Letterboxd Year in Review** | Two-part: a **personal headline summary right after New Year** (≥ 10 films logged), then the full **community round-up** (highest rated, by genre, by month, "the year in numbers"); extra stats for Pro/Patron | **Steal:** **eligibility floor** (enough data, or an honest "not enough yet"), and a **Household Year** page — opt-in aggregate of the house (most-watched, most-debated, total GB freed) |
+| **Trakt** | Year in Review per year, **Month in Review** and **All-Time stats** (VIP) | Confirms our period set (30 d ≈ month, year, all time) |
+| **Wrapperr** (Tautulli) | Spotify-style recap from Plex history; custom timeframes, movies/shows/music, expiring share links, viewing age | Covered in §1.4 |
+| **Jellyfin Wrapped / Jellyfin Rewind** | Community tools: Wrapped for movies/TV, Rewind for music (2025 edition, Svelte rewrite); both depend on the Playback Reporting plugin, which **keeps only 3 months by default** | **Lesson:** recaps die on data retention. Curatarr's `watch_history` is permanent — say so in the UI ("since you joined: …"), and never prune it |
+
+**Games & habit apps** — mechanics, not content
+
+| Product | What it does | Steal / Skip |
+|---|---|---|
+| **Steam Replay** (16 Dec) | Covered in §1.4 | — |
+| **PlayStation Wrap-Up** | Top games, genres, hours, trophies; **≥ 10 hours to qualify**; a **personalised PS Plus playlist**; completing it unlocks an avatar and a **share card** | **Steal:** the **playlist** — Curatarr already pushes Plex playlists (`plex_playlists.py`): "Your 2026 on Plex" (top titles + comfort picks) and, for music, a top-tracks playlist, one tap from the wrap-up |
+| **Xbox Year in Review** | Reportedly skipped 2025 (budget) | — |
+| **Strava Year in Sport** | Scenes vary with your data; **each scene shareable on its own** (no single export); moved **behind an $80/year paywall in 2025** and drew complaints | **Steal:** **per-tile share**. **Lesson:** never gate the recap — it's the feature people tell others about |
+| **Goodreads Year in Books** | Pages and books, **shortest vs longest book**, average rating, highest rated; ≥ 3 books; monthly achievements | **Steal:** **shortest vs longest** (film runtime / series length) as a contrast pair |
+| **Duolingo Year in Review** | Lessons, XP, minutes, streak, **how you compare to other learners**, final share card with a reward | Comparison: household opt-in only (see §4) |
+
+**Timing of the season:** YouTube Music ~24 Nov → Deezer 1 Dec → Apple and
+Amazon 2 Dec → Spotify and SoundCloud 3 Dec → PlayStation early Dec →
+Steam 16 Dec → Plex 18 Dec → Letterboxd 2 Jan (personal) / 12 Jan
+(community). Curatarr: the current-year wrap-up opens **1 December** with
+data to date, gets written once more on **1 January** when the year closes,
+and is frozen after that.
+
+### 1.7 What the extended scan adds to the design
+
+| Addition | From | Where it lands |
+|---|---|---|
+| **Comebacks** — titles/artists back after ≥ 12 months of silence | Apple | `_comebacks()` in the collector, a Comeback tile, a fact line; PR 1 |
+| **Per-title streak** — most consecutive days with one title | Apple, YouTube | `tempo.title_streak`; PR 1 |
+| **Top-Title Calendar** — the days you played your #1 | YouTube | `top_calendar` (list of dates) + a month-grid tile; PR 1 |
+| **vs the same period last year** on Hours | Last.fm | `tempo.prev_hours` → "+25 %" under the big number; PR 1 |
+| **Shortest vs longest** | Goodreads | `eras.shortest/longest` (runtime from verified data); PR 1 |
+| **Genre Discovery Count** — genres played for the first time ever | SoundCloud | `genres.new_count` + `genres.first_time[]`; PR 1 |
+| **Eligibility floor** — "Not enough yet: 3 plays so far" instead of a thin recap | Letterboxd, PlayStation, Goodreads | `facts.eligible` (≥ 5 plays and ≥ 3 h); PR 1 |
+| **Badges** — the 2nd–4th traits as small credentials under the archetype | Amazon | Hero; PR 2 |
+| **Quiz before the reveal** — "Which got the most hours?" with four posters; the answer opens the hero | Deezer, Spotify | Story mode, first visit to a newly written wrap-up; `haptic('medium')` on a right answer; PR 2 |
+| **Ask your wrap-up** — "Discuss in chat" becomes a thread `wrapup:{scope}:{period}` whose hidden context is the guarded fact sheet, so chat answers stay factual | YouTube Music | Chat context builder + `discussInChat`; PR 2 |
+| **Wrap-up playlist** — push top titles + comfort picks (music: top tracks) as a Plex playlist | PlayStation, everyone's top-songs playlist | `plex_playlists` reuse, one button; PR 3 |
+| **Lineup poster** — second snapshot layout, festival-bill typography, #1 headlines | Amazon | Snapshot; PR 3 |
+| **Per-tile share** — every bento tile can be shared on its own | Strava | Tile overflow menu; PR 3 |
+| **Household Year** — an opt-in page for the whole house (aggregates only) | Letterboxd community round-up | PR 4, behind a household setting |
+| **Taste twin** — which household member your vector is closest to | SoundCloud Doppelgänger, Spotify Wrapped Party | PR 4, opt-in by **both** people |
+| **Never gate, never prune** | Strava backlash, Jellyfin retention | Principles; no code |
+
+Collector additions (drop-in for `wrapup_facts.py`):
+
+```python
+_COMEBACK_GAP_DAYS = 365
+
+
+def _comebacks(db, W, ms, user_id, period, types) -> list:
+    """Titles (artists, for music) back this period after at least a year of
+    silence — Apple Replay's Comebacks. The gap is measured from the last play
+    before the period to the first play inside it."""
+    from sqlalchemy import func
+    if period.key == "all":
+        return []
+    key = func.coalesce(W.series_title, W.title)
+    inside = dict(db.query(key, func.min(W.viewed_at)).filter(
+        W.user_id == user_id, W.media_type.in_(types),
+        W.viewed_at >= period.start, W.viewed_at < period.end).group_by(key).all())
+    if not inside:
+        return []
+    before = dict(db.query(key, func.max(W.viewed_at)).filter(
+        W.user_id == user_id, W.media_type.in_(types), W.viewed_at < period.start,
+        key.in_(list(inside))).group_by(key).all())
+    out = [{"title": k, "gap_days": (inside[k] - last).days}
+           for k, last in before.items() if (inside[k] - last).days >= _COMEBACK_GAP_DAYS]
+    return sorted(out, key=lambda c: -c["gap_days"])[:3]
+
+
+def _title_streak_and_calendar(db, W, user_id, period, types, top_title) -> dict:
+    """The longest run of consecutive days spent with one title, and the days
+    the #1 title was played (YouTube Music's calendar)."""
+    from sqlalchemy import func
+    from src.services.viewing_sessions import utc_offset
+    off = f"{int(utc_offset().total_seconds() // 60):+d} minutes"
+    key = func.coalesce(W.series_title, W.title)
+    day = func.date(func.datetime(W.viewed_at, off))
+    rows = (db.query(key, day).filter(W.user_id == user_id, W.media_type.in_(types),
+                                      W.viewed_at >= period.start, W.viewed_at < period.end)
+            .distinct().all())
+    by_title = defaultdict(list)
+    for k, d in rows:
+        by_title[k].append(d)
+    best = max(((k, _streak(ds)) for k, ds in by_title.items()), key=lambda x: x[1], default=None)
+    return {"title_streak": best and best[1] >= 3 and {"title": best[0], "days": best[1]} or None,
+            "top_calendar": sorted(by_title.get(top_title, []))}
+
+
+def _eligible(tempo: dict) -> bool:
+    """Letterboxd's ten films, PlayStation's ten hours: below this the wrap-up
+    says "not enough yet" instead of dressing up three plays."""
+    return (tempo.get("plays") or 0) >= 5 and (tempo.get("hours") or 0) >= 3
+```
+
+`build_wrapup_facts()` calls them after the title roll-up
+(`out["comebacks"]`, `out["tempo"].update(_title_streak_and_calendar(...))`,
+`out["eligible"]`), the previous-period hours are one more `SUM` over
+`[start − (end − start), start)`, and genre discovery compares the period's
+genre set against the set before it. Every addition is SQL over tables the
+collector already reads — no new data source.
 
 ---
 
@@ -2037,3 +2164,20 @@ still loads before relying on it).
 - [PCWorld — Steam Replay 2025](https://www.pcworld.com/article/3015881/steam-replay-2025-is-here-see-your-year-on-steam-stats-and-all.html)
 - [GamingOnLinux — Steam Replay: 14 % of playtime on 2025 releases](https://gamingonlinux.com/2025/12/steam-replay-is-live-and-notes-only-14-of-playtime-spent-by-all-steam-users-was-for-2025-releases)
 - [Wrapperr (GitHub)](https://github.com/aunefyren/wrapperr) · [Unraid listing](https://ca.unraid.net/apps/wrapperr-0tvh0zj1xbkbyr)
+
+Extended scan (§1.6):
+
+- [9to5Google — YouTube Music 2025 Recap](https://9to5google.com/2025/11/24/youtube-music-2025-recap/) · [Cybernews — AI chat in the Recap](https://cybernews.com/ai-news/youtubes-music-recap-2025-ai-chatbot/) · [RouteNote](https://routenote.com/blog/youtube-music-2025-recap/)
+- [Deezer newsroom — My Deezer Year 2025](https://newsroom-deezer.com/?p=16550) · [RouteNote](https://routenote.com/blog/my-deezer-year-2025-has-arrived/)
+- [TechCrunch — Apple Music Replay 2025](https://techcrunch.com/2025/12/02/apple-musics-replay-2025-is-here) · [RouteNote](https://routenote.com/blog/apple-music-replay-2025/)
+- [About Amazon — 2025 Delivered](https://www.aboutamazon.com/md/news/entertainment/amazon-music-delivered-streaming-insights) · [TechCrunch](https://techcrunch.com/2025/12/02/amazon-musics-2025-delivered-is-now-here-to-compete-with-spotify-wrapped) · [PPC Land — Insights](https://ppc.land/amazon-music-adds-insights-and-2025-delivered-personalized-analytics-features/)
+- [SoundCloud — 2025 Playback](https://community.soundcloud.com/playbook-articles/2025-playback-the-year-you-shaped-the-sound) · [RouteNote](https://routenote.com/blog/soundcloud-playback-2025/)
+- [Last.fm — yearly listening report (example)](https://www.last.fm/pl/user/Explodingheads/listening-report/year)
+- [Media-Marketing — Netflix "Spoiled 2025"](https://www.media-marketing.com/en/news/attention-spoilers-netflix-ends-the-year-with-a-twist/) · [Netflix Tudum recap guide](https://www.netflix.com/tudum/articles/end-of-year-recap-spoilers-2025) · [Apartment Therapy — unofficial Netflix Wrapped](https://www.apartmenttherapy.com/netflix-year-in-review-37023621)
+- [Plex — 2025 Plex Rewind](https://www.plex.tv/blog/2025-plex-rewind/)
+- [Letterboxd — 2025 Year in Review](https://letterboxd.com/year-in-review/) · [FAQ](https://letterboxd.com/journal/2025-letterboxd-year-in-review-faq/)
+- [Trakt (App Store listing)](https://apps.apple.com/us/app/-/id1514873602)
+- [Jellyfin forum — Jellyfin Wrapped](https://forum.jellyfin.org/t-happy-new-year-introducing-jellyfin-wrapped-your-2024-year-in-review) · [Jellyfin Rewind (Unraid)](https://ca.unraid.net/apps/jellyfin-rewind-1bahszm03k04lq)
+- [Stevivor — PlayStation Wrap-Up 2025](https://stevivor.com/news/playstation-wrap-up-2025-now-available-to-players/) · [PureXbox — Xbox Year in Review 2025](https://www.purexbox.com/news/2025/12/is-xbox-wrapped-happening-for-2025-fans-clearly-want-to-see-it)
+- [Strava support — Year in Sport](https://support.strava.com/hc/en-us/articles/22067973274509-Your-Year-in-Sport) · [Paywall report](https://tagteam.harvard.edu/hub_feeds/3415/feed_items/17132945/content)
+- [Goodreads — Year in Books 2025](https://www.goodreads.com/blog/show/3064) · [Android Authority — Duolingo Year in Review 2025](https://www.androidauthority.com/duolingo-year-in-review-2025-3621782)
