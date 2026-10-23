@@ -338,23 +338,86 @@ def _pc_report():
 
 _pc_gpu_cache = {"at": 0.0, "busy": False, "since": 0.0, "reason": ""}
 
+# ── A program drawing on the PC's card (2026-10-23) ─────────────────────────
+# The agent reports each program's share of the card's 3D engine
+# (src/gpu_engine.py). One nobody has classified that draws GPU_PROC_BUSY_PCT
+# or more on GPU_PROC_POLLS polls in a row (~10 s) takes the PC out at once:
+# a new game is caught while its menu loads, not after the pressure gate's
+# 45 s of a full card. Two polls, not one: a browser's video spike must not
+# cut off a running chat. Ollama's runners draw on the same engine and never
+# count; a "not a game" answer exempts a program (the pressure gate still
+# guards a full card), a "game" answer makes it a game by name.
+GPU_PROC_BUSY_PCT = 30.0
+GPU_PROC_POLLS = 2
+OWN_RUNNERS = frozenset({"ollama.exe", "ollama app.exe", "llama-server.exe",
+                         "ollama_llama_server.exe"})
+_gpu_proc_streak: dict = {}
+# Unclassified programs seen drawing on the card lately (name -> time), for
+# the bell's "is this a game?" question.
+_gpu_drawing_seen: dict = {}
+_GPU_SEEN_KEEP_S = 3600
+
+
+def unknown_gpu_user(report: "dict | None") -> "str | None":
+    """The unclassified program that has drawn on the PC's 3D engine for
+    GPU_PROC_POLLS polls in a row, if any. Call once per poll."""
+    import time
+    got = _classified()
+    classified, ignored = got if got is not None else (frozenset(), frozenset())
+    drawing: dict = {}
+    for p in (report or {}).get("gpu_procs") or []:
+        name = p.get("name") or ""
+        nl = name.lower()
+        try:
+            pct = float(p.get("pct") or 0)
+        except (TypeError, ValueError):
+            continue
+        if (pct < GPU_PROC_BUSY_PCT or not nl or nl in OWN_RUNNERS or nl in SYSTEM_PROCESSES
+                or nl in classified or process_family(nl) in ignored):
+            continue
+        drawing[nl] = (name, pct)
+    for nl in list(_gpu_proc_streak):
+        if nl not in drawing:
+            del _gpu_proc_streak[nl]
+    now = time.time()
+    hits = []
+    for nl, (name, pct) in drawing.items():
+        _gpu_proc_streak[nl] = _gpu_proc_streak.get(nl, 0) + 1
+        _gpu_drawing_seen[nl] = now
+        if _gpu_proc_streak[nl] >= GPU_PROC_POLLS:
+            hits.append((pct, name))
+    for nl, at in list(_gpu_drawing_seen.items()):
+        if now - at > _GPU_SEEN_KEEP_S:
+            del _gpu_drawing_seen[nl]
+    return max(hits)[1] if hits else None
+
+
+def drew_on_gpu(name: str) -> bool:
+    """The program drew on the PC's card within the last hour."""
+    return (name or "").lower() in _gpu_drawing_seen
+
 
 def pc_busy(report: "dict | None") -> "tuple[bool, str]":
     """(busy, why) for the gaming PC on a split install, from its agent's
-    report: a classified game runs there, or something other than Ollama
-    holds its card for _GPU_HOLD_S. No report fails closed."""
+    report: a classified game runs there, an unclassified program draws on
+    its card (unknown_gpu_user), or something other than Ollama holds the
+    card for _GPU_HOLD_S. No report fails closed."""
     if not report:
+        _gpu_proc_streak.clear()
         return True, "no report from the PC"
     from src.services.ollama_hosts import pc_host
     targets = _game_targets()
     game = next((p.get("name") for p in report.get("processes") or []
                  if (p.get("name") or "").lower() in targets), None)
+    drawing = unknown_gpu_user(report)
     pc = pc_host()
     pressed = gpu_pressure(smi=lambda: _smi_from_report(report.get("gpu")),
                            ps=lambda: _ollama_loaded_models(pc.url if pc else None),
                            cache=_pc_gpu_cache)
     if game:
         return True, f"{game} running"
+    if drawing:
+        return True, f"{drawing} draws on the card (not classified yet)"
     if pressed:
         return True, f"card held: {_pc_gpu_cache.get('reason') or 'busy'}"
     return False, ""
@@ -624,6 +687,18 @@ def _classified() -> "tuple | None":
     return _cached_classified
 
 
+def _question_report():
+    """Whose programs the "is this a game?" question is about: the PC's
+    whenever an agent is configured - split or not, the games run there (a
+    split install asked about the NAS container's own processes until
+    2026-10-23, so a new game on the PC was never asked about). None while
+    the PC is unavailable; _LOCAL without an agent."""
+    from src.services import pc_host
+    if pc_host.configured():
+        return pc_host.snapshot()
+    return _LOCAL
+
+
 def get_unknown_processes() -> list[dict]:
     """Running programs worth the question "is this a game?": not a Windows
     or desktop process, not classified (a "not a game" answer covers the
@@ -643,7 +718,7 @@ def get_unknown_processes() -> list[dict]:
     seen: set[str] = set()
     skipped: set[str] = set()
     unknown: list[dict] = []
-    pc = _pc_report()
+    pc = _question_report()
     if pc is not _LOCAL:
         # The PC's programs, from its agent (rss already in MB there).
         for p in (pc or {}).get("processes") or []:
@@ -655,11 +730,13 @@ def get_unknown_processes() -> list[dict]:
             if _NEVER_ASK.search(nl) or process_family(nl) in ignored_families:
                 skipped.add(nl)
                 continue
-            if (p.get("rss_mb") or 0) * 1024 * 1024 < min_rss:
+            gpu = drew_on_gpu(name)
+            if not gpu and (p.get("rss_mb") or 0) * 1024 * 1024 < min_rss:
                 continue
             seen.add(nl)
-            unknown.append({"name": name, "pid": None})
-        return unknown
+            unknown.append({"name": name, "pid": None, "gpu": gpu})
+        # The ones that drew on the card first: those hold the PC back.
+        return sorted(unknown, key=lambda u: not u["gpu"])
     try:
         # No "exe" in the attrs: the loop filters on the NAME alone, and
         # resolving each process's executable path is an extra OS call per

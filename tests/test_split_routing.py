@@ -4,8 +4,8 @@ move phase 2, PR 4a).
     role       PC on and free     PC off, asleep, shutting down or gaming
     chat       PC                 NAS (OLLAMA_ENDPOINT)
     curator    PC                 NAS
-    enrich     PC                 NAS
     judge      PC                 PcUnavailable - deletion runs wait
+    enrich     NAS, always (ENRICH_ON_PC=true: PC when free)
     embed      NAS, always
 
 The PC is used only while its agent reports it free; a game there (judged
@@ -85,8 +85,14 @@ try:
     pm._pc_gpu_cache.update(at=0.0, busy=False, since=0.0, reason="")
     poll(QUIET)
     pc = oh.host_for("chat")
-    check("PC free: chat, curator, enrich and judge go to the PC",
-          all(oh.ollama_for(r) == "http://pc:11434" for r in ("chat", "curator", "enrich", "judge")))
+    check("PC free: chat, curator and judge go to the PC",
+          all(oh.ollama_for(r) == "http://pc:11434" for r in ("chat", "curator", "judge")))
+    check("...enrichment stays on the NAS, so both cards work at once",
+          oh.ollama_for("enrich") == main)
+    from src.config import settings as _s
+    _s.ENRICH_ON_PC = True
+    check("...unless ENRICH_ON_PC sends it to the free PC", oh.ollama_for("enrich") == "http://pc:11434")
+    _s.ENRICH_ON_PC = False
     check("...with the PC's own profile (large, 16k, all layers)",
           pc.profile == "large" and pc.num_ctx == 16384 and pc.gpu == {"num_gpu": 99})
     check("embeddings never leave the NAS", oh.ollama_for("embed") == main)
@@ -145,7 +151,7 @@ check("the run resolves its host BEFORE the pitch bake, and defers without it",
       eng.index('judge_host = host_for("judge")') < eng.index("resolve_pitcher_model(judge_host.url)")
       and "except PcUnavailable" in eng)
 check("the VRAM choreography acts on the active host", "effective_ollama" not in lp
-      and lp.count("ollama_for('curator')") == 2)
+      and lp.count("ollama_for('curator')") == 3)   # ps, evict, shutdown default
 check("a game on the PC evicts Curatarr's models from the PC's card",
       "await unload_llm_models(_pc.url)" in sched)
 check("the model-update test judges on the host it manages",

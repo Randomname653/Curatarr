@@ -2609,7 +2609,7 @@ async def generate_deletion_proposals(
         # conversation to settle before it takes the GPU back.
         _split_run = pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL)
         _YIELD_QUIET_S = 90.0 if _split_run else 0.0
-        await curator_start(_gate_label, exclusive_model=pitch_model)
+        _run_lane = await curator_start(_gate_label, exclusive_model=pitch_model, role="judge")
         # Whether THIS run currently owns a slot. The yield below drops it and
         # re-acquires; a cancel (scan stopped) landing in that re-acquire
         # leaves us holding nothing, and an unconditional curator_done() in
@@ -2633,12 +2633,12 @@ async def generate_deletion_proposals(
                 # exclusive_model on the RE-acquire is what evicts the chat's
                 # curator again after an interjection — without it the next
                 # adjudicate would load the pitcher AGAINST resident gemma.
-                if gate_contested():
+                if gate_contested(_run_lane):
                     _msg(f"{category}: yielding GPU to a waiting request…")
                     _holds_gate = False
-                    curator_done()
+                    curator_done(lane=_run_lane)
                     await wait_quiet(_YIELD_QUIET_S)
-                    await curator_start(_gate_label, exclusive_model=pitch_model)
+                    _run_lane = await curator_start(_gate_label, exclusive_model=pitch_model, role="judge")
                     _holds_gate = True
                 # Checked AFTER a yield too: the chat we waited for can take
                 # minutes, and a game started meanwhile is still a game.
@@ -2825,12 +2825,12 @@ async def generate_deletion_proposals(
                     # Yield between the verdict and its monologue too: they
                     # are two full generations, and a chat queued during the
                     # verdict waited out both before the loop-top yield.
-                    if gate_contested():
+                    if gate_contested(_run_lane):
                         _msg(f"{category}: yielding GPU to a waiting request…")
                         _holds_gate = False
-                        curator_done()
+                        curator_done(lane=_run_lane)
                         await wait_quiet(_YIELD_QUIET_S)
-                        await curator_start(_gate_label, exclusive_model=pitch_model)
+                        _run_lane = await curator_start(_gate_label, exclusive_model=pitch_model, role="judge")
                         _holds_gate = True
                     _variant = f"{lang_directive_str}|{verdict.get('_guard') or ''}"
                     pitch = await asyncio.to_thread(verdict_cache.get_pitch, _vkey, _variant)
@@ -2892,10 +2892,10 @@ async def generate_deletion_proposals(
             if _holds_gate:
                 if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
                     try:
-                        await evict_if_resident(pitch_model)
+                        await evict_if_resident(pitch_model, url=_run_lane.url)
                     except Exception as _ee:  # noqa: BLE001 - teardown; keep_alive frees VRAM anyway
                         logger.debug("[deletions] pitcher evict failed: %s", _ee)
-                curator_done()
+                curator_done(lane=_run_lane)
         _msg(f"{category}: pillar judging done — {len(final_proposals)} flagged of "
              f"{judged} judged"
              + (f" ({reused} unchanged since the last run, verdict reused)" if reused else "")
@@ -2983,8 +2983,8 @@ async def generate_deletion_proposals(
         f"{category}: scoring done ({len(scored_candidates):,} above threshold) — "
         f"generating LLM pitches for top {len(top_pitch_set)}…"
     )
-    await curator_start(f"deletion pitches: {category}",
-                        exclusive_model=pitch_model)
+    _run_lane = await curator_start(f"deletion pitches: {category}",
+                                    exclusive_model=pitch_model, role="judge")
     try:
         for _pidx, cand in enumerate(top_pitch_set, start=1):
             item = cand["item"]
@@ -3279,10 +3279,10 @@ CRITICAL RULES AND GUARDRAILS:
         if pitch_model != (settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL):
             try:
                 from src.services.llm_priority import evict_if_resident
-                await evict_if_resident(pitch_model)
+                await evict_if_resident(pitch_model, url=_run_lane.url)
             except Exception as _ee:  # noqa: BLE001 - teardown; keep_alive frees VRAM anyway
                 logger.debug("[deletions] pitcher evict failed: %s", _ee)
-        curator_done()
+        curator_done(lane=_run_lane)
 
     return final_proposals
 

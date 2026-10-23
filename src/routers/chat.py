@@ -3574,12 +3574,12 @@ FORMATTING RULES:
                     await asyncio.wait({acquire}, timeout=_HEARTBEAT_S)
                     if not acquire.done():
                         yield ": keepalive\n\n"
-                acquire.result()
+                _chat_lane = acquire.result()   # the card this turn holds
             except BaseException:
                 if not acquire.done():
                     acquire.cancel()
                 elif not acquire.cancelled() and acquire.exception() is None:
-                    curator_done()
+                    curator_done(lane=acquire.result())
                 raise
 
             # Slot acquired — Curator is now actually working. From here on
@@ -3603,7 +3603,7 @@ FORMATTING RULES:
 
             async def _delayed_vram_probe():
                 await asyncio.sleep(2.0)
-                return await check_curator_vram_health(curator_model)
+                return await check_curator_vram_health(curator_model, url=_chat_lane.url)
 
             health_task = None
             health_warned = False
@@ -3789,7 +3789,7 @@ FORMATTING RULES:
             finally:
                 # The GPU slot goes back the moment Ollama is done; the
                 # in-flight guard stays held until the turn is written.
-                curator_done()
+                curator_done(lane=_chat_lane)
                 # Cancel the VRAM probe if it's still pending (e.g. very fast
                 # response that finished before the 2 s probe even fired).
                 if health_task and not health_task.done():

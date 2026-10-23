@@ -34,20 +34,11 @@ def _src(rel: str) -> str:
 
 
 def _fresh():
-    lp._gpu_gate = None
-    lp._event = None
-    lp._active = 0
-    lp._gate_owner = ""
-    lp._gate_waiters = 0
-    lp._curator_evict_task = None
-    lp._holder_prios.clear()
-    lp._preemptible.clear()
-    lp._preempted.clear()
+    lp._reset_lanes()
     lp._last_interactive = 0.0
-    lp._curator_warm = False
 
 
-async def _no_evict(target):
+async def _no_evict(target, url=None):
     return None
 
 
@@ -61,8 +52,9 @@ def run(coro_fn):
             return await coro_fn()
         finally:
             lp.evict_others = orig
-            if lp._curator_evict_task:
-                lp._curator_evict_task.cancel()
+            for ln in lp.lanes():
+                if ln.evict_task:
+                    ln.evict_task.cancel()
     return asyncio.run(wrapper())
 
 
@@ -176,7 +168,7 @@ async def _preempt_budget():
 
     async def chatter(bg):
         while not bg.done():
-            if lp._preemptible:
+            if lp.lane().preemptible:
                 await lp.curator_start("chat", priority=lp.INTERACTIVE)
                 lp.curator_done()
                 lp._last_interactive = 0.0
@@ -219,13 +211,13 @@ waited, held = run(_quiet)
 check("wait_quiet waits out the window after a sign of the user", waited >= 0.55, waited)
 check("...and never returns while an interactive turn holds the slot", held)
 check("curator_done() releases bare and still knows the turn was interactive",
-      lp._holder_prios == [] and lp.seconds_since_interactive() < 5)
+      lp.lane().holder_prios == [] and lp.seconds_since_interactive() < 5)
 
 
 async def _make_room():
     evicted = []
 
-    async def fake_evict(model):
+    async def fake_evict(model, url=None):
         evicted.append(model)
 
     orig = lp.evict_if_resident
@@ -237,7 +229,7 @@ async def _make_room():
         lp.curator_done()
         lp._last_interactive = 0.0
         await lp.make_room_for_summarizer(0)
-        return before, evicted, lp._curator_warm
+        return before, evicted, lp.lane().warm
     finally:
         lp.evict_if_resident = orig
 

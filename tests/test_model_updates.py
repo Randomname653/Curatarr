@@ -316,7 +316,7 @@ import src.services.llm_priority as lp  # noqa: E402
 async def hold_case():
     # The curator gate is closed; enrichment would give up after `timeout`.
     lp.release_bulk_hold()      # the review tests above left a 900 s hold
-    lp._get_event().clear()
+    lp.lane_for("enrich").event().clear()
     lp.extend_bulk_hold(0.6)
     t0 = asyncio.get_event_loop().time()
     await lp.wait_for_enrichment_slot(timeout=0.1)
@@ -325,7 +325,7 @@ async def hold_case():
     t1 = asyncio.get_event_loop().time()
     await lp.wait_for_enrichment_slot(timeout=0.1)
     plain = asyncio.get_event_loop().time() - t1
-    lp._get_event().set()
+    lp.lane_for("enrich").event().set()
     return waited, plain
 
 
