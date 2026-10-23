@@ -273,16 +273,41 @@ class ChromaDBWrapper:
         # anonymised install hash) to eu.posthog.com / app.posthog.com.
         # No content leaves, but it violates the README's "nothing about
         # your library leaves the machine" promise. One-flag fix.
-        self.client = chromadb.PersistentClient(
+        self.client = self._open_client()
+        self.collection_name = collection_name
+        self.collection = self._get_or_create_collection()
+
+    @staticmethod
+    def _open_client():
+        return chromadb.PersistentClient(
             path=str(settings.CHROMADB_PATH),
             settings=Settings(
                 allow_reset=True,
                 anonymized_telemetry=False,
             ),
         )
-        self.collection_name = collection_name
-        self.collection = self._get_or_create_collection()
-    
+
+    def release_indexes(self) -> bool:
+        """Free the HNSW indexes Chroma holds in RAM by opening a fresh
+        client. The Rust core keeps every index it has loaded for the life
+        of the client (its cache counts indexes, not bytes), and a deleted
+        collection's index stays resident too. Measured: dropping the client
+        returned 820 MB at once; the indexes reload on the next query."""
+        try:
+            import gc
+            from chromadb.api.client import SharedSystemClient
+            old = self.client
+            SharedSystemClient.clear_system_cache()   # else the same System comes back
+            self.client = self._open_client()
+            self.collection = self._get_or_create_collection()
+            self._facets = None
+            del old
+            gc.collect()
+            return True
+        except Exception as e:
+            logger.warning("[chroma] release_indexes failed: %s", e)
+            return False
+
     def _get_or_create_collection(self):
         """Get or create collection.
 
@@ -376,11 +401,37 @@ class ChromaDBWrapper:
             return {"ids": [[]], "distances": [[]], "documents": [[]],
                     "metadatas": [[]]}
 
+    def facets_replace(self, parent_id: str, documents, embeddings, metadatas,
+                       ids) -> bool:
+        """Replace one title's facet points IN PLACE: upsert the new points
+        (same ids -> same HNSW slots) and delete only the ids that are no
+        longer wanted. ``delete`` + ``add`` burns a fresh HNSW slot per
+        point every time (Chroma never reuses a deleted slot): measured on
+        the owner's store, 333k slots held 199k live facets - 40% of a
+        1.2 GB index, all of it resident in RAM, growing with every
+        re-enrichment. An unchanged id keeps its slot."""
+        try:
+            emb = np.array(embeddings, dtype=np.float32)
+            coll = self._facets_collection()
+            coll.upsert(documents=documents, embeddings=emb,
+                        metadatas=metadatas, ids=ids)
+            have = coll.get(where={"parent": str(parent_id)}, include=[]).get("ids") or []
+            wanted = set(ids)
+            stale = [i for i in have if i not in wanted]
+            if stale:
+                coll.delete(ids=stale)
+            self._facet_touched(parent_id)
+            return True
+        except Exception as e:
+            logger.warning("[chroma] facets_replace(%s) failed: %s", parent_id, e)
+            return False
+
     def facets_delete_by_parent(self, parent_id: str) -> bool:
-        """Upsert half: drop every facet of one title before re-adding —
-        never the metadata-only staleness the main writer's fallback has."""
+        """Drop every facet of one title (a title whose themes vanished, or
+        whose re-embed failed: stale points must not outlive the data)."""
         try:
             self._facets_collection().delete(where={"parent": str(parent_id)})
+            self._facet_touched(parent_id)
             return True
         except Exception as e:
             # The old facets stay beside the re-added ones: stale points.
@@ -394,6 +445,144 @@ class ChromaDBWrapper:
         except Exception as e:
             logger.warning("[chroma] facets_count failed: %s", e)
             return 0
+
+    # ── FACET INDEX COMPACTION ────────────────────────────────────────────────
+    # Chroma's HNSW never reuses the slot of a deleted point, and the whole
+    # index is resident in RAM (3.2 KB per slot at 768 dims). Stores written
+    # by the old delete+add facet writer carry a large dead share (measured:
+    # 333k slots, 199k live). A rebuild into a fresh collection drops it.
+    # Every step is its own short call on the one Chroma thread, so queries
+    # and writes interleave with the copy; titles written meanwhile are
+    # tracked and replayed before the swap.
+    _COMPACT_TMP = "media_facets_v1_compact"
+    _COMPACT_OLD = "media_facets_v1_old"
+    _compact = None
+
+    def _facet_touched(self, parent_id) -> None:
+        st = self._compact
+        if st is not None:
+            st["dirty"].add(str(parent_id))
+
+    def facets_slot_stats(self):
+        """(slots, live) of the facet HNSW index, or None when unknown.
+        ``slots`` counts deleted points too: the persisted ``length.bin``
+        holds 4 bytes per slot. Read-only; no index is loaded."""
+        try:
+            from pathlib import Path
+            live = self._facets_collection().count()
+            base = Path(str(settings.CHROMADB_PATH))
+            con = sqlite_connect(f"file:{(base / 'chroma.sqlite3').as_posix()}?mode=ro",
+                                 uri=True, timeout=30)
+            try:
+                row = con.execute(
+                    "SELECT s.id FROM segments s JOIN collections c "
+                    "ON c.id = s.collection WHERE c.name = ? AND s.scope = 'VECTOR'",
+                    (self.FACETS_COLLECTION,)).fetchone()
+            finally:
+                con.close()
+            if not row:
+                return None
+            length_bin = base / str(row[0]) / "length.bin"
+            if not length_bin.exists():
+                return None
+            return length_bin.stat().st_size // 4, live
+        except Exception as e:  # noqa: BLE001 - an unreadable stat only means "no rebuild now"
+            logger.debug("[chroma] facets_slot_stats failed: %s", e)
+            return None
+
+    def facets_compact_begin(self) -> bool:
+        if self._compact is not None:
+            return True
+        try:
+            try:
+                self.client.delete_collection(self._COMPACT_TMP)   # a crashed earlier run
+            except Exception:  # noqa: BLE001 - usually "does not exist"
+                pass
+            new = self.client.create_collection(
+                name=self._COMPACT_TMP, metadata={"hnsw:space": "cosine"})
+            self._compact = {"new": new, "offset": 0, "dirty": set()}
+            return True
+        except Exception as e:
+            logger.warning("[chroma] facet compaction could not start: %s", e)
+            return False
+
+    @staticmethod
+    def _copy_points(src_res: Dict, dest) -> int:
+        ids = src_res.get("ids")
+        if ids is None or len(ids) == 0:
+            return 0
+        emb = src_res.get("embeddings")
+        dest.upsert(ids=list(ids),
+                    embeddings=np.asarray(emb, dtype=np.float32),
+                    documents=src_res.get("documents"),
+                    metadatas=src_res.get("metadatas"))
+        return len(ids)
+
+    _POINT_FIELDS = ["embeddings", "documents", "metadatas"]
+
+    def facets_compact_step(self, page: int = 2000) -> bool:
+        """Copy the next page of live facets; True once the source is read out."""
+        st = self._compact
+        if st is None:
+            return True
+        res = self._facets_collection().get(
+            include=self._POINT_FIELDS, limit=page, offset=st["offset"])
+        n = self._copy_points(res, st["new"])
+        st["offset"] += n
+        return n < page
+
+    def facets_compact_abort(self) -> None:
+        self._compact = None
+        try:
+            self.client.delete_collection(self._COMPACT_TMP)
+        except Exception:  # noqa: BLE001 - nothing to abort
+            pass
+
+    def facets_compact_finish(self) -> Dict:
+        """Reconcile what the paged copy could miss, check the counts, swap.
+        Returns {"ok", "before", "after"}; on any problem the old collection
+        stays in service and the half-built one is dropped."""
+        st = self._compact
+        if st is None:
+            return {"ok": False}
+        old, new = self._facets_collection(), st["new"]
+        try:
+            old_ids = list(old.get(include=[]).get("ids") or [])
+            new_ids = list(new.get(include=[]).get("ids") or [])
+            so, sn = set(old_ids), set(new_ids)
+            extra = [i for i in new_ids if i not in so]
+            for i in range(0, len(extra), 1000):
+                new.delete(ids=extra[i:i + 1000])
+            # Offset paging skips rows when a delete lands mid-copy: copy by id.
+            missing = [i for i in old_ids if i not in sn]
+            for i in range(0, len(missing), 1000):
+                self._copy_points(old.get(ids=missing[i:i + 1000],
+                                          include=self._POINT_FIELDS), new)
+            # Titles rewritten meanwhile: the same ids may carry new values.
+            for parent in list(st["dirty"]):
+                new.delete(where={"parent": parent})
+                self._copy_points(old.get(where={"parent": parent},
+                                          include=self._POINT_FIELDS), new)
+            before, after = old.count(), new.count()
+            if before != after:
+                raise RuntimeError(f"count mismatch after copy: {before} vs {after}")
+            old.modify(name=self._COMPACT_OLD)
+            try:
+                new.modify(name=self.FACETS_COLLECTION)
+            except Exception:
+                old.modify(name=self.FACETS_COLLECTION)   # put the original back
+                raise
+            self._facets = None
+            self._compact = None
+            try:
+                self.client.delete_collection(self._COMPACT_OLD)
+            except Exception as e:  # noqa: BLE001 - the swap is done; the leftover is only disk
+                logger.warning("[chroma] old facet collection not dropped: %s", e)
+            return {"ok": True, "before": before, "after": after}
+        except Exception as e:
+            logger.warning("[chroma] facet compaction abandoned, old index kept: %s", e)
+            self.facets_compact_abort()
+            return {"ok": False}
     
     def add_documents(
         self,

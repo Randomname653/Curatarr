@@ -327,6 +327,11 @@ class Settings(BaseSettings):
     # Ask GitHub (anonymously, every 6 h) whether a newer build is published;
     # admins then see "Update available" under the sidebar (services/update_check.py).
     UPDATE_CHECK: bool = True
+    # Rebuild the facet HNSW index when a quarter or more of it is dead slots
+    # (services/facet_index.compact_facets_if_needed): ~450 MB less memory on
+    # the owner's store, but the rebuilt graph's recall@20 was 0.81 against
+    # 0.89 - off until a rebuild keeps the recall.
+    FACET_COMPACT: bool = False
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to
