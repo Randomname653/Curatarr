@@ -27,6 +27,22 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Watch history: every play of the owner is its own row, and a rewatch in progress is not a
+completion.** The owner's plays came from the library listing, which carries one timestamp
+per item (`lastViewedAt`). Two plays of a film between two syncs became one row, the history
+from before the first sync was one row per item ever watched, and every listed item was
+written as finished. Rewatches, comfort titles, streaks, "same span before" baselines and the
+completion rate were measured on that. The sync already walked `/status/sessions/history/all`
+to attribute plays. It now also keeps the owner's own finished views (accountID 1) that the
+listing does not carry, borrowing the listing's or the stored row's genres, duration and ids.
+The first sync after the update walks the whole history once and recovers the old plays; a
+walk cut short by an error is retried from the start. Recovered old plays do not trigger the
+watched-a-recommendation follow-up. A watched item the listing returns with a resume point and
+no finished view at that time is now a partial play, which turns into the finished view once
+it is finished. An unfinished play of unknown length no longer counts as watched. Closed-year
+wrap-ups built on the old data are rebuilt once (`FACTS_VERSION`). Design notes:
+`docs/WRAPUP_V2_BLUEPRINT.md`. Tests: `tests/test_plex_owner_history.py`.
+
 **Memory: the container held 4 GB of anonymous heap; the measured owners are smaller now.**
 The NAS view (3.3 GB, then 4.1 GB after a few hours) was real heap, not page cache. Measured
 on a copy of the real data: the facet index rewrote a title with delete + add, and Chroma never

@@ -510,7 +510,10 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                        "retried next sync", e)
 
 
-    if not all_entries:
+    # Until the owner's history was recovered once, an empty listing is no
+    # reason to stop: the history walk below still has that history to bring.
+    owner_backfill = (await run_read(get_state, OWNER_BACKFILL_KEY)) != "1"
+    if not all_entries and not owner_backfill:
         msg = "No new watched items"
         if failed_sections:
             msg += f" — {', '.join(failed_sections)} not fetched, retried next sync"
@@ -602,9 +605,13 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # `accountID` per row. The shared helper below paginates the full history
     # so libraries with hundreds of thousands of plays don't run dry on the
     # first page (the cause of the 99% unattributable rate seen earlier).
+    # The same walk yields the owner's own play events (see _owner_history_entries).
+    # Until the owner's history was recovered once, it walks from the start.
+    capture: dict = {"events": [], "complete": False}
     try:
         history_account_lookup, history_by_rating_key = await _fetch_plex_history_lookup(
-            plex_url, headers, since_ts=last_sync_ts,
+            plex_url, headers, since_ts=None if owner_backfill else last_sync_ts,
+            capture=capture,
         )
     except Exception as e:
         logger.warning(
@@ -612,6 +619,20 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
         )
         history_account_lookup = {}
         history_by_rating_key = {}
+        capture["complete"] = False
+    owner_extra = _owner_history_entries(
+        capture["events"], lib_configs, all_entries,
+        backfill_before=(last_sync_ts - 60) if last_sync_ts else None)
+    # Resume points are only read against a history that covers the window:
+    # a walk cut short would turn finished views into partial ones.
+    partial_rewatches = (_mark_partial_rewatches(all_entries, history_by_rating_key)
+                         if capture["complete"] else 0)
+    if owner_extra or partial_rewatches:
+        logger.info("Plex sync: %d play(s) of the owner from the history the listing "
+                    "does not carry%s, %d rewatch(es) in progress",
+                    len(owner_extra), " (history backfill)" if owner_backfill else "",
+                    partial_rewatches)
+    all_entries.extend(owner_extra)
 
     def _resolve_account_for_event(rk: str, vts: int) -> Optional[int]:
         """Find the Plex accountID that watched ratingKey=rk at viewedAt=vts.
@@ -677,14 +698,31 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
             logger.info("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
             logger.info("local_account_map (raw names): %s", local_account_map)
 
-            # Get existing entries to deduplicate
+            # Get existing entries to deduplicate. ``near`` holds their unix
+            # times per (user, item): a history event whose seconds differ from
+            # the listing's lastViewedAt is still the same play.
             existing = set()
+            near: dict = {}
             for row in db.query(
                 WatchHistoryEntry.user_id,
                 WatchHistoryEntry.plex_item_id,
                 WatchHistoryEntry.viewed_at,
             ).all():
                 existing.add((row.user_id, row.plex_item_id, row.viewed_at))
+                if row.viewed_at is not None:
+                    near.setdefault((row.user_id, row.plex_item_id), []).append(
+                        calendar.timegm(row.viewed_at.utctimetuple()))
+            templates: dict = {}
+
+            def _template(rk: str):
+                """The newest stored play of an item: the metadata a history
+                event the listing did not carry lacks."""
+                if rk not in templates:
+                    templates[rk] = (db.query(WatchHistoryEntry.duration_ms, WatchHistoryEntry.genres,
+                                              WatchHistoryEntry.tmdb_id)
+                                     .filter(WatchHistoryEntry.plex_item_id == rk)
+                                     .order_by(WatchHistoryEntry.viewed_at.desc()).first())
+                return templates[rk]
 
             # Local cache to avoid duplicate MediaIdentity queries within same sync
             local_mi_cache = {}
@@ -732,6 +770,20 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                         unattributed += 1
                 if not user:
                     continue
+
+                if entry.get("_history_extra"):
+                    vts = int(viewed_at_ts)
+                    if any(abs(t - vts) <= _SAME_PLAY_S for t in near.get((user.id, rating_key), ())):
+                        skipped += 1
+                        continue
+                    if not entry.get("duration") or not entry.get("Genre"):
+                        tpl = _template(rating_key)
+                        if tpl is not None:
+                            entry["duration"] = entry.get("duration") or tpl.duration_ms
+                            if not entry.get("Genre") and tpl.genres:
+                                entry["Genre"] = [{"tag": g} for g in tpl.genres.split(",") if g]
+                            if tpl.tmdb_id and not entry.get("_tmdb_id"):
+                                entry["_tmdb_id"] = str(tpl.tmdb_id)
 
                 # The Plex accountID lives on plex_user_id so re-attribution can
                 # find the row even if the Curatarr user_id was a fallback.
@@ -895,18 +947,21 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     genres=genres_str,
                     tmdb_id=int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
                 ))
+                near.setdefault((user.id, rating_key), []).append(int(viewed_at_ts))
                 # Collect the hit for the watched-a-recommendation follow-up:
                 # identity_key is already the SERIES-level ratingKey for episodes
                 # — exactly what CachedRecommendation.plex_rating_key stores.
-                new_play_hits.append({
-                    "user_id": user.id,
-                    "identity_key": identity_key,
-                    "title": entry.get("title", ""),
-                    "series_title": series_title,
-                    "media_type": media_type,
-                    "tmdb_id": int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
-                    "viewed_at": viewed_at.isoformat() if viewed_at else None,
-                })
+                # A play recovered from old history is not news to follow up.
+                if not entry.get("_backfill"):
+                    new_play_hits.append({
+                        "user_id": user.id,
+                        "identity_key": identity_key,
+                        "title": entry.get("title", ""),
+                        "series_title": series_title,
+                        "media_type": media_type,
+                        "tmdb_id": int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
+                        "viewed_at": viewed_at.isoformat() if viewed_at else None,
+                    })
                 existing.add(dedup_key)
                 synced += 1
                 # A first or backlog sync is 10^4-10^5 rows: one commit at the
@@ -922,6 +977,10 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     await asyncio.to_thread(_write_entries)
     if member_backfill:
         await run_write(set_state, MEMBER_BACKFILL_KEY, "1")
+    if owner_backfill and capture["complete"]:
+        # Only a walk that reached the last page recovered the whole history;
+        # a cut-short one is walked from the start again next sync.
+        await run_write(set_state, OWNER_BACKFILL_KEY, "1")
 
     logger.info(
         "Plex sync done: %d new entries, %d skipped, %d resumed-view merges, "
@@ -1128,6 +1187,78 @@ def _process_rec_watch_hits(hits: list[dict]) -> None:
 MEMBER_BACKFILL_KEY = "member_history_backfilled"
 
 
+# ── The owner's own plays ────────────────────────────────────────────────────
+#
+# The section listing carries ONE timestamp per item, lastViewedAt. Two plays
+# of a film between two syncs became one row, and the owner's history from
+# before the first sync was one row per item ever watched — rewatches, comfort
+# titles, streaks and every "same span before" baseline were measured on that.
+# Each finished view is its own event in /status/sessions/history/all
+# (accountID 1 is the server owner). The sync already walks it to attribute
+# plays; it now also keeps the owner's events the listing does not carry. The
+# first sync after this change walks the whole history once.
+OWNER_BACKFILL_KEY = "owner_history_backfilled"
+_HISTORY_EVENT_KEYS = ("ratingKey", "viewedAt", "type", "title", "grandparentTitle",
+                       "grandparentKey", "parentIndex", "index", "librarySectionID")
+# Plex sometimes truncates seconds between the section listing and the history.
+_SAME_PLAY_S = 90
+_LISTING_ONLY_KEYS = ("_in_progress", "viewOffset", "lastViewedAt", "viewedAt", "_account_id")
+
+
+def _owner_history_entries(events: list, lib_configs: dict, listing: list,
+                           backfill_before: Optional[int] = None) -> list:
+    """The owner's play events (tuples in ``_HISTORY_EVENT_KEYS`` order) as
+    sync entries, minus those the listing already carries (same ratingKey
+    within 90 s). An event of an item the listing has borrows that entry's
+    metadata — genres, duration, ids — which the history does not hold.
+    Events older than ``backfill_before`` are marked ``_backfill``:
+    recovered history, not news."""
+    listed: dict = {}
+    for e in listing:
+        ts = e.get("lastViewedAt") or e.get("viewedAt")
+        if e.get("ratingKey") and ts:
+            listed.setdefault(str(e["ratingKey"]), []).append((int(ts), e))
+    out: list = []
+    for ev in events:
+        base = _member_entry(dict(zip(_HISTORY_EVENT_KEYS, ev)), lib_configs, 1)
+        if base is None:
+            continue
+        vts = base["viewedAt"]
+        same = listed.get(base["ratingKey"], ())
+        if any(abs(t - vts) <= _SAME_PLAY_S for t, _ in same):
+            continue
+        if same:
+            entry = {k: v for k, v in same[0][1].items() if k not in _LISTING_ONLY_KEYS}
+            entry.update(lastViewedAt=vts, viewedAt=vts)
+        else:
+            entry = {k: v for k, v in base.items() if k != "_account_id"}
+        entry["_history_extra"] = True
+        if backfill_before is not None and vts < backfill_before:
+            entry["_backfill"] = True
+        out.append(entry)
+    return out
+
+
+def _mark_partial_rewatches(entries: list, history_by_rk: dict) -> int:
+    """A watched item the listing returns with a resume point, and with no
+    finished view in the history at its lastViewedAt, is a rewatch in
+    progress — not one more completion. It takes the in-progress path: real
+    offset, the unfinished row advanced, promoted once it is finished. Only
+    meaningful when the history walk covered the window (the caller checks)."""
+    n = 0
+    for e in entries:
+        if e.get("_in_progress") or not e.get("viewOffset"):
+            continue
+        rk, ts = str(e.get("ratingKey") or ""), e.get("lastViewedAt")
+        if not rk or not ts:
+            continue
+        if any(abs(v - int(ts)) <= _SAME_PLAY_S for v, _ in history_by_rk.get(rk, ())):
+            continue
+        e["_in_progress"] = True
+        n += 1
+    return n
+
+
 def _member_entry(ev: dict, lib_configs: dict, account_id: int) -> Optional[dict]:
     """One history event as a sync entry (the shape the section listing
     yields), or None for a library Curatarr does not follow."""
@@ -1227,6 +1358,7 @@ async def _fetch_plex_history_lookup(
     plex_url: str,
     headers: dict,
     since_ts: Optional[int] = None,
+    capture: Optional[dict] = None,
 ) -> tuple[dict, dict]:
     """Fetch /status/sessions/history/all and build accountID lookups.
 
@@ -1242,6 +1374,11 @@ async def _fetch_plex_history_lookup(
     ``since_ts`` (Unix seconds, optional): pass to limit the walk to events
     on or after that timestamp via the ``viewedAt>>`` query param. Used by
     incremental sync; re-attribution passes None to walk the full history.
+
+    ``capture`` (optional dict): the owner's own play events (accountID 1)
+    are appended to ``capture["events"]``, and ``capture["complete"]`` is
+    set once the walk reached the last page — a walk cut short by an HTTP
+    error or the safety cap leaves it False.
     """
     exact: dict[tuple[str, int], int] = {}
     by_rk: dict[str, list[tuple[int, int]]] = {}
@@ -1275,6 +1412,8 @@ async def _fetch_plex_history_lookup(
             mc = r.json().get("MediaContainer", {}) or {}
             items = mc.get("Metadata", []) or []
             if not items:
+                if capture is not None:
+                    capture["complete"] = True
                 break
             for h in items:
                 rk = str(h.get("ratingKey", ""))
@@ -1286,11 +1425,17 @@ async def _fetch_plex_history_lookup(
                 acc_id = int(acc_id)
                 exact[(rk, vts)] = acc_id
                 by_rk.setdefault(rk, []).append((vts, acc_id))
+                if capture is not None and acc_id == 1:
+                    # A tuple, not a dict: a first walk can hold 10^5 events.
+                    capture.setdefault("events", []).append(
+                        tuple(h.get(k) for k in _HISTORY_EVENT_KEYS))
             page_count = len(items)
             total_seen += page_count
             pages += 1
             # Last page reached: server returned fewer than we asked for.
             if page_count < PAGE_SIZE:
+                if capture is not None:
+                    capture["complete"] = True
                 break
             if total_seen >= SAFETY_CAP:
                 logger.warning(
