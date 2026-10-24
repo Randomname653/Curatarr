@@ -55,6 +55,22 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Taste snapshots: what each month of watching looked like.** `TasteVectorEntry` is one row
+per user, overwritten on every rebuild, so the taste profile had no history: no "what you were
+in March", no monthly drift. A daily custodian job (`taste_snapshots`, Chroma reads, no model)
+now stores one snapshot per user, category and calendar month (`services/taste_snapshots.py`).
+- **What a snapshot holds:** plays, hours, titles, the top titles by played time, and the
+  played-time-weighted mean of the month's stored item vectors.
+- **Back-filled:** item vectors are static per item, so the first runs fill every month there is
+  from the watch history, within a per-run budget.
+- **Rewrites:** a closed month is written once; the running month is rewritten until it closes.
+  A change of embedding model rebuilds everything.
+- **Comparable across a year:** means are stored uncentred, and readers centre them on the
+  current corpus mean (`similarity`, `month_over_month`). Months written a year apart stay
+  comparable.
+
+Tests: `tests/test_taste_snapshots.py`.
+
 **Music: skips kept, albums, and the export's own account of each play.**
 - **Skips:** the Spotify import dropped every play under 30 seconds, which is where skips live. They
   now go into `music_skips`. That table is kept apart from `watch_history` on purpose: every play

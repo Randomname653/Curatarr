@@ -1097,3 +1097,32 @@ class MusicSkip(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "spotify_uri", "at", name="uq_music_skip"),
     )
+
+
+class TasteSnapshot(Base):
+    """One user's taste in one category for one calendar month (UTC), as the
+    weighted mean of the month's item vectors (services/taste_snapshots).
+
+    ``TasteVectorEntry`` is one row per user, overwritten: there was no
+    history of the profile itself, so no "what you were in March" and no
+    monthly drift. The mean is stored UNCENTRED — readers centre it on the
+    current corpus mean, so months written a year apart stay comparable —
+    with the ``embed_model`` it was built in (a model change rebuilds)."""
+    __tablename__ = "taste_snapshots"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    month        = Column(String(7), nullable=False)      # YYYY-MM
+    category     = Column(String(16), nullable=False)     # movie / show / anime / music
+    plays        = Column(Integer, default=0)
+    hours        = Column(Float, default=0.0)
+    titles       = Column(Integer, default=0)             # distinct titles of the month
+    vectors      = Column(Integer, default=0)             # of them with an index vector
+    mean_json    = Column(Text, nullable=True)            # NULL under the minimum
+    top_titles   = Column(Text, nullable=True)            # JSON list, by played time
+    embed_model  = Column(String(128), nullable=True)
+    computed_at  = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "month", "category", name="uq_taste_snapshot"),
+    )

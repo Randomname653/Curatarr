@@ -233,6 +233,9 @@ opens late November):
    one-time re-read of imported files. Open: Plex moods/styles and the Plex
    player, which need a real server to check the API shape against.*
 7. `taste_snapshots`, nanogenre labels. ⏳; these pay off in 2027.
+   *Snapshots done: `services/taste_snapshots.py`. They turned out to be
+   back-fillable after all, because item vectors are static, so every past
+   month is built from the watch history. Nanogenre labels are still open.*
 
 ---
 
