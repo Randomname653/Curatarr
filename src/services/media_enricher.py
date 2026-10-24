@@ -2488,6 +2488,15 @@ async def authoritative_tv_tmdb_id(tvdb_id, tmdb_id=None, *, cache=None):
     return found
 
 
+# TMDB crew jobs the credits index keeps, by the role it files them under.
+_CREDIT_JOBS = {"Director": "director", "Screenplay": "writer", "Writer": "writer",
+                "Teleplay": "writer", "Story": "writer",
+                "Original Music Composer": "composer", "Music": "composer",
+                **{j: "author" for j in ("Novel", "Book", "Graphic Novel", "Comic Book",
+                                         "Short Story", "Theatre Play")}}
+_CREDIT_CAST = 15
+
+
 async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
     """
     Fetch everything TMDB knows about a title in parallel:
@@ -2545,6 +2554,30 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
             source_author, source_kind = by_job[job], job
             break
 
+    # The same credits and details, kept with ids for the credits index
+    # (services/credits_index): directors, writers, creators, the composer,
+    # the billed cast, production companies, networks and the collection
+    # — fetched all along, dropped after the flat fields above.
+    people = []
+    for member in crew:
+        role = _CREDIT_JOBS.get((member.get("job") or "").strip())
+        if role and member.get("name"):
+            people.append({"role": role, "id": member.get("id"), "name": member["name"]})
+    for c in details.get("created_by") or []:
+        if c.get("name"):
+            people.append({"role": "creator", "id": c.get("id"), "name": c["name"]})
+    for i, member in enumerate(credits.get("cast", [])[:_CREDIT_CAST]):
+        if member.get("name"):
+            people.append({"role": "cast", "id": member.get("id"), "name": member["name"],
+                           "ord": i, "character": (member.get("character") or "")[:200] or None})
+    companies = [{"kind": "production", "id": c.get("id"), "name": c["name"]}
+                 for c in details.get("production_companies") or [] if c.get("name")]
+    companies += [{"kind": "network", "id": n.get("id"), "name": n["name"]}
+                  for n in details.get("networks") or [] if n.get("name")]
+    coll = details.get("belongs_to_collection") or None
+    collection = ({"id": coll.get("id"), "name": coll.get("name")}
+                  if isinstance(coll, dict) and coll.get("name") else None)
+
     # Keywords / tags
     kw_list = keywords.get("keywords") or keywords.get("results", [])
     keyword_names = [k.get("name", "") for k in kw_list[:20]]
@@ -2582,6 +2615,9 @@ async def fetch_tmdb_full(tmdb_id: int, media_type: str = "movie") -> dict:
         "director": director,
         "source_author": source_author,
         "source_kind": source_kind,
+        "credits": people,
+        "companies": companies,
+        "collection": collection,
         "keywords": keyword_names,
         "rating": vote_avg,
         "vote_count": vote_count,

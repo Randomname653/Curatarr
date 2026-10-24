@@ -223,6 +223,9 @@ opens late November):
    offset.*
 5. Credits and companies tables. Unlocks constellations, backfillable from
    the payloads the enricher already fetches.
+   *Done: `services/credits_index.py` (`media_works` / `media_credits` /
+   `media_companies`), fed daily from the raw cache. TMDB fetches now keep
+   person ids, companies, networks and the collection.*
 6. Music columns, Plex moods and styles. Partly ⏳, so start now even if the
    2026 music story stays thinner.
 7. `taste_snapshots`, nanogenre labels. ⏳; these pay off in 2027.

@@ -1007,3 +1007,56 @@ class LibraryEvent(Base):
     __table_args__ = (
         UniqueConstraint("plex_rating_key", "kind", "bucket", name="uq_library_event"),
     )
+
+
+class MediaWork(Base):
+    """One title as the credits index knows it, by the id it was fetched
+    under (services/credits_index): TMDB for films and shows, AniList (else
+    MAL) for anime. Durable — the raw cache it is built from expires, this
+    does not. ``fingerprint`` skips a re-index of unchanged data."""
+    __tablename__ = "media_works"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    category        = Column(String(16), nullable=False)    # movie / show / anime
+    id_source       = Column(String(8), nullable=False)     # tmdb / anilist / mal
+    work_id         = Column(String(32), nullable=False)
+    title           = Column(String(512), nullable=True)
+    year            = Column(Integer, nullable=True)
+    collection_id   = Column(Integer, nullable=True)
+    collection_name = Column(String(256), nullable=True)
+    fingerprint     = Column(String(40), nullable=True)
+    indexed_at      = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("category", "id_source", "work_id", name="uq_media_work"),
+    )
+
+
+class MediaCredit(Base):
+    """A person on a title: director, writer, creator, author (of the
+    source), composer, cast or voice (anime cast). ``person_id`` is TMDB's
+    when the fetch carried it (newer fetches), else NULL — ``name_key`` (the
+    lowercased, punctuation-free name) is what joins across titles then."""
+    __tablename__ = "media_credits"
+
+    id        = Column(Integer, primary_key=True, autoincrement=True)
+    work_ref  = Column(Integer, ForeignKey("media_works.id", ondelete="CASCADE"), nullable=False, index=True)
+    role      = Column(String(16), nullable=False)
+    person_id = Column(Integer, nullable=True, index=True)
+    name      = Column(String(256), nullable=False)
+    name_key  = Column(String(256), nullable=False, index=True)
+    ord       = Column(Integer, default=0)
+    character = Column(String(256), nullable=True)
+
+
+class MediaCompany(Base):
+    """A company on a title: a production company or network (TMDB) or an
+    animation studio (AniList / Jikan)."""
+    __tablename__ = "media_companies"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    work_ref   = Column(Integer, ForeignKey("media_works.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind       = Column(String(16), nullable=False)    # production / network / studio
+    company_id = Column(Integer, nullable=True, index=True)
+    name       = Column(String(256), nullable=False)
+    name_key   = Column(String(256), nullable=False, index=True)

@@ -27,6 +27,28 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Credits index: who made what, queryable and durable.** Directors, writers, cast, voice actors,
+studios and companies lived only as JSON inside the raw API cache (90-day TTL). They were not
+queryable, and a title deleted in March had lost them by December. TMDB's production companies,
+networks, collection and person ids were fetched and dropped. Changes:
+- **TMDB fetch:** `fetch_tmdb_full` now also keeps the following, all with TMDB ids, next to the
+  flat fields, which are unchanged:
+  - directors, writers, creators, the source author and the composer;
+  - the billed cast with character and order;
+  - production companies, networks and the collection.
+- **Walker:** a daily custodian job (`credits_index`, no model) files every live raw document of
+  the video categories into `media_works`, `media_credits` and `media_companies`
+  (`services/credits_index.py`).
+- **One entry per title:** a title is filed under its best id (TMDB; for anime AniList, else MAL,
+  else TMDB). Rows sharing any id are merged into one title: the credits of the richest row, the
+  companies of all. An anime's AniList studio row and TMDB voice-cast row therefore become one
+  entry. A title filed under another of its ids by an earlier walk is folded in.
+- **Older rows** give names only, which join across titles by a normalised name key. Anime cast is
+  filed as voice cast.
+- **Only changes are written:** an unchanged title is skipped by fingerprint.
+
+Tests: `tests/test_credits_index.py`.
+
 **The user's own clock, DST included.** Local time came from this machine's current offset,
 applied to every play. Three things went wrong with that:
 - plays from the other half of the year were an hour off across a DST change, enough to move a
