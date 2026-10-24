@@ -58,7 +58,8 @@ _ELIGIBLE_HOURS = 3
 # 3: hours and days on the user's own clock, DST included (services/user_time).
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
 # 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
-FACTS_VERSION = 5
+# 6: hours per day for the story mode's heatmap.
+FACTS_VERSION = 6
 
 
 @dataclass(frozen=True)
@@ -350,6 +351,8 @@ def _tempo(db, W, ms, base, local, total_ms, est_ms, plays) -> dict:
         "weekend_share": round((by_dow[0] + by_dow[6]) / max(1, sum(by_dow)), 2),
         "weekend_daytime_share": round(weekend_day / total, 2),
         "biggest_day": {"date": big[0], "hours": _h(big[1]), "plays": int(big[2])},
+        # every active day's hours on the user's clock — the story's heatmap
+        "by_day_h": {str(d): _h(v) for d, v, _ in days},
     }
 
 

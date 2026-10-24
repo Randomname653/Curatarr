@@ -55,6 +55,25 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Wrap-Up v2, step 3: the story mode.** v1 put everything on one scroll. The archetype came
+first (the conclusion before the evidence), then fifteen tiles of equal weight, with the story
+under them. The period is now told as a paced, full-screen sequence (`frontend/js/wrapup_story.js`):
+- **The order:** a cold-open number, a prediction, the reveal of the number one, the rhythm as a
+  heatmap of every day, the curator's slides in the editor's order, roast and toast, then who you
+  were (the archetype with a six-axis taste radar), and a send-off with the next pick and Share.
+- **Charts inside the slides:** the court slide draws the debates won and lost, and the balance
+  slide draws GB in vs out by month.
+- **Controls:** tap the sides to move, hold to pause, arrows and Escape on a keyboard. Reduced
+  motion turns off the animation and the auto-advance.
+- **Short periods stay short:** slides without data are skipped, and a period without a written
+  story is told from the insight cards.
+- **Opening:** a curator-written story opens by itself the first time it is seen. "Play your
+  wrap-up" brings it back, and the page below is now its "Explore" view.
+- **CSP-safe:** charts are SVG coloured by class, no inline style.
+- **Facts:** they carry each active day's hours for the heatmap (`FACTS_VERSION` 6).
+
+Tests: `tests/test_wrapup_story_mode.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
