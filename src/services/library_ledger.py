@@ -141,16 +141,24 @@ def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None) -
     return counts
 
 
-def velocity(start: datetime, end: datetime, types: Optional[list] = None) -> dict:
+def velocity(start: datetime, end: datetime, types: Optional[list] = None, db=None) -> dict:
     """GB in vs GB out over ``[start, end)``, by month, with the biggest
-    arrival and departure. Blocking — call via ``run_read``."""
+    arrival and departure. Blocking — call via ``run_read``, or pass the
+    caller's session as ``db``."""
     from src.database.models import LibraryEvent as E
-    with get_db_session() as db:
-        q = db.query(E.kind, E.at, E.size_mb, E.title, E.media_type).filter(
+
+    def _rows(s):
+        q = s.query(E.kind, E.at, E.size_mb, E.title, E.media_type).filter(
             E.at >= start, E.at < end)
         if types:
             q = q.filter(E.media_type.in_(list(types)))
-        rows = q.all()
+        return q.all()
+
+    if db is not None:
+        rows = _rows(db)
+    else:
+        with get_db_session() as s:
+            rows = _rows(s)
     by_month: dict = {}
     gb_in = gb_out = 0.0
     titles_in, titles_out = set(), set()

@@ -57,7 +57,8 @@ _ELIGIBLE_HOURS = 3
 # 2: the owner's plays come from the Plex history (every play, real partials).
 # 3: hours and days on the user's own clock, DST included (services/user_time).
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
-FACTS_VERSION = 4
+# 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
+FACTS_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -206,6 +207,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
     """The complete, deterministic fact set for one wrap-up."""
     from sqlalchemy import func
     from src.database.models import WatchHistoryEntry as W
+    from src.services import wrapup_sections as _sections
 
     now = now or datetime.utcnow()
     period = resolve_period(period_key, now)
@@ -272,11 +274,18 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
                 out["highbrow_comfort"] = _highbrow_split(vtitles, enriched, out["comfort"])
                 out["contrarian"] = _contrarian(vtitles, enriched, out["comfort"], stars)
                 out["dismissal"] = _dismissal(extra, enriched)
+                vnames = {t["title"] for t in vtitles}
+                out["auteurs"] = _sections.auteurs(db, [w for w in want if w["title"] in vnames])
         if "music" in types:
             out["music"] = _music(db, W, ms, user_id, base, period)
 
         out["genres"] = _genres(db, W, ms, user_id, period, types)
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)
+        out["court"] = _sections.court_record(db, user_id, period, scope)
+        out["time_to_watch"] = _sections.time_to_watch(db, W, user_id, period, types)
+        if is_admin:
+            # the server is the owner's to fill and to prune
+            out["velocity"] = _sections.library_velocity(db, period, types)
         out["look_ahead"] = _look_ahead(db, user_id, types)
 
     out["traits"] = derive_traits(out, now)
@@ -293,7 +302,7 @@ def facts_hash(facts: dict) -> str:
     """The identity of the numbers: what a story was written for. Ignores the
     time of computation and anything decorative attached afterwards."""
     core = {k: v for k, v in facts.items()
-            if k not in ("generated_at", "facts_hash", "drift", "posters")}
+            if k not in ("generated_at", "facts_hash", "drift", "river", "posters")}
     return hashlib.sha1(json.dumps(core, sort_keys=True, default=str).encode(),
                         usedforsecurity=False).hexdigest()
 
@@ -986,6 +995,40 @@ async def taste_drift(user_id: int, scope: str, period_key: str) -> dict:
         logger.info("[wrapup] drift %s/%s/%s: %.3f (%d clusters)", user_id, scope, period_key,
                     out["drift"], len(out.get("clusters") or []))
     return out
+
+
+_RIVER_MIN_MONTHS = 3
+
+
+async def taste_river(user_id: int, scope: str, period_key: str) -> list:
+    """The period month by month from the taste snapshots
+    (services/taste_snapshots): each month's similarity to the month before,
+    centred on the corpus mean, with what it was mostly made of. Per medium
+    only, like the drift; [] under three months with a mean."""
+    if scope == "all":
+        return []
+    from src.database.runner import run_read
+    from src.services.taste_snapshots import series
+    from src.vector_store.chromadb_wrapper import run_chroma
+    period = resolve_period(period_key)
+    lo, hi = period.start.strftime("%Y-%m"), period.end.strftime("%Y-%m")
+    months = [m for m in await run_read(series, user_id, scope) if lo <= m["month"] <= hi]
+    if sum(1 for m in months if m["mean"]) < _RIVER_MIN_MONTHS:
+        return []
+    try:
+        return await run_chroma(_river_sync, scope, months)
+    except Exception as e:
+        logger.warning("[wrapup] taste river for %s/%s failed: %s", user_id, scope, e)
+        return []
+
+
+def _river_sync(category, months) -> list:
+    from src.services.taste_engine import _domain_corpus_mean
+    from src.services.taste_snapshots import month_over_month
+    centre = _domain_corpus_mean(category)
+    sims = dict(month_over_month(months, centre))
+    return [{"month": m["month"], "hours": m["hours"], "similarity": sims.get(m["month"]),
+             "top_titles": m["top_titles"][:3]} for m in months]
 
 
 def _drift_rows(user_id, scope, period) -> tuple:

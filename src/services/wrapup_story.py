@@ -281,8 +281,41 @@ def render_fact_sheet(f: dict) -> tuple:
             fact(f"Cluster {cl['id']} around {', '.join(cl['top_titles'])}: {_pct(cl['share'])}% now, "
                  f"{_pct(cl['share_before'])}% before ({cl['trend']}).")
 
+    c = f.get("court") or {}
+    if c:
+        fact(f"Debates decided: {c['decided']} ({c['kept']} kept, {c['deleted']} deleted, "
+             f"{c['overrides']} kept over the curator's objection); you won {c['won']}, "
+             f"the curator won {c['lost']}.")
+        if c.get("boldest_keep"):
+            b = c["boldest_keep"]
+            fact(f"Boldest keep: {item(b['title'], b.get('media_type'))} {b['title']}, which the judge "
+                 f"was {b['score']}% sure should go ({c['defiant']} kept at 80% or more).")
+        if c.get("talked_into"):
+            t = c["talked_into"]
+            fact(f"The curator talked you into deleting {item(t['title'], t.get('media_type'))} "
+                 f"{t['title']} after {t['turns']} of your messages.")
+        if c.get("talked_out_of"):
+            t = c["talked_out_of"]
+            fact(f"You talked the curator out of deleting {item(t['title'], t.get('media_type'))} {t['title']}.")
+    v = f.get("velocity") or {}
+    if v:
+        fact(f"Server: {v['gb_in']} GB arrived, {v['gb_out']} GB left ({v['verdict']}).")
+    t = f.get("time_to_watch") or {}
+    if t:
+        lo = t["longest"]
+        fact(f"New titles waited a median {t['median_days']} days before the first play; longest "
+             f"{item(lo['title'], lo.get('media_type'))} {lo['title']}, {lo['days']} days; "
+             f"{_pct(t['same_week_share'])}% played within a week of arriving.")
+    for role, x in (f.get("auteurs") or {}).items():
+        refs = ", ".join(f"{item(n)} {n}" for n in x["titles"][:3])
+        fact(f"Most-watched {role}: {x['name']}, {x['count']} titles, {x['hours']} hours ({refs}).")
+    from src.services.wrapup_insights import mine, sheet_block
+    worth = sheet_block(mine(f))
+
     traits = (f.get("traits") or [])[:3]
     sheet = "\n".join(facts)
+    if worth:
+        sheet += "\n\n" + worth
     if traits:
         sheet += "\n\nTRAITS (pick one as archetype_trait): " + "; ".join(
             f"{tr['key']} ({tr['evidence']})" for tr in traits)
@@ -301,7 +334,9 @@ friend — dry, specific, affectionate underneath. Never a greeting card, never 
 HARD RULES
 1. Every claim rests on the FACTS. Cite them in fact_refs / item_refs. Name a title only
    if it has a T# and you reference that T#.
-2. Numbers: copy them exactly as the facts write them. Never compute, round or invent one.
+2. Numbers: copy them as the facts write them, or use one of the renderings a
+   WORTH SAYING card lists under "Say" ("nearly 60 hours"). Never compute or invent one.
+   Build the story from the top WORTH SAYING cards; the rest of the facts are background.
 3. archetype_title: 2-4 words, a role they EARNED from the trait you pick — concrete and a
    little pointed ("The Midnight Completionist", "Loyalist With Exceptions"). Never
    "Enthusiast", "Lover", "Fan", "Buff", "Aficionado". archetype_trait: that trait's key.
@@ -507,7 +542,7 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
     from src.database.runner import run_read, run_write
     from src.routers.wrapup import attach_posters
     from src.services.task_monitor import task_monitor
-    from src.services.wrapup_facts import build_wrapup_facts, taste_drift
+    from src.services.wrapup_facts import build_wrapup_facts, taste_drift, taste_river
     from src.services.wrapup_store import save_error, save_facts, save_story
 
     def step(i):
@@ -524,6 +559,9 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         drift = await taste_drift(user_id, scope, period_key)
         if drift:
             facts["drift"] = drift
+        river = await taste_river(user_id, scope, period_key)
+        if river:
+            facts["river"] = river
         step(3)
         await attach_posters(facts)
         await run_write(save_facts, user_id, scope, period_key, facts)
