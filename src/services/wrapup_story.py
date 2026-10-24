@@ -1,13 +1,12 @@
 """
-Curatarr — the wrap-up story: the curator names and phrases what
-wrapup_facts decided.
+Curatarr — the wrap-up story: the fact sheet, the stand-in, the task.
 
-The model gets a numbered fact sheet and answers in a forced JSON shape
-(Ollama ``format``, the pillars pattern). Everything it may mention enters
-by reference — facts F#, titles T#, owned-unwatched picks U#, clusters C# —
-and every number in its prose must already be on the sheet, so a wrap-up can
-be wrong in taste but never in fact. One repair turn names the fault; after
-that a deterministic story stands in (story_source "fallback"), built from
+``render_fact_sheet`` numbers what wrapup_facts decided — facts F#, titles
+T#, owned-unwatched picks U#, clusters C# — and ends with the ranked insight
+cards (services/wrapup_insights). The curator writes the story from those
+cards in services/wrapup_writer (an editor picks, a writer tells, every
+sentence checked against the cards it cites, repaired slide by slide). When
+the curator cannot answer at all, ``fallback_story`` stands in, built from
 the same facts, so the page never shows an error where a story should be.
 
 The same fact sheet is the hidden context of an "Ask your wrap-up" chat
@@ -18,74 +17,13 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Annotated, Optional
-
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 PHASES = ("Counting plays", "Finding the outliers", "Mapping taste clusters",
           "Fetching artwork", "Curator is writing", "Checking the facts")
 
-_Ref = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[FTUC]\d{1,3}$")]
-
-
-def _text(n: int):
-    return Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=n)]
-
-
-class Chapter(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    title: _text(60)
-    kicker: _text(110)
-    commentary: _text(480)
-    item_refs: list[_Ref] = Field(min_length=1, max_length=4)
-    fact_refs: list[_Ref] = Field(min_length=1, max_length=4)
-
-
-class RoastToast(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    roast: _text(260)
-    roast_refs: list[_Ref] = Field(min_length=1, max_length=3)
-    toast: _text(260)
-    toast_refs: list[_Ref] = Field(min_length=1, max_length=3)
-
-
-class LookAhead(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    challenge: _text(240)
-    item_ref: Optional[_Ref] = None
-    fact_refs: list[_Ref] = Field(default_factory=list, max_length=3)
-
-
-class ClusterName(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    ref: _Ref
-    name: _text(36)
-
-
-class WrapupStory(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    archetype_title: _text(44)
-    archetype_subhead: _text(160)
-    archetype_trait: str
-    era_chapters: list[Chapter] = Field(min_length=2, max_length=4)
-    roast_and_toast: RoastToast
-    look_ahead_hook: LookAhead
-    cluster_names: list[ClusterName] = Field(default_factory=list, max_length=3)
-    share_line: _text(110)
-
-
-STORY_SCHEMA = WrapupStory.model_json_schema()
-
-# Stock phrases a wrap-up must not contain; one hit sends the repair turn.
-_CLICHES = (
-    "journey", "tapestry", "eclectic", "delve", "delves", "testament", "embark",
-    "realm", "rollercoaster", "it's clear that", "it is clear that", "whether you're",
-    "truly", "ultimate", "diverse taste", "cinematic adventure", "here's to",
-    "buckle up", "enthusiast", "aficionado", "lover of", "in conclusion",
-)
-_CLICHE_RE = re.compile(r"\b(" + "|".join(re.escape(c) for c in _CLICHES) + r")\b", re.I)
 _NUM_RE = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)*")
 
 
@@ -133,10 +71,11 @@ def render_fact_sheet(f: dict) -> tuple:
         items[tid] = {"title": title, "media_type": media_type, "poster": posters.get(title)}
         return tid
 
-    def pick(title: str, media_type: Optional[str], poster: Optional[str] = None) -> str:
+    def pick(title: str, media_type: Optional[str], poster: Optional[str] = None,
+             year=None, reason: Optional[str] = None) -> str:
         uid = f"U{len(picks) + 1}"
         picks[uid] = {"title": title, "media_type": media_type,
-                      "poster": poster or posters.get(title)}
+                      "poster": poster or posters.get(title), "year": year, "reason": reason}
         return uid
 
     p = f.get("period") or {}
@@ -266,7 +205,8 @@ def render_fact_sheet(f: dict) -> tuple:
         uid = pick(d["title"], d.get("media_type"))
         fact(f"Dust collector {uid} {d['title']}: {d['gb']} GB on disk, never played by you.")
     for la in f.get("look_ahead") or []:
-        uid = pick(la["title"], la.get("media_type"), la.get("poster"))
+        uid = pick(la["title"], la.get("media_type"), la.get("poster"), la.get("year"),
+                   la.get("reason"))
         line = f"Owned, unwatched pick {uid} {la['title']}"
         if la.get("year"):
             line += f" ({la['year']})"
@@ -325,163 +265,11 @@ def render_fact_sheet(f: dict) -> tuple:
                    "traits": [tr["key"] for tr in traits]}
 
 
-# ── the prompt ──────────────────────────────────────────────────────────────
-
-SYSTEM = """You are Curatarr, the household's media curator, writing ONE person's wrap-up.
-You know them from months of arguing about what stays on the server. Voice: a sharp critic
-friend — dry, specific, affectionate underneath. Never a greeting card, never a press release.
-
-HARD RULES
-1. Every claim rests on the FACTS. Cite them in fact_refs / item_refs. Name a title only
-   if it has a T# and you reference that T#.
-2. Numbers: copy them as the facts write them, or use one of the renderings a
-   WORTH SAYING card lists under "Say" ("nearly 60 hours"). Never compute or invent one.
-   Build the story from the top WORTH SAYING cards; the rest of the facts are background.
-3. archetype_title: 2-4 words, a role they EARNED from the trait you pick — concrete and a
-   little pointed ("The Midnight Completionist", "Loyalist With Exceptions"). Never
-   "Enthusiast", "Lover", "Fan", "Buff", "Aficionado". archetype_trait: that trait's key.
-4. Wit comes from putting two real facts side by side, not from adjectives.
-   Weak: "You have a diverse taste in film."
-   Strong: "Nine stars for a 6.0 and a walkout on the festival winner — your standards are
-   real, they're just yours."
-5. era_chapters (2-4): distinct phases or sides of the period, each anchored on 1-4 T#
-   titles (a title anchors one chapter only). title: a headline, not a summary.
-   kicker: one line. commentary: 2-3 sentences.
-6. roast: one blind spot or contradiction the facts prove. toast: their highest-signal
-   taste, said with respect. Neither cruel nor flattering.
-7. look_ahead_hook: one concrete challenge for next time. item_ref: a U# pick or null.
-8. cluster_names: a 2-4 word name for each C# cluster in the facts (none if there are none).
-9. share_line: one line they would be glad to post, under 100 characters.
-10. Never: journey, tapestry, eclectic, delve, testament, embark, realm, "truly",
-    "it's clear that", "here's to", exclamation marks.
-Answer with the JSON object only."""
-
-
-def build_messages(sheet: str) -> list:
-    return [{"role": "system", "content": SYSTEM},
-            {"role": "user", "content": "FACTS\n" + sheet}]
-
-
-# ── validation ──────────────────────────────────────────────────────────────
-
-class StoryRejected(ValueError):
-    pass
-
-
-def _prose(s: WrapupStory) -> list:
-    out = [s.archetype_title, s.archetype_subhead, s.share_line,
-           s.roast_and_toast.roast, s.roast_and_toast.toast, s.look_ahead_hook.challenge]
-    for c in s.era_chapters:
-        out += [c.title, c.kicker, c.commentary]
-    out += [c.name for c in s.cluster_names]
-    return out
-
-
-def check_story(s: WrapupStory, idx: dict) -> None:
-    """The meaning checks a schema can't express. Raises StoryRejected naming
-    the first fault — its text goes verbatim into the repair turn."""
-    if idx["traits"] and s.archetype_trait not in idx["traits"]:
-        raise StoryRejected(f"archetype_trait must be one of {', '.join(idx['traits'])}")
-    known = idx["facts"] | set(idx["items"]) | set(idx["picks"]) | set(idx["clusters"])
-    refs = [r for c in s.era_chapters for r in c.fact_refs]
-    refs += s.roast_and_toast.roast_refs + s.roast_and_toast.toast_refs + s.look_ahead_hook.fact_refs
-    for r in refs:
-        if r not in known:
-            raise StoryRejected(f"reference {r} is not in the facts")
-    used = []
-    for c in s.era_chapters:
-        for r in c.item_refs:
-            if r not in idx["items"]:
-                raise StoryRejected(f"chapter '{c.title}': item_refs must be T# references from the facts")
-            used.append(r)
-    if len(used) != len(set(used)):
-        raise StoryRejected("each title may anchor only one chapter")
-    if s.look_ahead_hook.item_ref and s.look_ahead_hook.item_ref not in idx["picks"]:
-        raise StoryRejected("look_ahead_hook.item_ref must be a U# pick or null")
-    for cn in s.cluster_names:
-        if cn.ref not in idx["clusters"]:
-            raise StoryRejected(f"cluster {cn.ref} is not in the facts")
-    allowed = idx["numbers"] | {str(n) for n in range(0, 11)}
-    for text in _prose(s):
-        for n in numbers_in(text):
-            if n not in allowed:
-                raise StoryRejected(f"the number {n} is not in the facts — copy numbers exactly")
-        m = _CLICHE_RE.search(text)
-        if m:
-            raise StoryRejected(f"banned phrase '{m.group(0)}'")
-        if "!" in text:
-            raise StoryRejected("no exclamation marks")
-
-
-def parse_story(raw: str, idx: dict) -> WrapupStory:
-    from src.services.llm_utils import parse_llm_json
-    try:
-        s = WrapupStory.model_validate(parse_llm_json(raw))
-    except ValidationError as e:
-        first = e.errors()[0]
-        where = ".".join(str(x) for x in first.get("loc") or ()) or "story"
-        raise StoryRejected(f"{where}: {first.get('msg')}") from e
-    except (ValueError, TypeError) as e:
-        raise StoryRejected("it was not valid JSON") from e
-    check_story(s, idx)
-    return s
-
-
 def finish_story(story: dict, idx: dict) -> dict:
     """What the UI needs next to the story: every ref resolved to its title and
     artwork, so the page never looks a title up by the model's spelling."""
     return {**story, "refs": {**idx["items"], **idx["picks"]},
             "clusters": {k: {"top_titles": v.get("top_titles")} for k, v in idx["clusters"].items()}}
-
-
-# ── generation ──────────────────────────────────────────────────────────────
-
-_PREDICT = 1500
-_PREDICT_REPAIR = 1800
-_TIMEOUT = 420.0          # a cold 20 GB curator load plus the answer
-
-
-async def write_story(sheet: str, idx: dict) -> tuple:
-    """(story dict, source, model) — source llm / llm_repaired — or
-    (None, reason, model) when the curator could not deliver."""
-    from src.config import settings
-    from src.services.llm_errors import LLMCallError, post_chat
-    from src.services.llm_priority import background_curator_call
-    from src.services.llm_utils import curator_payload
-    from src.services.ollama_hosts import host_for
-
-    host = host_for("curator")
-    model = settings.CURATOR_MODEL or settings.BASE_CURATOR_MODEL
-    messages = build_messages(sheet)
-
-    async def ask(msgs, predict):
-        # repeat_penalty 1.0: a constrained JSON answer repeats its keys and
-        # quotes by construction (the judge's lesson).
-        payload = curator_payload(msgs, model=model, temperature=0.75, num_predict=predict,
-                                  fmt=STORY_SCHEMA, repeat_penalty=1.0, host=host)
-        data = await background_curator_call(
-            "wrap-up", lambda: post_chat(host.url, payload, read_timeout=_TIMEOUT))
-        return (data.get("message") or {}).get("content", "") or ""
-
-    raw = ""
-    try:
-        raw = await ask(messages, _PREDICT)
-        return parse_story(raw, idx).model_dump(), "llm", model
-    except StoryRejected as e:
-        logger.info("[wrapup] story rejected (%s) — one repair turn", e)
-        try:
-            raw2 = await ask(messages + [
-                {"role": "assistant", "content": raw[:3000]},
-                {"role": "user", "content": f"Your answer was rejected: {e}. Send the complete "
-                                            "JSON object again with every rule kept."}],
-                _PREDICT_REPAIR)
-            return parse_story(raw2, idx).model_dump(), "llm_repaired", model
-        except StoryRejected as e2:
-            return None, f"repair rejected: {e2}", model
-        except LLMCallError as e2:
-            return None, f"curator failed on repair: {e2}", model
-    except LLMCallError as e:
-        return None, f"curator unavailable: {e}", model
 
 
 # ── the deterministic stand-in ──────────────────────────────────────────────
@@ -536,6 +324,19 @@ def fallback_story(f: dict, idx: dict) -> dict:
 
 # ── the background task ─────────────────────────────────────────────────────
 
+def _voice(user_id: int, cards: list) -> tuple:
+    """(language, quotes): the language the user writes to the curator in,
+    and — unless they turned it off — their own words from the debates about
+    the cards' titles. Blocking."""
+    from src.database.connection import get_db_session
+    from src.services.wrapup_writer import main_language, quotes_allowed, user_quotes
+    with get_db_session() as db:
+        lang = main_language(db, user_id)
+        titles = list(dict.fromkeys(r for c in cards for r in c.get("refs") or []))
+        quotes = user_quotes(db, user_id, titles) if quotes_allowed(user_id) else []
+    return lang, quotes
+
+
 async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: bool, task) -> None:
     """Facts → drift → artwork → story → checks → stored. Reports each phase
     to the task monitor (the page's ticker reads it)."""
@@ -543,7 +344,9 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
     from src.routers.wrapup import attach_posters
     from src.services.task_monitor import task_monitor
     from src.services.wrapup_facts import build_wrapup_facts, taste_drift, taste_river
+    from src.services.wrapup_insights import mine
     from src.services.wrapup_store import save_error, save_facts, save_story
+    from src.services.wrapup_writer import write
 
     def step(i):
         task_monitor.update(task, processed=i, message=PHASES[i])
@@ -567,7 +370,9 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         await run_write(save_facts, user_id, scope, period_key, facts)
         step(4)
         sheet, idx = render_fact_sheet(facts)
-        story, source, model = await write_story(sheet, idx)
+        cards = mine(facts)
+        lang, quotes = await run_read(_voice, user_id, cards)
+        story, source, model = await write(facts, sheet, idx, cards, quotes=quotes, lang=lang)
         step(5)
         if story is None:
             logger.info("[wrapup] %s/%s/%s: deterministic story (%s)", user_id, scope, period_key, source)

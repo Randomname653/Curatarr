@@ -26,7 +26,7 @@ import src.services.wrapup_sections as sec  # noqa: E402
 from src.database.models import (Base, CuratorResolutionLog, LibraryEvent, LibraryItem,  # noqa: E402
                                  MediaCompany, MediaCredit, MediaWork, WatchHistoryEntry)
 from src.services.wrapup_facts import resolve_period  # noqa: E402
-from src.services.wrapup_story import check_story, numbers_in, render_fact_sheet  # noqa: E402
+from src.services.wrapup_story import numbers_in, render_fact_sheet  # noqa: E402
 
 PASS = FAIL = 0
 

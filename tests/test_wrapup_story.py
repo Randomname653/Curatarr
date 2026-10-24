@@ -1,10 +1,9 @@
-"""Wrap-up story (services/wrapup_story): the curator only names and phrases.
+"""Wrap-up story (services/wrapup_story): the fact sheet, the stand-in, the task.
 
-Pinned here: the fact sheet numbers every fact and item, the validator
-rejects an invented number, an unknown reference, a stock phrase and an
-archetype trait the facts did not earn; one repair turn then the
-deterministic story; the chat thread for "Ask your wrap-up" gets the same
-sheet; the generation task walks its phases and stores the story.
+Pinned here: the fact sheet numbers every fact and item; the deterministic
+story; the chat thread for "Ask your wrap-up" gets the same sheet; the
+generation task walks its phases and stores the story the writer
+(services/wrapup_writer, tests/test_wrapup_writer.py) produced; the season.
 
     python tests/test_wrapup_story.py
 """
@@ -92,34 +91,6 @@ def story(**over):
     return json.dumps(s)
 
 
-def rejected(raw):
-    try:
-        st.parse_story(raw, idx)
-        return None
-    except st.StoryRejected as e:
-        return str(e)
-
-
-print("\nvalidation")
-check("a grounded story passes", rejected(story()) is None)
-err = rejected(story(share_line="42 hours of pure cinema"))
-check(f"an invented number is rejected ({err})", err and "42" in err)
-bad_ch = json.loads(story())["era_chapters"]
-bad_ch[0]["item_refs"] = ["T99"]
-check("an unknown title reference is rejected", "item_refs" in (rejected(story(era_chapters=bad_ch)) or ""))
-dup = json.loads(story())["era_chapters"]
-dup[1]["item_refs"] = [T["Dark"]]
-check("a title anchors one chapter only", "only one chapter" in (rejected(story(era_chapters=dup)) or ""))
-check("a stock phrase is rejected", "journey" in (rejected(story(archetype_subhead="What a journey it was.")) or ""))
-check("an exclamation mark is rejected", "exclamation" in (rejected(story(share_line="Wow, Dark!")) or ""))
-check("an unearned trait is rejected", "archetype_trait" in (rejected(story(archetype_trait="binger")) or ""))
-la = {"challenge": "Watch Heat again.", "item_ref": T["Heat"], "fact_refs": []}
-check("the hook may only recommend an owned-unwatched pick", "U#" in (rejected(story(look_ahead_hook=la)) or ""))
-check("too few chapters is a schema fault", "era_chapters" in (rejected(story(era_chapters=bad_ch[:1])) or ""))
-check("not JSON is a parse fault", rejected("the year was great") == "it was not valid JSON")
-check("the schema is forced on the model", st.STORY_SCHEMA["type"] == "object"
-      and "era_chapters" in st.STORY_SCHEMA["properties"])
-
 print("\nresolution and fallback")
 done = st.finish_story(json.loads(story()), idx)
 check("refs resolve to title + artwork for the page", done["refs"][T["Dark"]]["poster"].endswith("dark.jpg")
@@ -130,7 +101,6 @@ check("fallback chapters anchor on the top titles", fb["era_chapters"][0]["item_
 check("fallback says only facts", "5.0 hours" in fb["era_chapters"][0]["commentary"])
 check("fallback hook is an owned-unwatched pick", fb["look_ahead_hook"]["item_ref"] in idx["picks"])
 
-print("\nthe curator call: one repair, then the stand-in")
 calls = []
 
 
@@ -151,23 +121,6 @@ import src.services.ollama_hosts as oh  # noqa: E402
 
 lp.background_curator_call = fake_bg
 oh.host_for = lambda role: type("H", (), {"url": "http://x", "profile": None, "num_ctx": 16384, "gpu": {}})()
-
-le.post_chat = fake_post_factory([story(share_line="99 problems"), story()])
-s, source, _ = asyncio.run(st.write_story(sheet, idx))
-check("a rejected answer gets one repair turn", source == "llm_repaired" and len(calls) == 2
-      and "rejected" in calls[1]["messages"][-1]["content"])
-check("the payload forces the schema", calls[0].get("format") == st.STORY_SCHEMA)
-calls.clear()
-le.post_chat = fake_post_factory([story(share_line="77 billion"), story(share_line="88 monkeys")])
-s, source, _ = asyncio.run(st.write_story(sheet, idx))
-check("two bad answers → no story, reason given", s is None and "repair rejected" in source)
-
-
-async def boom(url, payload, *, read_timeout):
-    raise le.LLMCallError(le.LLMFailure.INFRA_OFFLINE, "down")
-le.post_chat = boom
-s, source, _ = asyncio.run(st.write_story(sheet, idx))
-check("an offline curator → no story, no exception", s is None and "unavailable" in source)
 
 print("\nask your wrap-up")
 block = st.wrapup_discussion_block(FACTS, done)
@@ -202,13 +155,25 @@ wr.attach_posters = no_posters
 ws.save_facts = lambda *a: saved.setdefault("facts", a)
 ws.save_story = lambda uid, scope, period, h, story, source, model=None: saved.update(story=story, source=source, hash=h)
 ws.save_error = lambda *a: saved.setdefault("error", a)
-le.post_chat = fake_post_factory([story()])
+import src.services.wrapup_insights as wi  # noqa: E402
+
+CARDS = wi.mine(FACTS)
+st._voice = lambda uid, cards: ("en", [])
+EDIT = json.dumps({"arc": [c["id"] for c in CARDS[:3]], "roast": CARDS[0]["id"],
+                   "toast": CARDS[1]["id"], "archetype_trait": "contrarian",
+                   "archetype_title": "Loyalist With Exceptions",
+                   "archetype_subhead": "Your standards are yours.", "share_line": "One contrarian streak",
+                   "next_pick": "", "cluster_names": []})
+PROSE = "\n".join(f"## {c['id']} | Beat {i}\nIt happened [{c['id']}]." for i, c in enumerate(CARDS[:3], 1))
+PROSE += f"\n## ROAST\nA blind spot [{CARDS[0]['id']}].\n## TOAST\nA real taste [{CARDS[1]['id']}]."
+le.post_chat = fake_post_factory([EDIT, PROSE])
 task = tm.task_monitor.create("Wrap-up: test", "wrapup", total=len(st.PHASES), task_id="wrapup-1-all-30d")
 tm.task_monitor.start(task)
 asyncio.run(st.generate_wrapup(1, "all", "30d", True, task))
 check("the task walks every phase and finishes", task.processed == 5 and str(task.status.value) == "done")
-check("the story is stored for this facts hash", saved.get("source") == "llm" and saved.get("hash") == "h1"
-      and saved["story"]["refs"])
+check("the writer's story is stored for this facts hash", saved.get("source") == "llm"
+      and saved.get("hash") == "h1" and saved["story"]["version"] == 2 and saved["story"]["refs"]
+      and len(saved["story"]["slides"]) == 3)
 wf.build_wrapup_facts = lambda uid, scope, period, is_admin=False: {"empty": True, "eligible": False}
 task2 = tm.task_monitor.create("Wrap-up: empty", "wrapup", total=6, task_id="wrapup-1-all-6m")
 tm.task_monitor.start(task2)

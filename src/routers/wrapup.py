@@ -125,8 +125,14 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
         "story_at": row and row.get("story_at"),
         "story_source": row and row.get("story_source"),
         "generating": _running_task(user.id, scope, period),
+        "quotes": await run_read(_quotes_allowed, user.id),
         **(await run_read(available, user.id)),
     }
+
+
+def _quotes_allowed(user_id: int) -> bool:
+    from src.services.wrapup_writer import quotes_allowed
+    return quotes_allowed(user_id)
 
 
 def _task_id(user_id: int, scope: str, period: str) -> str:
@@ -178,6 +184,24 @@ def status(task_id: str, user: User = Depends(get_current_user)):
     logs = t.get("logs") or []
     return {"status": t["status"], "phase": t["processed"], "total": t["total"],
             "message": logs[-1]["msg"] if logs else None, "error": t["error"]}
+
+
+@router.get("/prefs")
+async def get_prefs(user: User = Depends(get_current_user)):
+    """The user's wrap-up choices: may the curator quote their own debate
+    messages back to them (opt-out — a quote only reaches its author)."""
+    from src.database.runner import run_read
+    from src.services.wrapup_writer import quotes_allowed
+    return {"quotes": await run_read(quotes_allowed, user.id)}
+
+
+@router.post("/prefs")
+async def set_prefs(body: dict, user: User = Depends(get_current_user)):
+    from src.database.runner import run_read, run_write
+    from src.services.wrapup_writer import quotes_allowed, set_quotes_allowed
+    if "quotes" in body:
+        await run_write(set_quotes_allowed, user.id, bool(body["quotes"]))
+    return {"quotes": await run_read(quotes_allowed, user.id)}
 
 
 @router.post("/playlist")
