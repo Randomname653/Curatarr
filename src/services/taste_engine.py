@@ -335,6 +335,7 @@ def _chroma_item_vector(entry: dict, profile: Optional[dict]) -> Optional[list]:
                                  cid, (res.get("metadata") or {}).get("title"))
                     continue
                 return _unit(list(emb))
+        return _title_doc_vector(chroma, entry, profile)
     except Exception as e:
         kind = type(e).__name__
         if kind in _ITEM_LOOKUP_WARNED:
@@ -361,6 +362,28 @@ _DOMAIN_COMPAT = {
 def _norm_title(t) -> str:
     t = re.sub(r"\s*\(\d{4}\)\s*$", "", str(t or ""))   # corpus_repair's "Title (1999)"
     return re.sub(r"[\W_]+", "", t.casefold())
+
+
+def _title_doc_vector(chroma, entry: dict, profile: Optional[dict]) -> Optional[list]:
+    """A series by its title. The index files it under the show's Plex key,
+    a history row only has the episode's (on the real data most anime months
+    found no vector by id). Library docs win over arr-only ones (``sonarr:…``);
+    two works of one title (Berserk 1997 and 2016) are told apart by the
+    profile's year, else neither is used."""
+    title = entry.get("series_title") or entry.get("title")
+    mtype = entry.get("media_type")
+    if not title or mtype not in ("show", "anime") or not hasattr(chroma, "get_by_title"):
+        return None
+    docs = [d for d in chroma.get_by_title(str(title), mtype)
+            if d.get("embedding") is not None and len(d["embedding"])
+            and _doc_is_item(d.get("metadata"), entry, profile)]
+    year = (profile or {}).get("year")
+    if year:
+        docs = [d for d in docs if (d.get("metadata") or {}).get("year") in (None, year)] or docs
+    if not docs or len({(d.get("metadata") or {}).get("year") for d in docs}) > 1:
+        return None
+    docs.sort(key=lambda d: ":" in str(d["id"]))
+    return _unit(list(docs[0]["embedding"]))
 
 
 def _doc_is_item(meta: Optional[dict], entry: dict, profile: Optional[dict]) -> bool:

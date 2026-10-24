@@ -730,6 +730,26 @@ class ChromaDBWrapper:
             }
         return None
 
+    def get_by_title(self, title: str, media_type: str, limit: int = 6) -> List[Dict]:
+        """The docs whose metadata carries exactly this title and media type,
+        with their embeddings. A series is indexed under the show's Plex
+        key, which a watch-history row (an episode's key) does not know, and
+        Plex hands out new keys when a library is re-added."""
+        try:
+            result = self.collection.get(
+                where={"$and": [{"title": title}, {"media_type": media_type}]},
+                include=["embeddings", "metadatas"], limit=limit,
+            )
+        except Exception as e:
+            _log_read_failure("get_by_title", e, detail=title)
+            return []
+        result = result or {}
+        embeddings = result.get("embeddings")
+        metadatas = result.get("metadatas") or []
+        return [{"id": r_id, "metadata": metadatas[j] if j < len(metadatas) else None,
+                 "embedding": embeddings[j] if embeddings is not None and len(embeddings) > j else None}
+                for j, r_id in enumerate(result.get("ids") or [])]
+
     def get_by_ids(self, doc_ids: List[str], chunk_size: int = 1000) -> Dict[str, Dict]:
         """Bulk fetch embeddings for many ids — one Chroma call per chunk.
 
