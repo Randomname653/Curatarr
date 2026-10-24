@@ -31,7 +31,7 @@ from src.paths import ROOT
 logger = logging.getLogger(__name__)
 
 BRANCH = "main"
-CHECK_EVERY_S = 6 * 3600
+CHECK_EVERY_S = 3600      # a git fetch: no API quota involved
 _TIMEOUT_S = 60
 
 

@@ -323,15 +323,21 @@ def curator_options(temperature: float = 0.7, num_predict: int = 1024, *,
     ``host`` (ollama_hosts.OllamaHost): the window and placement of the host
     the call goes to; without one, this process's defaults (the only host
     until a second is configured)."""
+    if host is None:
+        # Without one, the host the call actually goes to: a caller that
+        # posts to the routed curator host reaches the node while it is free,
+        # and the server's window or runner options there would reload it.
+        host = _curator_host()
     num_ctx = host.num_ctx if host is not None else CURATOR_NUM_CTX
     gpu = host.gpu if host is not None else curator_gpu()
+    runner = (getattr(host, "runner", None) or {}) if host is not None else {}
     # num_gpu is pinned here: the curator never takes the CPU lane. 19.9 GB
     # of weights at the summariser's measured 5.9 tok/s is tens of minutes
     # for one reply — the callers check llm_lane.curator_available() and wait
     # instead (src/services/llm_lane.py). ollama_options sets the SUMMARISER
     # placement, so the curator's is laid over it (or, with CURATOR_NUM_GPU
     # = -1, that placement is removed and Ollama decides).
-    opts = ollama_options(temperature, num_predict,
+    opts = ollama_options(temperature, num_predict, _runner=runner,
                           **{"num_ctx": num_ctx, **gpu, **extra})
     # num_thread is a RUNNER option — a change reloads the model. The CPU
     # lane's thread budget is the summariser's; the curator never runs there,
@@ -396,7 +402,20 @@ def curator_payload(messages: list, *, model: str = None, temperature: float = 0
     return p
 
 
-def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -> dict:
+def _curator_host():
+    from src.services.ollama_hosts import routed_host
+    return routed_host("curator")
+
+
+def _runner_for(role: str) -> dict:
+    """The runner options of the host ``role`` goes to now (ollama_hosts)."""
+    from src.services.ollama_hosts import routed_host
+    h = routed_host(role)
+    return dict(getattr(h, "runner", None) or {}) if h is not None else {}
+
+
+def ollama_options(temperature: float = 0.7, num_predict: int = 1024, *,
+                   _runner: dict | None = None, **extra) -> dict:
     """
     Build Ollama request parameters meant to be **spread into the request dict**::
 
@@ -425,10 +444,13 @@ def ollama_options(temperature: float = 0.7, num_predict: int = 1024, **extra) -
         # → {"think": False, "options": {"temperature": 0.1, "num_predict": 700, "num_gpu": 99}}
     """
     from src.services.llm_lane import SUMMARIZER, placement
+    # The host's runner options (use_mmap): a summariser call goes where
+    # enrichment goes; curator_options passes its own host's.
+    runner = _runner_for("enrich") if _runner is None else _runner
     return {
         "think": False,
         "options": {"temperature": temperature, "num_predict": num_predict,
-                    **placement(SUMMARIZER), **extra},
+                    **runner, **placement(SUMMARIZER), **extra},
     }
 
 

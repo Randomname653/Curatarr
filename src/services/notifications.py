@@ -124,7 +124,7 @@ _BELL_ONLY = frozenset({"game_question", "pc_update"})
 
 def _pc_update_items() -> list[dict]:
     """The node runs an older Curatarr than main (its agent checks every
-    6 h and reports it). One click updates it; when it cannot fast-forward,
+    hour and reports it). One click updates it; when it cannot fast-forward,
     the bell says why and how instead."""
     import time
     from src.services import pc_host

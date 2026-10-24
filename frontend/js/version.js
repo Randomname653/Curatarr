@@ -3,12 +3,12 @@
 // commit it was built from. For admins the same answer says whether upstream
 // has published a newer build; then an amber "Update available" sits above
 // the version and opens how to install it. The server asks GitHub at most
-// every 6 h; this only re-reads the stored answer once an hour.
+// once an hour; this re-reads the stored answer every 15 minutes.
 import { api } from './api.js';
 import { act, esc, openModal } from './ui.js';
 import { state } from './state.js';
 
-const REFRESH_MS = 60 * 60_000;
+const REFRESH_MS = 15 * 60_000;
 let _last = null;
 
 export async function loadVersion() {

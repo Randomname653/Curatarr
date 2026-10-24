@@ -89,12 +89,14 @@ def _side(text: str, verdict: str | None) -> str:
 async def _ask(endpoint: str, model: str, system: str, user: str, schema: dict) -> dict:
     from src.services.llm_errors import post_chat
     from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu
+    from src.services.ollama_hosts import main_host
     data = await post_chat(endpoint, {
         "model": model, "stream": False, "think": False, "keep_alive": "10m",
         "format": schema,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "options": {"temperature": 0.0, "seed": 7, "repeat_penalty": 1.0, "num_predict": 300,
-                    "num_ctx": CURATOR_NUM_CTX, **curator_gpu()}}, read_timeout=300.0)
+                    "num_ctx": CURATOR_NUM_CTX, **curator_gpu(), **main_host().runner}},
+        read_timeout=300.0)
     return json.loads((data.get("message") or {}).get("content") or "{}")
 
 

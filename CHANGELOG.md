@@ -605,7 +605,7 @@ install's NAS.
 
 **Version and "Update available" under the sidebar.** The footer shows the
 version and the commit that runs (the image carries it, a checkout reads
-HEAD). For admins, Curatarr asks GitHub every 6 hours, anonymously,
+HEAD). For admins, Curatarr asks GitHub every hour, anonymously,
 whether a newer build is published: the last successful image on main for
 a container, the newest main commit for a checkout. Only a build that is
 actually ahead counts, so a dev branch is never told to update. The hint
@@ -636,7 +636,7 @@ The PC's checkout needs this version for the agent's new reading.
 "Update now": a fast-forward of the checkout to main, then the usual restart
 (its preflight installs what the lock asks for). Nothing is merged or
 overwritten. A branch, local changes or local commits stop it, and the tray
-says why. The PC agent checks every 6 hours and reports where it stands, so
+says why. The PC agent checks every hour and reports where it stands, so
 the NAS's bell says when the gaming PC runs an older Curatarr. "Update the
 PC" there has the agent update and restart. The NAS sends only the token,
 and the agent fetches from its own origin.
@@ -672,6 +672,21 @@ attempts, so the same 50 came round again all night. The full name is still
 looked up first, so "Simon & Garfunkel" is found as itself. A credit that
 misses now keeps its attempt, waits on the normal backoff, and no longer
 counts toward the outage breaker.
+
+**Ollama without a second copy of the model in RAM.** On the NAS, Ollama
+loaded the 8B summariser without memory-mapping and held 4.9 GB of anonymous
+memory next to the 6.1 GB on the card. With `use_mmap` it held 0.45 GB; the
+rest became file pages the kernel can drop. `OLLAMA_USE_MMAP` (this server's
+Ollama) and `PC_OLLAMA_USE_MMAP` (the node's) set it, and every call to
+that host carries the value. A differing runner option would reload the
+model, so curator calls without an explicit host now take the options of
+the host they actually go to. Unset, Ollama decides as before. Leave it
+unset for Ollama on Windows with CUDA.
+
+**Update checks hourly.** The server asks GitHub every hour instead of every
+six (1-2 of the anonymous 60 requests an hour), and again 30 minutes after a
+failed check. The node checks hourly too, with a plain `git fetch`. The
+sidebar re-reads the answer every 15 minutes.
 
 **Needs attention and maintenance that could never finish.**
 - A wrong-entity finding no longer fires when a shared TMDB, TVDB or IMDb id

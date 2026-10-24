@@ -37,7 +37,7 @@ from typing import Optional
 import httpx
 
 from src.config import settings
-from src.services.ollama_hosts import ollama_for
+from src.services.ollama_hosts import host_for, ollama_for
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ async def _post_embed(model: str, inputs: list, num_ctx: int) -> list:
                 f"{ollama_for("embed")}/api/embed",
                 json={"model": model, "input": inputs,
                       "keep_alive": "2m",
-                      "options": {"num_gpu": 0, "num_ctx": num_ctx}},
+                      "options": {**host_for("embed").runner, "num_gpu": 0, "num_ctx": num_ctx}},
             )
         if r.status_code != 200:
             logger.warning("[embed] HTTP %s from /api/embed — is %r pulled?",
