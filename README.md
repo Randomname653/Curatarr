@@ -80,6 +80,43 @@ thing costs on disk.*
 and puts them up for your approval before they influence any verdict —
 and it speaks up when it notices a pattern worth asking about.*
 
+<!-- SCREENSHOTS OF THE CURRENT UI. The three images above predate the
+     glass redesign and the Wrap-Up. Run scripts/capture_screenshots.py
+     against a configured instance (docs/screenshots/README.md), check every
+     frame, then uncomment this block and delete the three legacy images
+     and their captions above.
+
+### On the desktop
+
+![Wrap-Up: a member's last 30 days as a hero archetype and a bento grid of earned tiles](docs/screenshots/desktop/wrapup.png)
+
+*Wrap-Up: every household member's own period in review. Every number is
+computed from the play record before the curator writes a word about it.*
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/desktop/deletions.png" alt="Deletion proposals: poster cards with a tinted glow, each with its verdict and the case for it"></td>
+    <td width="50%"><img src="docs/screenshots/desktop/chat.png" alt="Chat: the curator answering from the viewing record, with the composer floating as a glass bar"></td>
+  </tr>
+  <tr>
+    <td><em>Deletion proposals argue their case, and every one can be discussed.</em></td>
+    <td><em>Chat answers from your viewing record and verified facts.</em></td>
+  </tr>
+</table>
+
+### On a phone
+
+<p align="center">
+  <img src="docs/screenshots/mobile/chat.png" width="200" alt="Phone: chat above the floating glass tab bar">
+  <img src="docs/screenshots/mobile/wrapup.png" width="200" alt="Phone: the Wrap-Up bento in two columns">
+  <img src="docs/screenshots/mobile/deletions.png" width="200" alt="Phone: deletion proposals as a card stack">
+  <img src="docs/screenshots/mobile/bottom-sheet.png" width="200" alt="Phone: a dialog as a bottom sheet with a grab handle">
+</p>
+
+*Installable as an app: a floating tab bar in thumb reach, tables become
+cards, and dialogs become sheets you drag down to close.*
+-->
+
 ## Features
 
 - **Taste-aware recommendations** — from your own library or open-ended
@@ -107,6 +144,13 @@ and it speaks up when it notices a pattern worth asking about.*
   itself into the conversation.
 - **Multi-user** — every play is attributed to its Plex account; each
   user gets their own taste vector, recommendations, playlists and chat.
+- **Wrap-Up for every member** — the last 30 days, six months, a year or
+  all time: played hours, the listening clock, binges, comfort rewatches,
+  genre drift and what curation freed. Every number is computed in code;
+  the curator then tells it as chapters, a roast and a toast.
+- **At home on a phone** — installable as an app, with a floating tab bar,
+  card layouts, bottom sheets and a Swipe view for rating titles one by
+  one. The desktop gets the same frosted-glass design.
 - **Writes back to Plex** — per-user "Curatarr Recommended" playlists
   (updated in place, not recreated) and rotating collection shelves.
 - **Proactive messages** — a new season for something you binged, a
@@ -123,6 +167,9 @@ and it speaks up when it notices a pattern worth asking about.*
 - **Game mode** — when a game starts, the models are evicted from VRAM
   and only keyless API pre-fetching continues. The pipeline resumes by
   itself afterwards.
+- **A NAS that borrows the gaming PC** — run Curatarr around the clock in
+  a container, and let a second machine lend its GPU whenever it is on and
+  nobody is playing. Deletion verdicts wait for the big card.
 
 ## How it works
 
@@ -150,21 +197,29 @@ The full technical reference — data model, pipeline internals, design
 decisions and the invariants learned the hard way — lives in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+For a clickable bird's-eye view of the repository, open the
+**[interactive architecture diagram on GitDiagram](https://gitdiagram.com/randomname653/curatarr)**.
+An AI model draws it from the file tree and this README, and it is only
+redrawn on request, so use it to find your way around and check the
+details against ARCHITECTURE.md, which is maintained alongside the code.
+
 ---
 
 ## Getting started
 
 ### Requirements
 
-Curatarr runs directly on the host; there is no Docker image. Windows is
-the main platform (the launchers and the tray app are Windows-only);
-Linux and macOS run the server by hand. Ollama may run on another
-machine (`OLLAMA_ENDPOINT`).
+Curatarr runs three ways: on a Windows desktop (the launchers and the tray
+app are Windows-only), by hand on Linux or macOS, or as a container on a
+NAS or server (`ghcr.io/randomname653/curatarr`, published on every push to
+`main`). Ollama may run on another machine (`OLLAMA_ENDPOINT`); the
+container image does not include it.
 
 | | |
 |---|---|
 | **Python** | 3.12 or newer |
 | **[Git](https://git-scm.com)** | to clone the repository and to update it |
+| **Docker** | only for the container route, which needs neither Python nor Git |
 | **Plex Media Server** | you sign in as the server owner during setup |
 | **[Ollama][link-ollama]** | installed and running before the first start |
 | **GPU** | 24 GB VRAM for the default curator model. Smaller card? Pick a smaller curator model ([how](docs/USAGE.md#changing-the-models)); verdicts get softer |
@@ -247,6 +302,28 @@ uvicorn prints `Application startup complete.` There is no launcher on
 these platforms, so after every update repeat the `pip install` line and
 restart.
 
+**Docker (NAS, server)**
+
+```bash
+mkdir -p /srv/curatarr && sudo chown 568:568 /srv/curatarr
+docker run -d --name curatarr --restart unless-stopped \
+  -p 8000:8000 -v /srv/curatarr:/app/data -e TZ=Europe/Berlin \
+  ghcr.io/randomname653/curatarr:latest
+```
+
+Everything the app writes lives in that one volume: the database, the
+vector store, logs, backups and the `.env` the setup wizard writes, with
+every token in it. The container runs as uid 568 (TrueNAS SCALE's *apps*
+user), so that user must own the directory. After the first start it
+builds the missing Ollama models in the background. For compose or a
+TrueNAS custom app, use
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml). To your browser
+a container is never "the machine itself", so the setup wizard asks for
+the one-time setup code: `docker logs curatarr` shows it. Details, including
+lending a gaming PC's GPU to the NAS, are in
+[Running in a container](docs/USAGE.md#running-in-a-container-nas-server)
+and [the NAS move](docs/NAS_MOVE.md).
+
 ### First run
 
 1. Open `http://localhost:8000` on the machine running Curatarr. The
@@ -293,14 +370,27 @@ start.bat
 
 The launchers install changed dependencies and missing models on their
 own, and the server migrates its database at startup. Your data in
-`data/` and your `.env` are kept.
+`data/` and your `.env` are kept. On Windows the tray menu can also do
+this for you: **Check for updates**, then **Update now**.
+
+In a container, pull the new image and recreate the container (on
+TrueNAS, edit the app and save it); the data volume stays:
+
+```bash
+docker pull ghcr.io/randomname653/curatarr:latest
+docker stop -t 30 curatarr && docker rm curatarr   # then the same docker run as above
+```
+
+Admins see **Update available** under the sidebar when a newer build is
+published.
 
 ## Configuration
 
-Settings live in `.env`. The setup wizard writes it, and most options can
-also be changed in **Settings**. [`.env.example`](.env.example) documents
-every option with its default. If you edit `.env` by hand, restart
-Curatarr afterwards. These are the options most people change:
+Settings live in `.env` (in a container: `/app/data/.env`, inside the data
+volume). The setup wizard writes it, and most options can also be changed
+in **Settings**. [`.env.example`](.env.example) documents every option
+with its default. If you edit `.env` by hand, restart Curatarr afterwards.
+These are the options most people change:
 
 | Env var | What it does |
 |---|---|
@@ -313,14 +403,20 @@ Curatarr afterwards. These are the options most people change:
 | `SYNC_INTERVAL_HOURS` | Plex history pull cadence (default 24) |
 | `ENRICHMENT_TTL_DAYS` | How long an enriched profile stays fresh (default 90) |
 | `EXTRA_GAME_PROCESSES` | Extra `.exe` names that should pause the LLM |
+| `ALLOWED_HOSTS` | Opt-in guard against DNS rebinding: the host names Curatarr answers to ([SECURITY.md](SECURITY.md#first-run-setup)) |
+| `OLLAMA_PC_ENDPOINT`, `PC_AGENT_*` | A second machine's GPU ([how](docs/USAGE.md#running-in-a-container-nas-server)) |
 
 ## Documentation
 
 | Document | What's in it |
 |---|---|
 | [Usage guide](docs/USAGE.md) | Day-to-day operations, maintenance commands, troubleshooting |
+| [Moving onto a NAS](docs/NAS_MOVE.md) | Curatarr in a container, with the gaming PC as a second GPU |
 | [Benchmarks](docs/BENCHMARKS.md) | How the models were chosen — method, data, and the raw scores |
+| [How the curator judges](docs/CURATOR_EXAMPLES.md) | The recommended models judging the same fictional library, word for word |
 | [Architecture](ARCHITECTURE.md) | Data flow, subsystem internals, design decisions, hard-won invariants |
+| [Architecture diagram](https://gitdiagram.com/randomname653/curatarr) | Interactive, AI-drawn map of the repository (GitDiagram) |
+| [All docs](docs/README.md) | Which document is a guide, a reference, a design record or a dated audit report |
 | [Configuration reference](.env.example) | Every setting with defaults and comments |
 | [Roadmap](ROADMAP.md) | What's planned and what's deliberately parked |
 | [Changelog](CHANGELOG.md) | Condensed release history |
@@ -335,10 +431,14 @@ Curatarr afterwards. These are the options most people change:
 - **Titles go out, behaviour does not.** Enrichment queries public
   metadata APIs — TMDB, Wikipedia, Wikidata, MyAnimeList (or Jikan), AniList, MusicBrainz,
   Last.fm, Deezer, Spotify — and most are searched by *name*, so those
-  services learn which titles and artists your library holds. OMDb and
-  OpenSubtitles are queried purely by id. What is never sent: what you
-  watched, when, how often, your ratings, your taste profile, or anything
-  you typed.
+  services learn which titles and artists your library holds. OMDb,
+  OpenSubtitles and ListenBrainz are queried purely by id. What is never
+  sent: what you watched, when, how often, your ratings, your taste
+  profile, or anything you typed.
+- **Bulk downloads and the update check carry nothing of yours.** The
+  anime id mappings (from GitHub) and the Discogs data dump are fetched
+  whole. The update check asks GitHub's API anonymously, at most hourly,
+  whether a newer build exists; `UPDATE_CHECK=false` turns it off.
 - **Subtitle sources are opt-in.** Dialogue signals come from the file
   Plex already holds whenever one exists. OpenSubtitles is only contacted
   if you configure a key, matched by IMDb id (no title guessing), under a
@@ -388,7 +488,7 @@ keep their original licenses, listed in
 [badge-tests]: https://github.com/Randomname653/Curatarr/actions/workflows/tests.yml/badge.svg
 [badge-python]: https://img.shields.io/badge/python-3.12%2B-blue
 [badge-local]: https://img.shields.io/badge/LLM-100%25%20local-E5A00D
-[badge-platform]: https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey
+[badge-platform]: https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Docker-lightgrey
 [badge-scorecard]: https://api.scorecard.dev/projects/github.com/Randomname653/Curatarr/badge
 [link-scorecard]: https://scorecard.dev/viewer/?uri=github.com/Randomname653/Curatarr
 [badge-cii]: https://www.bestpractices.dev/projects/14459/badge

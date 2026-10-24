@@ -1,5 +1,9 @@
 # Post-Refactor Integration Audit & Residual Bottleneck Cleanup — 2026-10-15
 
+> **Dated report.** It describes the code at the commit named below: line numbers,
+> counts and "open" items are from then, and status notes added later carry their
+> date. For what is true today, see [the docs index](README.md#audit-reports--dated-snapshots).
+
 Scope: whether the UI/UX, documentation, LLM pipeline, AppSec (2026-10-10) and SQLite
 concurrency (2026-10-11) workstreams fit together, covering frontend↔backend JSON contracts,
 model/migration parity and the test battery. It also covers the residual leaks and event-loop
