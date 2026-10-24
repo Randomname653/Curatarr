@@ -29,6 +29,7 @@ import json
 import logging
 import re
 import unicodedata
+from datetime import datetime
 from typing import Optional
 
 from src.database.connection import get_db_session
@@ -172,10 +173,13 @@ def scan_cache(cache=None) -> list:
     cache = cache or MetadataCache()
     found: list = []
     try:
+        # The cache's own clock: expires_at is local time in ISO form
+        # (MetadataCache._expires_at). SQLite's datetime('now') is UTC with a
+        # space, and "T" sorts after " ": a row expiring today read as alive.
         cur = cache.conn.execute(
             "SELECT cache_key, response FROM api_cache "
             "WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%') "
-            "AND expires_at > datetime('now')")
+            "AND expires_at > ?", (datetime.now().isoformat(),))
         for key, resp in cur:
             filed = (key[3:] if key.startswith("v2:") else key).split(":", 2)
             if len(filed) != 3 or filed[1] not in CATEGORIES:
@@ -197,7 +201,6 @@ def scan_cache(cache=None) -> list:
 def persist(works: list) -> dict:
     """Upsert merged titles; a title whose fingerprint is unchanged is left
     alone. Blocking — call via ``run_write``."""
-    from datetime import datetime
     from src.database.models import MediaCompany, MediaCredit, MediaWork
     counts = {"new": 0, "updated": 0, "unchanged": 0, "folded": 0}
     with get_db_session() as db:
