@@ -62,7 +62,7 @@ hit style and miss what matters: whether the claims are true.
 
 **The format itself flattens the voice:**
 - The story is generated under Ollama JSON-schema forcing (`fmt=STORY_SCHEMA`,
-  `:420`). That is 15 typed fields, several with hard `max_length`
+  `:422`). That is 15 typed fields, several with hard `max_length`
   (`commentary` 480, `roast` 260, `kicker` 110).
 - Tam et al., *Let Me Speak Freely?* (EMNLP 2024), measured that
   constrained JSON decoding degrades reasoning-heavy generation, while it
