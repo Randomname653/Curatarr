@@ -356,15 +356,41 @@ deep-dive.
 4. **Visualizations 1, 3, 5 and 6** for the 2026 season. Constellation,
    river and scatter follow once credits and snapshots have accumulated.
 
-### 4.5 Open decisions for the owner
+### 4.5 Owner decisions (2026-10-24)
 
-- **Callback quotes from chat**: on by default with opt-out, or opt-in?
-- **Household comparisons**: shown to everyone, or only when each member
-  opts in?
-- **Story language**: follow the UI language, or the language the user
-  chats in?
-- **Persuader retro-labelling**: run the 8B classifier over existing debate
-  threads once?
+- **Callback quotes from chat: opt-out**, because a quote only ever goes
+  back to the person who wrote it, in their own wrap-up.
+  - Anything that would let one person's words or numbers reach *another*
+    member is **opt-in**: a shared slide, a household card, a share card
+    showing a quote.
+- **Household comparisons: only with consent.**
+  - A member appears in another member's comparison only after they agreed
+    (a per-user setting, off by default).
+  - Members who have not agreed are left out of medians and ranks, not
+    just hidden from them.
+- **Story language:** the user's main language. That is the language they
+  write most often in their own `ConversationMessage` rows, by message count.
+  - Detected deterministically, with no model call.
+  - English when there are no messages.
+  - Stored per user and recomputed with the wrap-up.
+  - The checks need it too: the cliché list, the `say` renderings and the
+    slide templates exist per language.
+- **Persuader retro-labelling: yes**, once over the existing
+  `deletion_proposal:*` threads.
+  - It uses the **summarizer** (`SUMMARIZER_MODEL`, base `granite4.1:8b`),
+    the same model that classifies keeps in chat today
+    (`episodic_memory.detect_and_handle_protection`).
+  - The live path gets the same `persuader` field from the same call, so
+    labels from the past and from now come from one classifier and can be
+    compared.
+  - The Judge and the curator are not used for this. They are a party to
+    the debate, and they would cost the GPU time the 27–31B models need.
+  - Before the backfill, hand-check about 30 threads against the labels;
+    below about 85% agreement, fix the prompt before running it on
+    everything.
+  - Today's delete path takes its stance from keywords
+    (`recommendations._curator_stance`). It moves to the same classifier,
+    so keep and delete are judged the same way.
 
 ---
 
