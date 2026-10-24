@@ -338,6 +338,13 @@ def _migrate_columns() -> None:
         # The user's own clock (2026-10-25): the IANA zone their browser
         # reports, for night-owl hours and calendars (services/user_time).
         ("users",                  "timezone",        "VARCHAR(64)"),
+        # Music context (2026-10-25): album, and the Spotify export's own
+        # account of each play (services/spotify_import).
+        ("watch_history",          "album",           "VARCHAR(512)"),
+        ("watch_history",          "listened_ms",     "INTEGER"),
+        ("watch_history",          "platform",        "VARCHAR(64)"),
+        ("watch_history",          "reason_end",      "VARCHAR(32)"),
+        ("watch_history",          "shuffle",         "BOOLEAN"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
@@ -375,6 +382,8 @@ def _migrate_columns() -> None:
         # Per-title enrichment lookups (plex_sync, the KB breakdown).
         ("ix_es_title_cat",              "enrichment_status", "title, media_category"),
         ("ix_curator_resolution_log_proposal_id", "curator_resolution_log", "proposal_id"),
+        # Spotify re-imports dedup on the URI: the matcher rewrites plex_item_id.
+        ("ix_wh_spotify_uri_viewed",     "watch_history", "spotify_uri, viewed_at"),
     ]
 
     import logging as _logging

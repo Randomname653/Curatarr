@@ -228,6 +228,10 @@ opens late November):
    person ids, companies, networks and the collection.*
 6. Music columns, Plex moods and styles. Partly ⏳, so start now even if the
    2026 music story stays thinner.
+   *Done for the Spotify side and the album: `music_skips`; album,
+   listened_ms, platform, reason_end and shuffle on `watch_history`; a
+   one-time re-read of imported files. Open: Plex moods/styles and the Plex
+   player, which need a real server to check the API shape against.*
 7. `taste_snapshots`, nanogenre labels. ⏳; these pay off in 2027.
 
 ---

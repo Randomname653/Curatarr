@@ -947,6 +947,9 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     completed=completed,
                     genres=genres_str,
                     tmdb_id=int(tmdb_id) if tmdb_id and str(tmdb_id).isdigit() else None,
+                    # a track's album (Plex: the parent); NULL for video
+                    album=((entry.get("parentTitle") or "")[:512] or None)
+                    if media_type == "music" else None,
                 ))
                 near.setdefault((user.id, rating_key), []).append(int(viewed_at_ts))
                 # Collect the hit for the watched-a-recommendation follow-up:
@@ -1200,7 +1203,8 @@ MEMBER_BACKFILL_KEY = "member_history_backfilled"
 # first sync after this change walks the whole history once.
 OWNER_BACKFILL_KEY = "owner_history_backfilled"
 _HISTORY_EVENT_KEYS = ("ratingKey", "viewedAt", "type", "title", "grandparentTitle",
-                       "grandparentKey", "parentIndex", "index", "librarySectionID")
+                       "grandparentKey", "parentIndex", "index", "librarySectionID",
+                       "parentTitle")
 # Plex sometimes truncates seconds between the section listing and the history.
 _SAME_PLAY_S = 90
 _LISTING_ONLY_KEYS = ("_in_progress", "viewOffset", "lastViewedAt", "viewedAt", "_account_id")
@@ -1276,6 +1280,7 @@ def _member_entry(ev: dict, lib_configs: dict, account_id: int) -> Optional[dict
         "viewedAt": int(vts),
         "title": ev.get("title", ""),
         "grandparentTitle": ev.get("grandparentTitle"),
+        "parentTitle": ev.get("parentTitle"),
         "parentIndex": ev.get("parentIndex"),
         "index": ev.get("index"),
         "grandparentRatingKey": gp.rsplit("/", 1)[-1] if gp else None,
