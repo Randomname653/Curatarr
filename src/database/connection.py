@@ -345,12 +345,17 @@ def _migrate_columns() -> None:
         ("watch_history",          "platform",        "VARCHAR(64)"),
         ("watch_history",          "reason_end",      "VARCHAR(32)"),
         ("watch_history",          "shuffle",         "BOOLEAN"),
+        # The ledger's arrivals from the arr history (services/arr_ledger).
+        ("library_events",         "entity",          "VARCHAR(48)"),
+        ("library_events",         "recorded_at",     "DATETIME"),
+        ("library_items",          "added_from",      "VARCHAR(8)"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
     # definition on existing DBs, so we create them explicitly. SQLite's
     # CREATE INDEX IF NOT EXISTS is idempotent — safe to re-run.
     new_indexes = [
+        ("ix_library_events_entity", "library_events", "entity"),
         # Pass 16h: artist_mbid index needed for the Spotify-Backlog
         # ``only_resolved=True`` filter and Phase 1.4's ``is_(None)`` scan
         # over hundreds of thousands of plays.

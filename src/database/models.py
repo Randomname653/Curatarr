@@ -986,6 +986,7 @@ class LibraryItem(Base):
     first_seen_at   = Column(DateTime, default=datetime.utcnow)
     last_seen_at    = Column(DateTime, default=datetime.utcnow)
     gone_at         = Column(DateTime, nullable=True)       # a complete walk no longer listed it
+    added_from      = Column(String(8), nullable=True)      # "arr": added_at is the first arr import
 
 
 class LibraryEvent(Base):
@@ -1000,7 +1001,12 @@ class LibraryEvent(Base):
     Curatarr or straight in the arrs alike), with its last size.
     kind ``returned``: a gone title is listed again.
     kind ``grew`` / ``shrunk``: a listed title's size moved by more than its
-    new arrivals explain — an upgraded file, a deleted season."""
+    new arrivals explain — an upgraded file, a deleted season.
+    ``source="arr"``: arrivals and upgrades read from the Radarr / Sonarr
+    history, one row per history record (``bucket`` = its ref); for the titles
+    an arr covers they replace the Plex walk's addedAt arrivals (services/
+    arr_ledger). Neutral kinds ``replaced`` / ``replaced_used`` / ``upgrade``
+    count neither in nor out."""
     __tablename__ = "library_events"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
@@ -1012,6 +1018,11 @@ class LibraryEvent(Base):
     title           = Column(String(512), nullable=True)
     size_mb         = Column(Float, default=0.0)
     source          = Column(String(16), default="plex")
+    # source "arr" (services/arr_ledger): the movie or episode a history
+    # record is about (an upgrade pairs its import with the file it replaced)
+    # and when the row was written.
+    entity          = Column(String(48), nullable=True, index=True)
+    recorded_at     = Column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("plex_rating_key", "kind", "bucket", name="uq_library_event"),

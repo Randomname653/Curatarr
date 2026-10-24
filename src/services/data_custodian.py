@@ -408,6 +408,14 @@ async def _run_wrapup_pregen(deep: bool = False, task=None) -> bool:
     return await pregenerate_all(task=task)
 
 
+async def _run_arr_ledger(deep: bool = False, task=None) -> bool:
+    """The ledger's arrivals and upgrades from the Radarr / Sonarr history
+    (services/arr_ledger). No model; False while the history is still being
+    read, so every tick advances it."""
+    from src.services.arr_ledger import run_arr_ledger
+    return await run_arr_ledger(task=task)
+
+
 async def _run_taste_snapshots(deep: bool = False, task=None) -> bool:
     """Each month's taste as a stored mean of its item vectors
     (services/taste_snapshots). Chroma reads, no model."""
@@ -824,6 +832,10 @@ def _registry() -> list[Task]:
         # and month, back-filled from the watch history, the running month
         # rewritten daily. Chroma reads, no model.
         Task("taste_snapshots", "Taste snapshots", 24.0, _run_taste_snapshots, takes_task=True),
+        # GB in for the wrap-up's balance: Plex's addedAt moves with every
+        # replaced file and re-added library, the arrs' history does not.
+        Task("arr_ledger", "Library arrivals from the arr history", 6.0, _run_arr_ledger,
+             takes_task=True),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
