@@ -5,9 +5,8 @@
 // the version and opens how to install it. The server asks GitHub at most
 // every 6 h; this only re-reads the stored answer once an hour.
 import { api } from './api.js';
-import { _errMsg, act, esc, openModal, toast } from './ui.js';
+import { act, esc, openModal } from './ui.js';
 import { state } from './state.js';
-import { loadUnreadMessages } from './notifications.js';
 
 const REFRESH_MS = 60 * 60_000;
 let _last = null;
@@ -25,20 +24,6 @@ export async function loadVersion() {
   const btn = document.getElementById('sb-update');
   if (btn) btn.hidden = !(v.update && v.update.update_available);
   if (!state._versionTimer) state._versionTimer = setInterval(loadVersion, REFRESH_MS);
-}
-
-// The bell's "Update the PC" (services/notifications.py): the gaming PC's
-// agent fast-forwards its checkout to main and restarts itself.
-export async function updateGamingPc() {
-  toast('Asking the gaming PC to update…', 'info');
-  try {
-    const r = await api('/api/hosts/pc/update', 'POST');
-    toast(r.updated ? `The gaming PC updated to ${String(r.to || '').slice(0, 7)} and restarts its agent.`
-                    : 'The gaming PC is already up to date.', 'success');
-  } catch (e) {
-    toast(`The gaming PC did not update — ${_errMsg(e)}`, 'danger', {ms: 9000});
-  }
-  loadUnreadMessages();
 }
 
 export function showUpdateInfo() {

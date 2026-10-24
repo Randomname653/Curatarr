@@ -178,30 +178,39 @@ Apps → Custom App → Install via YAML.
   default. Set `OLLAMA_HOST=0.0.0.0:11434` for it, and allow port 11434 in the
   firewall for the server's address only: Ollama has no login of its own.
 - **Game detection and the GPU checks** see the machine Curatarr runs on,
-  unless the gaming PC reports itself:
+  unless a node reports itself. A node is a second machine that lends its
+  card (a gaming PC, a workstation):
   - **Set up the agent.** Set the same `PC_AGENT_TOKEN` (16+ characters) in
-    both `.env` files. On the PC, also set `PC_AGENT_NOTIFY_URL` to this
-    Curatarr's LAN address. On the NAS, set `PC_AGENT_URL=http://<pc>:11435`.
-  - **Firewall:** allow port 11435 on the PC for the NAS only.
-  - **What it does:** the PC's tray starts an agent that reports its programs
-    and GPU, and the NAS polls it every 5 s. A game on the PC then evicts the
-    models there as before.
-  - **When the PC goes away:** a PC that is shutting down says so at once. A
-    PC that stops answering for two polls counts as gone. Either way, nothing
-    is sent to it any more.
+    both `.env` files. On the node, also set `PC_AGENT_NOTIFY_URL` to this
+    Curatarr's LAN address, and optionally `PC_AGENT_NAME` (default: its
+    computer name). On the server, set `PC_AGENT_URL=http://<node>:11435`.
+  - **Firewall:** allow port 11435 on the node for the server only.
+  - **What it does:** the node's tray starts an agent that reports its
+    programs, its GPU and each program's share of the 3D engine. The server
+    polls it every 5 s. A game on the node takes it out of the routing and
+    evicts the models there.
+  - **When the node goes away:** a node that is shutting down says so at
+    once. One that stops answering for two polls counts as gone. Either way,
+    nothing is sent to it any more.
+  - **Settings → Maintenance → Compute nodes** shows the node's state and
+    update status, and renames it.
 - **Two machines.** With the agent set up, `OLLAMA_PC_ENDPOINT` makes the
-  PC's card a second host:
-  - **While the PC is on and nobody plays:** chat, background curator work
-    and enrichment run there, with the PC's own profile (`PC_LLM_PROFILE`,
-    default large).
-  - **Otherwise:** they run on `OLLAMA_ENDPOINT`, typically the NAS with
-    `LLM_PROFILE=small`.
-  - **Deletion runs wait for the PC.** Their verdicts never come from the
-    small model. The existing proposals stay, and approving or rejecting them
-    needs no model.
+  node's card a second host. Each card has its own queue, so both work at
+  once:
+  - **While the node is free:** chat, background curator work and the
+    deletion run use it, with its own profile (`PC_LLM_PROFILE`, default
+    large).
+  - **Enrichment stays on `OLLAMA_ENDPOINT`** so that card keeps working too
+    (`ENRICH_ON_PC=true` moves it to the free node).
+  - **Otherwise:** everything runs on `OLLAMA_ENDPOINT`, typically the NAS
+    with `LLM_PROFILE=small`.
+  - **Deletion runs wait for the node.** Their verdicts never come from the
+    small model. "Run analysis" while the node is busy is queued and starts
+    by itself once it is free; the existing proposals stay meanwhile, and
+    approving or rejecting them needs no model.
   - **Embeddings always stay on `OLLAMA_ENDPOINT`.** Every vector comes from
     one host.
-  - **Without the agent the PC is never used,** because nobody could say
+  - **Without the agent the node is never used,** because nobody could say
     that it is on or that nobody is playing.
   - **Build the bakes on each machine.** The names are the same on both;
     each is built from a base that fits its card:

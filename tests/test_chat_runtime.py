@@ -719,7 +719,7 @@ def test_the_pc_leaving_before_the_first_word_retries_on_the_main_host():
             reqs = [e for e in rig.events if isinstance(e, tuple) and e[0] == "request"]
             assert [r[1] for r in reqs] == ["http://pc:11434/api/chat", "http://nas:30068/api/chat"], reqs
             assert reqs[1][2] == 8192, "the retry carries the NAS's window"
-            assert any("answering on the NAS" in f for f in frames), frames
+            assert any("answering on this server" in f for f in frames), frames
             assert _tokens(frames) == "Hello there"
             assert rig.rows()[-1] == ("assistant", "Hello there"), "the retried reply is saved"
     finally:

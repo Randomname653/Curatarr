@@ -750,16 +750,26 @@ async def job_arr_sync():
                     # audit-trail, and is silently ignored by every status
                     # filter elsewhere in the codebase (all look for
                     # ``pending`` / ``limbo`` / ``rejected`` / ``deleted``).
+                    # A category the run stopped in (the node got busy) replaces
+                    # only the titles it proposed again; one judged to the end
+                    # replaces all of its stored proposals (same rule as the
+                    # manual Analyze, recommendations_engine.run_judged_everything).
+                    from src.services.recommendations_engine import run_judged_everything
+                    whole = or_(
+                        DeletionProposal.category == cat,
+                        and_(
+                            DeletionProposal.category.is_(None),
+                            DeletionProposal.service == svc,
+                        ),
+                    )
+                    mine = (whole if run_judged_everything(cat) else and_(
+                        DeletionProposal.category == cat,
+                        DeletionProposal.media_id.in_(
+                            [str(p.get("arr_id", "")) for p in cat_proposals])))
                     db.query(DeletionProposal).filter(
                         DeletionProposal.user_id == user_id,
                         DeletionProposal.status == "pending",
-                        or_(
-                            DeletionProposal.category == cat,
-                            and_(
-                                DeletionProposal.category.is_(None),
-                                DeletionProposal.service == svc,
-                            ),
-                        ),
+                        mine,
                     ).update(
                         {"status": "superseded", "resolved_at": datetime.utcnow()},
                         synchronize_session=False,

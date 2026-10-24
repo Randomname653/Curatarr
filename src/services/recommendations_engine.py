@@ -257,7 +257,7 @@ SIZE_PTS_CAP = 25.0
 # titles. Learned keep-considerations are scored for the same JUDGE_CAP
 # slice — they used to stop at 30, so ranks 31-60 were judged without them.
 TARGET_CUTS, JUDGE_CAP = 10, 60
-# Split install (NAS + gaming PC): a run happens only while the PC is free,
+# Split install (server + node): a run happens only while the PC is free,
 # so it builds a RESERVE - this many times deeper - that lasts while the PC
 # is off. Stored verdicts (services/verdict_cache) cost no model call and do
 # not count against the cap, up to REUSE_FACTOR x the cap per run.
@@ -520,6 +520,17 @@ def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
     return run
 
 
+def run_judged_everything(category: str) -> bool:
+    """Whether the last run of ``category`` went through to its end: only
+    then may it replace the category's stored proposals wholesale. A run
+    that waited for its node or stopped early judged a part (or nothing),
+    and the proposals it did not reach stay (2026-10-23: a game started
+    mid-run, three categories were deferred - and "Run analysis" for all of
+    them replaced every stored proposal with the one category that ran)."""
+    run = DELETION_RUN_SUMMARY.get(category)
+    return bool(run) and not run.get("stopped")
+
+
 def deletion_run_summary(category: str | None = None) -> dict | None:
     """The last run for one category, or all categories summed ("All" tab)."""
     if category:
@@ -551,6 +562,14 @@ def _judge_lane() -> tuple:
     A failed reading counts as free, like the lane itself does: detection
     trouble must not silently stop every deletion run."""
     try:
+        # A split install judges on the node: is_game_running() reads THIS
+        # machine there, so a game started on the node mid-run went unseen
+        # until its calls failed as "outages" (2026-10-23).
+        from src.services.ollama_hosts import judge_ready, split
+        if split() and not judge_ready():
+            from src.services.pc_host import node_name, status
+            why = status().get("busy_reason") or status().get("reason") or "busy or away"
+            return False, f"{node_name(cap=True)} is not free ({why})"
         from src.services.process_monitor import is_game_running
         if not is_game_running():
             return True, ""
@@ -2451,11 +2470,15 @@ async def generate_deletion_proposals(
     try:
         judge_host = host_for("judge")
     except PcUnavailable as e:
-        # Split install: deletion verdicts wait for the gaming PC, never
+        # Split install: deletion verdicts wait for the node, never
         # the NAS's small model. The callers check judge_ready() first;
         # this catches a PC that left in between. Nothing is written.
         logger.info("[deletions] %s: %s - run deferred", category, e)
-        _msg(f"{category}: waiting for the gaming PC")
+        from src.services.pc_host import node_name
+        _msg(f"{category}: waiting for {node_name()}")
+        # Recorded as a stopped run: its stored proposals must stay (the
+        # callers supersede only what a run actually judged).
+        _record_deletion_run(category, stopped=f"waiting for {node_name()}")
         return []
     pitch_model = await resolve_pitcher_model(judge_host.url)
     from src.services import verdict_cache

@@ -25,7 +25,8 @@ import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
-import { showUpdateInfo, updateGamingPc } from './version.js';
+import { showUpdateInfo } from './version.js';
+import { loadNodes, saveNodeName, updateNode } from './nodes.js';
 import { answerGameQuestion } from './game.js';
 
 export function init() {
@@ -170,7 +171,9 @@ const actions = {
   loadDeletions,
   loadDepsStatus,
   loadModelUpdates,
+  loadNodes,
   openModelUpdates,
+  saveNodeName,
   setHapticLevel,
   startModelCompare,
   rerunModelCompare,
@@ -306,7 +309,7 @@ const actions = {
   toggleUser,
   toggleWhy,
   topbarSearch,
-  updateGamingPc,
+  updateNode,
   updateReclassifyCount,
   useStarter,
   wishArtist,

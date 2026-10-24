@@ -108,7 +108,7 @@ const SYS_ACTIONS = {
   model_updates: () => act('openModelUpdates'),
   game_yes: a => act('answerGameQuestion', a.arg, true),
   game_no: a => act('answerGameQuestion', a.arg, false),
-  pc_update: () => act('updateGamingPc'),
+  pc_update: () => act('updateNode'),
 };
 
 // Bell → chat: review a learned principle WITH the curator. The backend gets

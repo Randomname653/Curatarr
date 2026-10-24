@@ -3657,7 +3657,7 @@ FORMATTING RULES:
                 # Timeout raised from 120 s → 600 s: with a partial-CPU fallback
                 # the response can take 5-10 minutes. We'd rather wait it out
                 # than 504 the user mid-stream when their model has spilled.
-                # One retry on the main host when the gaming PC goes away
+                # One retry on the main host when the node goes away
                 # (shutdown, power, a game) BEFORE the reply has a word in it:
                 # services/pc_guard cuts the call off and raises PcLost. Once
                 # tokens went out, the turn ends with a note instead - a reply
@@ -3764,9 +3764,11 @@ FORMATTING RULES:
                         _fallback = host_for("chat")
                         if full_response or _attempt > 1 or _fallback.url == _url:
                             raise
-                        logger.info("[chat] the gaming PC went away before the reply "
-                                    "started - answering on %s", _fallback.url)
-                        yield f"data: {json.dumps({'status': 'The gaming PC went away - answering on the NAS…'})}\n\n"
+                        from src.services.pc_host import node_name as _node
+                        logger.info("[chat] %s went away before the reply "
+                                    "started - answering on %s", _node(), _fallback.url)
+                        _gone = f"{_node(cap=True)} went away - answering on this server…"
+                        yield f"data: {json.dumps({'status': _gone})}\n\n"
                         last_emit = loop.time()
                         from src.services.prompt_budget import budget_for as _bf, fit_messages as _fm
                         _host, _url = _fallback, _fallback.url
@@ -3775,10 +3777,11 @@ FORMATTING RULES:
 
             except PcLost:
                 # Mid-reply, or a second loss: the turn is not saved.
-                logger.info("[chat] the gaming PC went away mid-reply (%d chars)",
+                from src.services.pc_host import node_name as _node
+                logger.info("[chat] %s went away mid-reply (%d chars)", _node(),
                             len(full_response))
-                error_text = ("The gaming PC went away in the middle of this reply. "
-                              "Send it again - Curatarr answers on the NAS now.")
+                error_text = (f"{_node(cap=True)} went away in the middle of this reply. "
+                              "Send it again - Curatarr answers on this server now.")
 
             except httpx.ConnectError:
                 error_text = (f"Ollama not reachable at {ollama_url}. Make sure Ollama is "

@@ -274,7 +274,7 @@ check("...the agent-only restart tells the NAS first (goodbye)",
 notif_js = (ROOT / "frontend/js/notifications.js").read_text(encoding="utf-8")
 app_js = (ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
 check("the bell's button is a fixed handler, registered",
-      "pc_update: () => act('updateGamingPc')" in notif_js and "  updateGamingPc,\n" in app_js)
+      "pc_update: () => act('updateNode')" in notif_js and "  updateNode,\n" in app_js)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

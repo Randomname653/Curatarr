@@ -7,6 +7,7 @@ Category-specific metadata enrichment with progress tracking.
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -100,11 +101,11 @@ def custodian_sprint(
     """Keep working: until now + ``hours`` the custodian looks for due work
     every two minutes with the deep budgets and keeps the PC from
     idle-sleeping; 0 stops. It also ends by itself once nothing is left."""
-    from src.services.data_custodian import custodian_sprint_tick, set_sprint
+    from src.services.data_custodian import custodian_sprint_tick, set_sprint, sprint_status
     until = set_sprint(hours)
     if until:
         background_tasks.add_task(custodian_sprint_tick)
-    return {"until": until.isoformat() if until else None}
+    return {"until": until.isoformat() if until else None, "awake": sprint_status()["awake"]}
 
 
 @router.get("/status")
@@ -241,6 +242,21 @@ def _history_dedupe_key(cat: str, series_title, title) -> Optional[str]:
     if not title:
         return None
     return f"movie:{title.lower().strip()}"
+
+
+# A music "artist" from Plex's track tags that is really a credit line
+# ("A & B", "A feat. B", "A x B", "A vs. B", "A, B", "A presents B") or a
+# stray tag with no letters ("00", ".dev"). Only consulted AFTER the full
+# name missed: "Simon & Garfunkel" is found as itself first.
+_CREDIT_SEP = re.compile(r"\s(?:&|\+|x|vs\.?|feat\.?|ft\.?|featuring|pres\.?|presents|and|with)\s|,\s|\s/\s",
+                         re.IGNORECASE)
+
+
+def _looks_like_credit(name: str) -> bool:
+    s = (name or "").strip()
+    if not any(ch.isalpha() for ch in s) or s.startswith("."):
+        return True
+    return bool(_CREDIT_SEP.search(s))
 
 
 def _collect_history_items(user_id: int, categories: list) -> tuple:
@@ -3348,12 +3364,20 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     sentinel = _build_not_found_sentinel(canonical, pcat, raw)
                     counted = await _write_enrichment_db(
                         pitem, sentinel, pcat, fresh_attempt=True)
-                    if counted:
+                    # A collaboration credit or a stray tag nobody knows is
+                    # expected, not an outage: it neither counts toward the
+                    # abort ratio nor gets its attempt refunded, so the normal
+                    # backoff applies. Before, ~46 of every 50 music items
+                    # were such credits, every tick aborted music as
+                    # "upstream degraded", refunded them, and tried the same
+                    # 50 again (2026-10-23 night).
+                    credit = pcat == "music" and _looks_like_credit(canonical)
+                    if counted and not credit:
                         _attempted_keys[pcat].add(pitem["plex_rating_key"])
                     producer_not_found += 1
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
-                    _rolling[pcat].append("not_found")
+                    _rolling[pcat].append("credit" if credit else "not_found")
 
                     if len(_rolling[pcat]) >= _RATIO_WINDOW:
                         nf = sum(1 for x in _rolling[pcat] if x == "not_found")

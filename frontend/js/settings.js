@@ -8,6 +8,7 @@ import { loadLibraryConfig } from './libraries.js';
 import { showView } from './nav.js';
 import { state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
+import { loadNodes } from './nodes.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, 'Re-attributing…');
@@ -108,6 +109,7 @@ export function openSettingsPane(name, btn) {
   } else if (name === 'users') {
     loadUsers();
   } else if (name === 'maintenance') {
+    loadNodes();
     loadDepsStatus();
     loadModelUpdates();
   }

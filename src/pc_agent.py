@@ -10,6 +10,7 @@ agent runs on the PC (started by the tray) and reports the raw readings:
                         "gpu": [used_mb, total_mb, util] | "missing" | "timeout" | "error",
                         "gpu_procs": [{"name", "pct"}],   # 3D-engine share per program
                         "build": {"head", "latest", "behind", "can_update", "reason"} | null,
+                        "node": {"name"},                 # PC_AGENT_NAME, else the computer name
                         "shutting_down": bool}
     POST /update  ->  fast-forward this checkout to origin/main (src/self_update)
                       and restart the tray: {"ok", "updated", "from", "to", "reason"}.
@@ -38,6 +39,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import socket
 import subprocess
 import threading
 import time
@@ -110,7 +112,7 @@ class Agent:
                  post: Optional[Callable[[str, dict, str], None]] = None,
                  gpu_procs: Optional[Callable[[], list]] = None,
                  updates=None, apply_update: Optional[Callable[[], dict]] = None,
-                 on_updated: Optional[Callable[[dict], None]] = None):
+                 on_updated: Optional[Callable[[dict], None]] = None, name: str = ""):
         if not token or len(token) < 16:
             raise ValueError("PC_AGENT_TOKEN must be set (16+ characters)")
         self.token = token
@@ -126,6 +128,8 @@ class Agent:
         self._apply_update = apply_update
         self._on_updated = on_updated
         self._update_lock = threading.Lock()
+        # The node's name as it reports it; the server may rename it.
+        self.name = (name or "").strip()[:40] or _computer_name()
         self.notify_url = (notify_url or "").rstrip("/")
         self._post = post or _post_json
         self.shutting_down = False
@@ -158,7 +162,7 @@ class Agent:
                 logger.warning("[agent] update state unreadable: %s", e)
         return {"v": AGENT_VERSION, "time": time.time(), "processes": procs,
                 "gpu": gpu, "gpu_procs": gpu_procs, "build": build,
-                "shutting_down": self.shutting_down}
+                "node": {"name": self.name}, "shutting_down": self.shutting_down}
 
     def update(self) -> "tuple[int, dict]":
         """(HTTP status, body) for POST /update. One at a time; a restart
@@ -247,6 +251,13 @@ class Agent:
             self.server = None
 
 
+def _computer_name() -> str:
+    try:
+        return (socket.gethostname() or "").strip()[:40]
+    except OSError:
+        return ""
+
+
 def _post_json(url: str, body: dict, token: str) -> None:
     import urllib.request
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
@@ -270,7 +281,8 @@ def start_from_settings(settings, on_updated: Optional[Callable[[dict], None]] =
         agent = Agent(token.strip(), notify_url=getattr(settings, "PC_AGENT_NOTIFY_URL", "") or "",
                       updates=self_update.Checker(),
                       apply_update=self_update.apply if on_updated else None,
-                      on_updated=on_updated)
+                      on_updated=on_updated,
+                      name=getattr(settings, "PC_AGENT_NAME", "") or "")
         agent.serve(port=int(getattr(settings, "PC_AGENT_PORT", DEFAULT_PORT) or DEFAULT_PORT))
         return agent
     except Exception as e:  # noqa: BLE001 - a busy port or a short token must not stop the tray
