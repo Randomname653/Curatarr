@@ -68,6 +68,7 @@ def fake_vector(entry, profile):
     return VEC.get(entry["title"])
 
 
+real_item_vector = te._chroma_item_vector
 te._chroma_item_vector = fake_vector
 
 with fake_session() as db:
@@ -131,6 +132,42 @@ from src.services.data_custodian import _registry  # noqa: E402
 
 job = next((t for t in _registry() if t.job_id == "taste_snapshots"), None)
 check("the custodian builds them daily, no model", job is not None and not job.needs_llm)
+
+# ── a series is found by its title (seen live) ──────────────────────────────
+# The index files a show under the show's Plex key; a history row has the
+# episode's. On the real data most anime months found no vector by id.
+
+
+class FakeChroma:
+    docs = {"382475": ({"title": "Cyberpunk: Edgerunners", "media_type": "anime", "year": 2022}, [0, 3, 4]),
+            "sonarr:2739": ({"title": "Cyberpunk: Edgerunners", "media_type": "anime", "year": 2022}, [9, 9, 9]),
+            "700": ({"title": "Berserk", "media_type": "anime", "year": 1997}, [1, 0, 0]),
+            "701": ({"title": "Berserk", "media_type": "anime", "year": 2016}, [0, 1, 0])}
+
+    def get_by_id(self, doc_id):
+        return None
+
+    def get_by_title(self, title, media_type):
+        return [{"id": k, "metadata": m, "embedding": e} for k, (m, e) in self.docs.items()
+                if m["title"] == title and m["media_type"] == media_type]
+
+
+import src.vector_store.chromadb_wrapper as cw  # noqa: E402
+
+saved_get = cw.get_chroma_db
+cw.get_chroma_db = lambda: FakeChroma()
+try:
+    ep = {"plex_item_id": "382478", "title": "Let You Down", "series_title": "Cyberpunk: Edgerunners",
+          "media_type": "anime"}
+    check("an episode row finds its show by title, the library doc before the arr-only one",
+          real_item_vector(ep, None) == [0.0, 0.6, 0.8])
+    b = {"plex_item_id": "9", "title": "Berserk", "series_title": "Berserk", "media_type": "anime"}
+    check("two works of one title: none without a year, the right one with the profile's",
+          real_item_vector(b, None) is None and real_item_vector(b, {"year": 2016}) == [0.0, 1.0, 0.0])
+    check("a film is never matched by title", real_item_vector(
+        {"plex_item_id": "1", "title": "Berserk", "media_type": "movie"}, None) is None)
+finally:
+    cw.get_chroma_db = saved_get
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

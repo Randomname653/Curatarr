@@ -107,6 +107,10 @@ history = [
     {"ratingKey": "650", "viewedAt": _ts(T0 - timedelta(days=3)), "type": "episode",
      "title": "Pilot", "grandparentTitle": "Gone Show", "grandparentKey": "/library/metadata/649",
      "parentIndex": 1, "index": 1, "librarySectionID": 2, "accountID": 1},
+    # Plex answers "title": null for a play whose item is gone (seen live).
+    {"ratingKey": "660", "viewedAt": _ts(T0 - timedelta(days=5)), "type": "episode",
+     "title": None, "grandparentTitle": "Gone Show", "grandparentKey": "/library/metadata/649",
+     "parentIndex": 1, "index": 2, "librarySectionID": 2, "accountID": 1},
     film_event("777", _ts(T0 - timedelta(days=4)), section=9),
     dict(film_event("500", _ts(T0 - timedelta(days=6))), accountID=2002),
 ]
@@ -208,6 +212,8 @@ check("the earlier rewatch borrows duration and genres from the listing",
       films[0][2] is True and films[0][3] == 6_000_000 and films[0][4] == "Drama")
 check("an episode only the history knows arrives as the owner's play",
       [r[0] for r in rows if r[0] == "650"] == ["650"])
+check("a play whose item is gone (title null) is kept, and does not sink the sync",
+      [r[0] for r in rows if r[0] == "660"] == ["660"])
 check("a library Curatarr does not follow stays out", "777" not in [r[0] for r in rows])
 check("another account's play is not the owner's",
       _ts(T0 - timedelta(days=6)) not in [r[1] for r in films])

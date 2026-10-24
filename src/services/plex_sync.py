@@ -920,7 +920,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                         _mi = _MI(
                             plex_rating_key=identity_key,
                             media_type=media_type,
-                            title=series_title or entry.get("title", ""),
+                            title=series_title or entry.get("title") or "",
                             year=entry.get("year"),
                         )
                         db.add(_mi)
@@ -936,7 +936,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     user_id=user.id,
                     plex_user_id=entry_plex_account or str(user.plex_user_id),
                     plex_item_id=rating_key,
-                    title=entry.get("title", ""),
+                    title=entry.get("title") or "",
                     media_type=media_type,
                     series_title=series_title,
                     season=int(season) if season else None,
@@ -1278,7 +1278,8 @@ def _member_entry(ev: dict, lib_configs: dict, account_id: int) -> Optional[dict
         "ratingKey": str(rk),
         "lastViewedAt": int(vts),
         "viewedAt": int(vts),
-        "title": ev.get("title", ""),
+        # Plex sends "title": null for a play whose item is gone.
+        "title": ev.get("title") or "",
         "grandparentTitle": ev.get("grandparentTitle"),
         "parentTitle": ev.get("parentTitle"),
         "parentIndex": ev.get("parentIndex"),
