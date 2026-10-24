@@ -41,7 +41,11 @@ def _watched_enough(e: dict) -> bool:
     dur = e.get("duration_ms") or 0
     off = e.get("view_offset_ms") or 0
     if dur <= 0:
-        return True                       # unknown length: trust the row
+        # Unknown length: trust the row — and the row says not finished. It
+        # used to answer True here, so an unfinished play of unknown length
+        # (a short Spotify play, an import without durations) counted as
+        # watched and inflated every completion rate built on this.
+        return False
     return off / dur >= WATCHED_ENOUGH
 
 

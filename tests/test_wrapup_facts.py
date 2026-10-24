@@ -200,6 +200,39 @@ check("facts and story round-trip", row["facts"]["facts_hash"] == f["facts_hash"
       and row["story"]["archetype_title"] == "X" and row["story_hash"] == f["facts_hash"])
 check("one row per (user, scope, period)", ws.load(1, "movie", "30d") is None)
 
+print("\nwatch-data generation")
+check("facts carry the generation of the watch data they were built on",
+      f.get("facts_version") == wf.FACTS_VERSION)
+from src.services.viewing_sessions import _watched_enough  # noqa: E402
+check("an unfinished play of unknown length is not watched",
+      not _watched_enough({"completed": False, "duration_ms": None, "view_offset_ms": 60_000}))
+check("a finished play of unknown length is", _watched_enough({"completed": True}))
+import asyncio  # noqa: E402
+import types  # noqa: E402
+import src.routers.wrapup as wr  # noqa: E402
+
+ws.save_facts(1, "all", "year:2025", {"facts_version": 1, "scope": "all", "facts_hash": "old"})
+_built = []
+_real_build, _real_posters = wf.build_wrapup_facts, wr.attach_posters
+wf.build_wrapup_facts = lambda *a, **k: _built.append(a) or {
+    "facts_version": wf.FACTS_VERSION, "scope": "all", "facts_hash": "new"}
+
+
+async def _no_posters(facts):
+    return None
+
+
+wr.attach_posters = _no_posters
+try:
+    _me = types.SimpleNamespace(id=1, is_admin=True)
+    thawed, _ = asyncio.run(wr.current_facts(_me, "all", "year:2025"))
+    again, _ = asyncio.run(wr.current_facts(_me, "all", "year:2025"))
+finally:
+    wf.build_wrapup_facts, wr.attach_posters = _real_build, _real_posters
+check("a closed year built on older watch data is rebuilt once",
+      thawed["facts_hash"] == "new" and ws.load(1, "all", "year:2025")["facts"]["facts_hash"] == "new")
+check("...and frozen again after that", again["facts_hash"] == "new" and len(_built) == 1)
+
 print("\nwiring")
 main = (ROOT / "src/main.py").read_text(encoding="utf-8")
 check("wrapup router mounted at /api/wrapup", 'prefix="/api/wrapup"' in main)

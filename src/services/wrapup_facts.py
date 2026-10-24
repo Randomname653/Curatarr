@@ -52,6 +52,10 @@ _COMEBACK_GAP_DAYS = 365
 # plays (Letterboxd asks for ten films, PlayStation for ten hours).
 _ELIGIBLE_PLAYS = 5
 _ELIGIBLE_HOURS = 3
+# Bumped when the watch data underneath changes meaning: a closed year's
+# facts are frozen, except when they were built on an older generation.
+# 2: the owner's plays come from the Plex history (every play, real partials).
+FACTS_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -215,7 +219,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
             W.viewed_at < period.end, W.media_type.in_(types))
     local = func.datetime(W.viewed_at, _local_offset())
 
-    out: dict = {"scope": scope, "period": {
+    out: dict = {"facts_version": FACTS_VERSION, "scope": scope, "period": {
         "key": period.key, "label": period.label, "closed": period.closed,
         "start": period.start.isoformat(), "end": period.end.isoformat()}}
 

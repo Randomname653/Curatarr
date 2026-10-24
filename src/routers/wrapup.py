@@ -89,12 +89,14 @@ async def current_facts(user: User, scope: str, period: str) -> tuple:
     """(facts, stored row) — the stored facts while fresh, else recomputed,
     decorated with artwork and saved."""
     from src.database.runner import run_read, run_write
-    from src.services.wrapup_facts import build_wrapup_facts
+    from src.services.wrapup_facts import FACTS_VERSION, build_wrapup_facts
     from src.services.wrapup_store import load, save_facts
 
     p = _period(scope, period)
     row = await run_read(load, user.id, scope, period)
     facts = row and row.get("facts")
+    if facts and facts.get("facts_version") != FACTS_VERSION:
+        facts = None          # built on older watch data: a closed year thaws once
     if facts and (p.closed or (row.get("facts_at") and datetime.utcnow() - row["facts_at"] < _FRESH)):
         return facts, row
     facts = await run_read(build_wrapup_facts, user.id, scope, period,
