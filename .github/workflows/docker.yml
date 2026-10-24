@@ -43,6 +43,9 @@ jobs:
           test "$(docker exec curatarr id -u)" = "568"
           test "$(docker exec curatarr printenv CURATARR_ENV_FILE)" = "/app/data/.env"
           test "$(docker exec curatarr printenv CURATARR_BUILD_SHA)" = "$GITHUB_SHA"
+          # The users' own clocks (services/user_time) need the zone database
+          # in the image: without it every zone would fall back to UTC.
+          docker exec curatarr python -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin'); ZoneInfo('America/New_York')"
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/setup/status)
           echo "setup status: $code"; test "$code" = "200"
 
