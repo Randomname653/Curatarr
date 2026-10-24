@@ -254,6 +254,21 @@ check("a debate the summarizer could not answer stays pending for the next run",
       log_of("Unanswered").persuader_basis == "pending" and counts["unanswered"] == 1)
 check("the job reports the unanswered one", asyncio.run(do.run_debate_outcomes()) is False)
 
+# A backlog bigger than one batch (seen live: 40 labelled, 375 left, "done").
+answers.update({"Unanswered": False, "Backlog 0": False, "Backlog 1": False, "Backlog 2": False})
+for i in range(3):
+    pid = seed(f"Backlog {i}")
+    say(pid, ("user", "Really?"))
+    delete(pid)
+saved_batch = do._LABEL_BATCH
+do._LABEL_BATCH = 2
+try:
+    first = asyncio.run(do.run_debate_outcomes())
+    check("a full batch with more behind it is not done", first is False)
+    check("...and the next run finishes the backlog", asyncio.run(do.run_debate_outcomes()) is True)
+finally:
+    do._LABEL_BATCH = saved_batch
+
 labels = do.sample_labels(10, user_id=1)
 check("the owner's sample shows each llm label with their own words",
       any(x["title"] == "Transformers: The Last Knight" and x["persuader"] == "curator"

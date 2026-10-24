@@ -34,6 +34,7 @@ THREAD_PREFIX = "deletion_proposal:"
 # How far a resolution row may sit from its proposal's resolved_at and still
 # be the same decision (a chat keep writes both in one go; old rows drift).
 _LINK_WINDOW = timedelta(days=3)
+_LINK_BATCH = 2000
 _LABEL_BATCH = 40
 _TURN_CHARS = 400
 _MAX_TURNS = 16
@@ -117,7 +118,7 @@ def safe_fields_for(db, user_id: int, outcome: str, resolution_type: str,
 
 # ── rows from before the columns ────────────────────────────────────────────
 
-def link_old_rows(limit: int = 2000) -> int:
+def link_old_rows(limit: int = _LINK_BATCH) -> int:
     """Fill the structured columns of rows that have none yet (persuader_basis
     NULL): the proposal by user, title and outcome nearest the row's time.
     Blocking — call via ``run_write``. Returns the rows filled."""
@@ -211,11 +212,12 @@ async def _ask(title: str, turns: list) -> Optional[bool]:
         return None
 
 
-async def label_pending(limit: int = _LABEL_BATCH, task=None) -> dict:
+async def label_pending(limit: Optional[int] = None, task=None) -> dict:
     """Ask the summarizer about the debates the facts cannot decide. A thread
     with nothing left to read (chat wiped) moved nobody."""
     from src.database.runner import run_read, run_write
     from src.services.task_monitor import task_monitor
+    limit = limit or _LABEL_BATCH
     rows = await run_read(_pending, limit)
     counts = {"curator": 0, "none": 0, "unanswered": 0}
     for i, row in enumerate(rows):
@@ -235,16 +237,20 @@ async def label_pending(limit: int = _LABEL_BATCH, task=None) -> dict:
         counts[who] += 1
     if rows:
         logger.info("[debates] labelled %d debate(s): %s", len(rows), counts)
+    # A full batch may have more behind it: the job is not done yet.
+    counts["more"] = len(rows) >= limit and bool(await run_read(_pending, 1))
     return counts
 
 
 async def run_debate_outcomes(task=None) -> bool:
     """The custodian job: link rows from before the columns, then label the
-    debates still pending. True when nothing is left unanswered."""
+    debates still pending. True when nothing is left: on the real data the
+    first run labelled one batch of 40 and reported done with 375 pending,
+    so the backlog would have taken ten days of daily runs."""
     from src.database.runner import run_write
-    await run_write(link_old_rows)
+    linked = await run_write(link_old_rows)
     counts = await label_pending(task=task)
-    return counts["unanswered"] == 0
+    return counts["unanswered"] == 0 and not counts["more"] and linked < _LINK_BATCH
 
 
 def sample_labels(limit: int = 30, user_id: Optional[int] = None) -> list:
