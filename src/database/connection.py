@@ -335,6 +335,9 @@ def _migrate_columns() -> None:
         ("curator_resolution_log", "user_turns",      "INTEGER"),
         ("curator_resolution_log", "persuader",       "VARCHAR(8)"),
         ("curator_resolution_log", "persuader_basis", "VARCHAR(8)"),
+        # The user's own clock (2026-10-25): the IANA zone their browser
+        # reports, for night-owl hours and calendars (services/user_time).
+        ("users",                  "timezone",        "VARCHAR(64)"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model

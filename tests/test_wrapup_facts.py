@@ -57,7 +57,9 @@ def fake_session():
 
 wf.get_db_session = fake_session
 ws.get_db_session = fake_session
-wf._local_offset = lambda: "+0 minutes"       # the fixture is written in UTC
+import src.services.user_time as ut  # noqa: E402
+from datetime import timezone as _tz  # noqa: E402
+ut.server_zone = lambda: _tz.utc               # the fixture is written in UTC
 
 VERIFIED = {
     "Heat": {"year": 1995, "rating": 6.0, "votes": 5000, "runtime_min": 170},

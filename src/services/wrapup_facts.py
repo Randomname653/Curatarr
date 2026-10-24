@@ -55,7 +55,8 @@ _ELIGIBLE_HOURS = 3
 # Bumped when the watch data underneath changes meaning: a closed year's
 # facts are frozen, except when they were built on an older generation.
 # 2: the owner's plays come from the Plex history (every play, real partials).
-FACTS_VERSION = 2
+# 3: hours and days on the user's own clock, DST included (services/user_time).
+FACTS_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -132,12 +133,6 @@ def _estimated_sql(W):
 
 def _h(ms) -> float:
     return round((ms or 0) / 3_600_000, 1)
-
-
-def _local_offset() -> str:
-    """SQLite datetime() modifier from UTC rows to this machine's wall clock."""
-    from src.services.viewing_sessions import utc_offset
-    return f"{int(utc_offset().total_seconds() // 60):+d} minutes"
 
 
 # ── verified data (cache only) ──────────────────────────────────────────────
@@ -217,13 +212,19 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
     ms = played_ms_sql(W)
     base = (W.user_id == user_id, W.viewed_at >= period.start,
             W.viewed_at < period.end, W.media_type.in_(types))
-    local = func.datetime(W.viewed_at, _local_offset())
 
     out: dict = {"facts_version": FACTS_VERSION, "scope": scope, "period": {
         "key": period.key, "label": period.label, "closed": period.closed,
         "start": period.start.isoformat(), "end": period.end.isoformat()}}
 
     with get_db_session() as db:
+        # The user's own clock, with the offset in force at each play
+        # (services/user_time): night owl, peak hour, days and calendars.
+        from src.services.user_time import local_sql, user_zone
+        # Scanned from the first play, not from 1970 for "all time".
+        first = db.query(func.min(W.viewed_at)).filter(*base).scalar()
+        local = local_sql(W.viewed_at, user_zone(db, user_id),
+                          max(period.start, first or period.start), period.end)
         plays, total_ms, est_ms = db.query(
             func.count(), func.sum(ms), func.sum(_estimated_sql(W) * ms)).filter(*base).one()
         if not plays:

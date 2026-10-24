@@ -218,7 +218,9 @@ opens late November):
    - The owner checks the labels at `GET /api/stats/debate-labels`.
    - Not done: the durable `judge_verdicts` table and soft-deleting judge
      protections (later rows of the table).
-4. `User.timezone`. Tiny, and fixes the clock.
+4. `User.timezone`. Tiny, and fixes the clock. *Done: `services/user_time.py`. The
+   browser reports the zone, and each play is converted with its own date's
+   offset.*
 5. Credits and companies tables. Unlocks constellations, backfillable from
    the payloads the enricher already fetches.
 6. Music columns, Plex moods and styles. Partly ⏳, so start now even if the

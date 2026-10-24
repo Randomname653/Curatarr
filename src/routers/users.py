@@ -140,6 +140,29 @@ def get_me(user: User = Depends(get_current_user)):
     return UserResponse.from_orm(user)
 
 
+class TimezoneUpdate(BaseModel):
+    timezone: str
+
+
+@router.post("/me/timezone")
+def set_timezone(
+    body: TimezoneUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The IANA zone the user's browser reports: their hours and days in the
+    Wrap-Up run on it (services/user_time). An unknown name is refused, so a
+    typo never silently falls back to the server's clock."""
+    from src.services.user_time import valid_zone
+    name = valid_zone(body.timezone)
+    if not name:
+        raise HTTPException(status_code=400, detail=f"Unknown time zone: {body.timezone[:64]}")
+    row = db.get(User, user.id)
+    row.timezone = name
+    db.commit()
+    return {"timezone": name}
+
+
 @router.get("/me/notification-preferences")
 def get_notification_preferences(user: User = Depends(get_current_user)):
     """Return the catalogue of proactive triggers + this user's enabled state.

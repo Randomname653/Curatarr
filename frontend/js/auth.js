@@ -112,8 +112,20 @@ export async function copyPlexCode(btn) {
   }
 }
 
+// The user's own clock: the Wrap-Up's night-owl hours and calendars run on
+// the zone this browser reports (services/user_time). Sent when it differs
+// from the stored one; a failure only means the server's clock for now.
+function syncTimezone(u) {
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return; }
+  if (!tz || tz === u.timezone) return;
+  api('/api/users/me/timezone', 'POST', {timezone: tz})
+    .catch(e => console.warn('[tz] time zone not stored - the server clock stands in', tz, e));
+}
+
 export function setUser(u) {
   state.currentUser = u;
+  syncTimezone(u);
   document.getElementById('user-name').textContent = u.username || 'User';
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
   if (u.is_admin) {

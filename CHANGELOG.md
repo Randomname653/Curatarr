@@ -27,6 +27,25 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**The user's own clock, DST included.** Local time came from this machine's current offset,
+applied to every play. Three things went wrong with that:
+- plays from the other half of the year were an hour off across a DST change, enough to move a
+  23:30 play out of "night";
+- a container on UTC (the Docker default) put everyone's evening in UTC;
+- a household member in another zone was wrong all year.
+
+What changes:
+- **The user's zone:** the browser now reports its IANA zone (`POST /api/users/me/timezone`, sent
+  when it differs from the stored `users.timezone`; unknown names are refused).
+- **Wrap-Up:** hours, dayparts, days and calendars convert each play with the offset in force at
+  its own time. Inside the query this is a CASE over the zone's changes in the span
+  (`services/user_time.py`).
+- **Without a stored zone,** the machine's zone stands in: TZ, else /etc/timezone, else today's
+  offset. Sittings' dayparts use it too, now DST-correct.
+- **Rebuild:** closed-year wrap-ups are rebuilt once on the new clock (`FACTS_VERSION` 3).
+
+Tests: `tests/test_user_time.py`.
+
 **Debate outcomes: what the judge proposed, and who convinced whom.** The resolution log recorded
 that a deletion debate ended, but not what was at stake or who moved. A row had no link to its
 proposal, so the judge's score, the CUT / STAGNANT verdict and the GB could only be guessed back by
