@@ -144,9 +144,9 @@ check("no commit to compare: GitHub is not asked", gh.calls == [] and "error" in
 
 # ── staleness, summary, kick ────────────────────────────────────────────────
 now = time.time()
-check("a fresh answer is kept for 6 h", not uc.is_stale({"checked_at": now - 5 * 3600}, now)
-      and uc.is_stale({"checked_at": now - 6 * 3600 - 1}, now))
-check("an error is retried after 1 h", uc.is_stale({"checked_at": now - 3601, "error": "x"}, now)
+check("a fresh answer is kept for an hour", not uc.is_stale({"checked_at": now - 3000}, now)
+      and uc.is_stale({"checked_at": now - 3601}, now))
+check("an error is retried after 30 min", uc.is_stale({"checked_at": now - 1801, "error": "x"}, now)
       and not uc.is_stale({"checked_at": now - 600, "error": "x"}, now))
 check("never asked: stale", uc.is_stale({}, now))
 

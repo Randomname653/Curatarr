@@ -532,7 +532,7 @@ def system_notifications_route(user=Depends(get_current_user)):
 async def system_version(user=Depends(get_current_user)):
     """The build under the sidebar (services/build_info.py). Admins also get
     whether upstream has published a newer one (services/update_check.py):
-    the stored answer, with a background refresh when it is older than 6 h,
+    the stored answer, with a background refresh when it is older than 1 h,
     so this never waits on GitHub."""
     from src.services import build_info, update_check
     build = build_info.current()

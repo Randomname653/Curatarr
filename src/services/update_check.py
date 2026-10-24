@@ -26,8 +26,10 @@ logger = logging.getLogger(__name__)
 REPO = "Randomname653/Curatarr"
 API = "https://api.github.com"
 STATE_KEY = "update_check"
-CHECK_EVERY_S = 6 * 3600
-RETRY_AFTER_ERROR_S = 3600
+# Hourly: 1-2 requests of the anonymous 60 per hour and address, and a new
+# image takes ~10 min to build after a merge anyway (2026-10-24, was 6 h).
+CHECK_EVERY_S = 3600
+RETRY_AFTER_ERROR_S = 1800
 HOW = {
     "container": "Pull the new image, then redeploy: docker pull "
                  "ghcr.io/randomname653/curatarr:latest (TrueNAS shell) and edit + save the app, "

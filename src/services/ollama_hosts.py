@@ -52,6 +52,20 @@ class OllamaHost:
     profile: str             # "large" | "small": the judge's constitution, the window default
     num_ctx: int             # the curator window every curator call on this host pins
     gpu: dict = field(default_factory=dict)   # the curator's layer placement ({} = Ollama decides)
+    # Runner options EVERY call to this host carries, for every model on it
+    # ({"use_mmap": True} or {}). A runner option that differs between two
+    # calls reloads the model, so it is decided per host, here, once.
+    runner: dict = field(default_factory=dict)
+
+
+def _mmap(key: str) -> dict:
+    """{"use_mmap": bool} from the setting ``key``, or {} (Ollama decides).
+    Measured on the NAS 2026-10-24: Ollama loaded the 8B summariser without
+    mmap and kept a 4.5 GB copy in anonymous memory next to the one on the
+    card; with use_mmap the weights are file pages the kernel can drop."""
+    from src.config import settings
+    v = getattr(settings, key, None)
+    return {} if v is None else {"use_mmap": bool(v)}
 
 
 class PcUnavailable(RuntimeError):
@@ -82,7 +96,7 @@ def main_host() -> OllamaHost:
     from src.config import settings
     from src.services.llm_utils import CURATOR_NUM_CTX, curator_gpu, llm_profile
     return OllamaHost(url=settings.effective_ollama, profile=llm_profile(),
-                      num_ctx=CURATOR_NUM_CTX, gpu=curator_gpu())
+                      num_ctx=CURATOR_NUM_CTX, gpu=curator_gpu(), runner=_mmap("OLLAMA_USE_MMAP"))
 
 
 def pc_host() -> Optional[OllamaHost]:
@@ -104,7 +118,8 @@ def pc_host() -> Optional[OllamaHost]:
         n = int(getattr(settings, "PC_CURATOR_NUM_GPU", 99))
     except (TypeError, ValueError):
         n = 99
-    return OllamaHost(url=url, profile=profile, num_ctx=ctx, gpu={} if n < 0 else {"num_gpu": n})
+    return OllamaHost(url=url, profile=profile, num_ctx=ctx, gpu={} if n < 0 else {"num_gpu": n},
+                      runner=_mmap("PC_OLLAMA_USE_MMAP"))
 
 
 def split() -> bool:
@@ -144,6 +159,16 @@ def host_for(role: str) -> OllamaHost:
         from src.services.pc_host import node_name
         raise PcUnavailable(f"'{role}' waits for {node_name()} (off, busy or shutting down)")
     return main_host()
+
+
+def routed_host(role: str) -> Optional[OllamaHost]:
+    """host_for(role), or None where it cannot answer (a PC-only role while
+    the node is away, a half-configured install): for code that only builds
+    request options and must never fail over routing."""
+    try:
+        return host_for(role)
+    except Exception:  # noqa: BLE001 - PcUnavailable or no routing at all
+        return None
 
 
 def judge_ready() -> bool:

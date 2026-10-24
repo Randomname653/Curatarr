@@ -267,6 +267,13 @@ async def _residency(endpoint: str, model: str) -> dict:
     return out
 
 
+def _main():
+    """The host model updates manage and measure: this install's own Ollama
+    (OLLAMA_ENDPOINT), never the node a curator call may route to."""
+    from src.services.ollama_hosts import main_host
+    return main_host()
+
+
 async def _alone(endpoint: str, model: str) -> None:
     """Unload every resident model except ``model`` and hold bulk
     enrichment off, so what follows is measured on a quiet card."""
@@ -301,7 +308,7 @@ async def _speed(endpoint: str, model: str, probes: int = 3) -> dict:
         r = await _ollama(endpoint, "POST", "/api/chat", json={
             "model": model, "stream": False, "keep_alive": "5m",
             "messages": [{"role": "user", "content": prompt}],
-            **{k: v for k, v in curator_options(0.0, 160).items()}})
+            **{k: v for k, v in curator_options(0.0, 160, host=_main()).items()}})
         d = r.json() if r.status_code == 200 else {}
         ec, ed = d.get("eval_count"), d.get("eval_duration")
         pc, pd = d.get("prompt_eval_count"), d.get("prompt_eval_duration")
@@ -406,7 +413,7 @@ async def _run_side(endpoint: str, model: str, sample: list[dict], lang: str) ->
         r = await _ollama(endpoint, "POST", "/api/chat", json={
             "model": model, "stream": False, "keep_alive": "5m",
             "messages": [{"role": "system", "content": CURATOR_SYSTEM_PROMPT},
-                         {"role": "user", "content": q}], **curator_options(0.7, 400)})
+                         {"role": "user", "content": q}], **curator_options(0.7, 400, host=_main())})
         text = ((r.json().get("message") or {}).get("content") or "") if r.status_code == 200 else ""
         chats.append({"prompt": q, "text": text.strip(), "s": round(time.perf_counter() - t0, 1)})
     return {"titles": rows, "chat": chats, **(await measure(endpoint, model))}

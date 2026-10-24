@@ -314,6 +314,14 @@ class Settings(BaseSettings):
     # Enrichment (the summariser) stays on OLLAMA_ENDPOINT's card so both
     # cards work at once; true sends it to the PC while that one is free.
     ENRICH_ON_PC: bool = False
+    # use_mmap on every call to OLLAMA_ENDPOINT / to the node's Ollama
+    # (ollama_hosts.OllamaHost.runner). Unset: Ollama decides. Ollama on
+    # Linux loaded the summariser without mmap and kept a 4.5 GB copy in RAM
+    # next to the one on the card (measured on the NAS, 2026-10-24); true
+    # makes those weights file pages the kernel can drop. Leave it unset for
+    # Ollama on Windows with CUDA, where Ollama turns mmap off on purpose.
+    OLLAMA_USE_MMAP: Optional[bool] = None
+    PC_OLLAMA_USE_MMAP: Optional[bool] = None
     PC_LLM_PROFILE: str = "large"
     PC_CURATOR_NUM_CTX: int = 0
     PC_CURATOR_NUM_GPU: int = 99
@@ -327,7 +335,7 @@ class Settings(BaseSettings):
     PC_BASE_CURATOR_MODEL: str = "gemma4:31b"
     PC_BASE_SUMMARIZER_MODEL: str = "granite4.1:8b"
     PC_BASE_PITCHER_MODEL: str = "qwen3.8:27b"
-    # Ask GitHub (anonymously, every 6 h) whether a newer build is published;
+    # Ask GitHub (anonymously, hourly) whether a newer build is published;
     # admins then see "Update available" under the sidebar (services/update_check.py).
     UPDATE_CHECK: bool = True
     # Rebuild the facet HNSW index when a quarter or more of it is dead slots
