@@ -520,6 +520,17 @@ def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
     return run
 
 
+def run_judged_everything(category: str) -> bool:
+    """Whether the last run of ``category`` went through to its end: only
+    then may it replace the category's stored proposals wholesale. A run
+    that waited for its node or stopped early judged a part (or nothing),
+    and the proposals it did not reach stay (2026-10-23: a game started
+    mid-run, three categories were deferred - and "Run analysis" for all of
+    them replaced every stored proposal with the one category that ran)."""
+    run = DELETION_RUN_SUMMARY.get(category)
+    return bool(run) and not run.get("stopped")
+
+
 def deletion_run_summary(category: str | None = None) -> dict | None:
     """The last run for one category, or all categories summed ("All" tab)."""
     if category:
@@ -2465,6 +2476,9 @@ async def generate_deletion_proposals(
         logger.info("[deletions] %s: %s - run deferred", category, e)
         from src.services.pc_host import node_name
         _msg(f"{category}: waiting for {node_name()}")
+        # Recorded as a stopped run: its stored proposals must stay (the
+        # callers supersede only what a run actually judged).
+        _record_deletion_run(category, stopped=f"waiting for {node_name()}")
         return []
     pitch_model = await resolve_pitcher_model(judge_host.url)
     from src.services import verdict_cache

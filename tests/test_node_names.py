@@ -170,5 +170,40 @@ check("Settings -> Maintenance shows the compute nodes and can rename the node",
       and all(f"  {n},\n" in app_js for n in ("loadNodes", "saveNodeName", "updateNode")))
 check("the deletions view shows the queued note", dele_js.count("_renderQueuedBanner(r.queued_note);") == 2)
 
+# ── a run that did not judge everything replaces only what it judged ────────
+from src.services import recommendations_engine as eng2  # noqa: E402
+saved_runs = dict(eng2.DELETION_RUN_SUMMARY)
+eng2.DELETION_RUN_SUMMARY.clear()
+eng2._record_deletion_run("music", judged=40, flagged=12)
+eng2._record_deletion_run("movie", stopped="waiting for Big Rig")
+check("a category judged to the end may replace its proposals; a deferred one may not",
+      eng2.run_judged_everything("music") and not eng2.run_judged_everything("movie")
+      and not eng2.run_judged_everything("anime"))
+eng2.DELETION_RUN_SUMMARY.clear()
+eng2.DELETION_RUN_SUMMARY.update(saved_runs)
+eng_src = (ROOT / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
+rec_src = (ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
+sch_src = (ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
+check("a run that waits for its node records itself as stopped",
+      '_record_deletion_run(category, stopped=f"waiting for {node_name()}")' in eng_src)
+check("Analyze (all categories) supersedes per category, by what each run judged",
+      "if run_judged_everything(_c):" in rec_src and "DeletionProposal.media_id.in_(ids)" in rec_src
+      and "old_q.filter(or_(*conds) if conds else false())" in rec_src)
+check("...and so does the scheduled scan", "run_judged_everything(cat)" in sch_src)
+
+# ── music credits do not trip the outage breaker ────────────────────────────
+from src.routers.enrichment import _looks_like_credit  # noqa: E402
+credits = ["Armin van Buuren & Vini Vici", "50 Cent Feat. Ne-Yo", "Carbon Community vs. Burufunk",
+           "Benny Benassi presents The Bizz", "21 Savage, Offset & Metro Boomin", "Coone and B-Front",
+           "Adaro X Dr. Rude", "Billain / Allied", "00", ".dev", "17"]
+artists = ["Atilla", "Dej Loaf", "B.I.G", "9 Inch Dix", "2Deep", "Buffalo&Wallace"]
+check("credit lines and stray tags are recognised; single names are not",
+      all(_looks_like_credit(n) for n in credits) and not any(_looks_like_credit(n) for n in artists))
+en_src = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
+check("a missed credit keeps its attempt and does not count toward the abort ratio",
+      'credit = pcat == "music" and _looks_like_credit(canonical)' in en_src
+      and "if counted and not credit:" in en_src
+      and '_rolling[pcat].append("credit" if credit else "not_found")' in en_src)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

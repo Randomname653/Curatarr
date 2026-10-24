@@ -115,7 +115,7 @@ sys.modules["src.routers.recommendations"] = types.SimpleNamespace(
     _fetch_arr_candidates=_candidates, _enrich_proposal=_enrich,
     build_proposal_item_map=lambda items: {}, _retire_switched_off=_fake_retire)
 sys.modules["src.services.recommendations_engine"] = types.SimpleNamespace(
-    generate_deletion_proposals=_gen)
+    generate_deletion_proposals=_gen, run_judged_everything=lambda cat: True)
 import src.services.music_source as _ms  # noqa: E402
 _ms.music_service = lambda: "lidarr"
 

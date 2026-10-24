@@ -1094,6 +1094,9 @@ async def get_deletion_proposals(
         # metadata. arr-id-first keying — see build_proposal_item_map (the
         # Devil-Wears-Prada cross-service collision AND the same-service
         # same-title Good-Boy collision).
+        # The categories this run went through; which of them it judged to
+        # the end decides what it may replace (see _save).
+        _run_cats = [category] if category else cats_present
         item_map = build_proposal_item_map(arr_items)
         enriched = await asyncio.gather(*[
             _enrich_proposal(p, item_map, category) for p in proposals])
@@ -1112,26 +1115,37 @@ async def get_deletion_proposals(
                 # This prevents the "wiped cache with no replacement" failure mode.
                 from sqlalchemy import or_, and_
 
+                from sqlalchemy import false
+                from src.services.recommendations_engine import run_judged_everything
+
                 old_q = dbs.query(DeletionProposal).filter(
                     DeletionProposal.user_id == user.id,
                     DeletionProposal.status == "pending",
                 )
-                if category and category in _CATEGORY_TO_SERVICE:
-                    svc = _CATEGORY_TO_SERVICE[category]
-                    # Match rows where category column is set correctly OR where category
-                    # is NULL (legacy rows written before the column existed) but the
-                    # service matches.  This cleans up scheduler-generated NULL-category
-                    # rows without accidentally deleting "show" rows when refreshing "anime"
-                    # (both share sonarr — the category column disambiguates).
-                    old_q = old_q.filter(
-                        or_(
-                            DeletionProposal.category == category,
-                            and_(
-                                DeletionProposal.category.is_(None),
-                                DeletionProposal.service == svc,
-                            ),
-                        )
-                    )
+                # Replace only what this run judged. A category judged to the
+                # end replaces its stored proposals wholesale - matched by the
+                # category column OR, for legacy NULL-category rows, by service
+                # (so refreshing "anime" never touches "show": both are sonarr).
+                # A category that waited for its node or stopped early replaces
+                # only the titles it proposed again; the rest of its stored
+                # proposals stay. "Run analysis" for all categories used to
+                # wipe every category, deferred ones included (2026-10-23).
+                conds = []
+                for _c in _run_cats:
+                    if run_judged_everything(_c):
+                        svc = _CATEGORY_TO_SERVICE.get(_c)
+                        conds.append(or_(
+                            DeletionProposal.category == _c,
+                            and_(DeletionProposal.category.is_(None),
+                                 DeletionProposal.service == svc)) if svc
+                            else DeletionProposal.category == _c)
+                    else:
+                        ids = {str(p.get("arr_id", "")) for p in enriched
+                               if p.get("category") == _c}
+                        if ids:
+                            conds.append(and_(DeletionProposal.category == _c,
+                                              DeletionProposal.media_id.in_(ids)))
+                old_q = old_q.filter(or_(*conds) if conds else false())
                 prev_activity = {}
                 if activity_unavailable:
                     prev_activity = {

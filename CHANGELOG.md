@@ -640,6 +640,23 @@ and the reason. Before, its calls kept failing as outages until the breaker
 tripped. The Keep working line only promises "stays awake" where the server
 can keep its machine awake.
 
+**A run that did not judge everything no longer wipes proposals.** "Run
+analysis" for all categories replaced every stored proposal, including those
+of categories that waited for the node. One night a game started mid-run,
+and three categories' proposals were replaced by one category's. Now a
+category judged to the end replaces its own proposals. A category that
+waited or stopped replaces only the titles it proposed again. The scheduled
+scan follows the same rule.
+
+**Music enrichment no longer spins on credit lines.** Plex's track artists
+include credits ("A & B", "A feat. B", "A vs. B") and stray tags ("00",
+".dev") that MusicBrainz cannot know. 46 of every 50 music items were such
+misses. Each tick aborted music as "upstream degraded" and refunded the
+attempts, so the same 50 came round again all night. The full name is still
+looked up first, so "Simon & Garfunkel" is found as itself. A credit that
+misses now keeps its attempt, waits on the normal backoff, and no longer
+counts toward the outage breaker.
+
 **Needs attention and maintenance that could never finish.**
 - A wrong-entity finding no longer fires when a shared TMDB, TVDB or IMDb id
   says it is the same work. 39 of the owner's 65 were translated titles
