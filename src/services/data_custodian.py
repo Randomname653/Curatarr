@@ -403,6 +403,13 @@ async def _run_wrapup_pregen(deep: bool = False, task=None) -> bool:
     return await pregenerate_all(task=task)
 
 
+async def _run_credits_index(deep: bool = False, task=None) -> bool:
+    """Directors, writers, cast, studios and companies out of the raw cache
+    into durable, queryable tables (services/credits_index). No model."""
+    from src.services.credits_index import run_credits_index
+    return await run_credits_index(task=task)
+
+
 async def _run_debate_outcomes(deep: bool = False, task=None) -> bool:
     """Tie resolution-log rows to their proposals and let the summarizer read
     the debates the facts cannot decide (services/debate_outcome)."""
@@ -794,6 +801,9 @@ def _registry() -> list[Task]:
         # the debates a rule cannot decide, old and new alike.
         Task("debate_outcomes", "Debate outcomes", 24.0, _run_debate_outcomes,
              needs_llm=True, takes_task=True, llm_role="summarizer"),
+        # Who made what, kept past the raw cache's TTL: the wrap-up's
+        # director and studio constellations read it. No model.
+        Task("credits_index", "Credits index", 24.0, _run_credits_index, takes_task=True),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
