@@ -21,10 +21,12 @@ curatarr/
 ├── src/
 │   ├── main.py                FastAPI app + lifespan
 │   ├── config.py              Settings (env + defaults)
-│   ├── middleware.py          Security response headers (pure ASGI)
+│   ├── middleware.py          Pure-ASGI stack: headers, Host + CF Access gates, token refresh
 │   ├── log_setup.py           Logging bootstrap (file always, console if tty)
 │   ├── paths.py               ROOT/DATA_DIR anchoring, CWD-independent
 │   ├── tray_app.py            Windows tray launcher (production entry point)
+│   ├── pc_agent.py            The node's reporter, started by its tray (§0 2026-10)
+│   ├── self_update.py         Fast-forward-only update of a desktop checkout
 │   ├── routers/               HTTP surface — one file per API area (§19)
 │   ├── services/              Business logic — the §5-§13 subsystems plus
 │   │                          the satellite modules indexed in §19
@@ -61,10 +63,14 @@ repair tools written along the way, not part of the supported surface.
 
 ---
 
-## 0. 2026-08 delta — subsystems newer than the sections below
+## 0. Deltas — subsystems newer than the sections below
 
-The 2026-08 run added several subsystems the numbered sections don't cover
-yet. Until those sections are rewritten, this is the map:
+The 2026-08 run and the ones after it added subsystems the numbered sections
+don't cover yet. Until those sections are rewritten, this is the map, one
+table per run. The 2026-10 security surface lives in §17, the database
+concurrency rules in §4.
+
+### 2026-08 (and its September follow-ups)
 
 | Subsystem | Files | One-liner |
 |---|---|---|
@@ -113,6 +119,17 @@ yet. Until those sections are rewritten, this is the map:
 | Chat runtime guards | `llm_priority.curator_start`, `chat._send_message_guarded`, `_release_unstarted_chat`, `proactive_messages.get_unread_messages(seen=)` | A cancel during the eviction undoes the slot acquire; the deletion funnel releases only a slot it holds; the one-reply-in-flight guard is taken before anything is saved or built and released on every exit, a never-started stream included; Respond leaves a verification question unread until it is answered; the bell's background poll is not an impression (2026-09-25). |
 | Member view, budgets, parsers | `tasks._visible` / `_owner_of`, `library_status`, `media_enricher.omdb_quota_left`, `episodic_memory._split_action_line`, `image_proxy._host_resolves_public` | The 2026-09 audit residuals, closed 2026-09-25: a member's Activity view and task stream carry only tasks whose id names them; the library status hides arr addresses, root folders and test results from members; OMDb calls are counted per UTC day in app_state and stop at `OMDB_DAILY_LIMIT` (OMDb's own limit answer marks the day spent); the protection classifier's action line splits only before a known field label, so a title with a pipe stays whole; the image proxy resolves a whitelisted name and refuses private, loopback and link-local answers before every upstream connection. |
 | Vector identity | `ChromaDBWrapper.upsert_documents` / `use_collection`, `taste_engine._doc_is_item`, `enrichment._clear_emb_caches`, `media_enricher.ensure_verified_data` | Chroma's `add` keeps the old vector for an existing id without raising, so re-enrichment upserts; a stored vector is used only when its doc's domain and title match the item (doc ids mix TMDB movie, TMDB TV and AniList number spaces); a force re-enrich clears only the requested items' embedding caches; the wrapper switches collection in place after a profile flip; `ensure_verified_data` keeps the ids it resolved for every top-up (2026-09-25). |
+
+### 2026-10 — the second machine, the Wrap-Up and the history under it
+
+| Subsystem | Files | One-liner |
+|---|---|---|
+| Wrap-Up | `src/services/wrapup_facts.py`, `wrapup_story.py`, `wrapup_store.py` (table `wrapups`), `src/routers/wrapup.py`, `frontend/js/wrapup.js`, custodian task `wrapup_pregen`; design record `docs/WRAPUP_DESIGN.md` | Every household member's own period in review (30 days, 6 months, a calendar year or all time; everything or one medium). It replaced the admin Curation Report, whose ledger is now an admin-only section at its foot. **Code decides every number; the curator only names and phrases them.** `build_wrapup_facts` computes the superlatives, contrasts and traits in SQL over the user's own rows and counts PLAYED time: a ten-minute abandon of a three-hour film is ten minutes, Spotify rows carry it in `view_offset_ms`, imported finished rows get a per-type estimate whose share travels with the figure so the tile can say ≈. A section with nothing real to say is left out, never zeroed: the UI renders only earned tiles and the prompt sees only real facts. The story is a forced JSON shape in which facts, titles, owned-unwatched picks and clusters enter by reference (F#/T#/U#/C#); `check_story` refuses a number that is not on the sheet (0–10 aside), an unknown reference, or a title anchoring two chapters. One repair turn names the fault, then `fallback_story` builds the same shape from the facts alone, so the page never shows an error where a story should be. Facts are reused for 15 minutes and a closed year stays frozen until `FACTS_VERSION` moves: bump it whenever the rows under the facts change meaning (watch history, the clock). A story is stale when its hash differs from `facts_hash`, which ignores posters and drift. One generation per (user, scope, period): the in-process task registry is the claim (no await between check and create), so a crash leaves no stale lock. "Ask about it" is a chat thread (`wrapup:{scope}:{period}`) whose hidden context is the same fact sheet. The custodian writes only what `due_wrapups` names (the rolling month weekly, the year from 1 December, the closed year once more in early January). |
+| Compute nodes (the second machine) | On the node: `src/pc_agent.py`, `src/gpu_engine.py`. On the server: `src/services/pc_host.py`, `pc_guard.py`, `ollama_hosts.py`, `verdict_cache.py`, `src/routers/hosts.py`, `process_monitor.pc_busy`, the per-host lanes in `llm_priority`. Settings `PC_AGENT_*`, `OLLAMA_PC_ENDPOINT`, `ENRICH_ON_PC`; operator docs `docs/USAGE.md` ("Running in a container"), `docs/NAS_MOVE.md` | Curatarr on an always-on NAS borrows the gaming PC's card while it is on and nobody plays. **The agent decides nothing:** it reports raw readings (process names and memory, nvidia-smi, each program's 3D-engine share, its checkout's update state, its node name), and which program is a game stays in `process_monitor` on the server, so that logic exists once. `pc_host` polls every 5 s: available after one good answer, gone after two missed ones (one dropped packet must not flip the routing; a powered-off PC must not hold work for an HTTP timeout), draining at once on the agent's goodbye or its `shutting_down` flag. `generation()` goes up each time the node stops taking work (gone, draining, busy). **Routing picks a host by role, never a model name**; the bakes carry the same names on every host. Unsplit, every role answers the one endpoint; on a split install `host_for(role)` sends chat and curator work to the node while `pc_usable()`, the judge only there (`PcUnavailable`: a deletion run waits rather than judging with the small model), embeddings always to the main host (one host for every vector, so stored and new ones compare), enrichment to the main host unless `ENRICH_ON_PC`. A curator call takes its URL and its options from the same `host_for` result, because the card decides the window and the constitution variant (`LLM_PROFILE`). `pc_guard.ollama_client()` races every request to the node against `generation()` and raises `PcLost` the moment it changes. `PcLost` is an `httpx.ConnectError`, so every caller already handles it as "Ollama unreachable": a verdict fails closed, an item stays due, an unstarted chat reply may retry on the main host. `llm_priority` keeps one queue per host, so work waits only for work on the same card. Without the agent the node is never used blind. `verdict_cache` keeps a verdict under a hash of everything that decides it (bake digest, the judging host's profile and window, the system prompt with the learned principles, the evidence), so the node's free hours are not spent re-judging unchanged titles; outages are never stored. `PC_AGENT_ONLY` makes the node's tray run only the agent, and a server started there refuses, so Plex and the arrs are never synced twice. `/api/hosts/pc/goodbye` authenticates with `PC_AGENT_TOKEN`, not a login. |
+| Updates and build identity | `src/self_update.py`, `src/services/build_info.py`, `update_check.py`, `model_autobuild.py`, `GET /api/system/version`, `POST /api/hosts/pc/update`; `UPDATE_CHECK`, `AUTO_BUILD_MODELS` | **An update only fast-forwards.** A desktop checkout moves to `origin/main` only when it is on main, has no changes to tracked files and no commits of its own; nothing is merged, stashed, reset or overwritten, and a refusal says why. No URL, ref or command comes from outside: the node's update request carries only the token, and its agent fetches from its own `origin`. `build_info` names the running build (the image's `CURATARR_BUILD_SHA`, else HEAD read from `.git` without a git binary). `update_check` asks GitHub anonymously at most hourly and counts "newer" only when GitHub's compare puts upstream AHEAD, so a dev branch is never told to update; an answer stored for another sha is not shown. The version endpoint never waits on GitHub (stored answer plus a background refresh). In the container `model_autobuild` builds the main host's missing bakes in the background after start, so the server answers at once and model calls fail closed until the bakes exist; the node's bakes are only named, never pulled onto a machine someone games on. |
+| Whose clock | `src/services/user_time.py`, `users.timezone`, `POST /api/users/me/timezone` | Play rows are naive UTC. Local time is the user's IANA zone (the browser reports it; unknown names are refused), else the machine's (TZ, then /etc/timezone, then today's fixed offset), applied with **the offset in force at each row's own time**. One current offset over a whole span moved plays across DST and put a UTC container's evenings in UTC. SQLite has no zone data, so `local_sql` carries the zone's offset changes over the queried span as a CASE (exact, a handful of branches a year); the Wrap-Up converts through it, the sittings' dayparts through `to_local`. |
+| Library ledger | `src/services/library_ledger.py`, tables `library_items` / `library_events`, written by the 12-hourly tech walk in `plex_sync` | `MediaTechProfile` is a snapshot (overwritten, pruned when a title leaves); the ledger is the history on both sides of the storage balance, titles deleted outside Curatarr included. `library_items` keeps every title ever held with its earliest Plex `addedAt`. `library_events` is append-only: arrivals back-dated from `addedAt` (one per title and month, so the existing library's history is known from the first walk), gone and returned, and the size changes arrivals don't explain (grew, shrunk). **Only a complete walk marks anything gone**, the tech-profile prune's guard, so an outage or a cut-short walk never empties a category. The ledger writes in its own transaction: a fault there never costs the profiles. `velocity()` (GB in against GB out, by month) feeds the Wrap-Up. Music is not walked by default, so it has no ledger. |
+| Debate outcomes | `src/services/debate_outcome.py`, the `curator_resolution_log` columns `proposal_id` / `score` / `verdict` / `storage_mb` / `thread_id` / `user_turns` / `persuader` / `persuader_basis`, custodian task `debate_outcomes`, `GET /api/stats/debate-labels` | A resolution row says what was at stake and who moved. `persuader` is decided by rule wherever the facts decide it: an override, or a debate in which the user never wrote, moved nobody; a proposed cut kept by consensus means the curator conceded. Only a delete by consensus after the user spoke needs the thread read. The summarizer answers that in the custodian job for new and old rows alike, so every label comes from one classifier. `safe_fields_for` never costs the log row it decorates: on a fault the row is written bare and `link_old_rows` fills it later (by user, title and outcome near the row's time). The debate-labels endpoint lets the owner check the labels against the debates. |
 
 ---
 
@@ -168,7 +185,7 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 
 | Table | Purpose | Notes |
 |---|---|---|
-| `users` | Accounts | `is_admin`, `is_active` (soft-disable, never DROP) |
+| `users` | Accounts | `is_admin`, `is_active` (soft-disable, never DROP), `timezone` (IANA, reported by the browser; §0 Whose clock) |
 | `watch_history` | Every playback event | per Plex `accountID`. `source` = plex/spotify/manual. `plex_item_id` rewritten from `spotify:track:…` to a Plex key when Phase 1 matches. `artist_mbid` filled by Phase 1.4. `genres` filled by Phase 1.5/2. |
 | `enrichment_status` | One row per enriched item | THE pipeline state table. `plex_rating_key` is the UNIQUE key. See §5 for the six states encoded in `(enriched, error)`. Phase-2 columns (Pass 99-fu13, #37): `fetch_tier` (`"fast"`/`"full"`/NULL=full-legacy), `sources_state` (JSON of per-API status + timestamp), `provisional` (denormalised "still upgradable" flag). Read-side default for NULL `fetch_tier` is "full" — back-compat with pre-fu13 rows. Index `idx_es_fetch_tier` keeps the upgrade-scheduler query (#41) cheap. |
 | `arr_enrichment_status` | ARR-side enrichment mirror | written for items that have an `arr_id`+`service` |
@@ -181,7 +198,9 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 | `conversation_messages` | Chat history | `thread_id` isolates topics: `general` / `deletion_proposal:{id}` / `proactive_message:{id}`. Drives language detection. |
 | `episodic_memories` | Extracted taste/feedback/protection memories | `memory_type`, `media_category`, vector-searched globally per user |
 | `protected_media` | Deletion whitelist | `identifier` = TMDB/AniList id OR exact title |
-| `curator_resolution_log` | Audit trail | consensus-vs-override classification of deletion decisions |
+| `curator_resolution_log` | Audit trail | consensus-vs-override classification of deletion decisions, plus the proposal, its stakes and `persuader` (§0 Debate outcomes) |
+| `wrapups` | One row per (user, scope, period) | last computed facts + last written story with the `facts_hash` it was written for (§0 Wrap-Up) |
+| `library_items` / `library_events` | Library ledger | every title ever held; append-only arrivals / gone / returned / grew / shrunk (§0 Library ledger) |
 | `app_state` | Runtime KV flags | DB-backed so they survive restarts. See §11. |
 | `plex_rating` | Per-user Plex star ratings | music-only signal for deletion hard-protect (Pass 82c) |
 
@@ -205,6 +224,29 @@ historical bugs.
    `CURATARR_LOOP_GUARD=raise` in tests), and `tests/test_loop_db_ratchet.py`
    checks it statically. That is why the timeout can be 15 s instead of 60 s:
    a lock wait blocks one worker thread, not the server.
+
+   The rules behind it. **Never `await` inside a write transaction**: a
+   coroutine suspended while it holds SQLite's write lock cannot resume to
+   commit while another statement on the same loop waits on that lock, so
+   the wait is a deadlock until busy_timeout ends it with "database is
+   locked" (the music matcher did this). `run_write` has exactly one thread,
+   so writes made through it never contend with each other; busy_timeout
+   only arbitrates against writers outside it (another process, a raw
+   connection). Cancelling
+   the awaiting coroutine does **not** abort a write that already started:
+   it commits or rolls back whole on the writer thread, so a cancelled
+   caller must not assume nothing was written. Shutdown calls
+   `shutdown_writer()` to finish every queued write before the WAL is
+   checkpointed and the engine disposed. The guard covers the other SQLite
+   files too (the enrichment cache, the lyrics and offline indexes) through
+   `loop_guard.sqlite_connect`. Its modes (`CURATARR_LOOP_GUARD`): `warn` by
+   default (each site logged once, every statement counted), `raise` for
+   tests that pin a path loop-free, `off`. The lifespan's own startup and
+   teardown are counted under `lifecycle` instead of logged (`serving()`
+   flips around its yield), because no request can be waiting then;
+   `tests/run_all.py` collects every suite's sites through
+   `CURATARR_LOOP_GUARD_DUMP` and fails the battery on any `src/` coroutine
+   site.
 
 2. **Enrichment / API cache** — `data/cache/enrichment.db`, separate SQLite,
    wrapped by `src/cache/metadata_cache.py` (`MetadataCache`). Single table
@@ -1197,7 +1239,15 @@ default and must load as-is (`tests/test_env_example.py`). Key knobs:
 
 ---
 
-## 17. Security posture (1.0 audit)
+## 17. Security posture — code-side notes (SECURITY.md is current)
+
+[SECURITY.md](SECURITY.md) is the current posture: the threat model, who can
+log in, sessions, first-run setup, connection tests and service addresses,
+what a member can make the server do, third-party text in prompts, bodies
+from the outside and the known dependency advisories. This section keeps
+what a code change needs on top of it: where each control lives and why it
+lives there. The 1.0 audit's bullets come first and still hold; the 2026-10
+ones close the list.
 
 - Local-LLM only; no hosted-model calls.
 - ChromaDB telemetry disabled (`anonymized_telemetry=False`).
@@ -1239,6 +1289,43 @@ default and must load as-is (`tests/test_env_example.py`). Key knobs:
   items + a `showView()` guard for `deletions`/`curation`/`reclassify`/`report`
   + the endpoint checks — the **endpoint check is the real boundary**, the UI
   gates are convenience. Non-admins keep their own taste / recs / chat.
+- **Service URLs and the secret sent with them** (`src/services/endpoint_policy.py`,
+  2026-10-10 audit). The setup wizard and the library panel share one
+  policy for every operator-supplied endpoint (Plex, the arrs, Ollama,
+  SoulSync). `validate_service_url` admits an http(s) base URL without
+  credentials, query or fragment, because a `#` or `?` would cut off or
+  swallow the fixed API path the clients append and turn "Test connection"
+  into fetch-anything; link-local, cloud-metadata, multicast and unspecified
+  literals are refused, LAN and loopback stay legal. A literal check cannot
+  see where a NAME points, so `resolved_refusal` applies the same rules to
+  every address a name resolves to, right before a test connects, and treats
+  a lookup that errors or times out as a refusal. `secret_for_target` sends
+  the SAVED key only to the saved origin (scheme, host, port); a new address
+  needs its own key, or typing a URL would undo the integrations panel's
+  write-only masking. Any new endpoint field goes through both.
+- **Host allow-list** (`HostAllowListMiddleware`, `ALLOWED_HOSTS`). The
+  DNS-rebinding defence: a rebound page reaches the server under the
+  attacker's own name, so a Host that is not listed is answered 400 before
+  auth, the API or the static files see it. Opt-in and empty by default,
+  because any fixed list would lock out installs reached by IP, hostname or
+  a proxy's name; the loopback names always pass.
+- **Cloudflare Access at the origin** (`CloudflareAccessMiddleware`,
+  `src/services/cf_access.py`, `CF_ACCESS_HOSTS` / `_TEAM_DOMAIN` / `_AUD`).
+  Access gates the public name, but the reverse proxy answers anyone who
+  reaches the home IP with that name. So under a listed Host a request must
+  carry a valid `Cf-Access-Jwt-Assertion` for the app's audience, else 403;
+  a listed Host with team or audience unset refuses everything, and any
+  other Host (the LAN address, localhost) is never checked, so local use
+  never depends on Cloudflare. RS256 is verified in the module, without the
+  `cryptography` package: the decrypted signature is compared byte for byte
+  with the one valid PKCS#1 v1.5 encoding and nothing is parsed out of it,
+  because the parsing is where signature forgeries live. The team's keys are
+  cached for an hour and refetched when a token names an unknown one.
+- **Middleware order** (`src/main.py`, outermost first): security headers →
+  Host check → Cloudflare Access → token refresh → slow-request log → gzip →
+  CORS → routes. A refused Host or token never reaches auth or the static
+  files, and the refusal still carries the security headers. All of the
+  app's own middleware is pure ASGI, so SSE streams pass untouched.
 
 ---
 
@@ -1288,9 +1375,11 @@ Nothing in the apply path re-fetches metadata, re-embeds, or calls an LLM.
 
 ## 19. Module index — the satellites
 
-One line per file the sections above don't already anchor. This is the map,
-not the territory: when one of these grows a real design decision, promote it
-to its own section (or a §0 delta row) instead of growing this list.
+One line per file the sections above don't already anchor, plus an index
+line for each file whose design lives in a §0 row, §4 or §17, with a pointer
+there. This is the map, not the territory: when one of these grows a real
+design decision, promote it to its own section (or a §0 delta row) instead of
+growing this list.
 
 ### Entry points & platform
 - `src/tray_app.py` — Windows system-tray launcher (pystray + uvicorn worker
@@ -1338,14 +1427,95 @@ to its own section (or a §0 delta row) instead of growing this list.
   the tray intercept the web shutdown endpoint instead of relying on SIGINT.
 - `src/services/bg_tasks.py` — keeps strong references to fire-and-forget
   asyncio tasks so they aren't garbage-collected mid-run.
+- `src/self_update.py` — fast-forward-only update of a desktop checkout to
+  `origin/main` (the tray's "Update now", the agent's `/update`); refuses
+  off main, with local changes or with local commits (§0 Updates).
+- `src/services/build_info.py` — which build runs: the image's baked sha,
+  else HEAD read from `.git` without a git binary; read once per process.
+- `src/services/update_check.py` — the admins' "Update available": anonymous
+  GitHub, at most hourly, only a build that is ahead counts (§0 Updates).
+- `src/services/model_autobuild.py` — the container's background build of
+  the main host's missing bakes (`AUTO_BUILD_MODELS`); never the node's.
+
+### Database concurrency (§4)
+- `src/database/runner.py` — `run_read` (thread pool; WAL readers run side
+  by side) and `run_write` (one dedicated writer thread); a cancelled caller
+  does not abort a write already running. `shutdown_writer` drains it.
+- `src/database/loop_guard.py` — engine hook that records any statement run
+  on the event-loop thread, by call site (`GET /api/system/loop-guard`,
+  `CURATARR_LOOP_GUARD` warn / raise / off); `sqlite_connect` brings the
+  other SQLite files under the same check.
+
+### Compute nodes (§0 Compute nodes)
+- `src/pc_agent.py` — runs on the node, started by its tray when
+  `PC_AGENT_TOKEN` is set (no token, no agent). `GET /status` reports raw
+  readings, process names and GPU memory only (no paths, command lines or
+  user data); `POST /update` takes no parameters. The token rides in
+  `X-Agent-Token` and is compared in constant time.
+- `src/gpu_engine.py` — each program's share of the card's 3D engine from
+  the Windows performance counters (Task Manager's GPU column), so an
+  unclassified game shows within seconds instead of after the 45 s
+  GPU-pressure hold; empty off Windows.
+- `src/services/pc_host.py` — the server's view of the node: the 5 s poll,
+  available / draining / gone, `generation()`, its build state and its name
+  (the owner's rename over the one it reports).
+- `src/services/pc_guard.py` — `ollama_client()`, the httpx client for model
+  calls; a request to the node is cancelled when the node leaves and raises
+  `PcLost` (an `httpx.ConnectError`).
+- `src/services/ollama_hosts.py` — the role → host table (`host_for`,
+  `ollama_for`, `PcUnavailable`). Code that manages models rather than using
+  them reads the endpoint directly; `tests/test_ollama_hosts.py` keeps that
+  list closed.
+- `src/services/verdict_cache.py` — deletion verdicts and pitches reused
+  while the fingerprint of everything that decides them holds.
+- `src/routers/hosts.py` — `/api/hosts`: the agent's goodbye (token, no
+  login); for admins the node's state, rename and update.
+
+### Wrap-Up (§0 Wrap-Up)
+- `src/services/wrapup_facts.py` — every number of a wrap-up, decided in
+  SQL before any model sees it; blocking, called through `run_read`.
+- `src/services/wrapup_story.py` — the numbered fact sheet, the forced-JSON
+  story, `check_story`, one repair turn, `fallback_story`; the "Ask about
+  it" context block; `pregenerate_all` for the custodian.
+- `src/services/wrapup_store.py` — the `wrapups` table (load through
+  `run_read`, saves through `run_write`).
+- `src/routers/wrapup.py` — `/api/wrapup`: the live facts, `/generate`
+  (background task), `/status/{task_id}` for the ticker, `/playlist` (the
+  period's titles as a Plex playlist on the user's own account).
+- `frontend/js/wrapup.js` — the view: a tile only for a section the server
+  sent, every number from the facts; admins get the curation ledger
+  (`report.js`) at the foot.
+
+### Security surface (§17)
+- `src/services/endpoint_policy.py` — `validate_service_url`,
+  `resolved_refusal`, `secret_for_target`: where an operator-supplied
+  service URL may point and which saved secret may go with it.
+- `src/services/cf_access.py` — Cloudflare Access token check for the
+  public names (RS256 without `cryptography`, key cache, claims).
+- `src/middleware.py` — the app's pure-ASGI stack: `SecurityHeadersMiddleware`,
+  `HostAllowListMiddleware` (`ALLOWED_HOSTS`), `CloudflareAccessMiddleware`,
+  `TokenRefreshMiddleware`, `SlowRequestLogMiddleware`.
+
+### Time & history
+- `src/services/user_time.py` — whose clock: the user's IANA zone, else the
+  machine's, with the offset in force at each row's time; `local_sql` for
+  queries (§0 Whose clock).
+- `src/services/library_ledger.py` — what arrived when and what left, from
+  the tech walk; only a complete walk marks anything gone (§0 Library
+  ledger).
+- `src/services/debate_outcome.py` — what a deletion debate settled and who
+  convinced whom; rule first, the summarizer only where reading the debate
+  is the only way to tell (§0 Debate outcomes).
 
 ### Routers not covered above
 - `src/routers/imports.py` — GUI data imports (Spotify listening-history
   upload + run); upload open during setup, running the import is admin-only.
 - `src/routers/messages.py` — proactive-messages API (list unread, mark read).
-- `src/routers/stats.py` — admin-only curation report, backed by
+- `src/routers/stats.py` — admin-only curation ledger, backed by
   `src/services/curation_stats.py` (live SQL: monthly resolutions, GB freed,
-  Stubbornness Index, redundancy, taste evolution).
+  Stubbornness Index, redundancy, taste evolution), rendered as the owner's
+  section at the foot of the Wrap-Up; `/debate-labels` shows the
+  summarizer's who-convinced-whom labels next to the owner's own words.
 
 ### Chat & curator satellites
 - `src/services/app_context.py` — SSOT for what the curator is told about the
