@@ -310,7 +310,9 @@ def run_import(user_id: int, import_dir: Path = None, task=None) -> dict:
             _flush_buffer(db)
 
             done_dir.mkdir(exist_ok=True)
-            file_path.rename(done_dir / file_path.name)
+            # replace, not rename: on Windows rename refuses an existing
+            # target (the same export uploaded twice), on Linux both overwrite.
+            file_path.replace(done_dir / file_path.name)
             if task is not None:
                 from src.services.task_monitor import task_monitor
                 task_monitor.update(task, processed=i, total=len(files),
