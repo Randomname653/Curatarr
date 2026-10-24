@@ -8,6 +8,7 @@ import { state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
 import { EL, _errHtml, _errMsg, _posterImg, act, btnBusy, btnDone, countTo, esc, haptic, toast } from './ui.js';
+import { playStory } from './wrapup_story.js';
 
 const WU_KEY = 'curatarr_wrapup';
 const SEEN_KEY = 'curatarr_wrapup_seen';
@@ -48,8 +49,12 @@ export async function loadWrapup() {
       _save();
       return loadWrapup();
     }
-    wu.quizOpen = _quizDue();
+    // A curator-written (v2) story opens as the story the first time it is
+    // seen; its own prediction replaces the hero quiz.
+    const story = _storyDue();
+    wu.quizOpen = !story && _quizDue();
     _render();
+    if (story) { _markSeen(); playStory(wu.data); }
     if (wu.data.generating) _follow(wu.data.generating);
   } catch (e) {
     el.innerHTML = _errHtml(e, act('loadWrapup'));
@@ -85,7 +90,7 @@ function _render(reveal = false) {
   }
   el.innerHTML = wu.snapshot
     ? _controls(d) + _snapshot(f, d.story)
-    : _controls(d) + _hero(f, d) + _bento(f) + _story(f, d) + _ledgerSlot(f);
+    : _controls(d) + _hero(f, d) + '<h2 class="wu-explore">Explore</h2>' + _bento(f) + _story(f, d) + _ledgerSlot(f);
   if (reveal) el.querySelector('.wu-hero')?.classList.add('is-reveal');
   _armCounters(el);
   if (f.curatarr?.ledger && !wu.snapshot) {
@@ -139,7 +144,8 @@ function _genButton(d) {
   const label = !s ? 'Let the curator write it' : d.story_stale ? 'Numbers moved — rewrite' : 'Rewrite';
   const ask = s ? `<button type="button" class="btn btn-secondary btn-sm" ${act('askWrapup')}>Ask about it</button>` : '';
   const pl = `<button type="button" class="btn btn-ghost btn-sm" ${act('pushWrapupPlaylist', EL)}>Make it a Plex playlist</button>`;
-  return `<button type="button" class="btn btn-primary btn-sm" ${act('generateWrapup', EL)}>${label}</button>${ask}${pl}`;
+  const play = `<button type="button" class="btn btn-primary btn-sm" ${act('playWrapupStory')}>Play your wrap-up</button>`;
+  return `${play}<button type="button" class="btn ${s ? 'btn-secondary' : 'btn-primary'} btn-sm" ${act('generateWrapup', EL)}>${label}</button>${ask}${pl}`;
 }
 
 // ── the quiz before the reveal (Deezer, Spotify) ────────────────────────────
@@ -148,6 +154,16 @@ function _quizDue() {
   const d = wu.data, top = d?.facts?.top || [];
   if (!d?.story || top.length < 4) return false;
   try { return !(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')).includes(_seenKey()); } catch (_) { return false; }
+}
+function _storyDue() {
+  if (wu.data?.story?.version !== 2) return false;
+  try { return !(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')).includes(_seenKey()); } catch (_) { return false; }
+}
+// The paced story (wrapup_story.js); the page below is its Explore view.
+export function playWrapupStory() {
+  if (!wu.data) return;
+  _markSeen();
+  playStory(wu.data);
 }
 function _markSeen() {
   try {
