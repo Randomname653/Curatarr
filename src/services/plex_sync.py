@@ -44,6 +44,7 @@ from src.services.llm_utils import (
     detect_user_language, language_directive,
 )
 from src.services.http_client import tls_context
+from src.services.library_ledger import note_arrival, persist_ledger
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2657,6 +2658,7 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                     "hdr": False, "audio": set(), "subs": set(),
                     "count": 0, "versions": 1, "remux_files": 0})
                 m = _parse_media(it)
+                note_arrival(a.setdefault("arrivals", {}), it.get("addedAt"), m["size_bytes"])
                 a["size_bytes"] += m["size_bytes"] or 0           # total footprint
                 a["primary_bytes"] += m["primary_bytes"] or 0     # bitrate basis
                 a["redundant_bytes"] += (m["size_bytes"] or 0) - (m["primary_bytes"] or 0)
@@ -2684,6 +2686,13 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                         agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
 
     written = await run_write(_persist_tech_profiles, agg)
+    try:
+        # The same walk, kept: arrivals back-dated from addedAt, titles that
+        # left. Its own transaction — a ledger fault never costs the profiles.
+        await run_write(persist_ledger, agg, scanned - incomplete)
+    except Exception as e:
+        logger.warning("[ledger] library ledger not written this walk (%s) - the next walk "
+                       "catches up, arrivals are back-dated", e)
     pruned = await run_write(_prune_stale_tech_profiles, set(agg.keys()), scanned - incomplete)
     if pruned:
         task_monitor.log(_task, f"pruned {pruned} stale profiles (rating keys Plex no longer has)")

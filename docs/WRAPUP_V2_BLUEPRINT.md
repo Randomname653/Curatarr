@@ -197,9 +197,16 @@ starts the day it ships.
 opens late November):
 
 1. Event-level history plus backfill, and real completion. Every other
-   number depends on these.
+   number depends on these. *Done: Randomname653/Curatarr#216.*
 2. `added_at` / `acquired_at` plus `library_events`. Unlocks hoarding and
    procrastination, backfillable.
+   - *Built as the library ledger* (`services/library_ledger.py`, tables
+     `library_items` and `library_events`), fed by the tech sync's
+     whole-library walk.
+   - Plex `addedAt` is the arrival date. The arr grab history is not
+     needed for it: Plex's date is when the file reached the server, which
+     is what time-to-watch measures.
+   - Music has no ledger until the tech sync walks music.
 3. Resolution-log enrichment plus the retro-labelled persuader. Unlocks the
    Court Record, Curatarr's unique beat.
 4. `User.timezone`. Tiny, and fixes the clock.
