@@ -27,6 +27,26 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Library ledger: what arrived when, and what left.** Nothing recorded either side of the
+storage balance. GB freed was read off Curatarr's own deletions only, so a title deleted straight
+in Radarr never counted, and GB added was not known at all. The tech sync's whole-library walk
+(every 12 h) now also writes two durable tables (`services/library_ledger.py`):
+- **`library_items`** holds every title the library has held, never deleted, with the earliest
+  Plex `addedAt` it was ever seen with. For a series that is its first episode.
+- **`library_events`** is append-only:
+  - arrivals, one per title and month, sized by that month's files and back-dated from
+    `addedAt`, so the current library's history is known from the first walk on;
+  - titles a complete walk no longer lists (gone, deleted anywhere), and gone titles listed
+    again (returned);
+  - size changes the arrivals don't explain: a replaced, bigger file grew; a deleted season
+    shrunk.
+- A walk cut short by an outage marks nothing gone.
+- `velocity(start, end)` gives GB in vs out by month, with the biggest arrival and departure.
+  This is the raw material for the Wrap-Up's hoarder-vs-pruner balance and time-to-watch.
+- Music is not walked by default, so it has no ledger yet.
+
+Tests: `tests/test_library_ledger.py`.
+
 **Watch history: every play of the owner is its own row, and a rewatch in progress is not a
 completion.** The owner's plays came from the library listing, which carries one timestamp
 per item (`lastViewedAt`). Two plays of a film between two syncs became one row, the history

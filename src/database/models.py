@@ -933,3 +933,56 @@ class Wrapup(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "scope", "period_key", name="uq_wrapup_user_scope_period"),
     )
+
+
+class LibraryItem(Base):
+    """Every title the library has held, by Plex rating key — kept after the
+    title leaves (``gone_at``), never deleted. Written by the tech sync's
+    whole-library walk (services/library_ledger).
+
+    ``added_at`` is the earliest Plex ``addedAt`` ever seen for the key (a
+    series: its first episode) and only ever moves earlier: the arrival date
+    behind "hoarded 412 days before pressing play"."""
+    __tablename__ = "library_items"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    plex_rating_key = Column(String(64), unique=True, nullable=False, index=True)
+    media_type      = Column(String(20), nullable=False)   # movie / show / anime
+    title           = Column(String(512), nullable=True)
+    tmdb_id         = Column(Integer, nullable=True, index=True)
+    tvdb_id         = Column(Integer, nullable=True, index=True)
+    added_at        = Column(DateTime, nullable=True, index=True)
+    size_mb         = Column(Float, default=0.0)            # as last seen
+    first_seen_at   = Column(DateTime, default=datetime.utcnow)
+    last_seen_at    = Column(DateTime, default=datetime.utcnow)
+    gone_at         = Column(DateTime, nullable=True)       # a complete walk no longer listed it
+
+
+class LibraryEvent(Base):
+    """Append-only record of what entered and left the library, for "GB in
+    vs GB out per month" (services/library_ledger).
+
+    kind ``added``: one row per (title, month of arrival) — a series that
+    gained episodes over three months has three, each with the size of the
+    files that arrived that month. Back-dated from Plex ``addedAt``, so the
+    current library's arrivals are known from the first walk on.
+    kind ``gone``: a complete walk no longer lists the title (deleted through
+    Curatarr or straight in the arrs alike), with its last size.
+    kind ``returned``: a gone title is listed again.
+    kind ``grew`` / ``shrunk``: a listed title's size moved by more than its
+    new arrivals explain — an upgraded file, a deleted season."""
+    __tablename__ = "library_events"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    at              = Column(DateTime, nullable=False, index=True)
+    kind            = Column(String(16), nullable=False)    # added / gone / returned / grew / shrunk
+    bucket          = Column(String(32), nullable=False)    # added: YYYY-MM; else the ISO time
+    plex_rating_key = Column(String(64), nullable=False, index=True)
+    media_type      = Column(String(20), nullable=True)
+    title           = Column(String(512), nullable=True)
+    size_mb         = Column(Float, default=0.0)
+    source          = Column(String(16), default="plex")
+
+    __table_args__ = (
+        UniqueConstraint("plex_rating_key", "kind", "bucket", name="uq_library_event"),
+    )
