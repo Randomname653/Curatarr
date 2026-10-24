@@ -403,6 +403,13 @@ async def _run_wrapup_pregen(deep: bool = False, task=None) -> bool:
     return await pregenerate_all(task=task)
 
 
+async def _run_debate_outcomes(deep: bool = False, task=None) -> bool:
+    """Tie resolution-log rows to their proposals and let the summarizer read
+    the debates the facts cannot decide (services/debate_outcome)."""
+    from src.services.debate_outcome import run_debate_outcomes
+    return await run_debate_outcomes(task=task)
+
+
 async def _run_music_playlist_push(deep: bool = False, task=None) -> bool:
     """Push/refresh every active user's Curatarr-Recommended MUSIC playlist
     (one unheard album per recommended artist). Token-less users are
@@ -783,6 +790,10 @@ def _registry() -> list[Task]:
         # instead of a "write it" button. Curator work — waits for a game.
         Task("wrapup_pregen", "Wrap-ups written ahead", 24.0,
              _run_wrapup_pregen, needs_llm=True, takes_task=True),
+        # Who convinced whom in each deletion debate: the summarizer reads
+        # the debates a rule cannot decide, old and new alike.
+        Task("debate_outcomes", "Debate outcomes", 24.0, _run_debate_outcomes,
+             needs_llm=True, takes_task=True, llm_role="summarizer"),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,

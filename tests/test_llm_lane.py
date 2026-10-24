@@ -229,7 +229,7 @@ def test_the_wiring():
 
     cust = (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
     assert 'llm_role: str = "curator"' in cust, "curator is the safe default"
-    assert cust.count('llm_role="summarizer"') == 7, "the seven summariser-class tasks"
+    assert cust.count('llm_role="summarizer"') == 8, "the eight summariser-class tasks (debate_outcomes the eighth)"
     for job in ("memory_catchup", "custodian_enrich", "custodian_signif",
                 "custodian_recept", "custodian_taste", "lyrics_profile", "arr_pre_enrich"):
         entry = cust.split(f'Task("{job}"')[1].split("),")[0]
