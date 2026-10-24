@@ -65,8 +65,11 @@ def utc_offset() -> timedelta:
 
 
 def _local(dt: datetime) -> datetime:
-    """UTC row timestamp → wall clock of this machine (viewed_at is naive UTC)."""
-    return dt + utc_offset()
+    """UTC row timestamp → wall clock of this machine (viewed_at is naive UTC),
+    with the offset in force at ``dt`` — today's offset put last winter's
+    23:30 an hour off (services/user_time)."""
+    from src.services.user_time import to_local
+    return to_local(dt)
 
 
 def _daypart(hour: int) -> str:

@@ -574,6 +574,7 @@ def auth_status(user: User = Depends(get_current_user)):
         "user_id": user.id,
         "username": user.plex_username,
         "is_admin": user.is_admin,
+        "timezone": user.timezone,
     }
 
 

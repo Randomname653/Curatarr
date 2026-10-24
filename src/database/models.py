@@ -26,6 +26,9 @@ class User(Base):
     # Bumped on logout and deactivation; JWTs carry it as "ver" and are
     # rejected on mismatch - the revocation a stateless token otherwise lacks.
     token_version = Column(Integer, default=0)
+    # IANA zone the user's browser reports (e.g. "Europe/Berlin"): their
+    # evening is a local notion, and a container clock is often UTC.
+    timezone = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
     # The user's OWN plex.tv token, captured at PIN login. Powers per-account
