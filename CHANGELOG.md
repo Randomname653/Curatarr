@@ -55,6 +55,34 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
+story as one JSON form and checked it with rules that were strict on style and loose on truth:
+- an honest rounding, a title with an "!" or a band called Journey sent everything back;
+- one repair turn named only the first fault, and a second failure threw every good field away;
+- a wrong number that happened to appear elsewhere on the sheet passed, and so did a title
+  nobody had cited.
+
+Now (`services/wrapup_writer.py`):
+- **Editor (JSON, a choice):** picks 3–7 insight cards in story order, the roast and toast cards,
+  the archetype from the earned traits, a share line, the look-ahead pick and the cluster names.
+- **Writer (free prose):** writes one section per card plus roast, toast and the next pick, citing
+  the cards each sentence rests on.
+- **Each sentence is checked against the cards it cites.** Its numbers must be those cards' own
+  (renderings included), and a title it names must be on them. A sentence without its own
+  citation takes the next one's, and finally its slide's card.
+- **Style is fixed, not rejected:** titles and artist names are masked first, stock phrases are
+  cut and "!" becomes ".".
+- **Repair per slide:** only the slides that failed go back, every fault named. One that fails
+  again gets its card's template, and the rest stay as written.
+- **Voice:** the curator may quote the user's own debate messages back to them, only in their own
+  wrap-up and opt-out on the page (`/api/wrapup/prefs`). It writes in the language the user writes
+  to it most.
+- **Page compatibility:** the story is stored as slides plus the v1 shape, so the current page
+  renders it unchanged until the story mode arrives.
+
+Tests: `tests/test_wrapup_writer.py`; `tests/test_wrapup_story.py` now covers the sheet, the
+stand-in, the task and the season.
+
 **Wrap-Up v2, step 1: what is worth saying, and the new telemetry in the story.** The v1 fact
 sheet handed the curator about 40 equally weighted lines. Nothing said which facts were
 remarkable, every tile rendered because data existed, and the number check rejected honest

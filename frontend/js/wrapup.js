@@ -325,7 +325,26 @@ function _story(f, d) {
   const note = d.story_source === 'fallback'
     ? '<p class="wu-note">The curator was busy, so these chapters are the numbers without its commentary. Rewrite once it is free.</p>'
     : d.story_stale ? '<p class="wu-note">The numbers moved since this was written — the tiles are current, the words are from before.</p>' : '';
-  return `<section class="wu-chapters" aria-label="Chapters">${ch}</section>${pair}${hook}${note}`;
+  const quotes = `<p class="wu-note">${d.quotes
+    ? 'The curator may quote your own debate messages back to you — only here, in your own wrap-up.'
+    : 'The curator does not quote your debate messages.'}
+    <button type="button" class="btn btn-ghost btn-sm" ${act('toggleWrapupQuotes')}>${d.quotes ? 'Stop quoting me' : 'Allow quotes'}</button></p>`;
+  return `<section class="wu-chapters" aria-label="Chapters">${ch}</section>${pair}${hook}${note}${quotes}`;
+}
+
+// The user's own words are theirs to withhold (opt-out): the next rewrite
+// leaves them out.
+export async function toggleWrapupQuotes() {
+  if (!wu.data) return;
+  try {
+    const r = await api('/api/wrapup/prefs', 'POST', {quotes: !wu.data.quotes});
+    wu.data.quotes = r.quotes;
+    haptic('tick');
+    toast(r.quotes ? 'The curator may quote you again from the next rewrite.' : 'No more quotes from the next rewrite on.', 'success');
+    _render();
+  } catch (e) {
+    toast(_errMsg(e).slice(0, 200), 'danger');
+  }
 }
 
 // ── "Ask your wrap-up": a chat thread whose context is the fact sheet ───────

@@ -40,8 +40,10 @@ _FRACTIONS = ((0.25, "a quarter"), (1 / 3, "a third"), (0.5, "half"),
 
 # ── renderings ───────────────────────────────────────────────────────────────
 
-def _fmt(x: float) -> str:
-    return f"{x:,.1f}".rstrip("0").rstrip(".") if x % 1 else f"{int(x):,}"
+def _fmt(x) -> str:
+    """58.3 → '58.3', 20.0 → '20', 2100 → '2,100'."""
+    x = float(x or 0)
+    return f"{x:,.1f}".rstrip("0").rstrip(".") if round(x % 1, 1) else f"{int(round(x)):,}"
 
 
 def say_count(n, noun: str = "") -> list:
@@ -158,7 +160,7 @@ def _tempo(f) -> list:
             up = delta > 0
             out.append(_card(
                 "contrast", "open", 0.35 + _clamp(abs(delta) / 2) * 0.5,
-                f"{h} hours, against {prev} in the same span before.",
+                f"{_fmt(h)} hours, against {_fmt(prev)} in the same span before.",
                 f"{'more' if up else 'less'} than the span before by {round(abs(delta) * 100)}%",
                 {"hours": h, "prev_hours": prev, "delta": round(delta, 2)},
                 {"hours": say_hours(h), "prev_hours": say_hours(prev),
@@ -181,7 +183,7 @@ def _tempo(f) -> list:
         ratio = (bd.get("hours") or 0) / (h / active)
         if ratio >= 2.5:
             out.append(_card("moment", "moment", 0.3 + _clamp((ratio - 2.5) / 5) * 0.5,
-                             f"{bd['date']}: {bd['hours']} hours in one day, {bd['plays']} plays.",
+                             f"{bd['date']}: {_fmt(bd['hours'])} hours in one day, {bd['plays']} plays.",
                              f"about {round(ratio)} times a usual day",
                              {"date": bd["date"], "hours": bd["hours"], "ratio": round(ratio, 1)},
                              {"hours": say_hours(bd["hours"]), "ratio": say_count(round(ratio), "times")}))
@@ -196,7 +198,7 @@ def _top(f) -> list:
     share = (first.get("hours") or 0) / t["hours"]
     lead = share / max(0.01, (top[1]["hours"] / t["hours"]) if len(top) > 1 else 0.01)
     return [_card("superlative", "reveal", 0.35 + _clamp(share * 1.5) * 0.4 + _clamp((lead - 1) / 4) * 0.2,
-                  f"{first['title']} took {first['hours']} hours, {round(share * 100)}% of the time.",
+                  f"{first['title']} took {_fmt(first['hours'])} hours, {round(share * 100)}% of the time.",
                   "the title that owned the period" + (f", well clear of {top[1]['title']}"
                                                        if len(top) > 1 and lead >= 2 else ""),
                   {"hours": first["hours"], "share": round(share, 2), "plays": first.get("plays")},
@@ -285,7 +287,7 @@ def _balance(f) -> list:
         big = max(v.get("gb_in") or 0, v.get("gb_out") or 0) or 1
         verdict = v.get("verdict")
         out.append(_card("balance", "balance", 0.35 + _clamp(abs(net) / big) * 0.45,
-                         f"{v['gb_in']} GB in, {v['gb_out']} GB out — "
+                         f"{_fmt(v['gb_in'])} GB in, {_fmt(v['gb_out'])} GB out — "
                          f"{'a pruner' if verdict == 'pruner' else 'a hoarder' if verdict == 'hoarder' else 'in balance'}.",
                          "what the server gained against what it lost",
                          {"gb_in": v["gb_in"], "gb_out": v["gb_out"], "net_gb": net},
@@ -317,7 +319,7 @@ def _identity(f) -> list:
         if x:
             out.append(_card("identity", "identity", 0.3 + _clamp((x["count"] - 1) / 4) * 0.4
                              + _clamp(x["hours"] / 40) * 0.2,
-                             f"Your {label}: {x['name']}, {x['count']} titles, {x['hours']} hours "
+                             f"Your {label}: {x['name']}, {x['count']} titles, {_fmt(x['hours'])} hours "
                              f"({', '.join(x['titles'][:3])}).",
                              f"the {label} behind most of the hours",
                              {"count": x["count"], "hours": x["hours"]},
