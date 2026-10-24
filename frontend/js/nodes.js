@@ -17,7 +17,12 @@ function _nodeState(pc) {
 
 function _buildLine(b) {
   if (!b) return '<span class="t3">Update state: not reported (an older agent, or the node is away)</span>';
-  if (!b.behind) return '<span class="t3">Up to date with main</span>';
+  // When the agent last looked: its answer is cached between checks, so
+  // "up to date" is only as fresh as this.
+  const at = b.checked_at ? ` <span class="t3">· checked ${esc(_fmtRel(new Date(b.checked_at * 1000).toISOString()))}</span>` : '';
+  // A failed check has no count: say why instead of claiming "up to date".
+  if (b.behind == null) return `<span class="t3">Update state unknown — ${esc(b.reason || 'the check has not run yet')}</span>${at}`;
+  if (!b.behind) return `<span class="t3">Up to date with main</span>${at}`;
   const n = `${b.behind} commit${b.behind === 1 ? '' : 's'} behind main`;
   return b.can_update
     ? `<span>${esc(n)}</span> <button type="button" class="btn btn-secondary btn-sm" ${act('updateNode')}>Update</button>`
