@@ -190,6 +190,32 @@ carries `Content-Security-Policy: sandbox`, 2026-10-10) and, since
 checked before the first connection and before every redirect hop, so a
 rebinding CDN name cannot turn the proxy into a LAN fetcher.
 
+## The container and a second machine
+
+**The container** runs as a non-root user (uid 568) on a digest-pinned
+Python base and installs only the hash-checked lock. Everything it writes,
+including the `.env` with every token, lives in the one `/app/data` volume,
+so protect that dataset as you would the `.env` itself. With the usual port
+mapping a browser reaches the container through Docker's forwarding, never
+over loopback, so first-run setup always needs the setup code.
+
+**The PC agent** is a second listener, on the gaming PC (port 11435, plain
+HTTP). Every request must carry `PC_AGENT_TOKEN` (16+ characters, compared
+in constant time); without a token the agent does not start. It reports
+process names and GPU memory (no paths, command lines or user data), and it
+takes one action: `POST /update` fast-forwards the PC's own checkout to its
+own origin's `main` and restarts the tray. The caller chooses nothing. On the
+server, the agent's shutdown notice (`POST /api/hosts/pc/goodbye`) takes the
+same token instead of a login, and every other node route is admin-only. The
+token crosses the LAN in clear text: allow the agent's port in the PC's
+firewall for the server's address only, and use a long random token
+([docs/NAS_MOVE.md](docs/NAS_MOVE.md) shows how to make one).
+
+**A remote Ollama** has no login of its own: anyone who reaches its port can
+run, pull or delete models. When `OLLAMA_ENDPOINT` or `OLLAMA_PC_ENDPOINT`
+points at another machine, allow port 11434 there for Curatarr's address
+only.
+
 ## Known dependency advisories
 
 The pinned `chromadb` release carries four open advisories

@@ -1,5 +1,9 @@
 # AppSec audit & threat model — 2026-10-10
 
+> **Dated report.** It describes the code at the commit named below: line numbers,
+> counts and "open" items are from then, and status notes added later carry their
+> date. For what is true today, see [the docs index](../README.md#audit-reports--dated-snapshots).
+
 Scope: `src/` at `9cf2d18`, covering API endpoints, authentication and sessions, the
 deletion path, outbound HTTP clients, secret storage, and injection sinks. The
 frontend was checked only where it bears on token theft.
@@ -197,6 +201,9 @@ effective_key = secret_for_target(req.url, req.api_key, saved_url, saved_key)
 ```
 
 ### Fix C — service-URL policy and no reflected upstream bodies
+
+*Draft. It shipped as `validate_service_url` in `src/services/endpoint_policy.py`;
+there is no `url_policy.py`.*
 
 ```python
 # src/services/url_policy.py

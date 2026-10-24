@@ -4,7 +4,35 @@ Condensed release history, newest first.
 
 ---
 
-## Unreleased — a deletion judge that fails closed, the AppSec review, one SQLite writer
+## Unreleased — Wrap-Up for everyone, a tactile glass UI on desktop and phone, Curatarr on a NAS, one SQLite writer
+
+Two weeks after 1.1.0. The milestones, in the order the entries below
+follow them:
+
+- **Wrap-Up** replaces the owner-only Curation Report: every household
+  member's own period in review, with every number computed in code before
+  the curator writes about it. Behind it, watch history keeps every play,
+  each user has their own clock (DST included), a library ledger records
+  what arrived and what left, and a credits index keeps who made what.
+- **The interface**, light instead of lines: frosted-glass surfaces, poster
+  art with a tinted glow, a bento grid for the Wrap-Up, and on phones an
+  installable app with a floating glass dock, card-stack tables, bottom
+  sheets and a Swipe view.
+- **Concurrency**: one writer for SQLite; 561 database calls and the
+  vector store moved to worker threads, with a runtime guard
+  (`CURATARR_LOOP_GUARD`) and a ratchet test that lets the count of the
+  rest only fall (one is left). Chat no longer waits on background work.
+- **Resilience**: the deletion judge fails closed; a run that did not judge
+  everything keeps its proposals; no error handler swallows a failure
+  silently any more; slow arrs get the time they need
+  (`ARR_LISTING_TIMEOUT_S`); memory stays bounded across months.
+- **Security**: the AppSec review of 2026-10-10 (loopback-only setup
+  exemption, saved secrets only to their saved address, the service-URL
+  policy, the PIN setting removed) and, after it, the opt-in
+  `ALLOWED_HOSTS` check and Cloudflare Access at the origin.
+- **Deployment**: a container image for a NAS, the gaming PC as a named
+  compute node that lends its GPU, per-machine model bakes, and an update
+  check with "Update available" under the sidebar.
 
 **Wrap-Up: every household member's own period in review (the Curation Report folded in).**
 A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year
@@ -796,11 +824,36 @@ has not run yet: it shows the reason, and when the node last checked.
   error is explained by its own state; "Never processed" no longer reads
   "a full profile was written".
 
+**A slow Lidarr no longer stalls the app, or is asked twice for nothing.** A full library
+listing had 90 s for the whole body, and Lidarr's artist list takes about 124 s on 5,211
+artists, so it failed every time, twice, for 182 s of Lidarr load and no library. Listings
+now get a read budget (`ARR_LISTING_TIMEOUT_S`, default 240 s), 10 s to connect, and one
+attempt. A `Retry-After` in HTTP-date form no longer raises. The discography line and the
+album dossier stop downloading the full artist list (15-30 MB) for every chat turn and every
+judged candidate. Tests: `tests/test_arr_resilience.py`.
+
 **Docs.** README and USAGE walk through a reproducible first start (the
 prerequisites, the Windows install in three steps and the line that proves
 Curatarr is up), troubleshooting is named by symptom (LAN access, the Plex
 redirect, Ollama down, port 8000), USAGE lists the small-GPU settings, and
 CONTRIBUTING holds the lock workflow and a dev setup that starts.
+
+**Docs, checked against the code.** The README said "there is no Docker image";
+it now installs and updates the container next to Windows and Linux/macOS, lists
+the Wrap-Up, the phone app and the NAS setup among the features, links an
+interactive architecture diagram (GitDiagram), and names every outside service
+in Privacy, including ListenBrainz and the update check. `.env.example` gains the
+fourteen settings it was missing (`UPDATE_CHECK`, `GPU_PRESSURE_GATE`, the CPU
+lane, `IMAGE_CACHE_MAX_MB`, `LISTENBRAINZ_TOKEN`, the mmap and node keys, and
+others) and a list of process-environment variables (`CURATARR_ENV_FILE`, `TZ`,
+`CURATARR_LOOP_GUARD`). It no longer calls the unused `BACKUP_*` models
+fallbacks. `tests/test_env_example.py` now keeps it complete, keeps its values
+at config.py's defaults, and keeps it loadable: a blank boolean there would
+stop the server. `docs/README.md` sorts the docs into guides, references,
+design records and dated audit reports, and each audit report says it is a
+snapshot. `scripts/capture_screenshots.py` captures the README screenshots at
+fixed desktop and phone sizes with the account name replaced; the shot list
+and a privacy checklist are in `docs/screenshots/README.md`.
 
 
 ## 2026-10-10 — v1.1.0-beta: enrichment that heals itself, deletions that explain themselves

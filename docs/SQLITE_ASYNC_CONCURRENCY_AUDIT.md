@@ -1,5 +1,9 @@
 # SQLite / AsyncIO Concurrency Audit — 2026-10-11
 
+> **Dated report.** It describes the code at the commit named below: line numbers,
+> counts and "open" items are from then, and status notes added later carry their
+> date. For what is true today, see [the docs index](README.md#audit-reports--dated-snapshots).
+
 Scope: database session lifecycles and engine/PRAGMA setup (`src/database/connection.py`,
 `src/services/app_state.py`, `src/cache/metadata_cache.py`), background orchestration
 (`src/services/scheduler.py`, `src/services/data_custodian.py`, `src/services/bg_tasks.py`,

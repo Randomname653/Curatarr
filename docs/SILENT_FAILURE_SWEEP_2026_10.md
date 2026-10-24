@@ -1,5 +1,9 @@
 # Repository Truth & Silent-Failure Sweep — 2026-10-15
 
+> **Dated report.** It describes the code at the commit named below: line numbers,
+> counts and "open" items are from then, and status notes added later carry their
+> date. For what is true today, see [the docs index](README.md#audit-reports--dated-snapshots).
+
 Scope: `src/` and `frontend/` at `df4bfc9`. The sweep has two parts.
 
 - **Part 1** compares every audit written so far against the live code:
@@ -142,7 +146,7 @@ commit it fails each check it reaches, then stops on helpers that don't exist ye
 | 4 | **Deletion outcome** | `_commit_outcome()` replaces the bare `db.commit()` after a delete. It rolls back, then writes just the status, conditional on the `deleting` claim (3 tries). One failed commit no longer fails the rest of a bulk run. `_plex_delete_artist`: after an accepted DELETE, a check that raises or answers anything but 404/410/200 returns `None` (limbo); before, a 500 counted as gone. |
 | 5 | **AppSec leftovers** | `endpoint_policy.resolved_refusal()` resolves host names (3 s bound) and refuses any that resolve to link-local/metadata/unspecified/multicast. It runs before the Plex/Ollama/arr tests and the library test connect. Spotify upload: at most 20 files, each read with `read(cap + 1)`. `_decode_jwt` answers "Session expired or invalid"; the plex.tv PIN failure no longer returns plex.tv's body. The fixed-host tests (TMDB, Spotify, Last.fm) and the warm-up no longer return `str(e)`. |
 | 6 | **Concurrency** | Re-attribution: user snapshot → account map → column-only scan on a worker thread → PK-bulk updates in 2,000-row `write_session`s on the writer thread; no session across the `/accounts` call (first test of this path). `plex_sync._write_entries` commits every 2,000 new rows. VACUUM is postponed (task stays due) while `enrichment_running`, `music_pipeline_running`, `plex_sync_running` or `deletion_run` is set, and a file with < 20 % free pages is not rewritten. Lease: `scripts/music_enricher.py` records its PID (`music_pipeline_holder_pid`), and boot and shutdown keep `music_pipeline_running` while that PID is a live `music_enricher`. |
-| 7 | **Ratchet** | `tests/test_silent_except_ratchet.py` counts broad handlers whose body is only `pass`, or one `.debug(...)` (plus `pass`/`continue`/`return`), per file, against `tests/silent_except_baseline.json`. A file may only go down. `# noqa: BLE001 - <reason>` on the `except` line exempts a deliberate one. Baseline: **325** (342 before this commit; this AST definition is narrower than the grep count of 372 above). |
+| 7 | **Ratchet** | `tests/test_silent_except_ratchet.py` counts broad handlers whose body is only `pass`, or one `.debug(...)` (plus `pass`/`continue`/`return`), per file, against `tests/silent_except_baseline.json`. A file may only go down. `# noqa: BLE001 - <reason>` on the `except` line exempts a deliberate one. Baseline: **325** (342 before this commit; this AST definition is narrower than the grep count of 372 above). *Since: the count reached zero, the baseline file is gone, and the test is now a rule: every silent broad handler needs its `# noqa: BLE001 - <reason>`.* |
 
 Updated pins: `test_custodian_job_contract` (vacuum fixture now has free pages, plus checks for
 both gates). `test_judge_hardening` still pins `+ watch_unknown_skipped)` (kept true by ordering).

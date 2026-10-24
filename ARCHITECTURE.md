@@ -38,11 +38,15 @@ curatarr/
 ├── frontend/js/               app.js (entry: imports, init(), the window export block),
 │                              state.js (shared mutable state) and one module per view
 ├── frontend/vendor/           marked.min.js + purify.min.js, bundled locally
-├── scripts/                   Standalone runners + icon renderer
+├── scripts/                   Standalone runners, icon renderer, screenshot capture
 ├── tests/                     Plain-script battery — python tests/run_all.py
 ├── tests/benchmarks/          Model/prompt benchmarking harness (§19)
-├── docs/USAGE.md              Operator guide
+├── docs/README.md             Index: guides, references, design records, dated audits
+├── docs/USAGE.md              Operator guide (incl. the container)
 ├── docs/BENCHMARKS.md         Model measurements behind the §15/§16 choices
+├── docs/screenshots/          README images + how to capture them
+├── Dockerfile                 The container image (ghcr.io/randomname653/curatarr)
+├── deploy/docker-compose.yml  Compose / TrueNAS custom app
 ├── data/                      Runtime state (gitignored)
 │   ├── curatarr.db            SQLite (WAL)
 │   ├── cache/enrichment.db    Versioned API cache
@@ -1165,7 +1169,9 @@ without understanding why they exist.
 
 ## 16. Environment / config (`src/config.py`)
 
-`.env` (written by setup wizard). Key knobs:
+`.env` (written by setup wizard; `CURATARR_ENV_FILE` moves it, which the
+container does to `/app/data/.env`). `.env.example` lists every key with its
+default and must load as-is (`tests/test_env_example.py`). Key knobs:
 
 - `PLEX_URL` / `PLEX_TOKEN`, `OLLAMA_ENDPOINT`
 - `BASE_CURATOR_MODEL` (`gemma4:31b`) / `BASE_SUMMARIZER_MODEL`
@@ -1179,9 +1185,15 @@ without understanding why they exist.
 - `TMDB_API_KEY` (required for movies/shows), `OMDB_API_KEY`,
   `LASTFM_API_KEY`, `SPOTIFY_CLIENT_ID`/`_SECRET` (all optional)
 - `SYNC_INTERVAL_HOURS` (24), `ENRICHMENT_TTL_DAYS` (90),
-  `ARR_PRE_ENRICH_BATCH` (80), `ENRICH_PARALLEL_SLOTS`
-- `ENABLE_DOCS` (default False — gates `/api/docs`)
-- `EXTRA_GAME_PROCESSES` — comma-separated .exe names that pause the LLM
+  `ARR_PRE_ENRICH_BATCH` (80), `ARR_LISTING_TIMEOUT_S` (240: Lidarr computes
+  per-artist statistics before it answers a full listing)
+- `ENABLE_DOCS` (default False — gates `/api/docs`), `ALLOWED_HOSTS`,
+  `CF_ACCESS_*` (SECURITY.md)
+- `EXTRA_GAME_PROCESSES` — comma-separated .exe names that pause the LLM;
+  `GPU_PRESSURE_GATE`, `LLM_CPU_LANE` / `_THREADS` / `_MIN_FREE_MB` (§11)
+- The second machine: `PC_AGENT_*`, `OLLAMA_PC_ENDPOINT`, `PC_*` profile and
+  bases, `ENRICH_ON_PC`, `OLLAMA_USE_MMAP` / `PC_OLLAMA_USE_MMAP`
+  (docs/USAGE.md, docs/NAS_MOVE.md)
 
 ---
 
