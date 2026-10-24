@@ -1,7 +1,7 @@
 """Which Ollama host a piece of work goes to (2026-10-22, NAS move phase 2).
 
 Curatarr is moving onto the always-on NAS, with a second Ollama host: the
-gaming PC, whose 24 GB card runs the large bakes when it is on and nobody
+node, whose 24 GB card runs the large bakes when it is on and nobody
 plays. The bakes carry the same names on every host (build_models.py builds
 them from a base that fits each card), so routing means picking a HOST, never
 renaming a model.
@@ -86,7 +86,7 @@ def main_host() -> OllamaHost:
 
 
 def pc_host() -> Optional[OllamaHost]:
-    """The gaming PC's Ollama (OLLAMA_PC_ENDPOINT) with its own profile, or
+    """The node's Ollama (OLLAMA_PC_ENDPOINT) with its own profile, or
     None when the install is not split."""
     from src.config import settings
     url = (getattr(settings, "OLLAMA_PC_ENDPOINT", "") or "").strip().rstrip("/")
@@ -141,7 +141,8 @@ def host_for(role: str) -> OllamaHost:
     if pc_usable():
         return pc
     if role in PC_ONLY:
-        raise PcUnavailable(f"'{role}' waits for the gaming PC (off, busy or shutting down)")
+        from src.services.pc_host import node_name
+        raise PcUnavailable(f"'{role}' waits for {node_name()} (off, busy or shutting down)")
     return main_host()
 
 

@@ -748,6 +748,11 @@
             <!-- Maintenance pane (admin only): one section per action, its status under it -->
             <section class="settings-pane" data-pane="maintenance" hidden>
               <section class="section">
+                <div class="section-head"><h3>Compute nodes</h3><span class="section-hint">This server and the node that lends its card. Name the node as you like; work for its card moves here while it is busy or away.</span>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadNodes">Check again</button></div></div>
+                <div class="section-body"><div id="maint-nodes"><p class="loading" role="status" aria-live="polite">Loading…</p></div></div>
+              </section>
+              <section class="section">
                 <div class="section-head"><h3>Dependencies</h3><span class="section-hint">Pinned requirements versus the interpreter that runs this server. The launchers install; the server only reports.</span>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadDepsStatus" data-args='["$el"]'>Check again</button></div></div>
                 <div class="section-body"><div id="maint-deps"><p class="loading" role="status" aria-live="polite">Loading…</p></div></div>

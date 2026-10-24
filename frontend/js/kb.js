@@ -521,11 +521,14 @@ export function _renderCustodianBar(c) {
   // Keep working (2026-10-06): a sprint until a set time, two-minute ticks,
   // the large budgets, the PC kept from idle-sleeping. Stop ends it early.
   const sprint = c.sprint && c.sprint.until ? new Date(c.sprint.until + 'Z') : null;
-  if (sprint) line = `Keep working until ${sprint.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}, the PC stays awake · ${line}`;
+  // "stays awake" only where the server can keep its machine awake (Windows);
+  // a container has nothing to keep awake.
+  const awake = c.sprint && c.sprint.awake ? ', this machine stays awake' : '';
+  if (sprint) line = `Keep working until ${sprint.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}${awake} · ${line}`;
   const sprintCtl = sprint
-    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopSprint', EL)} title="Back to the 30-minute rhythm; the PC may sleep again">Stop</button>`
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopSprint', EL)} title="Back to the 30-minute rhythm">Stop</button>`
     : `<select id="sprint-hours" class="input w-70" aria-label="How long to keep working">${[2, 4, 6, 8, 10, 12].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h} h</option>`).join('')}</select>
-       <button type="button" class="btn btn-secondary btn-sm" ${act('startSprint', EL)} title="Work through the GPU work that is due (enrichment, Wikipedia significance, reception, lyrics profiles, taste, recommendations) without the 30-minute pauses, with the large budgets, and keep the PC from sleeping until then. Ends by itself once nothing is left.">Keep working</button>`;
+       <button type="button" class="btn btn-secondary btn-sm" ${act('startSprint', EL)} title="Work through the GPU work that is due (enrichment, Wikipedia significance, reception, lyrics profiles, taste, recommendations) without the 30-minute pauses and with the large budgets until then (a Windows server is also kept from sleeping). Ends by itself once nothing is left.">Keep working</button>`;
   el.innerHTML = `<section class="section">
     <div class="section-head">
       <h3>Data custodian ${due ? `<span class="badge amber badge-sm">${due} task${due > 1 ? 's' : ''} due</span>` : '<span class="badge muted badge-sm">all caught up</span>'}</h3>
@@ -603,7 +606,7 @@ export async function startSprint(btn) {
   btnBusy(btn, 'Starting…');
   try {
     const r = await api(`/api/enrichment/custodian/sprint?hours=${hours}`, 'POST');
-    if (r.until) toast(`Keeping at it for ${hours} h. The PC stays awake meanwhile.`, 'success');
+    if (r.until) toast(`Keeping at it for ${hours} h.${r.awake ? ' This machine stays awake meanwhile.' : ''}`, 'success');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadEnrichStatus, 3000);
 }

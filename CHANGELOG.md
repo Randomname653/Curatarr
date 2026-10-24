@@ -625,6 +625,21 @@ the NAS's bell says when the gaming PC runs an older Curatarr. "Update the
 PC" there has the agent update and restart. The NAS sends only the token,
 and the agent fetches from its own origin.
 
+**Nodes have names.** The second machine is a node, named like a Tdarr node:
+it reports a name of its own (`PC_AGENT_NAME`, else its computer name), and
+Settings → Maintenance → Compute nodes can rename it. That section also shows
+its state (free, busy and why, away), when it last reported, and whether it
+runs an older Curatarr, with an Update button. The UI, the bell and the log
+use the name; nothing says "the gaming PC" any more.
+
+**An analysis waits for its node.** "Run analysis" while the node is off,
+busy or playing is queued, and starts by itself on the first poll that finds
+the node free. The stored proposals stay on screen meanwhile, with a note.
+A game started on the node during a run now stops it with the node's name
+and the reason. Before, its calls kept failing as outages until the breaker
+tripped. The Keep working line only promises "stays awake" where the server
+can keep its machine awake.
+
 **Needs attention and maintenance that could never finish.**
 - A wrong-entity finding no longer fires when a shared TMDB, TVDB or IMDb id
   says it is the same work. 39 of the owner's 65 were translated titles

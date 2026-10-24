@@ -100,11 +100,11 @@ def custodian_sprint(
     """Keep working: until now + ``hours`` the custodian looks for due work
     every two minutes with the deep budgets and keeps the PC from
     idle-sleeping; 0 stops. It also ends by itself once nothing is left."""
-    from src.services.data_custodian import custodian_sprint_tick, set_sprint
+    from src.services.data_custodian import custodian_sprint_tick, set_sprint, sprint_status
     until = set_sprint(hours)
     if until:
         background_tasks.add_task(custodian_sprint_tick)
-    return {"until": until.isoformat() if until else None}
+    return {"until": until.isoformat() if until else None, "awake": sprint_status()["awake"]}
 
 
 @router.get("/status")

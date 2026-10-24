@@ -9,7 +9,7 @@ background, right after start: the server answers at once - a first build
 downloads 20 GB and more, far past any health check - and calls fail closed
 until the bakes exist, as they would anyway.
 
-Only the main host is built here. The gaming PC's bakes (build_models.py
+Only the main host is built here. The node's bakes (build_models.py
 --host pc) are pulled onto a machine someone games on, so that stays a
 deliberate step; a missing one is named in the log.
 """
@@ -55,9 +55,10 @@ async def ensure_main_models() -> dict:
             pc = await asyncio.to_thread(host_plan, "pc")
             pc_missing = await asyncio.to_thread(missing_on, pc["url"], pc["models"])
             if pc_missing:
-                logger.warning("[models] the gaming PC is missing %s - run "
+                from src.services.pc_host import node_name
+                logger.warning("[models] %s is missing %s - run "
                                "python build_models.py --host pc while it is on",
-                               ", ".join(pc_missing))
+                               node_name(cap=True), ", ".join(pc_missing))
         ident = await asyncio.to_thread(embedding_identity)
         out["embedding"] = ident["status"]
         if ident["status"] == "mismatch":

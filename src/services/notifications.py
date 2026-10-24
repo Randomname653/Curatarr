@@ -98,13 +98,14 @@ def _game_question_items() -> list[dict]:
     items = []
     for u in get_unknown_processes()[:_GAME_Q_MAX]:
         name = u["name"]
+        node = pc_host.node_name()
         items.append({"id": f"game-question:{name.lower()}", "kind": "game_question",
                       "severity": "warn" if u.get("gpu") else "info",
                       "title": f"Is {name} a game?",
-                      "text": ("It draws on the graphics card: Curatarr keeps its work off the "
-                               "PC while it runs. Your answer decides next time."
+                      "text": (f"It draws on the graphics card of {node}: Curatarr keeps its "
+                               "work off that card while it runs. Your answer decides next time."
                                if u.get("gpu") else
-                               "A large program on the PC. A game frees the card for it; "
+                               f"A large program on {node}. A game frees the card for it; "
                                "anything else is never asked again."),
                       "action": {"key": "game_yes", "label": "Yes, a game", "arg": name},
                       "secondary": {"key": "game_no", "label": "Not a game", "arg": name}})
@@ -122,7 +123,7 @@ _BELL_ONLY = frozenset({"game_question", "pc_update"})
 
 
 def _pc_update_items() -> list[dict]:
-    """The gaming PC runs an older Curatarr than main (its agent checks every
+    """The node runs an older Curatarr than main (its agent checks every
     6 h and reports it). One click updates it; when it cannot fast-forward,
     the bell says why and how instead."""
     import time
@@ -134,14 +135,15 @@ def _pc_update_items() -> list[dict]:
         return []
     n = int(b["behind"])
     behind = f"{n} commit{'s' if n != 1 else ''} behind main"
+    title = f"{pc_host.node_name(cap=True)} runs an older Curatarr"
     if b.get("can_update"):
         return [{"id": f"pc-update:{(b.get('latest') or '')[:12]}", "kind": "pc_update",
-                 "severity": "warn", "title": "The gaming PC runs an older Curatarr",
+                 "severity": "warn", "title": title,
                  "text": f"It is {behind}. Updating restarts its agent: work on its card "
-                         f"moves to the NAS for a few seconds.",
-                 "action": {"key": "pc_update", "label": "Update the PC"}}]
+                         f"moves to this server for a few seconds.",
+                 "action": {"key": "pc_update", "label": f"Update {pc_host.node_name()}"}}]
     return [{"id": f"pc-update:{(b.get('latest') or '')[:12]}", "kind": "pc_update",
-             "severity": "info", "title": "The gaming PC runs an older Curatarr",
+             "severity": "info", "title": title,
              "text": f"It is {behind}, and cannot update itself: {b.get('reason') or 'unknown'}. "
                      f"Run git pull in its Curatarr folder.",
              "action": None}]

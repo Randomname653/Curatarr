@@ -107,7 +107,7 @@ try:
 
     out = run(missing={"http://nas:30068": [], "http://pc:11434": ["curatarr-pitcher"]}, split=True)
     check("split: the PC's missing bakes are named, never pulled onto it from here",
-          built == [] and any("gaming PC is missing curatarr-pitcher" in m for _, m in logs.lines))
+          built == [] and any("is missing curatarr-pitcher" in m for _, m in logs.lines))
 
     out = run(missing={"http://nas:30068": []}, split=False, ident="mismatch")
     check("embedding weights that differ are an ERROR in the log",

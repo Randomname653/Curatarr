@@ -262,6 +262,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
       if (seq !== _delLoadSeq) return;
       _renderEnrichmentCoverageBanner(r.enrichment_coverage);
       _renderRunBanner(r.last_run);
+      _renderQueuedBanner(r.queued_note);
       _renderActivityBanner(r.activity_note);
       if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
       _renderDeletionProposals(r.proposals || []);
@@ -321,6 +322,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     if (seq !== _delLoadSeq) return;
 
     _renderRunBanner(r.last_run);
+    _renderQueuedBanner(r.queued_note);
     // The arr history couldn't be read: the message (empty list) or this
     // banner (partial list) says so — never "nothing imported recently".
     _renderActivityBanner(r.message && !r.proposals?.length ? null : r.activity_note);
@@ -343,6 +345,20 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
 // silence as "nothing to delete"; a run is now Partial or Failed out loud,
 // and the banner stays until the next run replaces it — never a toast that
 // is gone before anyone reads it.
+// An analysis asked for while the node was away (services/deletion_queue):
+// it starts by itself once the node is free; the stored proposals stay.
+export function _renderQueuedBanner(note) {
+  document.getElementById('del-queued-banner')?.remove();
+  if (!note) return;
+  const banner = document.createElement('div');
+  banner.id = 'del-queued-banner';
+  banner.className = 'banner warn';
+  banner.setAttribute('role', 'status');
+  banner.innerHTML = `<span class="banner-icon">${SVG_WARN}</span><div class="banner-text">${esc(note)}</div>`;
+  const delContent = document.getElementById('del-content');
+  delContent.parentNode.insertBefore(banner, delContent);
+}
+
 export function _renderRunBanner(run) {
   document.getElementById('del-run-banner')?.remove();
   if (!run || !(run.failed || run.deferred || run.stopped || run.degraded)) return;

@@ -867,6 +867,17 @@ async def get_deletion_proposals(
 ):
     from src.services.recommendations_engine import generate_deletion_proposals, deletion_run_summary
     from src.database.models import ProtectedMedia
+    from src.services import deletion_queue
+
+    # Split install: verdicts come from the node only. An analysis asked for
+    # while it is off, busy or playing is queued and starts by itself once
+    # the node is free (services/deletion_queue); meanwhile the stored
+    # proposals are shown as usual, with the queue's note above them.
+    if refresh:
+        from src.services.ollama_hosts import judge_ready
+        if not judge_ready():
+            await deletion_queue.queue(user.id, category, recent_only, recent_days)
+            refresh = False
 
     if not refresh:
         def _load_cached() -> tuple:
@@ -930,6 +941,7 @@ async def get_deletion_proposals(
             "enrichment_coverage": await run_read(_arr_enrichment_coverage, category),
             "stale": cache_stale,
             "last_run": deletion_run_summary(category),
+            **({"queued_note": deletion_queue.note(_queued)} if (_queued := await deletion_queue.pending()) else {}),
             **({"message": message} if not cached else {}),
             **({"activity_unavailable": unavailable,
                 "activity_note": _activity_unavailable_message(unavailable)}
@@ -1039,13 +1051,6 @@ async def get_deletion_proposals(
     # Analyze and the custodian's ARR scan ran CONCURRENTLY — two full judge
     # runs interleaving call-by-call on the LLM gate (double wall clock), and
     # the later batch superseding the earlier one's freshly written proposals.
-    from src.services.ollama_hosts import judge_ready
-    if not judge_ready():
-        # Split install: verdicts come from the gaming PC's card only.
-        return {"proposals": [], "total_gb": 0,
-                "message": ("Deletion analysis runs on the gaming PC, and it is off, "
-                            "busy or shutting down right now. The existing proposals "
-                            "stay; run the analysis again when the PC is free.")}
     from src.services.app_state import acquire_state_lock, release_state_lock
     if not await run_write(acquire_state_lock, "deletion_run"):
         return {"proposals": [], "total_gb": 0,

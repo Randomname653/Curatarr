@@ -299,6 +299,9 @@ class Settings(BaseSettings):
     # (no server, no database) and "Open Curatarr" opens PC_AGENT_NOTIFY_URL.
     PC_AGENT_ONLY: bool = False
     PC_AGENT_PORT: int = 11435
+    # On the node: the name it reports (default: its computer name). The
+    # server's Settings -> Maintenance can rename it for good.
+    PC_AGENT_NAME: str = ""
     PC_AGENT_NOTIFY_URL: str = ""
     PC_AGENT_URL: str = ""
     # The PC's Ollama as a SECOND host (services/ollama_hosts.py). Set, and
