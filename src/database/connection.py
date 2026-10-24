@@ -325,6 +325,16 @@ def _migrate_columns() -> None:
         ("series_editions",       "anidb_tags",          "VARCHAR(200)"),
         # Swipe "Want to watch" (2026-10-21): a not-seen answer with intent.
         ("swipe_ratings",         "want",                "BOOLEAN DEFAULT 0"),
+        # Debate outcomes (2026-10-25): a resolution tied to the proposal it
+        # settled, and who convinced whom (services/debate_outcome).
+        ("curator_resolution_log", "proposal_id",     "INTEGER"),
+        ("curator_resolution_log", "score",           "FLOAT"),
+        ("curator_resolution_log", "verdict",         "VARCHAR(16)"),
+        ("curator_resolution_log", "storage_mb",      "FLOAT"),
+        ("curator_resolution_log", "thread_id",       "VARCHAR(64)"),
+        ("curator_resolution_log", "user_turns",      "INTEGER"),
+        ("curator_resolution_log", "persuader",       "VARCHAR(8)"),
+        ("curator_resolution_log", "persuader_basis", "VARCHAR(8)"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model
@@ -361,6 +371,7 @@ def _migrate_columns() -> None:
         ("ix_wh_user_type_viewed",       "watch_history", "user_id, media_type, viewed_at"),
         # Per-title enrichment lookups (plex_sync, the KB breakdown).
         ("ix_es_title_cat",              "enrichment_status", "title, media_category"),
+        ("ix_curator_resolution_log_proposal_id", "curator_resolution_log", "proposal_id"),
     ]
 
     import logging as _logging

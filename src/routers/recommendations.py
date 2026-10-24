@@ -27,6 +27,7 @@ from src.database.models import (
 )
 from src.routers.auth import get_current_user, require_admin
 from src.config import settings
+from src.services.debate_outcome import safe_fields_for
 from src.services.enrichment_state import log_topup_failure
 from src.services.http_client import tls_context
 
@@ -1486,7 +1487,7 @@ def _blocked_reason(db: Session, user_id: int, p) -> Optional[str]:
 # it was last read (the Lidarr guard's storage_mb true-up, the outcome).
 _PROPOSAL_COLS = ("id", "user_id", "title", "service", "media_id", "category", "status",
                   "resolved_at", "reason", "storage_mb", "tmdb_id", "tvdb_id",
-                  "soulsync_ban", "user_comment", "arr_url", "confidence")
+                  "soulsync_ban", "user_comment", "arr_url", "confidence", "stagnant")
 
 
 class _Proposal:
@@ -1545,6 +1546,12 @@ def _curator_stance(user_id: int, proposal_id: int, fallback_pitch: Optional[str
     with get_db_session() as db:
         return _latest_curator_stance_for_proposal(
             db, user_id, proposal_id, fallback_pitch=fallback_pitch)
+
+
+def _debate_fields(user_id: int, outcome: str, resolution_type: str, p) -> dict:
+    """The resolution row's link to the proposal and who moved (services/debate_outcome)."""
+    with get_db_session() as db:
+        return safe_fields_for(db, user_id, outcome, resolution_type, p)
 
 
 @router.post("/deletions/{proposal_id}/approve")
@@ -1895,6 +1902,7 @@ async def _delete_one_and_log(user_id: int, p: _Proposal) -> bool:
             else:
                 resolution_type = "consensus"
                 override_reason = None
+            debate = await run_read(_debate_fields, user_id, "deleted", resolution_type, p)
             p.pending_log = dict(
                 user_id=user_id,
                 title=p.title,
@@ -1903,6 +1911,7 @@ async def _delete_one_and_log(user_id: int, p: _Proposal) -> bool:
                 resolution_type=resolution_type,
                 curator_stance=stance,
                 override_reason=override_reason,
+                **debate,
             )
             logger.info(
                 "📒 [RESOLUTION LOG] user=%d '%s' deleted (%s)%s",
@@ -2268,6 +2277,7 @@ def reject_deletion(
             resolution_type=resolution_type,
             curator_stance=stance,
             override_reason=override_reason,
+            **safe_fields_for(db, user.id, "kept", resolution_type, p),
         ))
         logger.info(
             "📒 [RESOLUTION LOG] user=%d '%s' kept (%s)%s",

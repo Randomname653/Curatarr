@@ -1733,6 +1733,7 @@ async def handle_protection_intent(
     llm_output: str,
     category: Optional[str] = None,
     assistant_held_delete_line: bool = False,
+    thread_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Parse LLM output for PROTECT_MEDIA action and write to ProtectedMedia.
@@ -1751,7 +1752,8 @@ async def handle_protection_intent(
     ``assistant_held_delete_line`` is the Pass 50 backstop, repurposed: a
     curator whose same-turn reply was a hard delete verdict cannot have
     reached a *consensus* this exchange, so a parsed ``consensus`` is
-    corrected to ``override``.
+    corrected to ``override``. ``thread_id`` is the discussion the keep came
+    from: the log row's link to its proposal and debate (services/debate_outcome).
     """
     if "ACTION: PROTECT_MEDIA" not in llm_output:
         return None
@@ -1887,6 +1889,23 @@ async def handle_protection_intent(
                     # detector actually classified the keep — synthetic callers
                     # (analyze_deletion_comment) omit RESOLUTION and get no row.
                     if resolution_type:
+                        from src.services.debate_outcome import proposal_id_of, safe_fields_for
+                        prop = None
+                        if not proposal_id_of(thread_id):
+                            # A keep said outside the proposal's own thread: the
+                            # proposal is the one this pass just rejected.
+                            try:
+                                prop = (db.query(DeletionProposal)
+                                        .filter(DeletionProposal.user_id == user_id,
+                                                DeletionProposal.title == title,
+                                                DeletionProposal.status == "rejected",
+                                                DeletionProposal.resolved_at
+                                                >= datetime.utcnow() - timedelta(minutes=5))
+                                        .order_by(DeletionProposal.resolved_at.desc()).first())
+                            except Exception as e:  # noqa: BLE001 - the keep is logged either way
+                                logger.warning("[debates] proposal of the %r keep not found: %s",
+                                               title, e)
+                        debate = safe_fields_for(db, user_id, "kept", resolution_type, prop, thread_id)
                         # One debate = one history row. The detector fires on EVERY
                         # turn of a keep-discussion, so a two-turn debate logged the
                         # same keep twice (Agatha All Along: turn 1 "Sentimental/
@@ -1907,6 +1926,9 @@ async def handle_protection_intent(
                         )
                         if recent:
                             recent.resolution_type = resolution_type
+                            for k, v in debate.items():
+                                if v is not None or k in ("persuader", "persuader_basis"):
+                                    setattr(recent, k, v)
                             if curator_stance:
                                 recent.curator_stance = curator_stance
                             recent.override_reason = (
@@ -1930,6 +1952,7 @@ async def handle_protection_intent(
                                     (override_reason or None)
                                     if resolution_type == "override" else None
                                 ),
+                                **debate,
                             ))
                             logger.info(
                                 "📒 [RESOLUTION LOG] user=%d '%s' kept (%s)%s",
@@ -2495,6 +2518,7 @@ async def detect_and_handle_protection(
         user_id, llm_output,
         category=anchor_category,
         assistant_held_delete_line=assistant_held_delete_line,
+        thread_id=thread_id,
     )
 
 

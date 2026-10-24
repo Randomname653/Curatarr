@@ -496,6 +496,16 @@ class CuratorResolutionLog(Base):
 
     The recap is then a single ``SELECT … GROUP BY`` over this table.
     Nothing migrates ``ProtectedMedia`` — state and history stay separate.
+
+    The structured columns (services/debate_outcome) tie a row to what the
+    judge proposed: ``proposal_id``, the judge's ``score`` (0-100) and
+    ``verdict`` (CUT / STAGNANT), the ``storage_mb`` at stake, the debate's
+    ``thread_id`` and how many times the user spoke in it (``user_turns``).
+    ``persuader`` says who moved: "user" (the curator proposed the cut and
+    conceded), "curator" (the user argued to keep it, then agreed to the
+    delete), "none" (an override, or no debate). ``persuader_basis``: "rule"
+    when the columns above decide it, "llm" when the summarizer read the
+    debate, "pending" until it has.
     """
     __tablename__ = "curator_resolution_log"
 
@@ -508,6 +518,14 @@ class CuratorResolutionLog(Base):
     curator_stance  = Column(Text, nullable=True)
     override_reason = Column(String(64), nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow, index=True)
+    proposal_id     = Column(Integer, nullable=True, index=True)
+    score           = Column(Float, nullable=True)        # judge's 0-100
+    verdict         = Column(String(16), nullable=True)   # CUT / STAGNANT
+    storage_mb      = Column(Float, nullable=True)
+    thread_id       = Column(String(64), nullable=True)
+    user_turns      = Column(Integer, nullable=True)
+    persuader       = Column(String(8), nullable=True)    # user / curator / none
+    persuader_basis = Column(String(8), nullable=True)    # rule / llm / pending
 
     __table_args__ = (
         Index("idx_crl_user_created", "user_id", "created_at"),

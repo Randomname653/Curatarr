@@ -209,6 +209,15 @@ opens late November):
    - Music has no ledger until the tech sync walks music.
 3. Resolution-log enrichment plus the retro-labelled persuader. Unlocks the
    Court Record, Curatarr's unique beat.
+   - *Built in `services/debate_outcome.py`.* Every resolution row
+     carries its proposal, the judge's score and verdict, the GB at stake,
+     the thread and the user's turns.
+   - A rule decides `persuader` where the facts are enough. The summarizer
+     reads only the deletes by consensus after a debate, for old rows and
+     new alike.
+   - The owner checks the labels at `GET /api/stats/debate-labels`.
+   - Not done: the durable `judge_verdicts` table and soft-deleting judge
+     protections (later rows of the table).
 4. `User.timezone`. Tiny, and fixes the clock.
 5. Credits and companies tables. Unlocks constellations, backfillable from
    the payloads the enricher already fetches.

@@ -27,6 +27,27 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Debate outcomes: what the judge proposed, and who convinced whom.** The resolution log recorded
+that a deletion debate ended, but not what was at stake or who moved. A row had no link to its
+proposal, so the judge's score, the CUT / STAGNANT verdict and the GB could only be guessed back by
+title. "Consensus" also covered both "you talked the curator out of it" and "it talked you into
+it". Changes (`services/debate_outcome.py`):
+- **New columns:** every write path (card Keep, delete, chat keep) now fills `proposal_id`,
+  `score`, `verdict`, `storage_mb`, `thread_id` and `user_turns`. A chat keep outside the proposal's
+  thread finds the proposal it just closed.
+- **`persuader` by rule:** an override or a debate without a word from the user moved nobody, and
+  a proposed cut kept by consensus means the curator conceded.
+- **`persuader` by the summarizer:** a delete by consensus after a debate goes to the summarizer,
+  which reads the thread and is asked whether the user argued to keep it. This runs as a custodian
+  job (`debate_outcomes`, summarizer lane), so labels for old rows and new come from one
+  classifier.
+- **Old rows:** rows from before the columns are linked to their proposals by title and time.
+- **Checking the labels:** the owner can compare them with their own words at
+  `GET /api/stats/debate-labels`.
+- **Safety:** a fault filling the columns never costs the log row itself.
+
+Tests: `tests/test_debate_outcome.py`.
+
 **Library ledger: what arrived when, and what left.** Nothing recorded either side of the
 storage balance. GB freed was read off Curatarr's own deletions only, so a title deleted straight
 in Radarr never counted, and GB added was not known at all. The tech sync's whole-library walk
