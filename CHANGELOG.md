@@ -243,6 +243,31 @@ in Radarr never counted, and GB added was not known at all. The tech sync's whol
 
 Tests: `tests/test_library_ledger.py`.
 
+**The ledger's arrivals come from the arr history.** The first walk against the real
+server showed that Plex's `addedAt` cannot date an arrival:
+- a replaced file takes the new file's date (1091 of 1110 upgraded films), so an upgrade read
+  as a new arrival plus a shrink of the old size;
+- a re-added library dates every file to the day of the re-add (15,135 anime episodes on one
+  day), so one month showed 12 TB "new".
+
+Radarr and Sonarr record every import with its size, and every replaced file as an `Upgrade`
+deletion in the same second. A new custodian job, `arr_ledger` (`services/arr_ledger.py`, no
+model), reads that history:
+- all of it once, oldest first, 60 pages a run; then what came since, also right before each
+  tech walk;
+- an import is an arrival; an import paired with its `Upgrade` deletion counts only the
+  difference;
+- departures stay with the Plex walk, which sees a title or a season leave however it left.
+  Sonarr drops the history of a deleted series, so the arr cannot be the only witness.
+
+Once a service's history is read to the end, its titles are covered:
+- the Plex walk writes no addedAt arrival, return or growth for them, only what left (gone, or
+  shrunk by more than the arr's own records explain);
+- the arrivals it had written for them are removed once;
+- a covered title's arrival date is its first arr import.
+
+Tests: `tests/test_arr_ledger.py`.
+
 **Watch history: every play of the owner is its own row, and a rewatch in progress is not a
 completion.** The owner's plays came from the library listing, which carries one timestamp
 per item (`lastViewedAt`). Two plays of a film between two syncs became one row, the history

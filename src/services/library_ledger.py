@@ -16,6 +16,11 @@ into two durable tables (``LibraryItem``, ``LibraryEvent`` in models.py):
   profile prune uses: an outage or a cut-short walk never empties a
   category), and a gone title listed again has returned.
 
+Arrivals of a title Radarr or Sonarr manage come from their history instead
+(services/arr_ledger), once it has been read to the end: Plex moves
+``addedAt`` with every replaced file and every re-added library. This walk
+still decides what left.
+
 Music is not walked by default (see ``sync_tech_profiles``), so it has no
 ledger yet.
 """
@@ -51,13 +56,44 @@ def note_arrival(arrivals: dict, added_ts, size_bytes) -> None:
     b[1] += int(size_bytes or 0)
 
 
-def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None) -> dict:
+def _covered(a: dict, arr: Optional[dict]) -> bool:
+    """Does an arr's history date this title's arrivals (services/arr_ledger)?"""
+    if not arr:
+        return False
+    if a.get("media_type") == "movie":
+        return a.get("tmdb_id") in arr.get("movie", ())
+    return a.get("tvdb_id") in arr.get("tv", ())
+
+
+def _arr_since(db, known: dict) -> dict:
+    """``{rating key: [(at, ±MB)]}``: the arrivals and upgrades the arr history
+    holds for a title since the oldest previous walk, by when they happened
+    (a first read of the whole history writes years of rows at once: their
+    write time says nothing about the files)."""
+    from src.database.models import LibraryEvent as E
+    seen = [r.last_seen_at for r in known.values() if r.last_seen_at]
+    if not seen:
+        return {}
+    out: dict = {}
+    for rk, kind, mb, at in (db.query(E.plex_rating_key, E.kind, E.size_mb, E.at)
+                             .filter(E.source == "arr", E.at >= min(seen),
+                                     E.kind.in_(("added", "grew", "shrunk")))):
+        out.setdefault(rk, []).append((at, -(mb or 0) if kind == "shrunk" else (mb or 0)))
+    return out
+
+
+def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None,
+                   arr: Optional[dict] = None) -> dict:
     """Write one walk into the ledger. Blocking — call via ``run_write``.
 
     ``items``: ``{rating_key: {media_type, title, tmdb_id, tvdb_id,
     size_bytes, arrivals}}`` (the tech sync's accumulator). ``complete``:
     the media types whose walk was complete and non-empty — only there is a
-    title that went unlisted gone."""
+    title that went unlisted gone. ``arr``: the TMDB / TVDB ids whose
+    arrivals the arr history dates (``arr_ledger.covered``). For those this
+    walk writes no arrival, return or growth — Plex's addedAt moves with
+    every replaced file and every re-added library — only what left: gone,
+    or shrunk by more than the arr's own records since the last walk explain."""
     from src.database.models import LibraryEvent, LibraryItem
     now = now or datetime.utcnow()
     stamp = now.isoformat(timespec="seconds")
@@ -67,7 +103,8 @@ def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None) -
         known = {r.plex_rating_key: r for r in
                  db.query(LibraryItem).filter(LibraryItem.media_type.in_(sorted(t for t in types if t)))}
         added = {(e.plex_rating_key, e.bucket): e for e in
-                 db.query(LibraryEvent).filter(LibraryEvent.kind == "added")}
+                 db.query(LibraryEvent).filter(LibraryEvent.kind == "added", LibraryEvent.source == "plex")}
+        arr_since = _arr_since(db, known) if arr else {}
         for rk, a in items.items():
             rk = str(rk)
             arrivals = a.get("arrivals") or {}
@@ -76,7 +113,9 @@ def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None) -
             size_mb = round((a.get("size_bytes") or 0) / _MB, 2)
             title = (a.get("title") or "")[:512] or None
             row = known.get(rk)
+            by_arr = _covered(a, arr)
             before_mb = None if row is None or row.gone_at is not None else (row.size_mb or 0)
+            last_seen = row.last_seen_at if row is not None else None
             # The month the previous walk saw: an arrival month before it was
             # complete then. New files get today's addedAt, so such a month
             # can only grow through a replaced file — an upgrade, not arrivals.
@@ -89,19 +128,31 @@ def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None) -
                 counts["new"] += 1
             elif row.gone_at is not None:
                 row.gone_at = None
-                db.add(LibraryEvent(at=now, kind="returned", bucket=stamp, plex_rating_key=rk,
-                                    media_type=row.media_type, title=title or row.title,
-                                    size_mb=size_mb))
-                counts["returned"] += 1
+                if not by_arr:      # else its re-import is the arr's arrival
+                    db.add(LibraryEvent(at=now, kind="returned", bucket=stamp, plex_rating_key=rk,
+                                        media_type=row.media_type, title=title or row.title,
+                                        size_mb=size_mb))
+                    counts["returned"] += 1
             row.media_type = a.get("media_type") or row.media_type
             row.title = title or row.title
             row.tmdb_id = a.get("tmdb_id") or row.tmdb_id
             row.tvdb_id = a.get("tvdb_id") or row.tvdb_id
-            if added_at and (row.added_at is None or added_at < row.added_at):
+            if added_at and row.added_from != "arr" and (row.added_at is None or added_at < row.added_at):
                 row.added_at = added_at
             row.size_mb = size_mb
             row.last_seen_at = now
             arrived_mb = 0.0      # what this walk's new arrivals explain of a size change
+            if by_arr:
+                arrived_mb = sum(mb for at, mb in arr_since.get(rk, ())
+                                 if last_seen is None or at is None or at > last_seen)
+                if before_mb is not None:
+                    change = size_mb - before_mb - arrived_mb
+                    if change <= -max(_CHANGE_MIN_MB, _CHANGE_MIN_SHARE * before_mb):
+                        db.add(LibraryEvent(at=now, kind="shrunk", bucket=stamp, plex_rating_key=rk,
+                                            media_type=row.media_type, title=row.title,
+                                            size_mb=round(-change, 2)))
+                        counts["shrunk"] += 1
+                continue
             for month, (ts, nbytes) in arrivals.items():
                 at, mb = datetime.utcfromtimestamp(ts), round(nbytes / _MB, 2)
                 ev = added.get((rk, month))

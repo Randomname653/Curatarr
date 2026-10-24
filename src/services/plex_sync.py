@@ -2692,10 +2692,20 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                         agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
 
     written = await run_write(_persist_tech_profiles, agg)
+    arr_cov = None
     try:
-        # The same walk, kept: arrivals back-dated from addedAt, titles that
-        # left. Its own transaction — a ledger fault never costs the profiles.
-        await run_write(persist_ledger, agg, scanned - incomplete)
+        # The arrs' own record first (services/arr_ledger): what they imported
+        # since their last read, so this walk's size changes are not counted
+        # a second time. The titles they cover get no addedAt arrivals here.
+        from src.services import arr_ledger
+        await arr_ledger.run_arr_ledger(since_only=True)
+        arr_cov = await run_read(arr_ledger.covered)
+    except Exception as e:  # noqa: BLE001 - the walk goes on without it
+        logger.warning("[ledger] arr history not read before the walk (%s)", e)
+    try:
+        # The same walk, kept: titles that left, and the arrivals of what no
+        # arr covers. Its own transaction — a ledger fault never costs the profiles.
+        await run_write(persist_ledger, agg, scanned - incomplete, None, arr_cov)
     except Exception as e:
         logger.warning("[ledger] library ledger not written this walk (%s) - the next walk "
                        "catches up, arrivals are back-dated", e)
