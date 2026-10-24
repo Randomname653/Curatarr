@@ -55,6 +55,30 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Wrap-Up v2, step 1: what is worth saying, and the new telemetry in the story.** The v1 fact
+sheet handed the curator about 40 equally weighted lines. Nothing said which facts were
+remarkable, every tile rendered because data existed, and the number check rejected honest
+rounding ("about 58 hours" for 58.3). Changes:
+- **New sections** read the records added in the last PRs (`services/wrapup_sections.py`):
+  - **court record:** debates decided, won and lost; the boldest keep against the judge's score;
+    what the curator talked you into or out of; GB saved and freed;
+  - **GB in vs GB out**, owner only, with a hoarder / pruner / balanced verdict;
+  - **time-to-watch:** how long the period's new titles waited on the server, the longest wait
+    and the share played within a week;
+  - **auteurs:** the director, studio and actor behind most of the hours;
+  - **taste river:** each month against the one before, from the taste snapshots.
+- **Insight miner** (`services/wrapup_insights.py`): turns the facts into ranked claim cards.
+  Each card has a score for surprise, specificity and contrast, a plain "why", the story beat it
+  belongs to, and approved renderings of each number ("58.3 hours" → "58 hours", "nearly 60
+  hours", "two and a half days"). Cards under the floor are dropped, so a quiet period gets a
+  shorter story, not padding.
+- **Fact sheet:** it ends with the ranked cards, and the curator is told to build the story from
+  the top. Their renderings pass the number check.
+- **API:** `GET /api/wrapup` returns the cards as `insights`.
+- **Rebuild:** `FACTS_VERSION` 5.
+
+Tests: `tests/test_wrapup_insights.py`.
+
 **Taste snapshots: what each month of watching looked like.** `TasteVectorEntry` is one row
 per user, overwritten on every rebuild, so the taste profile had no history: no "what you were
 in March", no monthly drift. A daily custodian job (`taste_snapshots`, Chroma reads, no model)

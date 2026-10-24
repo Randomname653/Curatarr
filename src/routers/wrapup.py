@@ -112,11 +112,14 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
                      user: User = Depends(get_current_user)):
     from src.database.runner import run_read
     from src.services.wrapup_facts import available
+    from src.services.wrapup_insights import mine
 
     facts, row = await current_facts(user, scope, period)
     story = row and row.get("story")
     return {
         "facts": facts,
+        # what is worth saying, ranked (services/wrapup_insights)
+        "insights": mine(facts),
         "story": story,
         "story_stale": bool(story) and row.get("story_hash") != facts.get("facts_hash"),
         "story_at": row and row.get("story_at"),
