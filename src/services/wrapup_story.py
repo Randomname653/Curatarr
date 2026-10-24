@@ -222,7 +222,11 @@ def render_fact_sheet(f: dict) -> tuple:
             r = m["on_repeat"]
             fact(f"On repeat: '{r['track']}' by {item(r['artist'], 'music')} {r['artist']}, "
                  f"{r['plays']} plays on {r['date']}.")
-        fact(f"Skipped {_pct(m.get('skip_rate'))}% of tracks.")
+        if m.get("skip_rate") is not None:
+            fact(f"Skipped {_pct(m['skip_rate'])}% of tracks on Spotify.")
+        if m.get("most_skipped"):
+            ms_ = m["most_skipped"]
+            fact(f"Skipped most often: '{ms_['track']}' by {ms_['artist']}, {ms_['skips']} times.")
     g = f.get("genres")
     if g:
         fact("Top genres: " + ", ".join(f"{x['genre']} {_pct(x['share'])}%" for x in g["top"]) + ".")

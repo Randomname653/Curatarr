@@ -98,6 +98,15 @@ class WatchHistoryEntry(Base):
     # (resolve_artist_mbids) so the Spotify-Backlog → Lidarr add flow has
     # the MBID immediately, no live lookup at click time.
     artist_mbid = Column(String(40), nullable=True, index=True)
+    # Music context (2026-10-25): the album a track was played from, and for
+    # Spotify what the export says about the play itself — how long it ran,
+    # on what, why it ended, shuffled or not. NULL on older rows (Spotify's
+    # are re-read from the imported files once, services/spotify_import).
+    album       = Column(String(512), nullable=True)
+    listened_ms = Column(Integer, nullable=True)
+    platform    = Column(String(64), nullable=True)
+    reason_end  = Column(String(32), nullable=True)
+    shuffle     = Column(Boolean, nullable=True)
 
     __table_args__ = (
         Index("idx_wh_user_item", "user_id", "plex_item_id"),
@@ -1060,3 +1069,31 @@ class MediaCompany(Base):
     company_id = Column(Integer, nullable=True, index=True)
     name       = Column(String(256), nullable=False)
     name_key   = Column(String(256), nullable=False, index=True)
+
+
+class MusicSkip(Base):
+    """A Spotify play shorter than the import's 30-second floor: a skip.
+
+    These used to be dropped at import, which is where skips live — so the
+    skip rate was a large undercount and "the track you always skip" was
+    not knowable. They are kept apart from ``watch_history`` on purpose:
+    every play count, taste vector and replay rule reads that table, and a
+    skip is not a play."""
+    __tablename__ = "music_skips"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    at          = Column(DateTime, nullable=False, index=True)
+    title       = Column(String(512), nullable=False)
+    artist      = Column(String(512), nullable=True)
+    album       = Column(String(512), nullable=True)
+    spotify_uri = Column(String(100), nullable=True)
+    ms_played   = Column(Integer, default=0)
+    platform    = Column(String(64), nullable=True)
+    reason_end  = Column(String(32), nullable=True)
+    shuffle     = Column(Boolean, nullable=True)
+    source      = Column(String(16), default="spotify")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "spotify_uri", "at", name="uq_music_skip"),
+    )

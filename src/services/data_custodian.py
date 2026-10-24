@@ -177,6 +177,11 @@ async def _run_significance(deep: bool = False, task=None) -> bool:
     return r.get("remaining", 0) == 0
 
 
+async def _run_reread_spotify_history(deep: bool = False, task=None) -> bool:
+    from src.services.spotify_import import reread_imported
+    return await reread_imported(task=task)
+
+
 async def _run_spotify(deep: bool = False, task=None) -> bool:
     from src.services.music_matcher import run_music_pipeline
     uid = await run_read(_admin_id)
@@ -774,6 +779,10 @@ def _registry() -> list[Task]:
         # returns False while a backlog remains, so ticks continue it.
         Task("vector_reconcile", "Vector store vs database", 24.0,
              _run_vector_reconcile, takes_task=True),
+        # Once: the already imported Spotify files read again for the skips,
+        # albums and platforms earlier imports dropped (a no-op afterwards).
+        Task("spotify_reread",   "Spotify history re-read", 24.0, _run_reread_spotify_history,
+             takes_task=True),
         Task("music_pipeline",   "Spotify pipeline",     24.0,  _run_spotify,
              takes_deep=True, takes_task=True),
         Task("discogs_styles",   "Discogs styles dump",  24.0,  _run_discogs_styles,

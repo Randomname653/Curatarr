@@ -55,6 +55,25 @@ January. The owner's curation ledger (the old Report) is a section at the bottom
 opens the Wrap-Up; the yearly paragraph and its endpoint are gone. Design notes:
 `docs/WRAPUP_DESIGN.md`. Tests: `tests/test_wrapup_facts.py`, `tests/test_wrapup_story.py`.
 
+**Music: skips kept, albums, and the export's own account of each play.**
+- **Skips:** the Spotify import dropped every play under 30 seconds, which is where skips live. They
+  now go into `music_skips`. That table is kept apart from `watch_history` on purpose: every play
+  count, taste vector and replay rule reads `watch_history`, and a skip is not a play.
+- **What each play now records:** a Spotify play keeps its album, how long it ran (`listened_ms`),
+  the platform, why it ended and whether it was shuffled. A Plex track keeps its album.
+- **Re-upload fix:** re-uploading an export after the matcher had run read every play as new.
+  Dedup keyed on `plex_item_id`, which the matcher rewrites; it now keys on the Spotify URI and
+  the time.
+- **Older imports:** a one-time custodian job (`spotify_reread`) reads the already imported files
+  again. It fills those columns where they are empty and brings the skips in. Skips go to the user
+  whose plays the file holds, and are never guessed.
+- **Wrap-Up skip rate:** it summed a Boolean column, which comes back as `True` (1). It read near
+  100% for everyone, and only counted Spotify's skips anyway. It now counts Spotify's skips and
+  unfinished plays, and names the track skipped most. A Plexamp-only listener gets no skip rate
+  instead of a wrong one (`FACTS_VERSION` 4).
+
+Tests: `tests/test_music_context.py`.
+
 **Credits index: who made what, queryable and durable.** Directors, writers, cast, voice actors,
 studios and companies lived only as JSON inside the raw API cache (90-day TTL). They were not
 queryable, and a title deleted in March had lost them by December. TMDB's production companies,

@@ -56,7 +56,8 @@ _ELIGIBLE_HOURS = 3
 # facts are frozen, except when they were built on an older generation.
 # 2: the owner's plays come from the Plex history (every play, real partials).
 # 3: hours and days on the user's own clock, DST included (services/user_time).
-FACTS_VERSION = 3
+# 4: the skip rate from Spotify's skips (music_skips), none without them.
+FACTS_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -272,7 +273,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
                 out["contrarian"] = _contrarian(vtitles, enriched, out["comfort"], stars)
                 out["dismissal"] = _dismissal(extra, enriched)
         if "music" in types:
-            out["music"] = _music(db, W, ms, user_id, base)
+            out["music"] = _music(db, W, ms, user_id, base, period)
 
         out["genres"] = _genres(db, W, ms, user_id, period, types)
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)
@@ -672,13 +673,13 @@ def _dismissal(cands, enriched) -> dict:
 
 # ── music ───────────────────────────────────────────────────────────────────
 
-def _music(db, W, ms, user_id, base) -> dict:
+def _music(db, W, ms, user_id, base, period) -> dict:
     """Top artists and tracks, the track on repeat (most plays in one day),
     the skip rate, and the user's best-rated artist (PlexAmp stars)."""
-    from sqlalchemy import func
-    from src.database.models import PlexRating
+    from sqlalchemy import case, func
+    from src.database.models import MusicSkip, PlexRating
     mb = (*base[:3], W.media_type == "music")
-    n, done = db.query(func.count(), func.sum(W.completed)).filter(*mb).one()
+    n = db.query(func.count()).filter(*mb).scalar()
     if not n:
         return {}
     total = func.sum(ms)
@@ -699,8 +700,24 @@ def _music(db, W, ms, user_id, base) -> dict:
     out = {
         "top_artists": [{"artist": a, "hours": _h(v), "plays": int(c)} for a, v, c in artists],
         "top_tracks": [{"track": t, "artist": a, "plays": int(c)} for t, a, c in tracks],
-        "skip_rate": round(1 - (done or 0) / n, 2),
     }
+    # Skips are the Spotify plays under 30 s (music_skips) plus its plays
+    # that did not finish. A Plex track is always written finished, so only
+    # Spotify listening has a skip rate — computed over all plays it read
+    # "skipped 0%" for every Plexamp listener.
+    # sum() of a Boolean column comes back as a Boolean (True, i.e. 1) —
+    # count the finished plays as integers.
+    sp_n, sp_done = db.query(func.count(), func.sum(case((W.completed == True, 1), else_=0))).filter(  # noqa: E712
+        *mb, W.source == "spotify").one()
+    sk = (MusicSkip.user_id == user_id, MusicSkip.at >= period.start, MusicSkip.at < period.end)
+    n_skips = db.query(func.count(MusicSkip.id)).filter(*sk).scalar() or 0
+    if sp_n or n_skips:
+        out["skip_rate"] = round((n_skips + (sp_n or 0) - (sp_done or 0)) / ((sp_n or 0) + n_skips), 2)
+        worst = (db.query(MusicSkip.title, MusicSkip.artist, func.count())
+                 .filter(*sk).group_by(MusicSkip.title, MusicSkip.artist)
+                 .order_by(func.count().desc()).first())
+        if worst and worst[2] >= 3:
+            out["most_skipped"] = {"track": worst[0], "artist": worst[1], "skips": int(worst[2])}
     if rep and rep[3] >= 5:
         out["on_repeat"] = {"track": rep[0], "artist": rep[1], "date": str(rep[2]),
                             "plays": int(rep[3])}
