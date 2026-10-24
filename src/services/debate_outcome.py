@@ -186,7 +186,7 @@ async def _ask(title: str, turns: list) -> Optional[bool]:
     """True / False from the summarizer; None when it could not answer."""
     import json
     from src.config import settings
-    from src.services.llm_utils import ollama_options, strip_think_tags
+    from src.services.llm_utils import SUMMARIZER_KEEP_ALIVE, ollama_options, strip_think_tags
     from src.services.ollama_hosts import ollama_for
     from src.services.pc_guard import ollama_client
     debate = "\n".join(f"{'USER' if r == 'user' else 'CURATOR'}: {c}" for r, c in turns)
@@ -195,6 +195,9 @@ async def _ask(title: str, turns: list) -> Optional[bool]:
         async with ollama_client(timeout=120) as client:
             r = await client.post(f"{ollama_for('enrich')}/api/chat", json={
                 "model": model, "stream": False, "format": _LABEL_SCHEMA,
+                # The summariser's residency: Ollama keeps the LAST request's
+                # keep_alive, and its 5 min default would cut the bake short.
+                "keep_alive": SUMMARIZER_KEEP_ALIVE,
                 "messages": [{"role": "system", "content": _LABEL_SYSTEM},
                              {"role": "user", "content": f"TITLE: {title}\n\n{debate}"}],
                 **ollama_options(temperature=0.0, num_predict=120)})
