@@ -408,6 +408,13 @@ async def _run_wrapup_pregen(deep: bool = False, task=None) -> bool:
     return await pregenerate_all(task=task)
 
 
+async def _run_taste_snapshots(deep: bool = False, task=None) -> bool:
+    """Each month's taste as a stored mean of its item vectors
+    (services/taste_snapshots). Chroma reads, no model."""
+    from src.services.taste_snapshots import run_taste_snapshots
+    return await run_taste_snapshots(task=task)
+
+
 async def _run_credits_index(deep: bool = False, task=None) -> bool:
     """Directors, writers, cast, studios and companies out of the raw cache
     into durable, queryable tables (services/credits_index). No model."""
@@ -813,6 +820,10 @@ def _registry() -> list[Task]:
         # Who made what, kept past the raw cache's TTL: the wrap-up's
         # director and studio constellations read it. No model.
         Task("credits_index", "Credits index", 24.0, _run_credits_index, takes_task=True),
+        # The taste profile had no history: one snapshot per user, category
+        # and month, back-filled from the watch history, the running month
+        # rewritten daily. Chroma reads, no model.
+        Task("taste_snapshots", "Taste snapshots", 24.0, _run_taste_snapshots, takes_task=True),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
