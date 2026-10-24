@@ -130,6 +130,13 @@ concurrency rules in §4.
 | Whose clock | `src/services/user_time.py`, `users.timezone`, `POST /api/users/me/timezone` | Play rows are naive UTC. Local time is the user's IANA zone (the browser reports it; unknown names are refused), else the machine's (TZ, then /etc/timezone, then today's fixed offset), applied with **the offset in force at each row's own time**. One current offset over a whole span moved plays across DST and put a UTC container's evenings in UTC. SQLite has no zone data, so `local_sql` carries the zone's offset changes over the queried span as a CASE (exact, a handful of branches a year); the Wrap-Up converts through it, the sittings' dayparts through `to_local`. |
 | Library ledger | `src/services/library_ledger.py`, tables `library_items` / `library_events`, written by the 12-hourly tech walk in `plex_sync` | `MediaTechProfile` is a snapshot (overwritten, pruned when a title leaves); the ledger is the history on both sides of the storage balance, titles deleted outside Curatarr included. `library_items` keeps every title ever held with its earliest Plex `addedAt`. `library_events` is append-only: arrivals back-dated from `addedAt` (one per title and month, so the existing library's history is known from the first walk), gone and returned, and the size changes arrivals don't explain (grew, shrunk). **Only a complete walk marks anything gone**, the tech-profile prune's guard, so an outage or a cut-short walk never empties a category. The ledger writes in its own transaction: a fault there never costs the profiles. `velocity()` (GB in against GB out, by month) feeds the Wrap-Up. Music is not walked by default, so it has no ledger. |
 | Debate outcomes | `src/services/debate_outcome.py`, the `curator_resolution_log` columns `proposal_id` / `score` / `verdict` / `storage_mb` / `thread_id` / `user_turns` / `persuader` / `persuader_basis`, custodian task `debate_outcomes`, `GET /api/stats/debate-labels` | A resolution row says what was at stake and who moved. `persuader` is decided by rule wherever the facts decide it: an override, or a debate in which the user never wrote, moved nobody; a proposed cut kept by consensus means the curator conceded. Only a delete by consensus after the user spoke needs the thread read. The summarizer answers that in the custodian job for new and old rows alike, so every label comes from one classifier. `safe_fields_for` never costs the log row it decorates: on a fault the row is written bare and `link_old_rows` fills it later (by user, title and outcome near the row's time). The debate-labels endpoint lets the owner check the labels against the debates. |
+| Model updates | `src/services/model_updates.py`, `model_update_eval.py`, `src/routers/model_updates.py` (`/api/system/model-updates`, admin), scheduler jobs `model_update_check` / `model_update_recover` (§13), app_state `model_updates`, Settings → Maintenance | A `curatarr-*` bake carries the weights it was built from, so pulling a tag never changed what runs: the installed copy was a pin nobody could see, and nobody noticed when a tag got new weights. The daily check compares each bake's RUNNING weights (the first `FROM` blob of `/api/show`, which a remote Ollama answers too) with the registry manifest's model layer. The curator and the pitcher can be tested; the summariser gets the notice only, and the embedding model is never offered (new weights would mean re-embedding the library). It manages and measures this install's own Ollama (`OLLAMA_ENDPOINT`), never the node, whose bakes `build_models.py --host pc` builds. **No pin, no pull:** the running weights are copied to a `-pinned-<digest>` tag and read back before anything is downloaded, a pull of unknown size is refused on a local Ollama (disk room fails closed), and `test_started` is saved before Ollama changes, so a test a restart cut off is rolled back at the next start. Every rollback step is checked against what Ollama then holds, and the pin is deleted only once the tag holds the running weights again; until then it is the last copy. Both bakes judge the same evidence for ten library titles plus three chat questions under the curator gate, timed through `/api/chat` (the path production uses; `/api/generate` measured the same weights three times slower). The review is the current weights without the persona, blind (A/B) and in both orders, a preference counting only when it survives the swap, because it is judging its own successor. **Measurements overrule it:** more failed calls, a CPU spill or generation below 75 % of the old speed turn its "update" into "stay" (`guards`). "Stay" restores the pin and mutes that registry digest until it moves again; "update" rebuilds the bakes and keeps the pin when a rebuild fails. |
+| Swipe | `src/services/swipe.py`, `src/routers/swipe.py` (`/api/swipe`, every signed-in user), table `swipe_ratings`, `taste_engine` (swipe entries join the weighted average), `frontend/js/swipe.js` | The taste vector only knew what Plex saw: a film seen in the cinema or a series watched on Netflix never reached it. The stack is the library titles nearest the user's taste centroids (a category-filtered vector query) that they have neither played in Plex nor answered, one card per title (a title's Plex and arr docs are twins); a loved title pulls its own nearest unanswered neighbours forward (`chain_cards`). **Only a seen answer is taste signal:** 10 stars weigh +1.5 and 1 star −1.5, linear between, seen without stars +0.5. "Not seen" only keeps the title out of the next stack. "Want to watch" is intent, not experience: it goes on the user's plex.tv watchlist and never into the vector, since the stack is built from the vector and wanting its nearest titles would only pull the vector toward itself. A title the user's own plays already weigh is left to them. A new answer replaces the old as a NEW row, because undo orders by id (the Windows clock's ~15 ms tick tied timestamps). Every `REBUILD_EVERY` (10) seen answers in a category rebuild that category's vector in the background without LLM summaries; answers shape only their own user's vector. |
+| Credits index | `src/services/credits_index.py`, tables `media_works` / `media_credits` / `media_companies`, custodian task `credits_index` (daily, no model), `media_enricher.fetch_tmdb_full` (`credits` / `companies` / `collection`) | Directors, writers, cast, studios and networks lived only as JSON in the raw API cache (`raw:{cat}:{id}`, 90-day TTL): not queryable, and gone for a title deleted in March by the time a December wrap-up asks for the most-watched director. The walker files every live raw document of the video categories into durable tables, and **the raw cache expiring never removes an index entry.** A title's data is spread over several raw rows (doc id, external ids, title): rows sharing any id are one title, filed under its best id (TMDB for films and shows; AniList, else MAL, else TMDB for anime) with the credits of the richest row (structured ids beat bare names) and the companies of all, and an entry an earlier walk filed under another of its ids is folded in. Older fetches carry names only, which join across titles by `name_key`; TMDB's anime cast is filed as `voice`. An unchanged title is skipped by fingerprint, and titles are written 300 at a time so no write transaction holds the single writer long. |
+| LLM failures by kind, prompts that fit | `src/services/llm_errors.py` (`post_chat`, `LLMFailure`, `INFRA` / `REPAIRABLE`, `DESCRIPTIONS`), `src/services/prompt_budget.py` (`fit`, `fit_messages`, `keep_tail`), `pillars.build_evidence` / `adjudicate`, chat history, the deletion run's outage stop in `recommendations_engine` | Every judge failure used to end as the same EVALUATE and "the model did not answer": Ollama down, a model that could not load next to a game, an over-long prompt, a cut-off answer, unreadable JSON and a fault in our own evidence code looked alike, and each needs a different response. `post_chat` raises `LLMCallError` carrying the kind: infrastructure kinds count as outages (two in a row stop a deletion run, and an outage does not spend the run's cap), parse, schema and truncation get exactly one repair turn that shows the model its own answer, and the Deletions banner names the cause. It also reads Ollama's own accounting (`done_reason`, `prompt_eval_count`), because **Ollama truncates an over-long prompt silently, from the front, where the system prompt is.** So a prompt must fit before it is sent: `fit` trims or drops the least valuable sections first (priority 0, the title, owner, household and feedback lines, is never touched; a one-line section goes whole or not at all; a trimmed untrusted block keeps its END fence, or the rest of the prompt would read as data), chat drops its oldest turns (an answer goes with its question), and the judge refuses a prompt its pre-flight estimate says will not fit. Tokens are estimated at 3.2 characters each, erring toward fitting; `prompt_eval_count` is the check after the fact. |
+| Limbo reconcile | `src/services/limbo_reconcile.py`, custodian task `limbo_reconcile` (daily), `recommendations._delete_one_and_log` / `_DELETE_CLAIMS` | `limbo` means a delete was sent (or due) and nobody knows how it ended. A row used to leave it only on a Retry click, so a delete that had gone through sat there with no resolution-log row and no freed-storage credit. Daily, per limbo row: a 404/410 from the arr or Plex takes the Retry path (which already reads 404 as "the earlier delete went through"), so the outcome, the log row and the SoulSync ban are written exactly as a click would; an item still present stays in limbo with at most a weekly bell to its user, because **the owner approved a delete, not an unattended re-send: nothing here sends a DELETE for an item that still exists**; no answer leaves the row for tomorrow. It also turns `deleting` rows that no delete of this process holds into limbo, but only rows already `deleting` on the previous pass: a delete claims its row on the writer thread before it can note the claim, and no real delete lasts a day. |
+| Retention | `src/services/retention.py`, custodian task `retention` (daily) | Soft retirement keeps ids stable and leaves a trail, but nothing ever removed the retired rows, and each rode along in all seven daily backups (the daily ARR sync alone supersedes a full proposal set). Removed, and nothing else: proposals superseded over 90 days ago, read proactive messages over 90 days old, conversation starters used or expired over 30 days ago, and OMDb day counters older than a week. **A proposal or message that a chat thread points at is kept.** That test builds the thread id with SQL's string-concatenation operator on purpose (`_thread_of`): `prefix + cast(id)` can compile to SQLite's arithmetic `+` (`'deletion_proposal:' + '42'` is 42), which matches no thread and would delete exactly the discussed rows. Kept on purpose: `deleted` / `rejected` / `error` proposals (tombstones the returns check and the catalog sync read, and the owner's keep decisions), chat, memories, the resolution log. Hard deletes are safe because `deletion_proposals` is AUTOINCREMENT, so a freed id is never handed out again (§15). |
+| Vector reconcile | `src/services/vector_reconcile.py`, custodian task `vector_reconcile`, `boot_drift_check` in `main.lifespan`, `scripts/revectorize_backfill.py` (deprecated; it drains this pass) | State lives in three stores, curatarr.db, the cached `enriched:*` profiles and the Chroma vectors, and the daily backup covers only the first. A database restored over a wiped or older vector store went unnoticed: the enrichment pre-filter skipped every enriched row, the audit heals docs that lost their profile but never profiles that lost their doc, and the stats counted `vector_ready` from SQLite, so the UI read "fully indexed" over an empty collection. The pass joins the three by the doc id `store_profile_vector` writes (`plex_rating_key or tmdb_id or anilist_id or title`). A missing doc whose profile is cached is re-embedded from it (no summariser; one embed per profile however many rows share it; 300 a run, and the task stays due while any remain). A row with no readable profile goes back to enrichment **once**: one that re-enrichment did not cover is reported, not looped. `vector_ready` is corrected both ways. **Never destructive:** it adds vectors and re-queues rows, it deletes nothing, and a Chroma read that fails raises instead of reading as "every doc is missing". A restored database carries its own last-run stamp, so at startup two counts decide whether the first tick reconciles anyway; while fewer than half the enriched rows have a doc, the owner is told weekly. |
 
 ---
 
@@ -203,6 +210,8 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 | `library_items` / `library_events` | Library ledger | every title ever held; append-only arrivals / gone / returned / grew / shrunk (§0 Library ledger) |
 | `app_state` | Runtime KV flags | DB-backed so they survive restarts. See §11. |
 | `plex_rating` | Per-user Plex star ratings | music-only signal for deletion hard-protect (Pass 82c) |
+| `swipe_ratings` | Swipe answers | one per (user, category, doc id): `seen`, `stars` 1–10, `want`; a new answer replaces the old as a new row, so undo orders by id (§0 Swipe) |
+| `media_works` / `media_credits` / `media_companies` | Credits index | one row per title under its best id, the people and companies on it; durable, while the raw cache it is built from expires (§0 Credits index) |
 
 ---
 
@@ -955,6 +964,8 @@ APScheduler. Defaults:
 | Orphaned-section check | weekly | |
 | DB vacuum | weekly | postponed (stays due) while `enrichment_running`, `music_pipeline_running`, `plex_sync_running` or `deletion_run` is set; a file with < 20 % free pages is not rewritten |
 | Game-mode VRAM watcher | 30 s | |
+| Model update check | daily | + 5 min after a start when overdue; registry vs running weights, network only (§0 Model updates) |
+| Model update recovery | once, 2 min after start | rolls back a model-update test a restart cut off |
 
 **Startup catch-up gotcha**: a fresh server start fires the overdue ARR-sync
 (deletion pitches, ~40 LLM calls) AND the ARR pre-enrich (80 items)
@@ -1388,6 +1399,12 @@ growing this list.
   CWD-independent so tray/autostart/frozen builds resolve data + frontend.
 - `src/log_setup.py` — idempotent logging bootstrap: rotating file handler
   always; console handler only when a real stderr exists (pythonw has none).
+- `src/winproc.py` — `NO_WINDOW`, the subprocess flags for a console program
+  started from the tray's process: under pythonw Windows gives each such child
+  a window of its own, so `nvidia-smi` (the GPU-pressure check) flashed one and
+  could take focus from the fullscreen game the check exists to protect.
+  Empty off Windows; stdlib only, because `deps_check` imports it before the
+  dependencies exist.
 - `src/deps_check.py` — pinned `requirements.txt` vs. the running
   interpreter (stdlib only, so it runs before the dependencies exist).
   `start.bat` and the tray call it before the first import and run pip on
@@ -1470,6 +1487,13 @@ growing this list.
   while the fingerprint of everything that decides them holds.
 - `src/routers/hosts.py` — `/api/hosts`: the agent's goodbye (token, no
   login); for admins the node's state, rename and update.
+- `src/services/deletion_queue.py` — "Run analysis" while the node is away
+  or busy: the judge runs only there, so the request is kept (one per
+  install, the last click wins, in app_state) and started by the first poll
+  that finds the node free (`pc_host` calls `kick`). Cleared before the run
+  starts, re-checked for an admin, dropped after 7 days so a long absence
+  does not fire a stale analysis. The scheduled scan needs none of it: it
+  stays due and retries every tick.
 
 ### Wrap-Up (§0 Wrap-Up)
 - `src/services/wrapup_facts.py` — every number of a wrap-up, decided in
@@ -1506,6 +1530,40 @@ growing this list.
 - `src/services/debate_outcome.py` — what a deletion debate settled and who
   convinced whom; rule first, the summarizer only where reading the debate
   is the only way to tell (§0 Debate outcomes).
+- `src/services/credits_index.py` — who made what, filed from the raw cache
+  into `media_works` / `media_credits` / `media_companies`; an entry outlives
+  the cache row it came from (§0 Credits index). `credits_of` reads one title.
+
+### Model updates (§0 Model updates)
+- `src/services/model_updates.py` — the daily registry check
+  (`check_updates`), the pin → pull → bake → both-sides test
+  (`run_comparison`), `rollback`, `recover_interrupted` and `decide`.
+- `src/services/model_update_eval.py` — the current weights' blind review in
+  both orders, and `guards`, the measured rules that overrule it.
+- `src/routers/model_updates.py` — `/api/system/model-updates` (admin):
+  status, check, compare, evaluate, decide; one test or review at a time.
+
+### Swipe (§0 Swipe)
+- `src/services/swipe.py` — the stack (`next_cards`, `chain_cards`), answers
+  and undo, `load_swipe_entries` for the taste rebuild.
+- `src/routers/swipe.py` — `/api/swipe`: next, answer (the watchlist write
+  and the background rebuild), undo, stats.
+- `frontend/js/swipe.js` — the view: the card deck, gestures and keys.
+
+### LLM calls (§0 LLM failures by kind, prompts that fit)
+- `src/services/llm_errors.py` — `post_chat`, the non-streaming call that
+  raises `LLMCallError` with its kind; `INFRA`, `REPAIRABLE`, `DESCRIPTIONS`.
+- `src/services/prompt_budget.py` — `est_tokens`, `budget_for`, `fit` (the
+  judge's evidence), `fit_messages` (chat history), `keep_tail` (a debate
+  transcript, newest part kept).
+
+### Upkeep (custodian)
+- `src/services/limbo_reconcile.py` — deletions with an unknown outcome,
+  settled only by the service's own 404 (§0 Limbo reconcile).
+- `src/services/retention.py` — retired rows past their horizon, a
+  discussed row kept (§0 Retention).
+- `src/services/vector_reconcile.py` — the database against the vector
+  store, never destructive (§0 Vector reconcile).
 
 ### Routers not covered above
 - `src/routers/imports.py` — GUI data imports (Spotify listening-history
@@ -1547,6 +1605,14 @@ growing this list.
   2026-08-28). Reception takes MAL's scores from the official API; written
   reviews exist only on Jikan, so while it is paused the AniList reviews
   carry the verdict instead of holding every anime with a MAL id.
+- `src/services/listenbrainz.py` — global listening for music evidence: one
+  call per artist (`top-release-groups-for-artist`) feeds both the artist
+  debate's "Global listening" line and the album dossier's rank inside the
+  artist's catalogue. Needs `LISTENBRAINZ_TOKEN` (the popularity endpoints
+  went behind auth; the few keyless 200s are cached answers, not a contract):
+  without one every fetch is transient, nothing is stamped, and the evidence
+  appears once a token lands. Its own ~1 req/s gate, apart from MusicBrainz's,
+  so it never stalls that lane; only a digest of the 100-500 KB answer is cached.
 - `src/services/studio_notes.py` — Wikipedia "what this studio is known for"
   reputation notes, cached ~forever.
 - `src/services/wikidata.py` — structured Wikidata facts (adaptation-source
@@ -1595,12 +1661,65 @@ growing this list.
   replaced three counters that disagreed with each other.
 - `src/services/archive_backfill.py` — coverage-gated on-demand backfill for
   metadata sources still catching up (vs the custodian's gentle pace).
+- `src/services/display_tags.py` — the tags a deletion card shows: up to
+  three genres from the enriched profile (the arr's list only without one)
+  minus what the tab already says, rarest in the library first, plus up to two
+  short themes, skipping any that more than 5 % of the category carries.
+  Rarity is counted per category and kept six hours; a failure leaves the
+  cards on their plain genres.
+
+### Shared plumbing
+- `src/services/arr_client.py` — the async Plex / Radarr / Sonarr / Lidarr /
+  Tautulli clients over one `MediaService.request`: a token bucket per client
+  that sleeps outside its lock (sleeping inside queued every caller behind
+  one wait), 429s and timeouts on separate retry budgets, Retry-After read in
+  both its forms and capped at 120 s, 10 s to connect. A full library listing
+  gets one long READ timeout (`ARR_LISTING_TIMEOUT_S`) and no second attempt,
+  because a retry costs the arr the same full scan; its 15-30 MB of JSON is
+  decoded in a worker thread. `classify_sonarr_category` is the one
+  show-vs-anime rule (`seriesType` or an "Anime" genre): two copies once
+  cached a series under one category and looked it up under the other.
+- `src/services/http_client.py` — `tls_context()`, the one SSLContext every
+  `httpx.AsyncClient` in `src/` passes as `verify=`: httpx otherwise builds
+  a context per client and loads the whole CA bundle (~50 ms of event-loop
+  CPU), and clients are opened per title and per probe. Built in the
+  lifespan before serving; `tests/test_loop_free_probes.py` refuses a client
+  without `verify=`.
+- `src/services/rating_value.py` — a score or a vote count as a number, or
+  none: Jikan/MAL put the content rating ("PG-13 - Teens 13 or older") in
+  `rating`, music sources write "N/A", and the summariser echoed its own
+  "N/A/10 (N/A votes)", where one bare `float()` stopped every deletion scan.
+  `prompt_rating` writes "unknown" rather than a score that is not one.
+- `src/services/household.py` — `is_admin_user`, for background paths that
+  apply owner-only data (the owner's SoulSync follows in the music taste
+  rebuild) or do owner-only work (principle capture for the global judge).
+  Fails closed: an unreadable row reads as a member, so owner data is
+  withheld for one run rather than leaked into a member's profile.
 
 ### Models & embeddings
 - `src/services/model_catalog.py` — benchmark-verified Ollama model catalog +
   VRAM-aware recommendations for the setup wizard.
 - `src/services/embedding_migration.py` — one-shot v2 embedding-corpus build
   in a parallel Chroma collection, sanity-gated before flipping the profile.
+- `src/services/model_check.py` — which models this install needs and which
+  are missing, one list for the tray's preflight and `build_models.py
+  --check` (start.bat goes through it). The embedding model is the stored
+  profile's, not `EMBEDDING_MODEL`, and an Ollama that does not answer is
+  reported as exactly that (`None`), never as every model missing, so no
+  launcher starts pulling on it. Also each host's bake plan (`host_plan`), the
+  curator VRAM-fit warning, and `embedding_identity`: vectors from other
+  weights do not compare even under the same model name, which a move to
+  another machine has to check before its first embedding.
+- `src/services/setup_minibench.py` — after the bake, the wizard runs the
+  curator through about a minute of production calls on this machine
+  (`POST /api/setup/minibench`: warm-up, two judge verdicts with the
+  production prompt, schema and parser, one card note), because the hardware
+  matrix only estimates cards it was not measured on, and a busy home server
+  judged 2-3.7x slower than predicted. The fixtures belong to a fictional
+  owner, so no user's data reaches the check; the timing is the result, not
+  the verdict. Verdicts rank spill > unreliable > slow (median verdict over
+  20 s) > ok; a nearly full card counts as a spill only when generation is
+  also under 60 % of the expected speed.
 
 ### Schemas
 - `src/schemas/user.py` / `chat.py` / `recommendations.py` — Pydantic shapes;
