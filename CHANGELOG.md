@@ -708,6 +708,9 @@ six (1-2 of the anonymous 60 requests an hour), and again 30 minutes after a
 failed check. The node checks hourly too, with a plain `git fetch`. The
 sidebar re-reads the answer every 15 minutes.
 
+Compute nodes no longer says "Up to date" when the node's check failed or
+has not run yet: it shows the reason, and when the node last checked.
+
 **Needs attention and maintenance that could never finish.**
 - A wrong-entity finding no longer fires when a shared TMDB, TVDB or IMDb id
   says it is the same work. 39 of the owner's 65 were translated titles
