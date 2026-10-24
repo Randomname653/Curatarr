@@ -273,9 +273,11 @@ for Sonarr and Radarr, 88 MB if Lidarr is on). Tests: `tests/test_ram_footprint.
 - Work after a reply (keep/protect detection, memory extraction, verification answers,
   bulk enrichment) waits until you have been quiet for a while. It no longer pushes the
   curator out between your reply and your follow-up.
-- Keep/protect detection only runs when your message contains a keep phrase (or a bare
-  "yes" in a discussion about a title). Memory extraction is skipped for conversations
-  with no likes, dislikes or reasons in them.
+- Memory extraction is skipped for conversations with no likes, dislikes or reasons in
+  them. Keep/protect detection still runs after every message: its keep-phrase pre-gate
+  only logs the messages it would have skipped until the log shows it misses no real
+  keep. Both phrase lists also cover German word order ("Lösch den Film nicht", "Finger
+  weg") and more ways of saying you liked something.
 - The curator stays loaded for 5 minutes after a reply unless background work needs the
   card. It used to be unloaded after 60 seconds, so reading a long reply cost a reload.
 - Every curator request uses the same context size and keep-alive. The deletion judge and
@@ -570,6 +572,59 @@ answer:
 The views say when a request failed instead of showing stale or empty state, deleting
 explains a lost reason, and "Why?" closes with Escape.
 
+**Model updates are noticed, and tested before you switch.** A bake runs the weights it
+was built from, so a newer model on the registry went unnoticed. A daily check compares
+each bake's weights with the registry; a difference shows up in the bell (now also a
+System section for notices like this) and as a bubble on Settings. The admin can then
+test the update: the current weights are pinned, the new ones pulled and baked like
+production, and both judge the same ten library titles and answer three chat questions.
+The result shows changed verdicts, time per call, speed, VRAM and GPU share. The current
+model then reviews both sides blind, in both orders, and recommends update, stay or
+either; more failures, a spill to the CPU or a slowdown below 75 % overrule an "update".
+"Take the update" rebuilds the bakes, "Stay" goes back to the pinned weights. A test
+that fails or is cut off by a restart rolls itself back and deletes the test bake. The
+first live tests shaped the measuring:
+- the card is quiet during the test, with every other model unloaded;
+- VRAM comes from `nvidia-smi`, since Ollama's `/api/ps` reported 2 GB for the new
+  gemma4:31b weights that took 22 GB (`nvidia-smi` also runs on Windows under
+  `--reload` now, where the setup wizard's GPU probe had failed with a blank error);
+- speed is measured through `/api/chat` like every curator call (`/api/generate` showed
+  a third of the real speed), old and new interleaved, and a side whose readings spread
+  more than 35 % decides nothing on speed;
+- "Review again" and "Run the whole test again" (on titles no earlier run used, spread
+  over the categories) replace a result made with the earlier measurements.
+
+The summariser gets the notice but no test yet; the embedding model is never offered,
+since new weights would mean embedding the library again.
+
+**A hardware bench, and a setup wizard that knows real sizes.** `tests/benchmarks/hwbench`
+measures which curator runs how well on which card size (4 to 24 GB, smaller cards
+simulated on the 4090), speed and quality apart, with production prompts. The older
+benches had drifted from production and now import its constitution and persona. The
+wizard's model sizes match the installed files (gemma4:26b was listed at 15 GB for an
+18.6 GB file, so 18 GB cards were told it fits), the GPU probe reports free VRAM and
+what else holds the card, and fit is judged on the VRAM measured per context window.
+
+**Taste per series, scoring that survives bad numbers, and memories that are replaced
+instead of deleted.**
+- A show's profile counted once per played episode, so a 300-episode sitcom outweighed
+  a 6-episode miniseries about 67 times. Shows and anime now count once per series,
+  weighted by finished episodes. An episode in progress is no longer a "drop"; a series
+  is one only when nothing was finished, at most two episodes were started, all under
+  40 %, and it has been idle for 30 days.
+- Deletion scoring: a NaN in the taste data scored a title as maximal clutter, and a new
+  user's whole library was shortlisted on no evidence. No taste evidence now scores just
+  under the shortlist bar, and a category with neither taste nor genre stats is skipped
+  with a reason. Keep-considerations cover all 60 judged candidates (was 30).
+- The embedding migration could delete the live vector store when its old source was
+  already gone. It now refuses, and a rollback restores the profile that was live.
+- A contradicting memory no longer deletes the old one whatever its weight. The old one
+  is marked replaced (recoverable, no longer retrieved), and a much weaker
+  contradiction counts as nuance. Memory retrieval no longer favours memories just for
+  being retrieved often, and keywords match whole words ("whatever" is not "hate").
+- Adopting a learned principle that contradicts an existing one retires the old rule,
+  so the judge is no longer told to apply two opposite rules.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:
@@ -578,6 +633,35 @@ genre that is rarest in your library first, and add up to two short
 themes in a quieter chip ("Anthropomorphic warships", "Drug heist"). Music
 cards, which showed none, get theirs from the artist profile.
 
+**Chat streams that don't hang or land in the wrong thread.** A stalled reply could lock
+the chat box for good. The server now sends a keepalive at least every 15 seconds while
+it waits for the GPU, loads the model or thinks, and the browser gives up after 45
+seconds of silence. "+ New" inside a discussion no longer deletes the free chat, and a
+running reply is no longer saved into the next thread. Error text is shown but never
+saved as a curator reply, your message and the reply are saved together once the reply
+is complete, and a dropped reply keeps its text and says it was not saved. The chat
+loads each thread's saved history, so it is no longer blank after a reload.
+
+**Plex reads no longer delete watch history, and outages are not "not found".**
+- The orphan clean-up compared episode and track plays with the top level of each
+  library (shows, artists), so every TV, anime and music play looked orphaned and one
+  click deleted all of them. It now checks the right item types, deletes nothing when a
+  library answers empty or with an error, and asks before removing more than a fifth.
+- A single 404 from Plex deleted that library's settings. A library is now removed only
+  after Plex's own library list has left it out three syncs in a row.
+- With MusicBrainz and Last.fm both down, an artist was cached as "no such artist" for a
+  week. An outage now caches nothing, and the music enricher moves past the row and
+  stops after ten outages in a row.
+- The music pipeline's "running" flag is a lease with an owner: two enrichers can no
+  longer run at once, a restart no longer takes it from a running one, and a crashed
+  one is taken over without a manual reset.
+- Lidarr's artist list (about two minutes on 5,000 artists) always timed out. Listings
+  get a longer budget (`ARR_LISTING_TIMEOUT_S`, 240 s), and chat and the judge no longer
+  download the whole list for every message and candidate.
+- Windows: no console window flashes up during games, a logoff or shutdown stops
+  Curatarr cleanly, Stop under `--reload` frees the port, and `.stignore` is no longer
+  rewritten at every start (a power cut then could empty it).
+
 **The deletion scan reads ratings safely.** One profile whose rating read
 "N/A/10 (N/A votes)" stopped every scheduled scan: the summariser had echoed
 its prompt line, and Jikan/MAL put the content rating ("PG-13 - Teens 13 or
@@ -585,6 +669,26 @@ older") in the same field. Ratings are now read as a number or not at all,
 profiles store the source's score instead of the model's echo, and the
 prompt says "unknown" when there is none. Profiles already holding text
 are picked up by the audit's re-enrichment.
+
+**The setup wizard recommends a measured curator.** The bench's results ship as
+`src/services/model_matrix.json`: for every card from 4 to 24 GB, the curator package
+(model, profile, context, KV setting, measured speed and quality score) and the VRAM it
+takes per context window. gemma4:31b-it-qat on 24 GB; gemma4:26b-a4b-it-qat on 6 to
+20 GB, where every 31b is offloaded and too slow; gemma4:e4b-it-qat as the alternative
+everywhere. Each package states the system RAM it needs, and a host short of it gets
+the alternative that fits (on a 16 GB host with a 4 or 6 GB card, e4b), with the reason
+shown. After the bake, a one-minute mini-bench checks the curator on this machine with
+production calls (two judge verdicts, one card note) on titles of a fictional owner,
+never your data: ok, slow, spilled or unreliable, each with advice. `docs/BENCHMARKS.md`
+has the October hardware matrix.
+
+**Judge: findings with reasons, two fact guards.** A pillar finding that is only a
+label ("NONE", "PASS") goes back for the repair turn and has to say something about the
+title; one model did that on 11 of 40 bench titles. Two errors every model made on the
+examples are corrected in code after validation, and listed in the verdict's `_guards`:
+the downscale flag follows the file's measured size class, and a keep that rests only
+on an owner signal goes to the owner's review instead, since a signal never forces a
+keep.
 
 **Dependencies.** aiohttp 3.14.5 for GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3
 and GHSA-494j-54xm-rwp3 (fixed in 3.14.4). Curatarr uses aiohttp only as the
@@ -602,6 +706,13 @@ only they watch (a 14-episode show was proposed as a Cut). Members' plays
 now come from their own Plex play history - the whole history on the first
 sync, incrementally after that; accounts without a Curatarr login are never
 filed under the owner.
+
+**Deletion scoring counts the household's taste.** The taste part of the score (up to
+80 points) measured distance from the owner's profile alone, so a show another member
+would enjoy and has not watched yet read as clutter. Each member's fit now lowers the
+score, by up to half the taste points for a full profile and barely for a thin one.
+"Why?" shows it as "Close to <member>'s taste", and a very close fit reaches the judge as
+a household line, weaker than an actual watch.
 
 **Swipe.** A new view walks the library titles closest to your taste that
 you have not played in Plex, one card at a time: "Not seen" moves on,
@@ -667,6 +778,21 @@ of unrelated ones (a car-nostalgia note on a French comedy). An
 embedding-only match now needs a cosine of at least 0.34. That is just
 above the measured noise, and real matches sit at 0.35 and up. Matches
 on a shared word work as before.
+
+**Curator examples.** `docs/CURATOR_EXAMPLES.md` shows the three recommended curators
+judging the same five titles of a fictional owner: the verdicts agree, the reasoning
+rests on different pillars. The setup wizard shows each model's sample under "how this
+curator judges".
+
+**Smaller fixes.**
+- Post-enrichment questions about a binge crashed whenever a series qualified: the
+  plays were grouped by year instead of by day.
+- The game badge reads the game watcher's last answer instead of probing the card on
+  every poll (about 2.3 s each).
+- The selection bar sits flush at the bottom of the view.
+- "Install app" behind Cloudflare Access shows Curatarr's icon instead of a letter.
+- The chat's stat boxes work from the keyboard; the unknown-process scan and several
+  count queries are cheaper.
 
 **Cloudflare Access at the origin.** Publishing Curatarr under a public
 name through Cloudflare and a reverse proxy no longer depends on nobody
