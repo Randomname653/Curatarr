@@ -216,8 +216,13 @@ opens late November):
      reads only the deletes by consensus after a debate, for old rows and
      new alike.
    - The owner checks the labels at `GET /api/stats/debate-labels`.
-   - Not done: the durable `judge_verdicts` table and soft-deleting judge
-     protections (later rows of the table).
+   - *Since done: `services/judge_record.py`.* `judge_verdicts` keeps every
+     verdict past the cache's 30 days. A protection's old state goes into
+     `protection_history` before it is lifted or changed; that is a history
+     table, not a soft-delete column, so none of the fifteen readers of
+     `protected_media` needs a new filter.
+   - *Orphan cleanup:* it marks plays `orphaned_at` instead of deleting them
+     (`database/orphaned.py`). The Wrap-Up reads them; the live app does not.
 4. `User.timezone`. Tiny, and fixes the clock. *Done: `services/user_time.py`. The
    browser reports the zone, and each play is converted with its own date's
    offset.*

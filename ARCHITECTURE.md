@@ -205,6 +205,8 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 | `conversation_messages` | Chat history | `thread_id` isolates topics: `general` / `deletion_proposal:{id}` / `proactive_message:{id}`. Drives language detection. |
 | `episodic_memories` | Extracted taste/feedback/protection memories | `memory_type`, `media_category`, vector-searched globally per user |
 | `protected_media` | Deletion whitelist | `identifier` = TMDB/AniList id OR exact title |
+| `protection_history` | What a protection was | its state before it was lifted, changed by the judge or downscaled (`services/judge_record`) |
+| `judge_verdicts` | The judge's verdicts, kept | one row per title and change of verdict, with the findings, score and size; the same verdict again only counts `scans` (`services/judge_record`) |
 | `curator_resolution_log` | Audit trail | consensus-vs-override classification of deletion decisions, plus the proposal, its stakes and `persuader` (§0 Debate outcomes) |
 | `wrapups` | One row per (user, scope, period) | last computed facts + last written story with the `facts_hash` it was written for (§0 Wrap-Up) |
 | `library_items` / `library_events` | Library ledger | every title ever held; append-only arrivals / gone / returned / grew / shrunk (§0 Library ledger) |
@@ -1527,6 +1529,10 @@ growing this list.
 - `src/services/library_ledger.py` — what arrived when and what left, from
   the tech walk; only a complete walk marks anything gone (§0 Library
   ledger).
+- `src/services/judge_record.py` — the judge's verdicts past the cache's
+  30 days, and what a protection was before it was lifted or changed.
+- `src/database/orphaned.py` — plays of media gone from Plex: the orphan
+  cleanup marks them, every ORM read hides them, the Wrap-Up asks for them.
 - `src/services/debate_outcome.py` — what a deletion debate settled and who
   convinced whom; rule first, the summarizer only where reading the debate
   is the only way to tell (§0 Debate outcomes).

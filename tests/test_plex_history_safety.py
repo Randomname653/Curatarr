@@ -155,7 +155,7 @@ def run(**kw):
 print("\n-- orphan cleanup reads the item type history stores --")
 seed()
 r = run()
-check("healthy Plex: no episode or track history deleted", r.get("deleted") == 0 and rows() == 23)
+check("healthy Plex: no episode or track history hidden", r.get("archived") == 0 and rows() == 23)
 types_asked = {c[0].split("/")[-2]: c[1].get("type") for c in calls if c[0].endswith("/all")}
 check("each section asked for its history type (1 / 4 / 10)",
       types_asked == {"1": "1", "2": "4", "3": "10"})
@@ -164,12 +164,32 @@ check("walk is paginated (X-Plex-Container-Start/Size sent)",
 
 seed(extra_orphans=2)
 r = run()
-check("a real orphan (under the share guard) is deleted", r.get("deleted") == 2 and rows() == 23)
+check("a real orphan (under the share guard) is hidden", r.get("archived") == 2 and rows() == 23)
+
+
+def all_rows():
+    from src.database import orphaned
+    with fake_db_session() as db:
+        orphaned.include(db)
+        return {k: o is not None for k, o in db.query(WatchHistoryEntry.plex_item_id,
+                                                      WatchHistoryEntry.orphaned_at)}
+
+
+kept = all_rows()
+check("...but its plays are kept, marked, for the Wrap-Up",
+      len(kept) == 25 and kept["900"] and kept["901"] and not kept[LIB["1"]["1"][0]])
+r = run()
+check("a second run hides nothing more", r.get("archived") == 0 and r.get("examined") == 23)
+LIB["1"]["1"].append("900")             # the item is back in a library
+r = run()
+check("an item back in a library gets its plays back",
+      r.get("returned") == 1 and rows() == 24 and not all_rows()["900"])
+LIB["1"]["1"].remove("900")
 
 ps._ORPHAN_PAGE = 3                     # force several pages per section
 seed()
 r = run()
-check("multi-page walk collects every key", r.get("deleted") == 0 and rows() == 23)
+check("multi-page walk collects every key", r.get("archived") == 0 and rows() == 23)
 ps._ORPHAN_PAGE = 2000
 
 # ── 2. unreadable / empty sections ───────────────────────────────────────────
@@ -177,12 +197,12 @@ print("\n-- an unreadable or empty section deletes nothing --")
 seed(extra_orphans=1)
 section_status["2"] = 503
 r = run()
-check("non-200 section aborts: nothing deleted", r.get("deleted") == 0 and "error" in r and rows() == 24)
+check("non-200 section aborts: nothing hidden", r.get("archived") == 0 and "error" in r and rows() == 24)
 section_status.clear()
 
 section_empty.add("3")
 r = run()
-check("section answering 0 items (unmounted share) aborts", r.get("deleted") == 0
+check("section answering 0 items (unmounted share) aborts", r.get("archived") == 0
       and "no items" in r.get("error", "") and rows() == 24)
 section_empty.clear()
 
@@ -190,10 +210,10 @@ section_empty.clear()
 print("\n-- more than a fifth would go: refused unless forced --")
 seed(extra_orphans=10)                  # 10 of 33 = 30 %
 r = run()
-check("refused with the number to confirm", r.get("deleted") == 0
-      and r.get("would_delete") == 10 and r.get("examined") == 33 and rows() == 33)
+check("refused with the number to confirm", r.get("archived") == 0
+      and r.get("would_archive") == 10 and r.get("examined") == 33 and rows() == 33)
 r = run(force=True)
-check("force=True deletes them", r.get("deleted") == 10 and rows() == 23)
+check("force=True hides them", r.get("archived") == 10 and rows() == 23)
 
 # ── 4. 404 → library config kept until Plex's own list confirms ──────────────
 print("\n-- a 404 alone never removes a library --")

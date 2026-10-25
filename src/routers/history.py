@@ -294,13 +294,14 @@ async def admin_re_attribute(_admin: User = Depends(require_admin)):
 @router.post("/admin/cleanup-orphans")
 async def admin_cleanup_orphans(force: bool = False,
                                 _admin: User = Depends(require_admin)):
-    """Drop watch_history rows whose Plex item no longer exists in any library.
+    """Hide watch_history rows whose Plex item no longer exists in any library.
 
     Walks every configured library section for the item type history keeps
-    there (movies, episodes, tracks), collects all live ratingKeys, deletes
+    there (movies, episodes, tracks), collects all live ratingKeys, and marks
     WatchHistoryEntry rows whose plex_item_id is a numeric ratingKey not
-    present anymore. Spotify entries (``plex_item_id`` starts with
-    ``spotify:``) are kept untouched. Deletes nothing when any section can't
+    present anymore with ``orphaned_at``: hidden from the live app, kept for
+    the Wrap-Up (database/orphaned). Spotify entries (``plex_item_id`` starts
+    with ``spotify:``) are never marked. Hides nothing when any section can't
     be read in full or answers empty, or when more than a fifth of the rows
     would go — ``?force=true`` lifts only that last guard.
     """
