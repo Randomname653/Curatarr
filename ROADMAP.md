@@ -58,11 +58,6 @@ app. What the first days of that setup still have to show:
   into the member artists, so they stop counting as artists of their own in
   the Knowledge Base.
 
-**Two cards, visible**
-- One view of what each card is doing right now: the lane's holder and
-  queue, the PC's state (free / busy / which game / away), and the memory of
-  the container. Today it is spread over the log, the badge and Activity.
-
 **Household**
 - Netflix viewing-history import (CSV) for household members, next to the
   Spotify import.

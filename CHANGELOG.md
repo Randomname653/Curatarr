@@ -197,6 +197,19 @@ network), walks the pending anime findings (`wrong_entity:*`, `id_conflict:anili
 
 Tests: `tests/test_anime_crossref.py`.
 
+**What each card is doing, in one place.** Settings -> Maintenance -> Compute nodes now shows,
+under this server and under the node, a line that refreshes every 5 s while it is on screen
+(`GET /api/hosts/cards`, admins; `services/compute_cards.py`). Until now this was spread over
+the log, the lane badge and Activity:
+- **The lane:** who holds the card ("deletion scan: anime") and how many wait, chats counted
+  apart.
+- **The card:** VRAM used of total and utilisation. On the node it comes from its agent's last
+  report, and its state is shown with the game that holds it.
+- **The memory:** the container's own use and limit (cgroup v2, else v1), Curatarr's RSS and the
+  RAM the host has free.
+
+Tests: `tests/test_compute_cards.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
