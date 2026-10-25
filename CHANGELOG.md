@@ -252,6 +252,15 @@ Tests: `tests/test_netflix_import.py`.
 
 Tests: `tests/test_series_taste_aggregation.py`, `tests/test_chat_household.py`.
 
+**Recommendation posters for titles written with their year.** The curator writes a discovery pick
+as "The Cycle (2026)", and the arr names some titles "Given (2021)". Searched with the year in it,
+TMDB found nothing and the card showed a "?". On the owner's cache that was every movie discovery
+and 7 of 10 anime picks. The year is now the search hint, and a music pick ("Artist - Track") is
+looked up by its artist (`recommendations.poster_query`). The next recommendation refresh fills
+the cards.
+
+Tests: `tests/test_rec_posters.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
