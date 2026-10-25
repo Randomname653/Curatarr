@@ -90,7 +90,7 @@ function _render(reveal = false) {
   }
   el.innerHTML = wu.snapshot
     ? _controls(d) + _snapshot(f, d.story)
-    : _controls(d) + _hero(f, d) + '<h2 class="wu-explore">Explore</h2>' + _bento(f) + _story(f, d) + _ledgerSlot(f);
+    : _controls(d) + _hero(f, d) + '<h2 class="wu-explore">Explore</h2>' + _bento(f) + _story(f, d) + _household(d) + _ledgerSlot(f);
   if (reveal) el.querySelector('.wu-hero')?.classList.add('is-reveal');
   _armCounters(el);
   if (f.curatarr?.ledger && !wu.snapshot) {
@@ -353,6 +353,37 @@ function _story(f, d) {
     : 'The curator does not quote your debate messages.'}
     <button type="button" class="btn btn-ghost btn-sm" ${act('toggleWrapupQuotes')}>${d.quotes ? 'Stop quoting me' : 'Allow quotes'}</button></p>`;
   return `<section class="wu-chapters" aria-label="Chapters">${ch}</section>${pair}${hook}${note}${quotes}`;
+}
+
+// The household is opt-in: only members who turned it on are compared, and
+// only by rank and median — never another member's name or titles.
+function _household(d) {
+  const h = d.household || {};
+  if (!h.consented) {
+    return `<p class="wu-note">Compare your wrap-up with the household: your rank by hours and the household's taste line, among the members who turn this on too.
+      <button type="button" class="btn btn-ghost btn-sm" ${act('toggleWrapupHousehold')}>Compare with the household</button></p>`;
+  }
+  const off = `<button type="button" class="btn btn-ghost btn-sm" ${act('toggleWrapupHousehold')}>Stop comparing</button>`;
+  if (!h.rank_hours) {
+    return `<p class="wu-note">You are in. The comparison starts once another member turns it on and has a wrap-up for this period. ${off}</p>`;
+  }
+  const only = h.only_you ? ` · only you watched <b>${esc(h.only_you)}</b>` : '';
+  return `<article class="card wu-household"><div class="wu-tile-lbl">In the house</div>
+    <p><b>#${_s(h.rank_hours)}</b> of ${_s(h.members)} by hours${only}${h.radar_median ? ' · the dashed line on your taste radar is the household median' : ''}</p>
+    <p class="wu-note">Only members who turned this on are compared, and nobody sees anyone else's titles. ${off}</p></article>`;
+}
+
+export async function toggleWrapupHousehold() {
+  if (!wu.data) return;
+  try {
+    const on = !wu.data.household?.consented;
+    await api('/api/wrapup/prefs', 'POST', {household: on});
+    haptic('tick');
+    toast(on ? 'You are compared with the members who said yes too.' : 'You are out of every household comparison.', 'success');
+    await loadWrapup();
+  } catch (e) {
+    toast(_errMsg(e).slice(0, 200), 'danger');
+  }
 }
 
 // The user's own words are theirs to withhold (opt-out): the next rewrite

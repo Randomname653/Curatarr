@@ -156,6 +156,8 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
     from src.services.wrapup_facts import available
     from src.services.wrapup_insights import mine
 
+    from src.services.household_compare import compare
+
     facts, row = await current_facts(user, scope, period)
     story = row and row.get("story")
     return {
@@ -168,6 +170,9 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
         "story_source": row and row.get("story_source"),
         "generating": _running_task(user.id, scope, period),
         "quotes": await run_read(_quotes_allowed, user.id),
+        # opt-in, worked out on every open and never stored
+        # (services/household_compare)
+        "household": await run_read(compare, user.id, scope, period, facts),
         **(await run_read(available, user.id)),
     }
 
@@ -231,19 +236,26 @@ def status(task_id: str, user: User = Depends(get_current_user)):
 @router.get("/prefs")
 async def get_prefs(user: User = Depends(get_current_user)):
     """The user's wrap-up choices: may the curator quote their own debate
-    messages back to them (opt-out — a quote only reaches its author)."""
+    messages back to them (opt-out — a quote only reaches its author), and
+    may they be compared with the household (opt-in — that reaches others)."""
     from src.database.runner import run_read
+    from src.services.household_compare import consented
     from src.services.wrapup_writer import quotes_allowed
-    return {"quotes": await run_read(quotes_allowed, user.id)}
+    return {"quotes": await run_read(quotes_allowed, user.id),
+            "household": await run_read(consented, user.id)}
 
 
 @router.post("/prefs")
 async def set_prefs(body: dict, user: User = Depends(get_current_user)):
     from src.database.runner import run_read, run_write
+    from src.services.household_compare import consented, set_consent
     from src.services.wrapup_writer import quotes_allowed, set_quotes_allowed
     if "quotes" in body:
         await run_write(set_quotes_allowed, user.id, bool(body["quotes"]))
-    return {"quotes": await run_read(quotes_allowed, user.id)}
+    if "household" in body:
+        await run_write(set_consent, user.id, bool(body["household"]))
+    return {"quotes": await run_read(quotes_allowed, user.id),
+            "household": await run_read(consented, user.id)}
 
 
 @router.post("/playlist")
