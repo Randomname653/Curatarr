@@ -156,9 +156,12 @@ def test_chroma_query_dimension_mismatch_warns():
         def get(self, **k):
             raise ValueError("bad id")
 
+        def count(self):
+            return 1
+
     w = object.__new__(cw.ChromaDBWrapper)
     w.collection = _Coll()
-    w._facets = _Coll()
+    w._phrases = _Coll()            # the facet index: one point per phrase
     cw._caller_error_counts.clear()
     with _logs(cw.__name__) as recs:
         res = w.query([[0.1] * 384], n_results=3)

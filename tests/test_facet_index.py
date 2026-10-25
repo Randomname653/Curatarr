@@ -33,6 +33,7 @@ class FakeChroma:
         self.count = 1000
         self.pages = {}          # offset -> {"ids": [...], "metadatas": [...]}
         self.page_error_at = None
+        self.known = {}          # phrases the index already holds
         self.query_result = {"ids": [[]], "documents": [[]],
                              "metadatas": [[]], "distances": [[]]}
 
@@ -51,6 +52,9 @@ class FakeChroma:
 
     def facets_query(self, query_embeddings, n_results=20, where=None):
         return self.query_result
+
+    def facets_phrase_vectors(self, phrases, emb_model=""):
+        return {p: v for p, v in self.known.items() if p in phrases}
 
     def facets_count(self):
         return sum(len(a[0]) for a in self.added)
@@ -178,6 +182,13 @@ n = asyncio.run(fi.write_facets(
     vec_map={"alpha beta": [0.0, 1.0]}))
 check("stragglers missing from vec_map are embedded individually",
       n == 2 and calls == [["fresh phrase"]])
+
+calls.clear()
+fake.known = {"alpha beta": [0.0, 1.0]}
+n = asyncio.run(fi.write_facets("sonarr:10", "U", "anime", "", ["alpha beta", "new one"]))
+check("a phrase the index already holds is not embedded again (one point per phrase)",
+      n == 2 and calls == [["new one"]])
+fake.known = {}
 
 STATE.clear()
 calls.clear()
