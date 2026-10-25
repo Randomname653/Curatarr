@@ -228,9 +228,10 @@ check("the build runs without a model, the names on the summarizer after it",
       not jobs["nanogenres"].needs_llm and jobs["nanogenre_names"].needs_llm
       and jobs["nanogenre_names"].llm_role == "summarizer" and "nanogenres" in jobs["nanogenre_names"].after)
 facts_src = (ROOT / "src/services/wrapup_facts.py").read_text(encoding="utf-8")
+from src.services import wrapup_facts as wf  # noqa: E402
 check("the facts carry it, a new generation",
       'out["nanogenres"] = _sections.nanogenres(db, W, user_id, period, types)' in facts_src
-      and "FACTS_VERSION = 9" in facts_src)
+      and wf.FACTS_VERSION >= 9)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

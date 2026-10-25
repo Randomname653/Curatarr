@@ -166,6 +166,23 @@ def render_fact_sheet(f: dict) -> tuple:
         if m.get("most_skipped"):
             ms_ = m["most_skipped"]
             fact(f"Skipped most often: '{ms_['track']}' by {ms_['artist']}, {ms_['skips']} times.")
+        mo = m.get("moods")
+        if mo:
+            fact("Moods (Plex's tags, share of the tagged listening): "
+                 + ", ".join(f"{x['mood']} {_pct(x['share'])}%" for x in mo["top_moods"])
+                 + f"; {_pct(mo['coverage'])}% of the music time is tagged.")
+            if mo.get("top_styles"):
+                fact("Styles: " + ", ".join(x["style"] for x in mo["top_styles"]) + ".")
+            for part, x in (mo.get("by_daypart") or {}).items():
+                fact(f"In the {part}: mostly {x['mood']} ({_pct(x['share'])}% of "
+                     f"{x['hours']} tagged hours).")
+    dv = f.get("devices")
+    if dv:
+        fact("Played on: " + ", ".join(f"{x['player']} {x['hours']} hours ({_pct(x['share'])}%)"
+                                       for x in dv["top"]) + ".")
+        if dv.get("night"):
+            n = dv["night"]
+            fact(f"After 23:00 mostly on {n['player']} ({_pct(n['share'])}% of {n['hours']} night hours).")
     g = f.get("genres")
     if g:
         fact("Top genres: " + ", ".join(f"{x['genre']} {_pct(x['share'])}%" for x in g["top"]) + ".")

@@ -60,7 +60,7 @@ _ELIGIBLE_HOURS = 3
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
 # 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
 # 6: hours per day for the story mode's heatmap.
-FACTS_VERSION = 9
+FACTS_VERSION = 10
 
 
 @dataclass(frozen=True)
@@ -289,6 +289,10 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
                 out["auteurs"] = _sections.auteurs(db, [w for w in want if w["title"] in vnames])
         if "music" in types:
             out["music"] = _music(db, W, ms, user_id, base, period)
+            moods = _moods(db, W, ms, base, local)
+            if out["music"] and moods:
+                out["music"]["moods"] = moods
+        out["devices"] = _devices(db, W, ms, base, local)
 
         out["genres"] = _genres(db, W, ms, user_id, period, types)
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)
@@ -746,6 +750,113 @@ def _music(db, W, ms, user_id, base, period) -> dict:
                             "plays": int(rep[3])}
     if fav and fav[0]:
         out["best_rated_artist"] = fav[0]
+    return out
+
+
+def _daypart(hour: int) -> str:
+    return next(name for name, hours in _DAYPARTS if hour in hours)
+
+
+_MOOD_COVERAGE = 0.3        # of the music time, else the moods say too little
+_MOOD_MIN_H = 2.0
+
+
+def _moods(db, W, ms, base, local) -> dict:
+    """What the music sounded like: Plex's moods and styles over the played
+    time (services/music_tags), and the leading mood of each part of the
+    day on the user's clock. {} under a third of the time tagged."""
+    from sqlalchemy import func
+    from src.services.music_tags import tags_for_tracks
+    hr = func.strftime("%H", local)
+    rows, names = [], {}
+    for k, artist, album, h, v in (db.query(W.plex_item_id, W.series_title, W.album, hr, func.sum(ms))
+                                   .filter(*base[:3], W.media_type == "music")
+                                   .group_by(W.plex_item_id, W.series_title, W.album, hr)):
+        if k and h is not None and v:
+            rows.append((k, int(h), int(v)))
+            if artist:
+                names[str(k)] = (artist, album)
+    total = sum(v for _, _, v in rows)
+    tags = tags_for_tracks(db, list({k for k, _, _ in rows}), names)
+    moods, styles, tagged = Counter(), Counter(), 0
+    by_part: dict = defaultdict(Counter)
+    part_ms = Counter()
+    for k, h, v in rows:
+        t = tags.get(str(k))
+        if not t:
+            continue
+        if t["mood"]:
+            tagged += v
+            part = _daypart(h)
+            part_ms[part] += v
+            for m in t["mood"]:
+                moods[m] += v
+                by_part[part][m] += v
+        for st in t["style"]:
+            styles[st] += v
+    if not total or tagged / total < _MOOD_COVERAGE or _h(tagged) < _MOOD_MIN_H:
+        return {}
+    out = {
+        "coverage": round(tagged / total, 2),
+        "top_moods": [{"mood": m, "share": round(v / tagged, 2)} for m, v in moods.most_common(5)],
+        "top_styles": [{"style": st, "share": round(v / total, 2)}
+                       for st, v in styles.most_common(5)],
+    }
+    # a part of the day needs an hour of tagged music to have a mood
+    out["by_daypart"] = {p: {"mood": c.most_common(1)[0][0],
+                             "share": round(c.most_common(1)[0][1] / part_ms[p], 2),
+                             "hours": _h(part_ms[p])}
+                         for p, c in by_part.items() if _h(part_ms[p]) >= 1}
+    return out
+
+
+_PLATFORMS = (("iphone", "iPhone"), ("ipad", "iPad"), ("tvos", "Apple TV"), ("apple tv", "Apple TV"),
+              ("ios", "iPhone"), ("android tv", "Android TV"), ("android", "Android"),
+              ("windows", "Windows"), ("os x", "Mac"), ("macos", "Mac"), ("osx", "Mac"),
+              ("chromecast", "Chromecast"), ("cast", "Chromecast"), ("roku", "Roku"),
+              ("tizen", "Samsung TV"), ("webos", "LG TV"), ("xbox", "Xbox"),
+              ("playstation", "PlayStation"), ("sonos", "Sonos"), ("linux", "Linux"),
+              ("chrome", "Web"), ("firefox", "Web"), ("safari", "Web"), ("web", "Web"))
+
+
+def platform_family(platform: Optional[str]) -> Optional[str]:
+    """Spotify writes "iOS 17.1 (iPhone14,2)", Plex "iOS": one name each."""
+    low = (platform or "").lower()
+    if not low:
+        return None
+    return next((name for key, name in _PLATFORMS if key in low), (platform or "")[:32])
+
+
+_DEVICE_KNOWN = 0.5         # of the time with a known player, else no device story
+
+
+def _devices(db, W, ms, base, local) -> dict:
+    """Where the time was spent: hours by player (the Plex device name, else
+    the platform), and the player of the night. {} when under half the time
+    has a known player or only one is known."""
+    from sqlalchemy import func
+    hr = func.strftime("%H", local)
+    acc, night, total = Counter(), Counter(), 0
+    for player, platform, h, v in (db.query(W.player, W.platform, hr, func.sum(ms))
+                                   .filter(*base).group_by(W.player, W.platform, hr)):
+        v = int(v or 0)
+        total += v
+        label = (player or "").strip() or platform_family(platform)
+        if not label or h is None:
+            continue
+        acc[label] += v
+        if _daypart(int(h)) == "night":
+            night[label] += v
+    known = sum(acc.values())
+    if not total or known / total < _DEVICE_KNOWN or len(acc) < 2:
+        return {}
+    out = {"known_share": round(known / total, 2),
+           "top": [{"player": p, "hours": _h(v), "share": round(v / known, 2)}
+                   for p, v in acc.most_common(3)]}
+    n_total = sum(night.values())
+    if night and _h(n_total) >= 2:
+        p, v = night.most_common(1)[0]
+        out["night"] = {"player": p, "share": round(v / n_total, 2), "hours": _h(n_total)}
     return out
 
 
