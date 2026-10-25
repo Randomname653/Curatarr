@@ -252,6 +252,15 @@ Tests: `tests/test_netflix_import.py`.
 
 Tests: `tests/test_series_taste_aggregation.py`, `tests/test_chat_household.py`.
 
+**The deletion run no longer skips every short title.** Titles the curator took a position on in
+chat stay out of the deletion run. The check tested each candidate as a lower-case substring of
+the last 60 days of replies: "Her" sits in every "other", "IF" in every "if", "10" in any number.
+On the owner's real chat 458 titles were never proposed. Now a title of several words matches as a
+whole phrase in its own capitalisation, and a one-word title only when it is emphasised or quoted:
+116 (`recommendations_engine.positioned_titles`).
+
+Tests: `tests/test_curator_stance_match.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

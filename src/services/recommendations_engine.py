@@ -37,6 +37,36 @@ from src.services.http_client import tls_context
 logger = logging.getLogger(__name__)
 
 
+# A title the curator wrote about, set apart from its own prose: emphasis
+# or quotes around it (**Her**, "Big"), or a title of several words as a
+# whole phrase in its own capitalisation.
+_TITLE_MARK = r"(?:\*\*|\*|_|\"|“|”|'|‘|’)"
+
+
+def positioned_titles(text: str, titles) -> set:
+    """The titles the curator took a position on in ``text`` (its recent
+    replies). A plain lower-case substring test exempted every short title
+    from deletion: "Her" is in every "other", "IF" in every "if", "10" in
+    any number, "Back to the Future Part II" in "Part III" - 458 titles on
+    the owner's real 60 days of chat (2026-10-25), 116 with this rule.
+    A one-word or very short title counts only when it is emphasised or
+    quoted; a longer one as a whole phrase in its own capitalisation."""
+    import re
+    low = text.lower()
+    out = set()
+    for t in titles:
+        t = (t or "").strip()
+        if not t or t.lower() not in low:      # the cheap test first
+            continue
+        if " " not in t or len(t) <= 3:
+            pat = _TITLE_MARK + re.escape(t) + _TITLE_MARK
+        else:
+            pat = r"(?<![\w'])" + re.escape(t) + r"(?![\w'])"
+        if re.search(pat, text):
+            out.add(t)
+    return out
+
+
 def _chroma_get_by_ids(ids: list) -> dict:
     """Embeddings by id, for run_chroma. The wrapper is looked up here, on
     the Chroma thread: importing this module no longer builds the client."""
@@ -1721,11 +1751,9 @@ async def generate_deletion_proposals(
                                  ConversationMessage.role == "assistant",
                                  ConversationMessage.created_at >= cutoff)
                          .all())
-                _blob = " | ".join((r.content or "") for r in _rows).lower()
+                _blob = " | ".join((r.content or "") for r in _rows)
                 if _blob:
-                    for t in candidate_titles:
-                        if t and t.lower() in _blob:
-                            curator_positioned.add(t)
+                    curator_positioned = positioned_titles(_blob, candidate_titles)
             except Exception as e:
                 guard_failures.append("curator stances")
                 logger.warning("[deletions] curator-stance scan failed: %s", e, exc_info=True)
