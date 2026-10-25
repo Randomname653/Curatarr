@@ -1657,6 +1657,26 @@ def _find_state_bearing_title_in_message(
     return (winner_title, winner_category)
 
 
+def _household_use_block(user_id: int, title: str, db: Session) -> str:
+    """The other members' use of a title (pillar III), for the owner's free
+    chat: an opinion on keeping or cutting a title has to know who else
+    watches it. The deletion judge and the proposal cards had it; free chat
+    called a sitcom another member watches every evening "a prime candidate
+    for the chopping block" (2026-10-25). Raw counts, like the judge gets."""
+    from src.services.pillars import _other_users_watch
+    lines = []
+    for o in _other_users_watch(db, user_id, {"title": title}, "show"):
+        eps = o.get("distinct_episodes") or 0
+        what = (f"{eps} distinct episodes" if eps
+                else "finished it" if o.get("completed") else "started it")
+        last = o["last"].date().isoformat() if o.get("last") else "unknown"
+        lines.append(f"{o['name']}: {what} ({o['views']} plays, last {last})")
+    if not lines:
+        return ""
+    return (f"\nHOUSEHOLD USE of '{title}' (other members; what the household watches "
+            f"outranks the owner's taste in any keep-or-cut talk): " + "; ".join(lines) + "\n")
+
+
 def _get_user_stance_block(user_id: int, title: str, db: Session) -> str:
     """Pass 28: return any user-specific stance the curator should know
     about a title — pending DeletionProposal, prior resolution, ProtectedMedia
@@ -3256,6 +3276,15 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                     log_topup_failure(logger, "[chat] availability", active_title, _e)
             except Exception as _e:
                 log_topup_failure(logger, "[chat] viewing pattern", active_title, _e)
+            # the owner curates for the household: who else watches this
+            # (members see only their own record - household compare is opt-in)
+            if user.is_admin:
+                try:
+                    _hh = await run_read(_in_session, _household_use_block, user.id, active_title)
+                    if _hh:
+                        hidden_metadata_context = (hidden_metadata_context or "") + _hh
+                except Exception as _e:
+                    log_topup_failure(logger, "[chat] household use", active_title, _e)
 
 
     # 2. Build context — infer domain for hard data-level quarantine
