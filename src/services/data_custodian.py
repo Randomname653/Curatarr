@@ -430,6 +430,12 @@ async def _run_artist_tags(deep: bool = False, task=None) -> bool:
     return await run_artist_tags(task=task)
 
 
+async def _run_music_tags(deep: bool = False, task=None) -> bool:
+    """Plex's moods and styles on the music (services/music_tags). No model."""
+    from src.services.music_tags import run_music_tags
+    return await run_music_tags(task=task)
+
+
 async def _run_taste_snapshots(deep: bool = False, task=None) -> bool:
     """Each month's taste as a stored mean of its item vectors
     (services/taste_snapshots). Chroma reads, no model."""
@@ -846,6 +852,9 @@ def _registry() -> list[Task]:
         # and month, back-filled from the watch history, the running month
         # rewritten daily. Chroma reads, no model.
         Task("taste_snapshots", "Taste snapshots", 24.0, _run_taste_snapshots, takes_task=True),
+        # How the music feels: Plex's moods and styles per artist, album and
+        # track, for the wrap-up's moods by time of day. No model.
+        Task("music_tags", "Music moods and styles", 72.0, _run_music_tags, takes_task=True),
         # The Wrap-Up's rhythm clock: the device of every play ("phone after
         # midnight") and the moods of every artist. Plex only, no model.
         Task("plex_players", "Players of the Plex plays", 24.0, _run_plex_players, takes_task=True),

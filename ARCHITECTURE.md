@@ -206,6 +206,7 @@ SQLite via SQLAlchemy 2.0, WAL mode. The tables that matter:
 | `episodic_memories` | Extracted taste/feedback/protection memories | `memory_type`, `media_category`, vector-searched globally per user |
 | `protected_media` | Deletion whitelist | `identifier` = TMDB/AniList id OR exact title |
 | `protection_history` | What a protection was | its state before it was lifted, changed by the judge or downscaled (`services/judge_record`) |
+| `music_tags` | Plex's moods and styles | one row per artist / album / track, kind and tag; a complete walk of a section replaces its rows (`services/music_tags`) |
 | `judge_verdicts` | The judge's verdicts, kept | one row per title and change of verdict, with the findings, score and size; the same verdict again only counts `scans` (`services/judge_record`) |
 | `curator_resolution_log` | Audit trail | consensus-vs-override classification of deletion decisions, plus the proposal, its stakes and `persuader` (§0 Debate outcomes) |
 | `wrapups` | One row per (user, scope, period) | last computed facts + last written story with the `facts_hash` it was written for (§0 Wrap-Up) |
@@ -1529,6 +1530,9 @@ growing this list.
 - `src/services/library_ledger.py` — what arrived when and what left, from
   the tech walk; only a complete walk marks anything gone (§0 Library
   ledger).
+- `src/services/music_tags.py` — Plex's moods and styles per artist, album
+  and track, walked through Plex's filter lists; a play takes its track's,
+  else its album's, else its artist's (by key, else by names).
 - `src/services/judge_record.py` — the judge's verdicts past the cache's
   30 days, and what a protection was before it was lifted or changed.
 - `src/database/orphaned.py` — plays of media gone from Plex: the orphan

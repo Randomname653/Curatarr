@@ -95,6 +95,26 @@ on the real server named a title for the last 30 days that had been played in Ma
 
 Tests: `tests/test_marked_plays.py`.
 
+**How the music felt, and the player of the night, in the Wrap-Up.**
+- **Moods and styles:** a custodian job (`music_tags`, every three days, no model) reads Plex's own
+  moods and styles for every music section into `music_tags`. It works the way Plex's filter bar
+  does: it lists the tags per kind and level (moods on artists, albums and tracks; styles on
+  artists and albums), then the items under each tag. It also reads the tags a listing carries on
+  the item itself. Only a walk that read a whole section replaces that section's rows.
+- **A play's moods:** a track takes its own moods, else its album's, else its artist's; styles
+  come from the album, else the artist. Most track events in Plex's history carry no ratingKey,
+  so a play the music index does not know by key is found by its artist and album names.
+- **Wrap-Up:**
+  - **Moods:** the leading moods and styles over the played time, and the leading mood of each
+    part of the day. They need a third of the music time tagged.
+  - **Players:** the players by hours (`watch_history.player`, else the platform read as its
+    family: "iOS 17.1 (iPhone14,2)" is an iPhone) and the player of the night. They need half
+    the time with a known player.
+  - **Cards:** two new insight cards, "Mornings ran Energetic, nights Melancholy" and "After
+    23:00 it was the iPhone" (`FACTS_VERSION` 10).
+
+Tests: `tests/test_music_moods.py`.
+
 **The player of every Plex play, and the moods of every artist.** Groundwork for the Wrap-Up's
 rhythm clock and "phone after midnight", measured on the real server:
 - **Player:** every Plex history event names its device, and `/devices` gives its name and

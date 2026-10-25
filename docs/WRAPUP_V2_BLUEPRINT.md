@@ -235,8 +235,11 @@ opens late November):
    2026 music story stays thinner.
    *Done for the Spotify side and the album: `music_skips`; album,
    listened_ms, platform, reason_end and shuffle on `watch_history`; a
-   one-time re-read of imported files. Open: Plex moods/styles and the Plex
-   player, which need a real server to check the API shape against.*
+   one-time re-read of imported files.*
+   *Since done: the Plex player (`services/plex_players.py`) and Plex
+   moods/styles (`services/music_tags.py`, read through Plex's filter
+   lists, checked against a real server: moods on types 8/9/10 with ~300
+   tags each, styles on 8/9, none on tracks).*
 7. `taste_snapshots`, nanogenre labels. ⏳; these pay off in 2027.
    *Snapshots done: `services/taste_snapshots.py`. They turned out to be
    back-fillable after all, because item vectors are static, so every past

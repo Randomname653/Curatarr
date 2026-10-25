@@ -1181,6 +1181,29 @@ class JudgeVerdict(Base):
     )
 
 
+class MusicTag(Base):
+    """Plex's own moods and styles on artists, albums and tracks
+    (services/music_tags). Track genres were a comma string and nothing else
+    said how music feels, so a "morning intensity, late-night wind-down"
+    story had nothing to read. One row per item, kind and tag; a complete
+    walk of a section replaces that section's rows."""
+    __tablename__ = "music_tags"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    section_key = Column(String(32), nullable=False)
+    level       = Column(String(8), nullable=False)      # artist | album | track
+    item_key    = Column(String(32), nullable=False)     # the Plex ratingKey
+    kind        = Column(String(8), nullable=False)      # mood | style
+    tag         = Column(String(128), nullable=False)
+    seen_at     = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("level", "item_key", "kind", "tag", name="uq_music_tag"),
+        Index("idx_music_tag_item", "item_key"),
+        Index("idx_music_tag_section", "section_key"),
+    )
+
+
 class ProtectionHistory(Base):
     """What a protection was before it was lifted or changed
     (services/judge_record).

@@ -367,7 +367,41 @@ def _music(f) -> list:
     return out
 
 
-_MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _music)
+def _moods(f) -> list:
+    mo = (f.get("music") or {}).get("moods") or {}
+    parts = mo.get("by_daypart") or {}
+    out = []
+    day = [(p, parts[p]) for p in ("morning", "afternoon") if p in parts]
+    late = [(p, parts[p]) for p in ("evening", "night") if p in parts]
+    if day and late:
+        (dp, dx), (lp, lx) = max(day, key=lambda x: x[1]["hours"]), max(late, key=lambda x: x[1]["hours"])
+        if dx["mood"] != lx["mood"]:
+            out.append(_card("contrast", "music", 0.4 + _clamp((dx["share"] + lx["share"]) / 2) * 0.4,
+                             f"{dp.capitalize()}s ran {dx['mood']}, {lp}s {lx['mood']}.",
+                             "the same person, two soundtracks a day apart",
+                             {"day_share": dx["share"], "late_share": lx["share"]},
+                             {"day_share": say_share(dx["share"]), "late_share": say_share(lx["share"])},
+                             media_type="music"))
+    top = (mo.get("top_moods") or [None])[0]
+    if top and top["share"] >= 0.3:
+        out.append(_card("identity", "music", 0.25 + _clamp(top["share"]) * 0.45,
+                         f"{round(top['share'] * 100)}% of the tagged listening was {top['mood']}.",
+                         "the mood the year kept coming back to", {"share": top["share"]},
+                         {"share": say_share(top["share"])}, media_type="music"))
+    return out
+
+
+def _devices(f) -> list:
+    n = (f.get("devices") or {}).get("night")
+    if not n or n["share"] < 0.5:
+        return []
+    return [_card("rhythm", "rhythm", 0.3 + _clamp(n["share"]) * 0.4 + _clamp(n["hours"] / 50) * 0.15,
+                  f"After 23:00 it was the {n['player']}: {round(n['share'] * 100)}% of {_fmt(n['hours'])} night hours.",
+                  "where the late hours were spent", {"share": n["share"], "hours": n["hours"]},
+                  {"share": say_share(n["share"]), "hours": say_hours(n["hours"])})]
+
+
+_MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _music, _moods, _devices)
 
 
 def mine(facts: dict, floor: float = FLOOR, limit: int = MAX_CARDS) -> list:
