@@ -98,7 +98,7 @@ def parse_title(raw: str) -> dict:
 def title_ref(raw: str) -> str:
     """The Netflix title's own id here: stable across re-imports, the
     placeholder ``plex_item_id`` until the matcher finds the library item."""
-    return "netflix:" + hashlib.sha1((raw or "").strip().casefold().encode("utf-8")).hexdigest()[:24]
+    return "netflix:" + hashlib.sha1((raw or "").strip().casefold().encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
 
 
 # ── the files ───────────────────────────────────────────────────────────────
@@ -250,7 +250,7 @@ def save_upload(filename: str, content: bytes, import_dir: Path = None) -> dict:
             rejected.append((Path(name).name, "not a Netflix viewing-history CSV"))
             return
         stem = "ViewingActivity" if kind == FULL else Path(_safe_name(name)).stem
-        target = import_dir / f"{stem}-{hashlib.sha1(data).hexdigest()[:8]}.csv"
+        target = import_dir / f"{stem}-{hashlib.sha1(data, usedforsecurity=False).hexdigest()[:8]}.csv"
         target.write_bytes(data)
         saved.append(target.name)
 
