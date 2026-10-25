@@ -24,7 +24,8 @@ README section embeds which file). Every run produces the same frames:
   capture would put it straight back on the front page (the same reason
   prep_screenshots.py blurs the pill on hand-made captures).
 
-Read-only: the script navigates and opens menus, it never approves,
+Read-only: the script navigates, opens menus and steps through the Wrap-Up
+story; it never approves,
 rejects, sends or starts anything. Run it against an instance whose library
 you are happy to publish — every title on screen ends up in the README.
 """
@@ -50,14 +51,32 @@ VIEWPORTS = {
 # waits for the posters on screen to fade in. The bottom sheet is the
 # "Add to Home Screen" steps: read-only, and on a phone every dialog is
 # the same sheet.
+# The Wrap-Up opens on the calendar year, with its story closed for the
+# bento; the story shots step through the slides to the one named.
+_YEAR = "localStorage.setItem('curatarr_wrapup', JSON.stringify({scope: 'all', period: 'year', year: 2026}));"
+_CLOSE_STORY = "js:document.querySelector('.wus-close')?.click()"
+
+
+def _slide(cls: str) -> str:
+    return ("js:(async () => { for (let i = 0; i < 40 && !document.querySelector('.wus-stage.wus-s-"
+            + cls + "'); i++) { document.querySelector('.wus-next').click();"
+            " await new Promise(r => setTimeout(r, 120)); } })()")
+
+
 SHOTS = [
-    ("wrapup", "desktop", "#wrapup", "#wrapup-view .wu-hero, #wrapup-view .wu-empty", None),
+    ("wrapup", "desktop", "#wrapup", "#wrapup-view .wu-hero, #wrapup-view .wu-empty", _CLOSE_STORY, _YEAR),
     ("deletions", "desktop", "#deletions", "#deletions-view.active", None),
     ("chat", "desktop", "#chat", "#chat-view.active #chat-input-area", None),
-    ("recommendations", "desktop", "#recs", "#recs-view.active", None),
+    ("recommendations", "desktop", "#recs", "#recs-view.active",
+     "click:#recs-view .cat-tab:nth-child(2)"),
     ("knowledge-base", "desktop", "#enrich", "#enrich-view.active", None),
     ("chat", "phone", "#chat", "#mobile-tabbar", None),
-    ("wrapup", "phone", "#wrapup", "#wrapup-view .wu-hero, #wrapup-view .wu-empty", None),
+    ("wrapup", "phone", "#wrapup", "#wrapup-view .wu-hero, #wrapup-view .wu-empty", _CLOSE_STORY, _YEAR),
+    ("story-clock", "phone", "#wrapup", ".wus .wus-stage", _slide("clock"), _YEAR),
+    ("story-river", "phone", "#wrapup", ".wus .wus-stage", _slide("river"), _YEAR),
+    ("story-consensus", "phone", "#wrapup", ".wus .wus-stage", _slide("consensus"), _YEAR),
+    ("story-pair", "phone", "#wrapup", ".wus .wus-stage", _slide("pair"), _YEAR),
+    ("swipe", "phone", "#swipe", "#swipe-view.active", None),
     ("deletions", "phone", "#deletions", "#deletions-view.active", None),
     ("history-cards", "phone", "#history", "#history-view.active", None),
     ("more-drawer", "phone", "#recs", "#mobile-tabbar", "click:#mt-more"),
@@ -82,6 +101,19 @@ def _args():
     p.add_argument("--chromium", default="", help="Chromium binary, when not Playwright's own")
     p.add_argument("--timeout", type=float, default=20.0, help="seconds to wait for a view")
     return p.parse_args()
+
+
+# The README shows phone frames 200 px wide: 3x is what the phone renders,
+# 1.5x is plenty to store (a quarter of the bytes).
+PHONE_STORED_WIDTH = 585
+
+
+def _store_at(path: Path, width: int) -> None:
+    from PIL import Image
+    with Image.open(path) as im:
+        if im.width > width:
+            im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
+            im.save(path, optimize=True)
 
 
 def _pseudonymise(page, name: str) -> None:
@@ -131,13 +163,13 @@ def main() -> int:
     failed = 0
     with sync_playwright() as pw:
         browser = pw.chromium.launch(**({"executable_path": a.chromium} if a.chromium else {}))
-        for name, vp, route, ready, step in shots:
+        for name, vp, route, ready, step, *init in shots:
             ctx = browser.new_context(**VIEWPORTS[vp], reduced_motion="reduce",
                                       color_scheme="dark", locale="en-US")
             # The token goes in before the app's first script runs, so the
             # first paint is the signed-in app, not the login screen.
             ctx.add_init_script(
-                f"localStorage.setItem('curatarr_token', {a.token!r});")
+                f"localStorage.setItem('curatarr_token', {a.token!r});" + (init[0] if init else ""))
             page = ctx.new_page()
             target = Path(a.out) / OUT_DIR[vp] / f"{name}.png"
             try:
@@ -167,6 +199,8 @@ def main() -> int:
                 _pseudonymise(page, a.name)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(target), animations="disabled")
+                if vp == "phone":
+                    _store_at(target, PHONE_STORED_WIDTH)
                 print(f"  ok  {target.relative_to(ROOT) if target.is_relative_to(ROOT) else target}")
             except Exception as e:  # noqa: BLE001 - one view failing should not cost the others
                 failed += 1

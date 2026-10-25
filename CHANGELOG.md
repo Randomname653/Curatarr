@@ -252,6 +252,27 @@ Tests: `tests/test_netflix_import.py`.
 
 Tests: `tests/test_series_taste_aggregation.py`, `tests/test_chat_household.py`.
 
+**The README shows the app as it is now.** The Preview still showed three pre-redesign images, and the
+block for the new ones had sat behind a comment because no frame had been captured.
+- **A demo household on a real library:** Jane Doe (the fictional owner of `CURATOR_EXAMPLES.md`)
+  and Sam, with an invented 2026, on a scrubbed copy of the data that can write nowhere. Taste,
+  nanogenres, the Wrap-Up and its story, recommendations, a deletion analysis and one chat answer
+  were then run by the app itself. `docs/screenshots/README.md` says how.
+- **New sections:**
+  - "A look around": the Wrap-Up and four story slides, the chat, the deletion proposals, the
+    phone, and more behind a fold.
+  - Features grouped as the curator, the household, library care and your hardware; Netflix,
+    Swipe, the household rule and the card view are new there.
+  - "How it works" as a Mermaid diagram.
+- **The capture script** steps through the Wrap-Up story to the slide it names, opens the
+  calendar year, and stores phone frames at 1.5x.
+- **Poster cards on a phone** (deletions, recommendations, arr search) are a grid now: a small
+  poster beside the title line, the actions on a line of their own, the text at full width. The
+  110 px poster beside everything else had squeezed the pitch into a narrow column and stacked the
+  buttons three high.
+
+Tests: `tests/test_readme_screenshots.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
