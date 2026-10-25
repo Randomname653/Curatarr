@@ -181,6 +181,22 @@ Tests: `tests/test_nanogenres.py`.
 
 Tests: `tests/test_wrapup_views.py`.
 
+**Anime the audit flags, re-resolved through the TVDB -> AniDB -> AniList crossref.** Sonarr knows a
+series by its TVDB id, the anime-lists mapping names its AniDB entry, and the offline snapshot names
+that entry's AniList id (year-checked). A new daily custodian job, `anime_crossref` (no model, no
+network), walks the pending anime findings (`wrong_entity:*`, `id_conflict:anilist_id`):
+- **When the chain gives one answer** that differs from the profile's, the item gets an automatic
+  pin (`media_match_overrides`, note "auto: TVDB -> AniDB -> AniList crossref", no owner), its
+  findings close and it re-enriches on the pin.
+- **Otherwise it is left for the owner:** several AniDB entries for one TVDB series and none marked
+  main, no AniList id, no mapping, or no known arr year (the year check keeps a drifted AniDB id
+  out). An item that already has a pin is never touched, so an automatic pin that did not help is
+  not re-pinned in a loop; the weekly audit re-raises it after the grace week.
+- **Measured** on a copy of the NAS data: 10 of 30 pending anime findings pinned (Vampire Princess
+  Miyu, Piano no Mori, Gundam: Iron-Blooded Orphans, Golgo 13 among them).
+
+Tests: `tests/test_anime_crossref.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

@@ -539,6 +539,14 @@ async def _run_lyrics_profiles(task=None) -> bool:
     return await run_lyrics_profiles(task=task)
 
 
+async def _run_anime_crossref(task=None) -> bool:
+    """Audit-flagged anime re-resolved via the TVDB -> AniDB -> AniList
+    crossref (src/services/anime_crossref.py)."""
+    from src.services.anime_crossref import run_anime_crossref
+    await run_anime_crossref(task=task)
+    return True
+
+
 async def _run_editions_sync(task=None) -> bool:
     """Series editions: which cut is on disk (Sonarr episode files, custom
     formats) and whether AniDB knows an uncensored version. One API call per
@@ -923,6 +931,11 @@ def _registry() -> list[Task]:
              _run_raw_refresh, takes_deep=True, takes_task=True),
         Task("custodian_audit",  "Profile audit",        168.0, _run_audit,
              takes_deep=True, takes_task=True),
+        # Anime the audit flagged, settled by the TVDB -> AniDB -> AniList
+        # crossref when it names one entry: an automatic pin, then a
+        # re-enrichment. Two local SQLite files, no model, no network.
+        Task("anime_crossref",   "Anime re-resolution",  24.0,
+             _run_anime_crossref, takes_task=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay,
              reports_own=True),
         Task("orphan_check",     "Orphaned sections",    168.0, sched.job_orphan_check,
