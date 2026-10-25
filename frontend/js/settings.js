@@ -47,30 +47,31 @@ export async function reattributeHistory(btn) {
 
 export async function cleanupOrphans(btn) {
   const res = await confirmDialog({
-    title: 'Delete history for removed media', danger: true, confirmLabel: 'Delete history',
-    body: '<p>Deletes watch history for titles that are no longer in any Plex library.</p><p class="t3 fs-12 mt-8">Spotify history is kept. Nothing is deleted if a library can\'t be read.</p>',
+    title: 'Hide history for removed media', confirmLabel: 'Hide history',
+    body: '<p>Hides watch history for titles that are no longer in any Plex library. The plays are kept for your Wrap-Up.</p><p class="t3 fs-12 mt-8">Spotify history is never hidden. Nothing is hidden if a library can\'t be read.</p>',
   });
   if (!res.ok) return;
   const status = document.getElementById('maint-cleanup-status');
-  btnBusy(btn, 'Deleting…');
-  setStatus(status, 'Deleting history for removed media…', 'busy');
+  btnBusy(btn, 'Hiding…');
+  setStatus(status, 'Hiding history for removed media…', 'busy');
   try {
     let r = await api('/api/history/admin/cleanup-orphans', 'POST');
-    if (r.error && r.would_delete) {
+    if (r.error && r.would_archive) {
       // The share guard: a mass "orphaning" is usually a reading failure, so
       // the owner confirms the number before anything goes.
       const again = await confirmDialog({
-        title: `Delete ${r.would_delete} of ${r.examined} history entries?`, danger: true,
-        confirmLabel: 'Delete anyway',
+        title: `Hide ${r.would_archive} of ${r.examined} history entries?`,
+        confirmLabel: 'Hide anyway',
         body: '<p>That is more than a fifth of all history. This usually means a library was not fully readable, not that the media is gone.</p><p class="t3 fs-12 mt-8">Only continue if you really removed that much from Plex.</p>',
       });
-      if (!again.ok) { setStatus(status, r.error + ' (deleted: 0)', 'err'); return; }
+      if (!again.ok) { setStatus(status, r.error + ' (hidden: 0)', 'err'); return; }
       r = await api('/api/history/admin/cleanup-orphans?force=true', 'POST');
     }
-    if (r.error) { setStatus(status, r.error + ' (deleted: 0)', 'err'); return; }
-    setStatus(status, `Done — deleted ${r.deleted} of ${r.examined} entries checked`, 'ok');
-    toast(`Deleted ${r.deleted} history entries for removed media`, 'success');
-    if (r.deleted > 0) setTimeout(loadHistoryStatus, 800);
+    if (r.error) { setStatus(status, r.error + ' (hidden: 0)', 'err'); return; }
+    const back = r.returned ? `, ${r.returned} back in Plex` : '';
+    setStatus(status, `Done — hid ${r.archived} of ${r.examined} entries checked${back}`, 'ok');
+    toast(`Hid ${r.archived} history entries for removed media`, 'success');
+    if (r.archived > 0 || r.returned > 0) setTimeout(loadHistoryStatus, 800);
   } catch (e) {
     setStatus(status, _errMsg(e), 'err');
   } finally {

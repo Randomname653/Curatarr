@@ -160,7 +160,7 @@ with conn_mod.get_db_session() as db:
 check("a confirmed miss counts one more on the streak, config kept",
       app_state.get_state("plex_section_missing:2") == "1" and n_configs == 2)
 
-# ── 2. cleanup_orphan_watch_history (deletion path) ────────────────────────
+# ── 2. cleanup_orphan_watch_history (hiding path) ────────────────────────
 print("cleanup_orphan_watch_history")
 t0 = datetime(2026, 9, 1)
 with conn_mod.get_db_session() as db:
@@ -178,11 +178,11 @@ ROUTES["/library/sections/2/all"] = (200, live)
 app_state.set_state("recs_invalidate_at", "")
 res, err, sites = run_guarded(lambda: ps.cleanup_orphan_watch_history())
 check("orphan cleanup runs with no statement on the loop", ok(res, err, sites))
-check("...and deletes exactly the orphan",
-      (res or {}).get("deleted") == 1 and (res or {}).get("examined") == 6)
+check("...and hides exactly the orphan",
+      (res or {}).get("archived") == 1 and (res or {}).get("examined") == 6)
 with conn_mod.get_db_session() as db:
     keys = {r.plex_item_id for r in db.query(WatchHistoryEntry).all()}
-check("the orphan row is gone, live and Spotify rows stay",
+check("the orphan row is hidden, live and Spotify rows stay",
       "200" not in keys and {"100", "104", "spotify:x"} <= keys)
 check("recommendations are invalidated", bool(app_state.get_state("recs_invalidate_at")))
 

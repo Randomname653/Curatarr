@@ -51,6 +51,9 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 from src.database import loop_guard  # noqa: E402
 loop_guard.install(engine)
 
+from src.database import orphaned  # noqa: E402
+orphaned.install()
+
 
 def _apply_sqlite_pragmas(dbapi_connection) -> None:
     cursor = dbapi_connection.cursor()
@@ -351,6 +354,9 @@ def _migrate_columns() -> None:
         ("library_events",         "entity",          "VARCHAR(48)"),
         ("library_events",         "recorded_at",     "DATETIME"),
         ("library_items",          "added_from",      "VARCHAR(8)"),
+        # Plays of media gone from Plex are marked, not deleted
+        # (database/orphaned).
+        ("watch_history",          "orphaned_at",     "DATETIME"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model

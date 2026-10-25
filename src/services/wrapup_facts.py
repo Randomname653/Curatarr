@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
+from src.database import orphaned
 from src.database.connection import get_db_session
 
 logger = logging.getLogger(__name__)
@@ -230,6 +231,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
         "start": period.start.isoformat(), "end": period.end.isoformat()}}
 
     with get_db_session() as db:
+        orphaned.include(db)        # plays of media gone from Plex count
         # The user's own clock, with the offset in force at each play
         # (services/user_time): night owl, peak hour, days and calendars.
         from src.services.user_time import local_sql, user_zone
@@ -962,6 +964,7 @@ def available(user_id: int) -> dict:
     from sqlalchemy import func
     from src.database.models import WatchHistoryEntry as W
     with get_db_session() as db:
+        orphaned.include(db)        # plays of media gone from Plex count
         types = [t for (t,) in db.query(W.media_type).filter(W.user_id == user_id)
                  .distinct() if t in SCOPES]
         years = sorted({int(y) for (y,) in db.query(func.strftime("%Y", W.viewed_at))
@@ -1057,6 +1060,7 @@ def _drift_rows(user_id, scope, period) -> tuple:
                  "media_type": scope, "w": float(v or 0)} for k, s, pk, v in q if k and v]
 
     with get_db_session() as db:
+        orphaned.include(db)        # plays of media gone from Plex count
         return (top(db, (W.viewed_at >= period.start, W.viewed_at < period.end), 200),
                 top(db, (W.viewed_at < period.start,), 400))
 

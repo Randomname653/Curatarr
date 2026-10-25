@@ -788,10 +788,10 @@
                 <div class="section-body"><p class="lh-15 fs-12 t3">Stops Curatarr gracefully: running jobs finish their current step first. Start it again on the server to come back.</p></div>
               </section>
               <section class="section">
-                <div class="section-head"><h3>Delete history for removed media <span class="badge danger badge-sm">Destructive</span></h3>
-                  <div class="section-actions"><button class="btn btn-danger btn-sm" data-action="cleanupOrphans" data-args='["$el"]'>Delete history</button></div></div>
+                <div class="section-head"><h3>Hide history for removed media</h3>
+                  <div class="section-actions"><button class="btn btn-sm" data-action="cleanupOrphans" data-args='["$el"]'>Hide history</button></div></div>
                 <div class="section-body">
-                  <p class="lh-15 fs-12 t3">Deletes watch history for titles that are no longer in any Plex library. Spotify history is kept. Nothing is deleted if a library can't be read.</p>
+                  <p class="lh-15 fs-12 t3">Hides watch history for titles that are no longer in any Plex library from history, taste and recommendations. The plays are kept for your Wrap-Up, and come back if the title returns to Plex. Spotify history is never hidden. Nothing is hidden if a library can't be read.</p>
                   <div id="maint-cleanup-status" class="status mt-8"></div>
                 </div>
               </section>

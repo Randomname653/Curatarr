@@ -519,6 +519,9 @@ def delete_judge_protection(
     if not row:
         raise HTTPException(status_code=404, detail="Protection not found")
     title = row.title or row.identifier
+    # The live row goes; what it was stays (services/judge_record).
+    from src.services.judge_record import archive_protection
+    archive_protection(db, row, "lifted", by_user_id=user.id)
     db.delete(row)
     db.commit()
     return {"status": "deleted", "title": title}
@@ -753,6 +756,8 @@ def downscale_done(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Downscale candidate not found")
+    from src.services.judge_record import archive_protection
+    archive_protection(db, row, "downscaled", by_user_id=user.id, new_verdict="HARD_KEEP")
     row.verdict = "HARD_KEEP"
     db.commit()
     return {"status": "ok", "id": row.id, "title": row.title or row.identifier}
