@@ -3,6 +3,7 @@ import { loadProfiles } from './kb.js';
 import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, esc, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
+import { netflixDropZone, refreshNetflixPending } from './netflix_import.js';
 export function _renderUsers(users) {
   const targets = document.querySelectorAll('.user-list-target');
   const html = `<div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th class="t-right">Actions</th></tr></thead><tbody>
@@ -33,6 +34,9 @@ export async function loadUsers(force = false) {
     if (sel) sel.innerHTML = users.map(u =>
       `<option value="${u.id}">${esc(u.plex_username)}</option>`).join('');
     refreshSpotifyPending('adm-sp');
+    const nf = document.getElementById('adm-nf-zone');
+    if (nf && !nf.innerHTML) nf.innerHTML = netflixDropZone();
+    refreshNetflixPending(users);
   } catch (e) {
     targets.forEach(el => el.innerHTML = _errHtml(e, act('loadUsers')));
   }

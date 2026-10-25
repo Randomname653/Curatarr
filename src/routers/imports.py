@@ -1,4 +1,5 @@
-"""Data imports through the GUI — no scripts, no shell.
+"""Data imports through the GUI — no scripts, no shell: Spotify listening
+history and Netflix viewing history.
 
 The upload half is open during first-run setup as well (the wizard's Import
 step), because that is exactly when people have their Spotify export at hand.
@@ -115,4 +116,89 @@ async def spotify_run(payload: dict, _admin=Depends(require_admin)):
     # A bare create_task is only weakly referenced: the import could be
     # collected mid-run and vanish without a result or an error.
     track_task(_job(), name="spotify_import")
+    return {"started": True}
+
+
+# ── Netflix (services/netflix_import) ───────────────────────────────────────
+# The same shape: upload (also during setup), then an admin run that says
+# whose plays each profile's are.
+_nf_running: dict = {}
+_nf_last: dict = {}
+
+
+@router.get("/netflix/status")
+def netflix_status(_gate=Depends(require_admin_or_first_run)):
+    from src.services import netflix_import
+    return {"pending": netflix_import.pending_files(), "running": bool(_nf_running),
+            "last_result": _nf_last or None}
+
+
+@router.post("/netflix/files")
+async def netflix_upload(files: list[UploadFile] = File(...),
+                         _gate=Depends(require_admin_or_first_run)):
+    from src.services import netflix_import
+    if len(files) > _MAX_FILES:
+        raise HTTPException(status_code=413, detail=f"At most {_MAX_FILES} files per upload")
+    saved, rejected = [], []
+    cap = _MAX_FILE_MB * 1024 * 1024
+    for up in files:
+        content = await up.read(cap + 1)
+        if len(content) > cap:
+            rejected.append((up.filename, f"larger than {_MAX_FILE_MB} MB"))
+            continue
+        result = await asyncio.to_thread(netflix_import.save_upload, up.filename or "upload", content)
+        saved += result["saved"]
+        rejected += result["rejected"]
+    return {"saved": saved,
+            "rejected": [{"name": n, "reason": r} for n, r in rejected],
+            "pending": await asyncio.to_thread(netflix_import.pending_files)}
+
+
+@router.delete("/netflix/files")
+def netflix_clear(_admin=Depends(require_admin)):
+    from src.services import netflix_import
+    return {"removed": netflix_import.clear_pending()}
+
+
+@router.post("/netflix/run")
+async def netflix_run(payload: dict, _admin=Depends(require_admin)):
+    """``{"assign": {profile: user_id}}``: a full export's profile names, a
+    simple export's file name. Profiles left out are not imported."""
+    from src.services import netflix_import
+    if _nf_running:
+        raise HTTPException(409, "an import is already running")
+    assign = payload.get("assign")
+    if not isinstance(assign, dict) or not assign or not all(
+            isinstance(k, str) and isinstance(v, int) for k, v in assign.items()):
+        raise HTTPException(422, "assign ({profile: user_id}) is required")
+    if not await asyncio.to_thread(netflix_import.pending_files):
+        raise HTTPException(400, "no pending files — upload first")
+    if _nf_running:
+        raise HTTPException(409, "an import is already running")
+
+    from src.services.task_monitor import task_monitor
+    card = task_monitor.create(name="Netflix history import", category="import", task_id="netflix-import")
+    task_monitor.start(card)
+    _nf_running["task"] = True
+
+    async def _job():
+        try:
+            stats = await netflix_import.run_import(assign, task=card)
+            _nf_last.clear()
+            _nf_last.update(stats)
+            if stats.get("error"):
+                task_monitor.error(card, stats["error"])
+            else:
+                task_monitor.done(card, f"{stats['imported']} plays imported "
+                                        f"({stats['plays_in_library']} of {stats['plays']} on library titles), "
+                                        f"{stats['duplicates']} duplicates skipped")
+        except Exception as e:
+            logger.warning("[netflix-import] failed: %s", e)
+            _nf_last.clear()
+            _nf_last.update({"error": str(e)})
+            task_monitor.error(card, str(e))
+        finally:
+            _nf_running.clear()
+
+    track_task(_job(), name="netflix_import")
     return {"started": True}

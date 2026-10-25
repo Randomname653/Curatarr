@@ -112,6 +112,10 @@ def played_ms(row: dict) -> tuple:
     of played_ms_sql, for rows already in memory."""
     if row.get("source") == "spotify":
         return int(row.get("view_offset_ms") or 0), False
+    # Netflix says how long was watched (netflix_import); its simple export
+    # does not, and falls through to the estimate
+    if row.get("source") == "netflix" and row.get("listened_ms"):
+        return int(row["listened_ms"]), False
     if row.get("completed"):
         if row.get("duration_ms"):
             return int(row["duration_ms"]), False
@@ -128,11 +132,12 @@ def a_play(W):
 
 
 def played_ms_sql(W):
-    from sqlalchemy import case, func
+    from sqlalchemy import and_, case, func
     est = case(*[(W.media_type == k, int(v * 60_000)) for k, v in _EST_MIN.items()],
                else_=_EST_DEFAULT_MIN * 60_000)
     return case(
         (W.source == "spotify", func.coalesce(W.view_offset_ms, 0)),
+        (and_(W.source == "netflix", W.listened_ms.isnot(None)), W.listened_ms),
         (W.completed == True, func.coalesce(W.duration_ms, est)),   # noqa: E712
         else_=func.coalesce(W.view_offset_ms, 0))
 
@@ -140,7 +145,8 @@ def played_ms_sql(W):
 def _estimated_sql(W):
     from sqlalchemy import and_, case, func
     return case((and_(W.completed == True, W.duration_ms.is_(None),       # noqa: E712
-                      func.coalesce(W.source, "") != "spotify"), 1), else_=0)
+                      func.coalesce(W.source, "") != "spotify",
+                      ~and_(W.source == "netflix", W.listened_ms.isnot(None))), 1), else_=0)
 
 
 def _h(ms) -> float:
@@ -341,23 +347,27 @@ _DAYPARTS = (("night", range(0, 5)), ("morning", range(5, 11)),
 def _tempo(db, W, ms, base, local, total_ms, est_ms, plays) -> dict:
     from sqlalchemy import func
     hr = func.strftime("%H", local)
+    # A play known by its day only (Netflix's simple export) has no hour:
+    # it counts for its weekday and its day, never for a clock reading.
+    timed = func.coalesce(W.date_only, False) == False     # noqa: E712
     by_hour = [0] * 24
-    for h, v in db.query(hr, func.sum(ms)).filter(*base).group_by(hr).all():
+    for h, v in db.query(hr, func.sum(ms)).filter(*base, timed).group_by(hr).all():
         if h is not None:
             by_hour[int(h)] = int(v or 0)
     dw = func.strftime("%w", local)                     # 0 = Sunday
     by_dow = [0] * 7
     # weekday x hour for the rhythm clock, Monday first
     clock = [[0] * 24 for _ in range(7)]
-    for d, h, v in db.query(dw, hr, func.sum(ms)).filter(*base).group_by(dw, hr).all():
+    for d, h, t, v in db.query(dw, hr, timed, func.sum(ms)).filter(*base).group_by(dw, hr, timed).all():
         if d is not None and h is not None:
             by_dow[int(d)] += int(v or 0)
-            clock[(int(d) + 6) % 7][int(h)] += int(v or 0)
+            if t:
+                clock[(int(d) + 6) % 7][int(h)] += int(v or 0)
     day = func.date(local)
     days = [r for r in db.query(day, func.sum(ms), func.count()).filter(*base)
             .group_by(day).all() if r[0]]
     weekend_day = db.query(func.sum(ms)).filter(
-        *base, func.strftime("%w", local).in_(("0", "6")),
+        *base, timed, func.strftime("%w", local).in_(("0", "6")),
         func.strftime("%H", local).between("11", "17")).scalar() or 0
 
     parts = Counter()
@@ -481,7 +491,7 @@ def _comebacks(db, W, user_id, period, types) -> list:
 def _video_rows(db, W, user_id, period, video_types) -> list:
     cols = (W.plex_item_id, W.title, W.series_title, W.media_type, W.season,
             W.episode, W.viewed_at, W.duration_ms, W.view_offset_ms, W.completed,
-            W.tmdb_id, W.source)
+            W.tmdb_id, W.source, W.listened_ms, W.date_only)
     names = [c.key for c in cols]
     q = (db.query(*cols).filter(W.user_id == user_id, W.viewed_at >= period.start,
                                 W.viewed_at < period.end, W.media_type.in_(video_types), a_play(W))
@@ -501,11 +511,19 @@ def _prior_completions(db, W, user_id, period, vrows) -> set:
         q = db.query(W.series_title, W.title, W.season, W.episode).filter(
             W.user_id == user_id, W.viewed_at < period.start, W.completed == True,   # noqa: E712
             (W.series_title.in_(chunk)) | (W.title.in_(chunk)))
-        out |= {(s or t, se, ep) for s, t, se, ep in q}
+        out |= {(s or t, se, _ep(se, ep, t, s)) for s, t, se, ep in q}
     return out
 
 
 # ── completion, comfort, binge ──────────────────────────────────────────────
+
+def _ep(season, episode, title, series_title):
+    """The episode part of a comfort key: its number, else (a Netflix play)
+    its title; None for a film (viewing_sessions.episode_id)."""
+    from src.services.viewing_sessions import episode_id
+    k = episode_id(season, episode, title, series_title)
+    return k[1:] if k else None
+
 
 def _completion(vrows, now) -> dict:
     from src.services.taste_engine import _is_drop
@@ -527,7 +545,8 @@ def _comfort(vrows, prior) -> dict:
     for r in vrows:
         if not r["completed"]:
             continue
-        k = (r["series_title"] or r["title"], r["season"], r["episode"])
+        k = (r["series_title"] or r["title"], r["season"],
+             _ep(r["season"], r["episode"], r["title"], r["series_title"]))
         kinds[k[0]] = r["media_type"]
         seen[k] += 1
         if seen[k] > 1 or k in prior:

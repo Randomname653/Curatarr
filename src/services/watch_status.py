@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from src.services.viewing_sessions import episode_id
+
 logger = logging.getLogger("curatarr")
 
 
@@ -129,8 +131,8 @@ def watched_lookup(user_id: int, titles: list, category: str = None) -> dict:
         if getattr(r, "media_type", None) == "music":
             a["_music"] += 1
             a["_tracks"].add(r.title)
-        elif r.episode is not None:
-            a["_eps"].add((r.season, r.episode))
+        elif episode_id(r.season, r.episode, r.title, r.series_title) is not None:
+            a["_eps"].add(episode_id(r.season, r.episode, r.title, r.series_title))
         if r.viewed_at and (a["last"] is None or r.viewed_at > a["last"]):
             a["last"] = r.viewed_at
     for a in agg.values():

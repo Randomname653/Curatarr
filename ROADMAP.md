@@ -58,10 +58,6 @@ app. What the first days of that setup still have to show:
   into the member artists, so they stop counting as artists of their own in
   the Knowledge Base.
 
-**Household**
-- Netflix viewing-history import (CSV) for household members, next to the
-  Spotify import.
-
 **Discovery features on the taste-vector stack** (SoulSync-inspired)
 - **Decade time machine** — "my taste, but the 1980s": taste-similarity
   partitioned by era, one lane per decade.

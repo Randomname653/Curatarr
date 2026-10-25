@@ -45,7 +45,7 @@ def fill_players(by_rk: dict, players: dict, by_ts: Optional[dict] = None) -> in
     filled = 0
     with get_db_session() as db:
         rows = (db.query(W.id, W.plex_item_id, W.viewed_at, W.title)
-                .filter(W.platform.is_(None), func.coalesce(W.source, "") != "spotify",
+                .filter(W.platform.is_(None), func.coalesce(W.source, "").notin_(("spotify", "netflix")),
                         W.viewed_at.isnot(None)).all())
         updates = []
         for rid, rk, at, title in rows:
