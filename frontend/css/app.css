@@ -1647,6 +1647,8 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .wus-radar { overflow: visible; }
 .wus-rd-grid { fill: none; stroke: var(--border2); stroke-width: 1; }
 .wus-rd-shape { fill: var(--amber-dim); stroke: var(--amber); stroke-width: 2; }
+.wus-rd-median { fill: none; stroke: var(--text3); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.wu-household { margin-top: 12px; }
 .wus-rd-lbl { fill: var(--text2); font-size: 9px; }
 .wus-bal-in { fill: var(--amber); }
 .wus-bal-out { fill: var(--text3); }

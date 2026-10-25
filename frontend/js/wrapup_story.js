@@ -68,7 +68,7 @@ export function radarAxes(f) {
   return ax.filter(([, v]) => typeof v === 'number' && !Number.isNaN(v));
 }
 
-export function radar(f) {
+export function radar(f, median = null) {
   const ax = radarAxes(f);
   if (ax.length < 4) return '';
   const c = 110, r = 80, n = ax.length;
@@ -78,13 +78,18 @@ export function radar(f) {
   };
   const ring = v => ax.map((_, i) => pt(i, v).map(x => x.toFixed(1)).join(',')).join(' ');
   const shape = ax.map(([, v], i) => pt(i, Math.max(0.04, v)).map(x => x.toFixed(1)).join(',')).join(' ');
+  // the household median (opt-in, services/household_compare): drawn only
+  // when it has every axis the user's own shape has
+  const med = median && ax.every(([name]) => typeof median[name] === 'number')
+    ? `<polygon points="${ax.map(([name], i) => pt(i, Math.max(0.04, median[name])).map(x => x.toFixed(1)).join(',')).join(' ')}" class="wus-rd-median"><title>Household median</title></polygon>`
+    : '';
   const labels = ax.map(([name, v], i) => {
     const [x, y] = pt(i, 1.22);
     return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="wus-rd-lbl" text-anchor="middle">${_s(name)} ${_pct(v)}%</text>`;
   }).join('');
   return `<svg class="wus-chart wus-radar" width="300" viewBox="0 0 220 220" role="img" aria-label="Taste: ${ax.map(([n, v]) => `${n} ${_pct(v)}%`).join(', ')}">
     <polygon points="${ring(1)}" class="wus-rd-grid"/><polygon points="${ring(0.5)}" class="wus-rd-grid"/>
-    <polygon points="${shape}" class="wus-rd-shape"/>${labels}</svg>`;
+    ${med}<polygon points="${shape}" class="wus-rd-shape"/>${labels}</svg>`;
 }
 
 /** Hoarder vs pruner: GB in up, GB out down, by month. */
@@ -293,7 +298,7 @@ function build(d) {
   const title = s?.archetype_title;
   if (title) {
     out.push({cls: 'identity', share: `${title}${s.share_line && s.share_line !== title ? ` — ${s.share_line}` : ''}`,
-      html: `<div class="wus-eyebrow">${period} · who you were</div>${radar(f)}
+      html: `<div class="wus-eyebrow">${period} · who you were</div>${radar(f, d.household?.radar_median)}
         <h2 class="wus-arch">${_s(title)}</h2>${s.archetype_subhead ? `<p class="wus-text">${_s(s.archetype_subhead)}</p>` : ''}`});
   }
   const hook = s?.look_ahead_hook;
