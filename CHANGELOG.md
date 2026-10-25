@@ -313,6 +313,11 @@ found):
 
 Tests: `tests/test_ram_footprint.py` (section 5), `tests/test_facet_index.py`.
 
+**The LLM security scan is gone.** It sent changed files to GPT-4o on every PR and the whole
+server weekly. It read one file at a time, so its highs were mostly cross-file false positives, and
+it failed every run once its API credit ran out. CodeQL, Bandit, OSV-Scanner and Scorecard stay.
+Removed: the workflow, its scanner script, its lock and its accepted-findings list.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

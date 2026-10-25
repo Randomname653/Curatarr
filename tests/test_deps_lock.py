@@ -199,7 +199,7 @@ def test_compile_uses_uv_universal_with_hashes_and_refuses_without_uv():
         (root / "lock").mkdir()
         (root / "lock" / "requirements-bandit.in").write_text("bandit[sarif]==1.9.4\n", encoding="utf-8")
         n = dl.compile_locks(run=fake_run, log=lambda s: None, uv=["uv"], root=root)
-    assert n == 2, "the llm-scan input is missing here and is skipped, not invented"
+    assert n == 2, "the app lock and the bandit lock"
     assert cmds[0][:3] == ["uv", "pip", "compile"] and "--universal" in cmds[0] and "--generate-hashes" in cmds[0]
     assert "--python-version" in cmds[0] and cmds[0][cmds[0].index("-o") + 1].endswith("requirements.txt")
     assert "--upgrade" not in cmds[0], "a plain compile keeps the versions the lock holds"
