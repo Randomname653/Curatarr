@@ -135,12 +135,6 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
     for col, ddl in (("size_bytes", "INTEGER NOT NULL DEFAULT 0"), ("added_at", "INTEGER"), ("album_year", "INTEGER")):
         if col not in have:
             con.execute(f"ALTER TABLE track_lyrics ADD COLUMN {col} {ddl}")
-    # An artist's Plex moods and styles (services/plex_players, 2026-10-25):
-    # JSON lists; Plex keeps them per artist, not per track.
-    have = {r[1] for r in con.execute("PRAGMA table_info(plex_artists)")}
-    for col in ("moods", "styles", "genres", "country", "tags_at"):
-        if col not in have:
-            con.execute(f"ALTER TABLE plex_artists ADD COLUMN {col} TEXT")
     con.commit()
     return con
 
