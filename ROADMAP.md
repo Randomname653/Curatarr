@@ -54,9 +54,6 @@ app. What the first days of that setup still have to show:
   order before turning it on.
 
 **Needs attention, the rest automated**
-- Anime whose AniList entry is another work (a film for a series, a sequel
-  for the first season): re-resolve through the TVDB → AniList crossref
-  where it names exactly one entry, before asking a human.
 - Collaboration credits from the Plex index ("A & B", "A feat. B") folded
   into the member artists, so they stop counting as artists of their own in
   the Knowledge Base.
