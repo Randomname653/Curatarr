@@ -298,6 +298,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)
         out["court"] = _sections.court_record(db, user_id, period, scope)
         out["time_to_watch"] = _sections.time_to_watch(db, W, user_id, period, types)
+        out["nanogenres"] = _sections.nanogenres(db, W, user_id, period, types)
         if is_admin:
             # the server is the owner's to fill and to prune
             out["velocity"] = _sections.library_velocity(db, period, types)

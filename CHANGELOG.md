@@ -134,6 +134,25 @@ rhythm clock and "phone after midnight", measured on the real server:
 
 Tests: `tests/test_plex_players.py`.
 
+**Nanogenres: titles whose themes sit together, named once.** The facet index keeps about six
+theme phrases per title; nothing aggregated them. Clustering the phrases gave broad themes ("urban
+life", "humor") with music and video mixed. Clustering the titles works: each title is the mean of
+its own phrases, and video and music are clustered apart. On the real store that gave coming-of-age
+teen comedies (Superbad, Clueless), serial-killer thrillers (Zodiac) and german street rap, from
+29,630 titles at a 340 MB peak (`services/nanogenres.py`):
+- **Build:** a custodian job, `nanogenres` (no model), runs a spherical k-means with a fixed seed,
+  about one cluster per 80 titles (137 video, 233 music). It builds once, and again only on a new
+  version or embedding model. Later runs only assign titles new to the index to the nearest
+  centre, so clusters and names stay put. Tables `nanogenres` and `title_nanogenres`.
+- **Names:** `nanogenre_names` (the summarizer, 40 a run) names each cluster from its central
+  titles, their genres and their shared phrases ("serial killer psychological thriller", "german
+  urban hip hop"). Without the genres in the prompt the names were lists of themes.
+- **Wrap-Up:** the facts carry the period's played hours per named nanogenre, the biggest first
+  with their titles, the ones never played before the period, and the share of hours that have a
+  nanogenre (93% of the owner's last 30 days). `FACTS_VERSION` 9.
+
+Tests: `tests/test_nanogenres.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
