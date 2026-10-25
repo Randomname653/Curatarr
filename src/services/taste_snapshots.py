@@ -67,12 +67,12 @@ def _month_rows(user_id: int, category: str, month: str) -> list:
     """The month's titles with their played time, heaviest first."""
     from sqlalchemy import func
     from src.database.models import WatchHistoryEntry as W
-    from src.services.wrapup_facts import played_ms_sql
+    from src.services.wrapup_facts import a_play, played_ms_sql
     ms = played_ms_sql(W)
     key = func.coalesce(W.series_title, W.title)
     with get_db_session() as db:
         q = (db.query(key, func.max(W.series_title), func.max(W.plex_item_id), func.sum(ms), func.count())
-             .filter(W.user_id == user_id, W.media_type == category,
+             .filter(W.user_id == user_id, W.media_type == category, a_play(W),
                      func.strftime("%Y-%m", W.viewed_at) == month)
              .group_by(key).order_by(func.sum(ms).desc()))
         return [{"title": k, "series_title": s, "plex_item_id": pk, "media_type": category,

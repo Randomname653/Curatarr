@@ -93,12 +93,13 @@ def time_to_watch(db, W, user_id: int, period, types: list) -> dict:
     the server: median wait, the longest, and how many went within a week."""
     from sqlalchemy import func
     from src.database.models import LibraryItem as LI
+    from src.services.wrapup_facts import a_play
     video = [t for t in types if t != "music"]
     if not video or period.key == "all":
         return {}
     key = func.coalesce(W.series_title, W.title)
     first = dict(db.query(key, func.min(W.viewed_at)).filter(
-        W.user_id == user_id, W.media_type.in_(video), *_in(W.viewed_at, period))
+        W.user_id == user_id, W.media_type.in_(video), a_play(W), *_in(W.viewed_at, period))
         .group_by(key).all())
     if not first:
         return {}

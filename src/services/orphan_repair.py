@@ -203,9 +203,12 @@ async def apply_orphan_mapping(mappings: list) -> dict:
 
                 # Plex history events are typically completed plays. Honor any
                 # `viewOffset` returned (in-progress); else assume completed.
+                # A history event carries no duration: that is no reason to call
+                # it unfinished (every Plexamp play since September read as
+                # 0 h in the wrap-up); its length is estimated downstream.
                 duration_ms = item.get("duration")
                 view_offset_ms = item.get("viewOffset") or duration_ms
-                completed = bool(duration_ms) and (
+                completed = not duration_ms or (
                     view_offset_ms is None or view_offset_ms >= duration_ms * 0.9
                 )
 

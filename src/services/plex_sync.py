@@ -456,6 +456,10 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                         item["_anilist_id"] = gid[10:]
                     elif gid.startswith("mal://"):
                         item["_mal_id"] = gid[6:]
+            marked = mark_bulk_marked(items)
+            if marked:
+                logger.info("Library %r: %d item(s) marked as played in Plex (one second "
+                            "shared by several), not viewings", sec_title, marked)
 
             all_entries.extend(items)
 
@@ -772,6 +776,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 if not user:
                     continue
 
+                if entry.get("_marked") and near.get((user.id, rating_key)):
+                    # Marked as played again: the viewing it stands for is stored.
+                    skipped += 1
+                    continue
+
                 if entry.get("_history_extra"):
                     vts = int(viewed_at_ts)
                     if any(abs(t - vts) <= _SAME_PLAY_S for t in near.get((user.id, rating_key), ())):
@@ -950,13 +959,15 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     # a track's album (Plex: the parent); NULL for video
                     album=((entry.get("parentTitle") or "")[:512] or None)
                     if media_type == "music" else None,
+                    # Seen, but not when or for how long (wrapup_facts.a_play).
+                    source="marked" if entry.get("_marked") else None,
                 ))
                 near.setdefault((user.id, rating_key), []).append(int(viewed_at_ts))
                 # Collect the hit for the watched-a-recommendation follow-up:
                 # identity_key is already the SERIES-level ratingKey for episodes
                 # — exactly what CachedRecommendation.plex_rating_key stores.
                 # A play recovered from old history is not news to follow up.
-                if not entry.get("_backfill"):
+                if not entry.get("_backfill") and not entry.get("_marked"):
                     new_play_hits.append({
                         "user_id": user.id,
                         "identity_key": identity_key,
@@ -1202,12 +1213,36 @@ MEMBER_BACKFILL_KEY = "member_history_backfilled"
 # plays; it now also keeps the owner's events the listing does not carry. The
 # first sync after this change walks the whole history once.
 OWNER_BACKFILL_KEY = "owner_history_backfilled"
+# "Mark as played" in Plex sets lastViewedAt (and viewCount) for every item it
+# touches to the same second and writes no history event. Nobody finishes
+# three episodes in one second: on the real server whole seasons sat on one
+# second (12 anime episodes on 2026-10-23 22:49:45, 86 show episodes on
+# 2024-12-10), and each was read as a fresh viewing, a rewatch where the real
+# plays were stored months before.
+_MARKED_MIN = 3
+
+
+def mark_bulk_marked(items: list) -> int:
+    """Flag the listed items whose lastViewedAt they share with at least
+    ``_MARKED_MIN - 1`` others of the same library (``_marked``)."""
+    seconds: dict = {}
+    for it in items:
+        ts = it.get("lastViewedAt")
+        if ts and not it.get("_in_progress"):
+            seconds.setdefault(int(ts), []).append(it)
+    n = 0
+    for group in seconds.values():
+        if len(group) >= _MARKED_MIN:
+            for it in group:
+                it["_marked"] = True
+            n += len(group)
+    return n
 _HISTORY_EVENT_KEYS = ("ratingKey", "viewedAt", "type", "title", "grandparentTitle",
                        "grandparentKey", "parentIndex", "index", "librarySectionID",
                        "parentTitle")
 # Plex sometimes truncates seconds between the section listing and the history.
 _SAME_PLAY_S = 90
-_LISTING_ONLY_KEYS = ("_in_progress", "viewOffset", "lastViewedAt", "viewedAt", "_account_id")
+_LISTING_ONLY_KEYS = ("_in_progress", "viewOffset", "lastViewedAt", "viewedAt", "_account_id", "_marked")
 
 
 def _owner_history_entries(events: list, lib_configs: dict, listing: list,

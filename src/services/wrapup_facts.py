@@ -59,7 +59,7 @@ _ELIGIBLE_HOURS = 3
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
 # 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
 # 6: hours per day for the story mode's heatmap.
-FACTS_VERSION = 6
+FACTS_VERSION = 7
 
 
 @dataclass(frozen=True)
@@ -116,6 +116,14 @@ def played_ms(row: dict) -> tuple:
             return int(row["duration_ms"]), False
         return int(_EST_MIN.get(row.get("media_type"), _EST_DEFAULT_MIN) * 60_000), True
     return int(row.get("view_offset_ms") or 0), False
+
+
+def a_play(W):
+    """Not a row Plex wrote for "mark as played" (``source="marked"``, see
+    plex_sync): it says the title was seen, not when or for how long, so it
+    stays out of everything counted inside a period."""
+    from sqlalchemy import func
+    return func.coalesce(W.source, "") != "marked"
 
 
 def played_ms_sql(W):
@@ -215,7 +223,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
     types = scope_types(scope)
     ms = played_ms_sql(W)
     base = (W.user_id == user_id, W.viewed_at >= period.start,
-            W.viewed_at < period.end, W.media_type.in_(types))
+            W.viewed_at < period.end, W.media_type.in_(types), a_play(W))
 
     out: dict = {"facts_version": FACTS_VERSION, "scope": scope, "period": {
         "key": period.key, "label": period.label, "closed": period.closed,
@@ -243,7 +251,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
             ps, pe = period.previous
             prev = db.query(func.sum(ms)).filter(
                 W.user_id == user_id, W.viewed_at >= ps, W.viewed_at < pe,
-                W.media_type.in_(types)).scalar()
+                W.media_type.in_(types), a_play(W)).scalar()
             if prev:
                 tempo["prev_hours"] = _h(prev)
         out["tempo"] = tempo
@@ -435,7 +443,7 @@ def _comebacks(db, W, user_id, period, types) -> list:
         return []
     key = func.coalesce(W.series_title, W.title)
     inside = {k: v for k, v in db.query(key, func.min(W.viewed_at)).filter(
-        W.user_id == user_id, W.media_type.in_(types),
+        W.user_id == user_id, W.media_type.in_(types), a_play(W),
         W.viewed_at >= period.start, W.viewed_at < period.end).group_by(key).all() if k}
     if not inside:
         return []
@@ -457,7 +465,7 @@ def _video_rows(db, W, user_id, period, video_types) -> list:
             W.tmdb_id, W.source)
     names = [c.key for c in cols]
     q = (db.query(*cols).filter(W.user_id == user_id, W.viewed_at >= period.start,
-                                W.viewed_at < period.end, W.media_type.in_(video_types))
+                                W.viewed_at < period.end, W.media_type.in_(video_types), a_play(W))
          .order_by(W.viewed_at.asc()))
     return [dict(zip(names, r)) for r in q]
 
@@ -758,7 +766,7 @@ def _genres(db, W, ms, user_id, period, types) -> dict:
     fallers (percentage points) and genres played for the first time ever
     (SoundCloud's Genre Discovery Count)."""
     now_s = _genre_shares(db, W, ms, (W.user_id == user_id, W.viewed_at >= period.start,
-                                      W.viewed_at < period.end, W.media_type.in_(types)))
+                                      W.viewed_at < period.end, W.media_type.in_(types), a_play(W)))
     if not now_s:
         return {}
     top = sorted(now_s.items(), key=lambda kv: -kv[1])[:5]
@@ -1043,7 +1051,7 @@ def _drift_rows(user_id, scope, period) -> tuple:
     def top(db, filters, n):
         total = func.sum(ms)
         q = (db.query(key, func.max(W.series_title), func.max(W.plex_item_id), total)
-             .filter(W.user_id == user_id, W.media_type == scope, *filters)
+             .filter(W.user_id == user_id, W.media_type == scope, a_play(W), *filters)
              .group_by(key).order_by(total.desc()).limit(n))
         return [{"title": k, "series_title": s, "plex_item_id": pk,
                  "media_type": scope, "w": float(v or 0)} for k, s, pk, v in q if k and v]

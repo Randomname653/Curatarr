@@ -71,8 +71,29 @@ under them. The period is now told as a paced, full-screen sequence (`frontend/j
   wrap-up" brings it back, and the page below is now its "Explore" view.
 - **CSP-safe:** charts are SVG coloured by class, no inline style.
 - **Facts:** they carry each active day's hours for the heatmap (`FACTS_VERSION` 6).
+- **Reading time:** a slide stays as long as its text takes to read, 6 to 20 s, instead of a
+  fixed 7 s that cut the longer ones off.
 
 Tests: `tests/test_wrapup_story_mode.py`.
+
+**Marked as played is no viewing; music from Plex's history has its hours.** The first Wrap-Up
+on the real server named a title for the last 30 days that had been played in March. Two causes:
+- **Marked as played:** "Mark as played" in Plex gives every item it touches one `lastViewedAt`
+  second and writes no history event. The sync read each item as a viewing, a rewatch where the
+  real plays were stored months before.
+  - On the real server, 268 of 1259 video rows were such marks; Kim Possible had 86 episodes in
+    one second.
+  - Three or more items of one library in one second are now a mark. An item with a stored play
+    gets nothing; a first mark is stored as `source="marked"`, which keeps "seen" for curation and
+    stays out of everything the Wrap-Up counts inside a period.
+  - A one-time migration (schema generation 2) marks the rows already stored.
+- **Music from Plex's history:** the orphan import took Plexamp plays from the history, which has
+  no length, and stored them unfinished, so every artist read 0 h.
+  - Such a play now counts as played, with its length estimated.
+  - The same migration repairs the stored rows.
+- `FACTS_VERSION` 7 rebuilds the wrap-ups.
+
+Tests: `tests/test_marked_plays.py`.
 
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:

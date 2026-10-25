@@ -207,7 +207,9 @@ def checkpoint_and_dispose() -> None:
 # Schema generation, stored in PRAGMA user_version by _migrate_columns.
 # 1 = every column listed in _migrate_columns (2026-10). Bump it together with
 # any new one-shot backfill and gate that backfill on the old value.
-SCHEMA_VERSION = 1
+# 2 = video plays Plex wrote for "mark as played" are source "marked", and music
+#     plays imported from Plex's history without a length count as played (2026-10-25).
+SCHEMA_VERSION = 2
 
 
 def _migrate_columns() -> None:
@@ -449,6 +451,28 @@ def _migrate_columns() -> None:
                     "    next_retry_at = datetime(enriched_at, '+3 days') "
                     "WHERE error LIKE 'Not found%' AND enriched_at IS NOT NULL"
                 ))
+            schema_was = conn.exec_driver_sql("PRAGMA user_version").scalar() or 0
+            if schema_was < 2 and "watch_history" in tables:
+                # "Mark as played" in Plex gives every item it touches the same
+                # lastViewedAt second; the sync read each as a viewing (a whole
+                # season "watched" in one second, a rewatch of plays stored
+                # months before). Three or more video items of one user in one
+                # second are such a mark. Kept (the title was seen), counted as
+                # no viewing (wrapup_facts.a_play). Same rule as plex_sync.
+                conn.exec_driver_sql(
+                    "UPDATE watch_history SET source = 'marked' "
+                    "WHERE source IS NULL AND media_type IN ('movie', 'show', 'anime') "
+                    "AND (user_id, viewed_at) IN ("
+                    "  SELECT user_id, viewed_at FROM watch_history "
+                    "  WHERE source IS NULL AND media_type IN ('movie', 'show', 'anime') "
+                    "  GROUP BY user_id, viewed_at HAVING COUNT(DISTINCT plex_item_id) >= 3)")
+                # Music plays the orphan import took from Plex's history had no
+                # length and were stored unfinished: 0 h in every wrap-up. A
+                # history event is a play; its length is estimated downstream.
+                conn.exec_driver_sql(
+                    "UPDATE watch_history SET completed = 1 "
+                    "WHERE media_type = 'music' AND source IS NULL AND completed = 0 "
+                    "AND duration_ms IS NULL AND view_offset_ms IS NULL")
             # Record the schema generation this boot brought the file to. A
             # future one-shot backfill keys on it (``if user_version < N``)
             # rather than on whether its column happened to be added just now.
