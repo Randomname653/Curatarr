@@ -214,7 +214,7 @@ sheet, _ = render_fact_sheet(f)
 check("the fact sheet carries the moods, the parts of the day and the players",
       "Moods (Plex's tags" in sheet and "In the night: mostly Melancholy" in sheet
       and "Played on: iPhone" in sheet and "After 23:00 mostly on iPhone" in sheet)
-check("the facts' shape changed: FACTS_VERSION moved", wf.FACTS_VERSION == 10)
+check("the facts' shape changed: FACTS_VERSION moved", wf.FACTS_VERSION >= 10)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

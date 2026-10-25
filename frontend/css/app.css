@@ -1661,6 +1661,18 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .wus-ct-bg { fill: var(--bg3); }
 .wus-ct-you { fill: var(--amber); }
 .wus-ct-cur { fill: var(--text3); }
+/* rhythm clock, taste river, consensus (the story's stage-3 views) */
+.wus-clock path { stroke: none; }
+.wus-rv { stroke: var(--bg2); stroke-width: .6; }
+.wus-rv.s0 { fill: var(--amber); }
+.wus-rv.s1 { fill: rgba(229,160,13,.72); }
+.wus-rv.s2 { fill: rgba(229,160,13,.5); }
+.wus-rv.s3 { fill: rgba(229,160,13,.32); }
+.wus-rv.s4 { fill: rgba(229,160,13,.18); }
+.wus-rv-lbl { font-size: 8px; fill: var(--text); paint-order: stroke; stroke: var(--bg2); stroke-width: 2px; }
+.wus-cs-pt { fill: var(--text3); }
+.wus-cs-kept { fill: var(--amber); }
+.wus-cs-cut { stroke: var(--danger-fg); stroke-width: 1.6; fill: none; }
 .wus-ct-meta { font-size: 12px; color: var(--text3); }
 .wu-explore { font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--text3); margin: 26px 0 10px; font-weight: 600; }
 @media (max-width: 640px) {

@@ -162,6 +162,25 @@ teen comedies (Superbad, Clueless), serial-killer thrillers (Zodiac) and german 
 
 Tests: `tests/test_nanogenres.py`.
 
+**The story's last three views: rhythm clock, taste river, you and the crowd.** Visualizations 2,
+7 and 8 of the Wrap-Up blueprint, drawn as SVG with classes only:
+- **Rhythm clock:** 24 hour sectors with a ring per weekday, shaded by the quartiles of the
+  played hours, with the music's leading mood per part of the day underneath. The facts carry a
+  weekday-by-hour grid (`tempo.clock_h`).
+- **Taste river:** the five leading nanogenres stacked month by month around a centre line, each
+  a shade of the accent and named where it is widest (labels kept inside the chart, none over
+  another), with the nanogenres new to you. The facts carry the hours by month
+  (`nanogenres.by_month`).
+- **You and the crowd:** your hours against the community's score for up to 40 of the period's
+  video titles. The judge's last verdict (`judge_verdicts`) is the marker: a cross for a title it
+  wanted gone, a triangle for one it kept. The top left is named: what you loved and the crowd did
+  not.
+  - The pool is the period's own video titles, because a music-heavy rollup left only 11.
+  - AniList scores, which carry no vote count, count; a known small vote count does not.
+- `FACTS_VERSION` 11.
+
+Tests: `tests/test_wrapup_views.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

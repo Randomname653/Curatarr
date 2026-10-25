@@ -118,6 +118,102 @@ export function court(c) {
     <div class="wus-ct-meta">${_s(c.decided)} decided · ${_s(c.kept)} kept · ${_s(c.deleted)} deleted · ${_s(c.overrides)} over its objection</div></div>`;
 }
 
+const _DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const _DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/** The rhythm clock: 24 hour sectors, a ring per weekday (Monday inside),
+ *  four levels by the quartiles of the active cells. */
+export function clock(rows) {
+  const cells = (rows || []).flat().filter(v => v > 0).sort((a, b) => a - b);
+  if (cells.length < 10) return '';
+  const q = p => cells[Math.min(cells.length - 1, Math.floor(p * cells.length))];
+  const cuts = [q(0.25), q(0.5), q(0.75)];
+  const lvl = v => !v ? 0 : v <= cuts[0] ? 1 : v <= cuts[1] ? 2 : v <= cuts[2] ? 3 : 4;
+  const c = 120, r0 = 30, ring = 10;            // the hour marks sit inside the 240 box
+  const pt = (r, a) => [c + r * Math.sin(a), c - r * Math.cos(a)].map(x => x.toFixed(1));
+  const arcs = [];
+  rows.forEach((row, d) => row.forEach((v, h) => {
+    const a0 = h * Math.PI / 12 + 0.012, a1 = (h + 1) * Math.PI / 12 - 0.012;
+    const ri = r0 + d * ring + 1, ro = r0 + (d + 1) * ring - 1;
+    const [x1, y1] = pt(ro, a0), [x2, y2] = pt(ro, a1), [x3, y3] = pt(ri, a1), [x4, y4] = pt(ri, a0);
+    arcs.push(`<path d="M${x1} ${y1}A${ro} ${ro} 0 0 1 ${x2} ${y2}L${x3} ${y3}A${ri} ${ri} 0 0 0 ${x4} ${y4}Z" class="wus-hm l${lvl(v)}"><title>${_DAYS[d]} ${h}:00${v ? ` · ${_fmt(v)} h` : ''}</title></path>`);
+  }));
+  const ticks = [0, 6, 12, 18].map(h => {
+    const [x, y] = pt(r0 + 7 * ring + 10, h * Math.PI / 12);
+    return `<text x="${x}" y="${y}" class="wus-rd-lbl" text-anchor="middle" dominant-baseline="middle">${h}</text>`;
+  }).join('');
+  return `<svg class="wus-chart wus-clock" width="300" viewBox="0 0 240 240" role="img" aria-label="Hours by weekday and hour">${arcs.join('')}${ticks}</svg>`;
+}
+
+/** The taste river: the leading nanogenres' hours stacked month by month
+ *  around a centre line, each a shade of the accent, named at its widest. */
+export function river(byMonth) {
+  const months = Object.keys(byMonth || {}).sort();
+  const names = [...new Set(months.flatMap(m => Object.keys(byMonth[m])))];
+  if (months.length < 3 || names.length < 2) return '';
+  const totals = names.map(n => months.reduce((s, m) => s + (byMonth[m][n] || 0), 0));
+  const order = names.map((n, i) => [n, totals[i]]).sort((a, b) => b[1] - a[1]).map(([n]) => n);
+  const W = 300, H = 140, x = i => (i / (months.length - 1) * W).toFixed(1);
+  const col = months.map(m => order.reduce((s, n) => s + (byMonth[m][n] || 0), 0));
+  const scale = (H - 10) / Math.max(1, ...col);
+  const layers = [], labels = [], placed = [];
+  const base = col.map(t => H / 2 - t * scale / 2);
+  const CHAR_W = 4.2;                            // the 8px label's width per character
+  order.forEach((n, k) => {
+    const top = base.slice(), bot = base.map((b, i) => b + (byMonth[months[i]][n] || 0) * scale);
+    const up = top.map((y, i) => `${x(i)},${y.toFixed(1)}`).join(' L');
+    const down = bot.map((y, i) => `${x(i)},${y.toFixed(1)}`).reverse().join(' L');
+    layers.push(`<path d="M${up} L${down}Z" class="wus-rv s${Math.min(k, 4)}"><title>${_s(n)}</title></path>`);
+    const widest = bot.map((y, i) => y - top[i]).reduce((b, w, i, a) => (w > a[b] ? i : b), 0);
+    if (bot[widest] - top[widest] >= 12) {
+      // inside the box, and never over a label already placed
+      const w = n.length * CHAR_W, y = (top[widest] + bot[widest]) / 2;
+      const left = Math.min(Math.max(+x(widest) - w / 2, 2), W - 2 - w);
+      if (!placed.some(p => Math.abs(p.y - y) < 10 && left < p.right && left + w > p.left)) {
+        placed.push({left, right: left + w, y});
+        labels.push(`<text x="${left.toFixed(1)}" y="${y.toFixed(1)}" class="wus-rv-lbl" dominant-baseline="middle">${_s(n)}</text>`);
+      }
+    }
+    bot.forEach((y, i) => { base[i] = y; });
+  });
+  const ends = `<text x="0" y="${H + 12}" class="wus-rd-lbl">${_s(months[0])}</text><text x="${W}" y="${H + 12}" class="wus-rd-lbl" text-anchor="end">${_s(months[months.length - 1])}</text>`;
+  return `<svg class="wus-chart wus-river" width="460" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="Your nanogenres month by month: ${order.map(_s).join(', ')}">${layers.join('')}${labels.join('')}${ends}</svg>`;
+}
+
+/** Consensus: your hours (up) against the community's score (right); the
+ *  judge's verdict is the marker. Top-left is what you loved alone. */
+export function consensus(c) {
+  const pts = c?.points || [];
+  if (pts.length < 6) return '';
+  const W = 280, H = 170, pad = 22;
+  const cs = pts.map(p => p.community);
+  const lo = Math.min(...cs, c.median_community) - 0.3, hi = Math.max(...cs, c.median_community) + 0.3;
+  const hmax = Math.max(...pts.map(p => p.hours), 1);
+  const px = v => pad + (v - lo) / (hi - lo) * (W - pad - 6);
+  const py = v => H - pad - Math.sqrt(Math.max(0, v) / hmax) * (H - pad - 8);
+  const f1 = n => n.toFixed(1);
+  const mark = p => {
+    const X = px(p.community), Y = py(p.hours);
+    const tip = `<title>${_s(p.title)} · ${_fmt(p.hours)} h · ${_fmt(p.community)}</title>`;
+    if (p.verdict === 'cut') {
+      return `<path d="M${f1(X - 4)} ${f1(Y - 4)}L${f1(X + 4)} ${f1(Y + 4)}M${f1(X + 4)} ${f1(Y - 4)}L${f1(X - 4)} ${f1(Y + 4)}" class="wus-cs-cut">${tip}</path>`;
+    }
+    if (p.verdict === 'kept') {
+      return `<path d="M${f1(X)} ${f1(Y - 5)}L${f1(X + 5)} ${f1(Y + 4)}L${f1(X - 5)} ${f1(Y + 4)}Z" class="wus-cs-kept">${tip}</path>`;
+    }
+    return `<circle cx="${f1(X)}" cy="${f1(Y)}" r="4" class="wus-cs-pt">${tip}</circle>`;
+  };
+  return `<svg class="wus-chart wus-cons" width="420" viewBox="0 0 ${W} ${H}" role="img" aria-label="${pts.length} titles: your hours against the community score">
+    <line x1="${f1(px(c.median_community))}" x2="${f1(px(c.median_community))}" y1="4" y2="${H - pad}" class="wus-axis"/>
+    <line x1="${pad}" x2="${W - 6}" y1="${f1(py(c.median_hours))}" y2="${f1(py(c.median_hours))}" class="wus-axis"/>
+    <text x="${pad + 2}" y="12" class="wus-rd-lbl">yours alone</text>
+    <text x="4" y="${H / 2}" class="wus-rd-lbl" transform="rotate(-90 8 ${H / 2})" text-anchor="middle">your hours</text>
+    <text x="${pad}" y="${H - 6}" class="wus-rd-lbl">${_fmt(Math.min(...cs))}</text>
+    <text x="${f1(px(Math.max(...cs)))}" y="${H - 6}" class="wus-rd-lbl" text-anchor="end">${_fmt(Math.max(...cs))}</text>
+    <text x="${f1((pad + W) / 2)}" y="${H - 6}" class="wus-rd-lbl" text-anchor="middle">community score</text>
+    ${pts.map(mark).join('')}</svg>`;
+}
+
 // ── the slides ──────────────────────────────────────────────────────────────
 function _posters(f, refs, story) {
   // no artwork, no frame: an empty "?" tile says nothing on a story slide
@@ -158,6 +254,16 @@ function build(d) {
         ${heatmap(t.by_day_h, f.period.start, f.period.end)}
         <p class="wus-text">Longest run: ${_s(t.longest_streak_days)} days in a row.${bd.date ? ` Biggest day: ${_s(bd.date)}, ${_fmt(bd.hours)} hours.` : ''}</p>`});
   }
+  const clockSvg = clock(t.clock_h);
+  if (clockSvg) {
+    const moods = f.music?.moods?.by_daypart || {};
+    const moodLine = ['morning', 'afternoon', 'evening', 'night'].filter(p => moods[p])
+      .map(p => `${p}: ${_s(moods[p].mood)}`).join(' · ');
+    const day = _DAY_NAMES[((t.peak_weekday ?? 1) + 6) % 7];
+    out.push({cls: 'clock', share: `Most at ${t.peak_hour}:00, busiest on ${day}s`,
+      html: `<div class="wus-eyebrow">Round the clock</div><h2 class="wus-h">Most at ${_s(t.peak_hour)}:00, busiest on ${day}s</h2>
+        ${clockSvg}${moodLine ? `<p class="wus-text">The music's mood — ${moodLine}.</p>` : ''}`});
+  }
   const slides = s?.slides?.length ? s.slides
     : (d.insights || []).slice(0, 5).map(c => ({id: c.id, beat: c.slide, headline: '', text: c.claim, item_refs: []}));
   for (const sl of slides) {
@@ -167,6 +273,21 @@ function build(d) {
     out.push({cls: `beat beat-${esc(sl.beat || '')}`, share: sl.headline || sl.text,
       html: `${sl.headline ? `<h2 class="wus-h">${_s(sl.headline)}</h2>` : ''}${_posters(f, sl.item_refs, s)}${visual}
         <p class="wus-text">${_s(sl.text)}</p>`});
+  }
+  const ng = f.nanogenres || {};
+  const riverSvg = river(ng.by_month);
+  if (riverSvg) {
+    const lead = (ng.top || [])[0];
+    out.push({cls: 'river', share: lead ? `${lead.name}: ${_fmt(lead.hours)} hours` : 'How the taste moved',
+      html: `<div class="wus-eyebrow">How the taste moved</div>${lead ? `<h2 class="wus-h">${_s(lead.name)} led</h2>` : ''}
+        ${riverSvg}${(ng.new_to_you || []).length ? `<p class="wus-text">New to you: ${ng.new_to_you.map(_s).join(', ')}.</p>` : ''}`});
+  }
+  const consSvg = consensus(f.consensus);
+  if (consSvg) {
+    const alone = f.consensus.yours_alone || [];
+    out.push({cls: 'consensus', share: alone.length ? `Mine, not theirs: ${alone.join(', ')}` : 'You and the crowd',
+      html: `<div class="wus-eyebrow">You and the crowd</div><h2 class="wus-h">${alone.length ? `Yours alone: ${_s(alone[0])}` : 'Mostly in step with the crowd'}</h2>
+        ${consSvg}<p class="wus-text">Up is your hours, right the community's score. A cross is a title the judge wanted gone, a triangle one it kept.</p>`});
   }
   const rt = s?.roast_and_toast;
   if (rt?.roast && rt?.toast) {
