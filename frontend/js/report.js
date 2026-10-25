@@ -4,7 +4,7 @@
 // Stubbornness Index, taste evolution. The yearly paragraph is gone — the
 // curator writes the whole wrap-up now.
 import { _swrCache, _swrRun, api } from './api.js';
-import { _errHtml, act, emptyHtml, esc } from './ui.js';
+import { _errHtml, act, emptyHtml, esc, loc } from './ui.js';
 // The report's one computed style: a fill's share as --v (0-100 %). The
 // class says what it is and which way it grows (.rep-col-* is a column's
 // height, .rep-split-* a share of the debate bar); colours live in app.css.
@@ -13,7 +13,7 @@ export function _repBar(cls, pct) {
 }
 const _monthShort = key => {
   const dt = new Date(`${key}-01T00:00:00`);
-  return isNaN(dt.getTime()) ? key : dt.toLocaleString(undefined, {month: 'short'});
+  return isNaN(dt.getTime()) ? key : dt.toLocaleString(loc(), {month: 'short'});
 };
 
 let _ledgerEl = null;

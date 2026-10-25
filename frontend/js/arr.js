@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, openModal, proxyImg, setStatus, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast } from './ui.js';
 import { state } from './state.js';
 import { showView, tabToHash } from './nav.js';
 const ARR_TABS = {
@@ -278,7 +278,7 @@ export function openLibraryItem(svc, tabId, idx) {
     item.year,
     _sizeStr(item.size_on_disk),
     item.album_count ? `${item.album_count} album${item.album_count === 1 ? '' : 's'}` : '',
-    item.added ? `added ${new Date(item.added).toLocaleDateString()}` : '',
+    item.added ? `added ${new Date(item.added).toLocaleDateString(loc())}` : '',
     item.status,
   ].filter(Boolean).map(f => esc(String(f))).join(' · ');
   openModal({

@@ -77,7 +77,7 @@ const document = {};
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const act = (name, ...args) => `data-action="${name}"` + (args.length ? ` data-args='${JSON.stringify(args)}'` : '');
 const _posterImg = (url) => `<img src="${url}">`;
-const countTo = () => {}; const haptic = () => {};
+const countTo = () => {}; const haptic = () => {}; const loc = () => undefined;
 """ + body + """
 const data = %s;
 const slides = build(data);

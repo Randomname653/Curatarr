@@ -1,6 +1,6 @@
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 import { api } from './api.js';
-import { _errMsg, btnDone, toast } from './ui.js';
+import { _errMsg, btnDone, setLocale, toast } from './ui.js';
 import { state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
@@ -125,6 +125,7 @@ function syncTimezone(u) {
 
 export function setUser(u) {
   state.currentUser = u;
+  setLocale(u.locale);
   syncTimezone(u);
   document.getElementById('user-name').textContent = u.username || 'User';
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();

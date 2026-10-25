@@ -1,6 +1,6 @@
 // ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 import { api } from './api.js';
-import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
 import { startTaskStream, stopTaskStream } from './activity.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
@@ -19,7 +19,7 @@ export async function loadJudgeProtections() {
         : (p.verdict === 'KEEP_WITH_FLAG'
             ? '<span class="badge amber badge-sm">Keep · downscale</span>'
             : '<span class="badge muted badge-sm">Protected</span>');
-      const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      const when = p.created_at ? new Date(p.created_at).toLocaleDateString(loc()) : '';
       return `<div class="panel-item">
         <div class="panel-item-head">
           <div class="panel-item-title">${esc(p.title || '—')} ${badge}
@@ -96,7 +96,7 @@ export async function loadPrinciples() {
         : (p.novelty ? ` <span class="badge muted">${esc(p.novelty)}</span>` : '');
       const reinf = (p.times_reinforced || 0) > 0 ? ` <span class="fs-11 t3">×${p.times_reinforced} reinforced</span>` : '';
       const meta = [p.basis, p.category].filter(Boolean).map(esc).join(' · ');
-      const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      const when = p.created_at ? new Date(p.created_at).toLocaleDateString(loc()) : '';
       const actions = p.status === 'merged'
         ? ''
         : p.status === 'active'
@@ -251,7 +251,7 @@ export async function loadDownscale() {
       const tech = p.tech
         ? `<span class="badge muted">${esc(p.tech.resolution || '?')} ${esc(p.tech.codec || '')} · ${p.tech.size_gb} GB${p.tech.mb_per_min ? ` · ${p.tech.mb_per_min} MB/min` : ''}</span>`
         : '<span class="badge muted">no tech profile</span>';
-      const when = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      const when = p.created_at ? new Date(p.created_at).toLocaleDateString(loc()) : '';
       return `<div class="panel-item">
         <div class="panel-item-head">
           <div class="panel-item-title">${esc(p.title || '—')} ${tech}

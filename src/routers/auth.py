@@ -560,21 +560,27 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
 
     token = _create_jwt(user_id, is_admin, token_version)
     _pin_bindings.pop(int(pin_id), None)   # one PIN, one session
+    from src.database.runner import run_read
+    from src.services.user_language import user_locale
     return {
         "status": "ok",
         "token": token,
-        "user": {"id": user_id, "username": username, "is_admin": is_admin},
+        "user": {"id": user_id, "username": username, "is_admin": is_admin,
+                 "locale": await run_read(user_locale, user_id)},
     }
 
 
 @router.get("/status")
 def auth_status(user: User = Depends(get_current_user)):
+    from src.services.user_language import user_locale
     return {
         "authenticated": True,
         "user_id": user.id,
         "username": user.plex_username,
         "is_admin": user.is_admin,
         "timezone": user.timezone,
+        # Numbers and dates in the language the user writes to the curator in.
+        "locale": user_locale(user.id),
     }
 
 

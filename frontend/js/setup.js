@@ -1,7 +1,7 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
 import { state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
-import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, toast } from './ui.js';
+import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, loc, toast } from './ui.js';
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
@@ -577,11 +577,11 @@ export async function startOnboardingSync() {
         const s = await api('/api/history/status');
         fails = 0;
         const entries = s.watch_history_entries || 0;
-        lbl.textContent = `${entries.toLocaleString()} entries synced…`;
+        lbl.textContent = `${entries.toLocaleString(loc())} entries synced…`;
         if (entries > 0) bar.style.width = '60%';
         if (s.taste_vector?.computed) {
           bar.style.width = '100%';
-          lbl.textContent = `${entries.toLocaleString()} entries · taste profile computed`;
+          lbl.textContent = `${entries.toLocaleString(loc())} entries · taste profile computed`;
           _stopOnboardingPoll();
           setTimeout(() => {
             renderOnboardingStep('models');

@@ -1,5 +1,5 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, setStatus, toast, trackDirty } from './ui.js';
 import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
@@ -20,21 +20,21 @@ export async function reattributeHistory(btn) {
     // Build a calmer summary that explains what each bucket actually means.
     const lines = ['Done.'];
     if (r.updated > 0) {
-      lines.push(`• ${r.updated.toLocaleString()} row${r.updated === 1 ? '' : 's'} (re)assigned to a different Plex account.`);
+      lines.push(`• ${r.updated.toLocaleString(loc())} row${r.updated === 1 ? '' : 's'} (re)assigned to a different Plex account.`);
     }
     if (r.unchanged > 0) {
-      lines.push(`• ${r.unchanged.toLocaleString()} row${r.unchanged === 1 ? '' : 's'} already correctly attributed (idempotent — no-op on repeat runs).`);
+      lines.push(`• ${r.unchanged.toLocaleString(loc())} row${r.unchanged === 1 ? '' : 's'} already correctly attributed (idempotent — no-op on repeat runs).`);
     }
     if (r.unattributable > 0) {
       // Frame this as expected behavior, not failure: Plex has limited history
       // retention, so older plays can't be cross-referenced and stay parked
       // on admin. That's fine for the "single primary user" case and lets the
       // multi-user code path own attribution for everything new from now on.
-      lines.push(`• ${r.unattributable.toLocaleString()} row${r.unattributable === 1 ? '' : 's'} kept on admin — older than Plex's history retention horizon, can't be matched. This is expected and harmless.`);
+      lines.push(`• ${r.unattributable.toLocaleString(loc())} row${r.unattributable === 1 ? '' : 's'} kept on admin — older than Plex's history retention horizon, can't be matched. This is expected and harmless.`);
     }
     if (typeof r.plex_history_events !== 'undefined') {
       lines.push('');
-      lines.push(`Plex returned ${r.plex_history_events.toLocaleString()} play events covering ${r.plex_history_rating_keys.toLocaleString()} unique items. Your library has ${(r.local_rks_in_plex_history + r.local_rks_missing_from_plex_history).toLocaleString()} distinct watched items in total.`);
+      lines.push(`Plex returned ${r.plex_history_events.toLocaleString(loc())} play events covering ${r.plex_history_rating_keys.toLocaleString(loc())} unique items. Your library has ${(r.local_rks_in_plex_history + r.local_rks_missing_from_plex_history).toLocaleString(loc())} distinct watched items in total.`);
     }
     setStatus(status, lines.join(String.fromCharCode(10)), 'ok');
     toast('Re-attribution done', 'success');
@@ -441,7 +441,7 @@ function _muEval(role, ev, facts_rebuilt, run, err, summary) {
       <div class="section-actions mt-8"><button class="btn btn-secondary btn-sm" ${run ? 'disabled' : ''} ${act('evaluateModelUpdate', role, EL)}>Review again (re-measures speed and VRAM)</button></div></div></div>`;
 }
 
-const _muTime = iso => iso ? new Date(iso).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : '';
+const _muTime = iso => iso ? new Date(iso).toLocaleTimeString(loc(), {hour: '2-digit', minute: '2-digit'}) : '';
 
 function _muCompare(role, c, run, err) {
   const s = c.summary;
@@ -525,7 +525,7 @@ function _muHistory(hist) {
   if (!hist?.length) return '';
   const rows = [...hist].reverse().map(h => {
     const t = h.tally?.titles;
-    return `<li>${esc(h.at ? new Date(h.at).toLocaleString() : '?')} — ${esc(h.recommendation || 'no review')}`
+    return `<li>${esc(h.at ? new Date(h.at).toLocaleString(loc()) : '?')} — ${esc(h.recommendation || 'no review')}`
       + (t ? ` (titles new ${t.new}, old ${t.old}, tie ${t.tie})` : '')
       + `<span class="t3"> · ${esc((h.titles || []).join(', '))}</span></li>`;
   }).join('');

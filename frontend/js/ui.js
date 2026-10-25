@@ -81,16 +81,23 @@ export function withTransition(fn) {
   }
 }
 
+// Numbers and dates in the user's language, not the browser's: the one they
+// write to the curator in (/api/auth/status "locale", services/user_language).
+// A German browser read "1.055GB" next to the curator's "3,152 GB".
+let _locale;
+export function setLocale(tag) { _locale = tag || undefined; }
+export const loc = () => _locale;
+
 // A number that counts up to n instead of jumping (stat boxes). Ease-out
 // over ms; reduced motion and an unchanged value write it straight away.
 export function countTo(el, n, ms = 600) {
   if (!el) return;
   const from = parseInt(el.textContent.replace(/\D/g, ''), 10) || 0;
-  if (from === n || REDUCED_MQ.matches || document.hidden) { el.textContent = n.toLocaleString(); return; }
+  if (from === n || REDUCED_MQ.matches || document.hidden) { el.textContent = n.toLocaleString(loc()); return; }
   const t0 = performance.now();
   const step = t => {
     const p = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - p, 4);
-    el.textContent = Math.round(from + (n - from) * e).toLocaleString();
+    el.textContent = Math.round(from + (n - from) * e).toLocaleString(loc());
     if (p < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -384,7 +391,7 @@ export function pagerHtml(p) {
   const total = Number(p.total || 0), limit = Number(p.limit || 50), offset = Number(p.offset || 0);
   if (offset === 0 && total <= limit) return '';
   const from = total ? offset + 1 : 0, to = Math.min(offset + limit, total);
-  return `<div class="pager"><span>${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}</span><span class="row-end"></span>
+  return `<div class="pager"><span>${from.toLocaleString(loc())}–${to.toLocaleString(loc())} of ${total.toLocaleString(loc())}</span><span class="row-end"></span>
     <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.page(Math.max(0, offset - limit))}>Prev</button>
     <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.page(offset + limit)}>Next</button></div>`;
 }
@@ -448,7 +455,7 @@ export function _fmtRel(iso) {
   const [n, u] = a < 3600e3 ? [Math.round(a / 60e3), 'min'] : a < 86400e3 ? [Math.round(a / 3600e3), 'h'] : [Math.round(a / 86400e3), 'd'];
   return d > 0 ? `in ${n} ${u}` : `${n} ${u} ago`;
 }
-export function _fmtAbs(iso) { const dt = new Date(iso); return isNaN(dt.getTime()) ? '' : dt.toLocaleString(); }
+export function _fmtAbs(iso) { const dt = new Date(iso); return isNaN(dt.getTime()) ? '' : dt.toLocaleString(loc()); }
 
 // setStatus(el, text, kind) — the inline status next to a Save / Test button
 // (kind: ok | err | busy | none). Extra classes on the element survive.
