@@ -192,6 +192,47 @@ def persist_ledger(items: dict, complete: set, now: Optional[datetime] = None,
     return counts
 
 
+def ledger_start(db) -> Optional[datetime]:
+    """When the Plex walk began witnessing departures: its first title."""
+    from sqlalchemy import func
+    from src.database.models import LibraryItem
+    return db.query(func.min(LibraryItem.first_seen_at)).scalar()
+
+
+def _departures_before(db, start: datetime, end: datetime, types: Optional[list]) -> list:
+    """What left before the Plex walk existed, as ``(kind, at, mb, title,
+    media_type)`` rows of kind ``gone``: Curatarr's own deletions, and the
+    files deleted in the arrs by hand (arr_ledger's ``removed`` rows) that
+    are not one of those. Radarr and Sonarr drop the history of a deleted
+    film or series, so Curatarr's record is the only one of those."""
+    from src.database.models import DeletionProposal as P, LibraryEvent as E
+    first = ledger_start(db)
+    stop = min(end, first) if first else end
+    if stop <= start:
+        return []
+    out = []
+    q = db.query(P.resolved_at, P.storage_mb, P.title, P.category).filter(
+        P.status == "deleted", P.resolved_at >= start, P.resolved_at < stop)
+    if types:
+        q = q.filter(P.category.in_(list(types)))
+    ours: dict = {}
+    for at, mb, title, cat in q:
+        key = (title or "").lower()
+        if any(t.date() == at.date() for t in ours.get(key, ())):
+            continue        # one deletion, proposed to two members
+        out.append(("gone", at, mb or 0, title, cat))
+        ours.setdefault(key, []).append(at)
+    q = db.query(E.at, E.size_mb, E.title, E.media_type).filter(
+        E.kind == "removed", E.at >= start, E.at < stop)
+    if types:
+        q = q.filter(E.media_type.in_(list(types)))
+    for at, mb, title, mtype in q:
+        if any(abs((at - t).total_seconds()) < 2 * 86400 for t in ours.get((title or "").lower(), ())):
+            continue        # the arr's side of a deletion Curatarr already counted
+        out.append(("gone", at, mb or 0, title, mtype))
+    return out
+
+
 def velocity(start: datetime, end: datetime, types: Optional[list] = None, db=None) -> dict:
     """GB in vs GB out over ``[start, end)``, by month, with the biggest
     arrival and departure. Blocking — call via ``run_read``, or pass the
@@ -203,7 +244,8 @@ def velocity(start: datetime, end: datetime, types: Optional[list] = None, db=No
             E.at >= start, E.at < end)
         if types:
             q = q.filter(E.media_type.in_(list(types)))
-        return q.all()
+        rows = [r for r in q.all() if r[0] != "removed"]
+        return rows + _departures_before(s, start, end, types)
 
     if db is not None:
         rows = _rows(db)

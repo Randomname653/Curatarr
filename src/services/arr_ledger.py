@@ -16,9 +16,13 @@ record (``bucket`` = ``radarr:<history id>``, so a re-read writes nothing):
 * an import paired with its ``Upgrade`` deletion is the net change only
   (``grew`` / ``shrunk`` by new minus old); the deletion row stays as the
   neutral ``replaced_used`` (an unpaired one is ``replaced``);
-* other deletions are not written: departures stay with the Plex walk, which
-  sees a title or a season leave however it left (Sonarr drops the history
-  of a deleted series, so the arr cannot be the only witness).
+* a file deleted in the arr by hand is a neutral ``removed`` row; it counts
+  as GB out only for the time before the Plex walk existed (before that the
+  arr and Curatarr's own deletions are the only witnesses). After it,
+  departures are the Plex walk's: it sees a title or a season leave however
+  it left, and Sonarr drops the history of a deleted series;
+* "MissingFromDisk" is never a departure: moved or re-mounted libraries
+  produce tens of thousands in a day.
 
 Once a service's history has been read to the end, its titles are "covered":
 the Plex walk stops writing arrivals and upgrades for them (see
@@ -44,6 +48,15 @@ _IMPORT = "downloadFolderImported"
 _DELETED = ("movieFileDeleted", "episodeFileDeleted")
 # Neutral kinds: not in library_ledger.IN_KINDS / OUT_KINDS.
 REPLACED, REPLACED_USED, UPGRADE = "replaced", "replaced_used", "upgrade"
+# A file deleted in the arr by hand (or through its API): a departure, but
+# counted only for the time before the Plex walk witnessed departures
+# (library_ledger.velocity). "MissingFromDisk" is not one: on the real server
+# 32,352 episodes "went missing" on one day (a moved library) and came back
+# without an import.
+REMOVED = "removed"
+_REMOVED_REASONS = ("Manual", "ManualOverride")
+# State generation: 2 = the history read once more for the removals.
+_STATE_V = 2
 SERVICES = ("radarr", "sonarr")
 
 
@@ -92,7 +105,7 @@ def resolve(svc: str, rec: dict, titles: dict, keys: dict) -> Optional[dict]:
     does not keep. ``keys``: the LibraryItem rating key by external id."""
     et = rec.get("eventType")
     reason = (rec.get("data") or {}).get("reason")
-    if et != _IMPORT and not (et in _DELETED and reason == "Upgrade"):
+    if et != _IMPORT and not (et in _DELETED and reason in ("Upgrade",) + _REMOVED_REASONS):
         return None
     at = _parse_at(rec.get("date"))
     if at is None or rec.get("id") is None:
@@ -103,7 +116,8 @@ def resolve(svc: str, rec: dict, titles: dict, keys: dict) -> Optional[dict]:
     entity = (f"radarr:{rec.get('movieId')}" if svc == "radarr"
               else f"sonarr:ep:{rec.get('episodeId')}")
     return {"ref": f"{svc}:{rec['id']}", "at": at, "entity": entity,
-            "deleted": et != _IMPORT, "size_mb": _size_mb(rec),
+            "deleted": et != _IMPORT, "removed": reason in _REMOVED_REASONS,
+            "size_mb": _size_mb(rec),
             "rk": rk or f"arr:{svc}:{arr_id}", "linked": rk is not None,
             "media_type": t.get("media_type") or ("movie" if svc == "radarr" else "show"),
             "title": (t.get("title") or rec.get("sourceTitle") or "")[:512] or None}
@@ -132,7 +146,7 @@ def apply(rows: list, now: Optional[datetime] = None) -> dict:
     1663 upgrades), and they pair across two pages as well."""
     from src.database.models import LibraryEvent as E, LibraryItem as I
     now = now or datetime.utcnow()
-    counts = {"added": 0, "upgrades": 0, "replaced": 0, "skipped": 0}
+    counts = {"added": 0, "upgrades": 0, "replaced": 0, "removed": 0, "skipped": 0}
     rows = sorted(rows, key=lambda r: (r["at"], r["ref"]))
     with get_db_session() as db:
         refs = [r["ref"] for r in rows]
@@ -148,6 +162,11 @@ def apply(rows: list, now: Optional[datetime] = None) -> dict:
             ev = E(at=r["at"], bucket=r["ref"], plex_rating_key=r["rk"], media_type=r["media_type"],
                    title=r["title"], size_mb=r["size_mb"], source="arr", entity=r["entity"],
                    recorded_at=now)
+            if r.get("removed"):
+                ev.kind = REMOVED
+                counts["removed"] += 1
+                db.add(ev)
+                continue
             if r["deleted"]:
                 # The file an upgrade replaced: its import may already be here.
                 imp = (db.query(E).filter(E.source == "arr", E.entity == r["entity"], E.kind == "added",
@@ -219,7 +238,8 @@ def covered() -> dict:
     out = {"movie": set(), "tv": set()}
     for svc, kind in (("radarr", "movie"), ("sonarr", "tv")):
         st = _load(get_state(_state_key(svc)))
-        if st.get("done"):
+        # A second read for the removals keeps the coverage of the first.
+        if st.get("done") or st.get("reread"):
             out[kind] = set(_load(get_state(_covered_key(svc)), []))
     return out
 
@@ -251,12 +271,17 @@ async def walk(svc: str, client, pages: int = _PAGES_PER_RUN, since_only: bool =
     from src.database.runner import run_read, run_write
     from src.services.app_state import get_state, set_state
     st = _load(await run_read(get_state, _state_key(svc)))
+    if st.get("done") and int(st.get("v") or 1) < _STATE_V:
+        # Read before the removals were kept: once more from the start (the
+        # refs make every record already written a no-op).
+        st.update(page=1, done=False, reread=True)
+    st["v"] = _STATE_V
     if since_only and not st.get("done"):
         return {"done": False, "skipped": "history not read to the end yet"}
     listing = await (client.get_movies() if svc == "radarr" else client.get_series())
     titles = title_maps(svc, listing)
     keys = await run_read(_item_keys, svc)
-    total = {"added": 0, "upgrades": 0, "replaced": 0, "skipped": 0, "pages": 0}
+    total = {"added": 0, "upgrades": 0, "replaced": 0, "removed": 0, "skipped": 0, "pages": 0}
     newest = _parse_at(st.get("since")) if st.get("since") else None
 
     async def take(records):
@@ -292,6 +317,7 @@ async def walk(svc: str, client, pages: int = _PAGES_PER_RUN, since_only: bool =
     st["since"] = newest.isoformat() if newest else st.get("since")
     st["done"] = bool(st.get("done"))
     if st["done"]:
+        st.pop("reread", None)
         ext = sorted({t["ext"] for t in titles.values() if t.get("ext")})
         await run_write(set_state, _covered_key(svc), json.dumps(ext))
         if not st.get("cleaned"):

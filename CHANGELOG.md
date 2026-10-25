@@ -289,6 +289,22 @@ Once a service's history is read to the end, its titles are covered:
 
 Tests: `tests/test_arr_ledger.py`.
 
+**What left before the ledger existed.** A past period's balance showed every arrival but only the
+departures since the first Plex walk; on the real server 2026 read 38.5 TB in and 5.3 TB out.
+Before that walk, two witnesses remain:
+- **Curatarr's own deletions** (`DeletionProposal`, deleted). Radarr and Sonarr drop the history
+  of a deleted film or series, so this is the only record of those.
+- **Files deleted in the arr by hand** (`Manual`): the arr ledger now keeps them as neutral
+  `removed` rows, and the history is read once more to collect them (state generation 2; the
+  coverage stays meanwhile, so no Plex arrival comes back).
+
+`velocity` counts both as GB out only for the time before the first walk; after it, departures are
+the walk's. A deletion is counted once even when its arr side or a second member's proposal also
+recorded it. `MissingFromDisk` is never a departure: on the real server 32,352 episodes "went
+missing" on one day, a moved library.
+
+Replayed on a copy of the NAS backup, 2026 reads 38.3 TB in and 19.2 TB out.
+
 **Watch history: every play of the owner is its own row, and a rewatch in progress is not a
 completion.** The owner's plays came from the library listing, which carries one timestamp
 per item (`lastViewedAt`). Two plays of a film between two syncs became one row, the history
