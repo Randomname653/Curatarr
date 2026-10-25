@@ -238,6 +238,20 @@ Netflix history import (`services/netflix_import.py`, `services/netflix_match.py
 
 Tests: `tests/test_netflix_import.py`.
 
+**Two blind spots found while seeding the README's demo household.**
+- **Taste: series without the profile alias count.** The show/anime rebuild looked up enrichment
+  profiles only under the played episode keys. A Plex episode carries its series profile there,
+  because the enrichment aliases it. A Netflix or imported episode does not, so its series fell
+  out of the taste vector. On the demo history that was 0 of 9 series; the series' own key is now
+  looked up too (`taste_engine._profile_keys`).
+- **The owner's free chat knows who else watches a title.** The deletion judge and the proposal
+  cards had the other members' use (pillar III); free chat did not. It called a sitcom another
+  member had watched 135 episodes of "a prime candidate for the chopping block". The owner's chat
+  now gets each member's distinct episodes, plays and last play; a member's chat does not, because
+  household compare stays opt-in (`chat._household_use_block`).
+
+Tests: `tests/test_series_taste_aggregation.py`, `tests/test_chat_household.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
