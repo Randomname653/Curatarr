@@ -124,10 +124,11 @@ APP_MAP_BLOCK = (
     "EVERY background job — syncs, maintenance, memory extraction, LLM "
     "runs — with progress and history) · 'Settings' (admin panes: 'Plex "
     "libraries' maps each Plex library to a category, 'Arr apps' holds the "
-    "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify history "
-    "import, 'Maintenance' has sync and repair actions and 'Compute nodes': "
-    "this server and the node that lends its card, which the owner can "
-    "rename and update there).\n"
+    "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify and "
+    "Netflix history imports (a member's Netflix viewing counts like their "
+    "Plex viewing), 'Maintenance' has sync and repair actions and 'Compute "
+    "nodes': this server and the node that lends its card, with what each "
+    "card is doing right now, which the owner can rename and update there).\n"
 )
 
 # ── Knowledge Base health: why the library is not at 100 % ───────────────────

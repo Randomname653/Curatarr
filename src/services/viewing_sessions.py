@@ -49,6 +49,17 @@ def _watched_enough(e: dict) -> bool:
     return off / dur >= WATCHED_ENOUGH
 
 
+def episode_id(season, episode, title, series_title):
+    """One episode's identity for counting distinct episodes: its number,
+    else - a Netflix play names the episode, not its number - its title
+    within the series. None for a film."""
+    if episode is not None:
+        return (season, episode)
+    if series_title and title and title != series_title:
+        return (season, "title", title)
+    return None
+
+
 def _episode_key(e: dict):
     if e.get("episode") is not None:
         return (e.get("season"), e.get("episode"))
@@ -107,7 +118,9 @@ def sittings(entries: list[dict], now: Optional[datetime] = None,
     first. Each: {"start", "end", "plays", "episodes", "span_min"}."""
     now = now or datetime.utcnow()
     cutoff = now - timedelta(days=window_days)
-    plays = sorted((e for e in entries if e.get("viewed_at") and e["viewed_at"] >= cutoff),
+    # a play known by its day only (Netflix's simple export) sits at no hour
+    plays = sorted((e for e in entries if e.get("viewed_at") and e["viewed_at"] >= cutoff
+                    and not e.get("date_only")),
                    key=lambda e: e["viewed_at"])
     out: list[dict] = []
     cur: Optional[dict] = None

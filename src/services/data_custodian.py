@@ -539,6 +539,18 @@ async def _run_lyrics_profiles(task=None) -> bool:
     return await run_lyrics_profiles(task=task)
 
 
+async def _run_netflix_relink(task=None) -> bool:
+    from src.services.netflix_match import run_relink
+    n = await run_write(run_relink)
+    if task is not None:
+        try:
+            from src.services.task_monitor import task_monitor
+            task_monitor.update(task, processed=n, total=n, message=f"{n} plays linked")
+        except Exception:  # noqa: BLE001 - progress card only
+            pass
+    return True
+
+
 async def _run_anime_crossref(task=None) -> bool:
     """Audit-flagged anime re-resolved via the TVDB -> AniDB -> AniList
     crossref (src/services/anime_crossref.py)."""
@@ -936,6 +948,10 @@ def _registry() -> list[Task]:
         # re-enrichment. Two local SQLite files, no model, no network.
         Task("anime_crossref",   "Anime re-resolution",  24.0,
              _run_anime_crossref, takes_task=True),
+        # Netflix plays whose title has arrived in the library since the
+        # import: linked by TMDB id or title (no network).
+        Task("netflix_relink",   "Netflix plays to library", 24.0,
+             _run_netflix_relink, takes_task=True),
         Task("memory_decay",     "Memory decay",         168.0, sched.job_memory_decay,
              reports_own=True),
         Task("orphan_check",     "Orphaned sections",    168.0, sched.job_orphan_check,

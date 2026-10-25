@@ -41,6 +41,7 @@ from src.database.runner import run_read
 from src.services.llm_utils import curator_payload
 from src.services.http_client import tls_context
 from src.services.pc_guard import ollama_client
+from src.services.viewing_sessions import episode_id
 from src.services.ollama_hosts import host_for
 
 logger = logging.getLogger(__name__)
@@ -279,7 +280,8 @@ def _owner_watch(db, owner_id: int, item: dict, category: str) -> dict | None:
     # +0 keeps the term off any index and the lookup runs as a MULTI-INDEX
     # OR on title / series_title / tmdb_id: 0.5 ms (live copy, 2026-10-20).
     rows = (db.query(WatchHistoryEntry.viewed_at, WatchHistoryEntry.completed,
-                     WatchHistoryEntry.season, WatchHistoryEntry.episode)
+                     WatchHistoryEntry.season, WatchHistoryEntry.episode,
+                     WatchHistoryEntry.title, WatchHistoryEntry.series_title)
               .filter((WatchHistoryEntry.user_id + 0) == owner_id, *filters).all())
     if not rows:
         return None
@@ -287,8 +289,9 @@ def _owner_watch(db, owner_id: int, item: dict, category: str) -> dict | None:
         "count": len(rows),
         "completed": any(bool(r.completed) for r in rows),
         "last": max((r.viewed_at for r in rows if r.viewed_at), default=None),
-        "episodes": len({(r.season, r.episode) for r in rows
-                         if r.episode is not None}),
+        # a Netflix play names its episode, not its number (episode_id)
+        "episodes": len({k for r in rows if (k := episode_id(r.season, r.episode, r.title,
+                                                             r.series_title)) is not None}),
         # Which seasons those episodes sit in. "3 episodes of a 12-episode
         # series" reads as 25% and a lost interest; "3 episodes, all in
         # season 1 of 2" reads as halfway through a self-contained run —
@@ -310,7 +313,8 @@ def _other_users_watch(db, owner_id: int, item: dict, category: str) -> list[dic
     if not filters:
         return []
     W = WatchHistoryEntry
-    rows = (db.query(W.user_id, W.season, W.episode, W.completed, W.viewed_at)
+    rows = (db.query(W.user_id, W.season, W.episode, W.completed, W.viewed_at,
+                     W.title, W.series_title)
               .filter(W.user_id != owner_id, *filters).all())
     if not rows:
         return []
@@ -321,7 +325,8 @@ def _other_users_watch(db, owner_id: int, item: dict, category: str) -> list[dic
         by_user.setdefault(r.user_id, []).append(r)
     out = []
     for uid, urows in by_user.items():
-        eps = {(r.season, r.episode) for r in urows if r.episode is not None}
+        eps = {k for r in urows
+               if (k := episode_id(r.season, r.episode, r.title, r.series_title)) is not None}
         out.append({
             "name": names.get(uid, f"user {uid}"),
             "views": len(urows),

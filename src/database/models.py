@@ -93,7 +93,7 @@ class WatchHistoryEntry(Base):
     tmdb_id = Column(Integer, nullable=True)
     # Music / Spotify
     spotify_uri = Column(String(100), nullable=True)   # full spotify:track:xxx URI
-    source      = Column(String(16),  nullable=True)   # "plex" | "spotify" | "manual"
+    source      = Column(String(16),  nullable=True)   # NULL (Plex) | "spotify" | "marked" | "netflix"
     # Pass 16f: pre-resolved MusicBrainz artist ID — populated by Phase 1.4
     # (resolve_artist_mbids) so the Spotify-Backlog → Lidarr add flow has
     # the MBID immediately, no live lookup at click time.
@@ -115,6 +115,11 @@ class WatchHistoryEntry(Base):
     # record; every ORM read hides it unless the session asks for it
     # (database/orphaned).
     orphaned_at = Column(DateTime, nullable=True)
+    # Netflix plays (2026-10-25, services/netflix_import): the title's own
+    # id there (stable while the matcher rewrites plex_item_id), and True
+    # when the export gave the day only - no clock time, no duration.
+    source_ref  = Column(String(64), nullable=True)
+    date_only   = Column(Boolean, nullable=True)
 
     __table_args__ = (
         Index("idx_wh_user_item", "user_id", "plex_item_id"),

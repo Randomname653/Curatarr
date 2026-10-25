@@ -210,6 +210,34 @@ the log, the lane badge and Activity:
 
 Tests: `tests/test_compute_cards.py`.
 
+**Netflix viewing history for household members, counted like Plex.** Settings -> Users ->
+Netflix history import (`services/netflix_import.py`, `services/netflix_match.py`):
+- **Both exports:**
+  - the data export's zip (only `CONTENT_INTERACTION/ViewingActivity.csv` is read: every
+    profile, start time, watched time, bookmark, device; trailers, previews and starts under two
+    minutes are left out);
+  - a profile's `NetflixViewingHistory.csv` (title and day, in the account's locale; the date
+    format is told by the file's newest-first order).
+- **Profiles to members:** each profile found is attached to a household member, or skipped.
+  Importing the same files again adds nothing.
+- **The same rows as Plex:** `watch_history` with `source="netflix"`, stamped when the play ended.
+  The real watched time is the played time (`listened_ms`); the position reached is the offset.
+  A day-only play counts for its day and weekday, never for a clock hour or a sitting
+  (`date_only`).
+- **On the library's titles:** a film takes the key its Plex plays use (else `radarr:N`); a
+  series takes Sonarr's title and category. The match is exact: by title, else through TMDB in
+  English and German ("Haus des Geldes" is Money Heist). A missing episode number comes from
+  Sonarr's episode list, else TMDB's list of the season in both languages ("Lügen" is Dark
+  S1E2). Titles that arrive in the library later are linked by a daily custodian pass
+  (`netflix_relink`, no network).
+- **Counted the same way:** an episode without a number counts by its title
+  (`viewing_sessions.episode_id`). This applies to the household protection of the deletion
+  judge, the owner's own watch line, the watch status, comfort replays and series completion.
+- **Left alone by the Plex writers:** the sync's resume and in-progress merges, the
+  re-attribution, the orphan cleanup, the player backfill and the dedupe script.
+
+Tests: `tests/test_netflix_import.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

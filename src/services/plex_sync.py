@@ -676,6 +676,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
 
     def _write_entries() -> None:
         nonlocal synced, skipped, resumed, unattributed
+        from sqlalchemy import func
         with get_db_session() as db:
             # A hidden play of a gone item is still a stored play: the
             # duplicate check below must see it (database/orphaned).
@@ -844,6 +845,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                         WatchHistoryEntry.user_id == user.id,
                         WatchHistoryEntry.plex_item_id == rating_key,
                         WatchHistoryEntry.completed == False,  # noqa: E712
+                        # a Netflix play of the same film is its own viewing
+                        func.coalesce(WatchHistoryEntry.source, "") != "netflix",
                     ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
                     if _prev is not None and _prev.viewed_at != viewed_at:
                         existing.discard((user.id, rating_key, _prev.viewed_at))
@@ -867,6 +870,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                         WatchHistoryEntry.user_id == user.id,
                         WatchHistoryEntry.plex_item_id == rating_key,
                         WatchHistoryEntry.completed == False,  # noqa: E712
+                        func.coalesce(WatchHistoryEntry.source, "") != "netflix",
                         WatchHistoryEntry.viewed_at <= viewed_at,
                         WatchHistoryEntry.viewed_at >= viewed_at - timedelta(days=RESUME_WINDOW_DAYS),
                     ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
@@ -1832,7 +1836,8 @@ async def reattribute_watch_history() -> dict:
         with get_db_session() as db:
             return db.query(W.id, W.plex_item_id, W.viewed_at, W.user_id,
                             W.plex_user_id, W.title).filter(
-                or_(W.source.is_(None), W.source != "spotify"),
+                # Netflix plays (netflix_import) were never Plex events either
+                or_(W.source.is_(None), W.source.notin_(("spotify", "netflix"))),
                 ~W.plex_item_id.like("spotify:%"),
             ).all()
 
@@ -2049,7 +2054,9 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
             ).filter(
                 or_(
                     WatchHistoryEntry.source.is_(None),
-                    WatchHistoryEntry.source != "spotify",
+                    # a Netflix play stays when the title leaves Plex: it
+                    # was not watched there (netflix_import)
+                    WatchHistoryEntry.source.notin_(("spotify", "netflix")),
                 ),
                 ~WatchHistoryEntry.plex_item_id.like("spotify:%"),
             ).all()

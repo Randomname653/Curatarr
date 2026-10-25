@@ -88,7 +88,11 @@ def main() -> int:
     args = ap.parse_args()
 
     with get_db_session() as db:
-        q = db.query(WatchHistoryEntry)
+        # Plex's own rows only: a Netflix play next to a Plex play of the
+        # same title is two viewings, not a resume or a timezone twin
+        from sqlalchemy import func
+        q = db.query(WatchHistoryEntry).filter(
+            func.coalesce(WatchHistoryEntry.source, "") != "netflix")
         if not args.include_music:
             q = q.filter(WatchHistoryEntry.media_type.notin_(
                 ("track", "music", "artist", "album")))

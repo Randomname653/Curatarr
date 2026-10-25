@@ -359,6 +359,9 @@ def _migrate_columns() -> None:
         # Plays of media gone from Plex are marked, not deleted
         # (database/orphaned).
         ("watch_history",          "orphaned_at",     "DATETIME"),
+        # Netflix plays (services/netflix_import).
+        ("watch_history",          "source_ref",      "VARCHAR(64)"),
+        ("watch_history",          "date_only",       "BOOLEAN"),
     ]
     # Indexes that need to exist on top of the new columns. ALTER TABLE
     # ADD COLUMN doesn't pick up the ``index=True`` flag from the model

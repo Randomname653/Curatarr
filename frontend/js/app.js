@@ -28,6 +28,7 @@ import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
 import { showUpdateInfo } from './version.js';
 import { loadNodes, saveNodeName, updateNode } from './nodes.js';
+import { clearNetflixFiles, handleNetflixDrop, onNetflixFile, openNetflixPicker, runNetflixImport } from './netflix_import.js';
 import { answerGameQuestion } from './game.js';
 
 export function init() {
@@ -153,6 +154,11 @@ const actions = {
   goToView,
   handleKey,
   handleSpotifyDrop,
+  handleNetflixDrop,
+  onNetflixFile,
+  openNetflixPicker,
+  runNetflixImport,
+  clearNetflixFiles,
   hideOnError,
   posterLoaded,
   jumpLatest,

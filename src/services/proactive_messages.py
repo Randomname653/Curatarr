@@ -50,7 +50,7 @@ from src.services.series_progress import (
     should_reengage_series,
     normalize_title,
 )
-from src.services.viewing_sessions import rhythm as _viewing_rhythm, utc_offset as _utc_offset
+from src.services.viewing_sessions import episode_id, rhythm as _viewing_rhythm, utc_offset as _utc_offset
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -332,7 +332,8 @@ def detect_series_completion(entries: list[dict], now: datetime,
     rows_by_series: dict = {}
     for e in recent:
         key = e["series_title"] or e["title"]
-        by_series.setdefault(key, set()).add(e.get("episode"))
+        by_series.setdefault(key, set()).add(
+            episode_id(e.get("season"), e.get("episode"), e.get("title"), e.get("series_title")))
         rows_by_series.setdefault(key, []).append(e)
     for series, eps in by_series.items():
         if len(eps) < 8:
