@@ -6,7 +6,7 @@ SQLite database models for users, sessions, and encrypted user data.
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint,
+    LargeBinary, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
@@ -1205,3 +1205,45 @@ class ProtectionHistory(Base):
     kind          = Column(String(16), nullable=False)
     by_user_id    = Column(Integer, nullable=True)           # who lifted it; NULL = the judge
     at            = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Nanogenre(Base):
+    """A nanogenre: titles whose themes sit together ("coming-of-age teen
+    comedies", "horrorcore rap"), found by clustering each title's facet
+    phrases (services/nanogenres) and named once by the summarizer.
+
+    ``grp`` keeps video and music apart; ``centroid`` (float32, unit length)
+    is what a new title is assigned by, so the clusters and their names stay
+    put between rebuilds. A rebuild comes only with a new ``version`` or
+    embedding model."""
+    __tablename__ = "nanogenres"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    grp         = Column(String(8), nullable=False)            # video / music
+    idx         = Column(Integer, nullable=False)              # the cluster's number in its build
+    name        = Column(String(96), nullable=True)            # NULL until the summarizer named it
+    size        = Column(Integer, default=0)
+    top_phrases = Column(Text, nullable=True)                  # JSON: the commonest phrases
+    top_titles  = Column(Text, nullable=True)                  # JSON: the titles nearest the centre
+    top_genres  = Column(Text, nullable=True)                  # JSON: the members' commonest genres
+    centroid    = Column(LargeBinary, nullable=False)
+    embed_model = Column(String(96), nullable=True)
+    version     = Column(Integer, nullable=False)
+    built_at    = Column(DateTime, default=datetime.utcnow, nullable=False)
+    named_at    = Column(DateTime, nullable=True)
+
+
+class TitleNanogenre(Base):
+    """One title's nanogenre (services/nanogenres): the facet index's parent
+    doc, its title and domain (how the Wrap-Up joins watch history)."""
+    __tablename__ = "title_nanogenres"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    parent       = Column(String(128), nullable=False, unique=True)
+    title        = Column(String(512), nullable=True)
+    domain       = Column(String(16), nullable=True)
+    nanogenre_id = Column(Integer, ForeignKey("nanogenres.id"), nullable=False, index=True)
+    sim          = Column(Float, nullable=True)                # cosine to the centre
+    assigned_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("idx_title_nanogenre_title", "title", "domain"),)
