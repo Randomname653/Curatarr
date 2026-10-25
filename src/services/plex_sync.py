@@ -639,6 +639,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     len(owner_extra), " (history backfill)" if owner_backfill else "",
                     partial_rewatches)
     all_entries.extend(owner_extra)
+    players = await fetch_players(plex_url, headers)
+    play_devices = capture.get("devices") or {}
 
     def _resolve_account_for_event(rk: str, vts: int) -> Optional[int]:
         """Find the Plex accountID that watched ratingKey=rk at viewedAt=vts.
@@ -802,6 +804,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 # The Plex accountID lives on plex_user_id so re-attribution can
                 # find the row even if the Curatarr user_id was a fallback.
                 entry_plex_account = str(account_id) if account_id is not None else str(user.plex_user_id or "")
+                player, platform = player_of(entry.get("_device_id"), rating_key, int(viewed_at_ts),
+                                             play_devices, players)
 
                 duration_ms = entry.get("duration")
                 view_offset_ms = entry.get("viewOffset", 0) if is_in_progress else duration_ms
@@ -965,6 +969,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     if media_type == "music" else None,
                     # Seen, but not when or for how long (wrapup_facts.a_play).
                     source="marked" if entry.get("_marked") else None,
+                    player=player, platform=platform,
                 ))
                 near.setdefault((user.id, rating_key), []).append(int(viewed_at_ts))
                 # Collect the hit for the watched-a-recommendation follow-up:
@@ -1243,9 +1248,37 @@ def mark_bulk_marked(items: list) -> int:
     return n
 _HISTORY_EVENT_KEYS = ("ratingKey", "viewedAt", "type", "title", "grandparentTitle",
                        "grandparentKey", "parentIndex", "index", "librarySectionID",
-                       "parentTitle")
+                       "parentTitle", "deviceID")
 # Plex sometimes truncates seconds between the section listing and the history.
 _SAME_PLAY_S = 90
+async def fetch_players(plex_url: str, headers: dict) -> dict:
+    """{device id: (name, platform)} from Plex's /devices: "iPhone" / "iOS",
+    "Chromecast Google TV" / "Android". {} when Plex does not answer."""
+    try:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=30) as client:
+            r = await client.get(f"{plex_url}/devices", headers={**headers, "Accept": "application/json"})
+        if r.status_code != 200:
+            return {}
+        devs = (r.json().get("MediaContainer") or {}).get("Device") or []
+        return {int(d["id"]): ((d.get("name") or "")[:64] or None, (d.get("platform") or "")[:64] or None)
+                for d in devs if str(d.get("id", "")).isdigit()}
+    except Exception as e:  # noqa: BLE001 - a play without its player is still a play
+        logger.debug("Plex devices not read: %s", e)
+        return {}
+
+
+def player_of(device_id, rating_key: str, ts: int, play_devices: dict, players: dict) -> tuple:
+    """(player name, platform) of one play: its own history event's device,
+    else the event of the same item within 90 s (a listed play)."""
+    if device_id is None:
+        near = [(abs(t - ts), d) for t, d in play_devices.get(str(rating_key), ()) if abs(t - ts) <= _SAME_PLAY_S]
+        device_id = min(near)[1] if near else None
+    try:
+        return players.get(int(device_id), (None, None)) if device_id is not None else (None, None)
+    except (TypeError, ValueError):
+        return None, None
+
+
 _LISTING_ONLY_KEYS = ("_in_progress", "viewOffset", "lastViewedAt", "viewedAt", "_account_id", "_marked")
 
 
@@ -1328,6 +1361,7 @@ def _member_entry(ev: dict, lib_configs: dict, account_id: int) -> Optional[dict
         "_category": sec[0],
         "_library_title": sec[2],
         "_account_id": int(account_id),
+        "_device_id": ev.get("deviceID"),
     }
 
 
@@ -1471,6 +1505,9 @@ async def _fetch_plex_history_lookup(
                 acc_id = int(acc_id)
                 exact[(rk, vts)] = acc_id
                 by_rk.setdefault(rk, []).append((vts, acc_id))
+                if capture is not None and h.get("deviceID") is not None:
+                    # The player of every play, any account: the listing has none.
+                    capture.setdefault("devices", {}).setdefault(rk, []).append((vts, h["deviceID"]))
                 if capture is not None and acc_id == 1:
                     # A tuple, not a dict: a first walk can hold 10^5 events.
                     capture.setdefault("events", []).append(

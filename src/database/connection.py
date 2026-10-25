@@ -350,6 +350,8 @@ def _migrate_columns() -> None:
         ("watch_history",          "platform",        "VARCHAR(64)"),
         ("watch_history",          "reason_end",      "VARCHAR(32)"),
         ("watch_history",          "shuffle",         "BOOLEAN"),
+        # The device of a Plex play, from its history event (2026-10-25).
+        ("watch_history",          "player",          "VARCHAR(64)"),
         # The ledger's arrivals from the arr history (services/arr_ledger).
         ("library_events",         "entity",          "VARCHAR(48)"),
         ("library_events",         "recorded_at",     "DATETIME"),

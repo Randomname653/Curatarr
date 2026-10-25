@@ -107,6 +107,9 @@ class WatchHistoryEntry(Base):
     platform    = Column(String(64), nullable=True)
     reason_end  = Column(String(32), nullable=True)
     shuffle     = Column(Boolean, nullable=True)
+    # A Plex play's device ("iPhone"; platform holds its OS), from the
+    # history event's deviceID (plex_sync.player_of, services/plex_players).
+    player      = Column(String(64), nullable=True)
     # Set by the orphan cleanup when the item left every Plex library
     # (2026-10-25). The play happened, so the row stays for the year's
     # record; every ORM read hides it unless the session asks for it

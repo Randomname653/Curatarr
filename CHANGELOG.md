@@ -95,6 +95,25 @@ on the real server named a title for the last 30 days that had been played in Ma
 
 Tests: `tests/test_marked_plays.py`.
 
+**The player of every Plex play, and the moods of every artist.** Groundwork for the Wrap-Up's
+rhythm clock and "phone after midnight", measured on the real server:
+- **Player:** every Plex history event names its device, and `/devices` gives its name and
+  platform ("iPhone" / "iOS"). Nothing stored it.
+  - The sync and the history import now write `player` (new column) and `platform` for every
+    Plex play.
+  - A one-time custodian job, `plex_players`, fills the plays already stored. Most music events no
+    longer carry a ratingKey (the track was re-added), so a play is also found by its second and
+    title.
+  - On a copy of the NAS data, about 19,000 music plays got their player; 968 plays happened on a
+    phone between midnight and 5 am.
+- **Artist moods:** Plex keeps moods and styles per artist ("Atmospheric, Melodic" / "Indie
+  Folk"), only in an artist's own metadata.
+  - A daily custodian job, `artist_tags`, reads them into the Plex music index, 300 artists a run,
+    the most-played first, each again after 90 days.
+  - About half of the artists have moods.
+
+Tests: `tests/test_plex_players.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

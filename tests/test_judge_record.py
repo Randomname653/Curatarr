@@ -152,7 +152,7 @@ check("lifting deletes the live row and archives what it was",
 
 # ── 3. the judge loop keeps every verdict ────────────────────────────────────
 print("\n-- the judge loop keeps every verdict --")
-src_eng = (ROOT / "src/services/recommendations_engine.py").read_text()
+src_eng = (ROOT / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
 loop = src_eng[src_eng.index("_model_v = v"):src_eng.index('if v in ("CUT", "STAGNANT"):')]
 check("after the household floor, before the verdict is acted on",
       "HOUSEHOLD FLOOR" in loop and "judge_record.keep_verdict(" in loop
@@ -184,7 +184,7 @@ s.close()
 for path, n in (("src/services/wrapup_facts.py", 3), ("src/services/taste_snapshots.py", 2),
                 ("src/routers/wrapup.py", 1), ("src/services/plex_sync.py", 1)):
     check(f"{path} reads the hidden plays ({n})",
-          (ROOT / path).read_text().count("orphaned.include(db)") == n)
+          (ROOT / path).read_text(encoding="utf-8").count("orphaned.include(db)") == n)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
