@@ -252,6 +252,14 @@ Tests: `tests/test_netflix_import.py`.
 
 Tests: `tests/test_series_taste_aggregation.py`, `tests/test_chat_household.py`.
 
+**The deletion run no longer skips every short title.** Titles the curator took a position on in
+chat stay out of the deletion run. The check tested each candidate as a lower-case substring of
+the last 60 days of replies: "Her" sits in every "other", "IF" in every "if", "10" in any number.
+On the owner's real chat 458 titles were never proposed. Now a title of several words matches as a
+whole phrase in its own capitalisation, and a one-word title only when it is emphasised or quoted:
+116 (`recommendations_engine.positioned_titles`).
+
+Tests: `tests/test_curator_stance_match.py`.
 **Recommendation posters for titles written with their year.** The curator writes a discovery pick
 as "The Cycle (2026)", and the arr names some titles "Given (2021)". Searched with the year in it,
 TMDB found nothing and the card showed a "?". On the owner's cache that was every movie discovery
