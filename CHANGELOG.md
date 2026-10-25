@@ -115,8 +115,8 @@ Tests: `tests/test_marked_plays.py`.
 
 Tests: `tests/test_music_moods.py`.
 
-**The player of every Plex play, and the moods of every artist.** Groundwork for the Wrap-Up's
-rhythm clock and "phone after midnight", measured on the real server:
+**The player of every Plex play.** Groundwork for the Wrap-Up's rhythm clock and "phone after
+midnight", measured on the real server:
 - **Player:** every Plex history event names its device, and `/devices` gives its name and
   platform ("iPhone" / "iOS"). Nothing stored it.
   - The sync and the history import now write `player` (new column) and `platform` for every
@@ -126,11 +126,6 @@ rhythm clock and "phone after midnight", measured on the real server:
     title.
   - On a copy of the NAS data, about 19,000 music plays got their player; 968 plays happened on a
     phone between midnight and 5 am.
-- **Artist moods:** Plex keeps moods and styles per artist ("Atmospheric, Melodic" / "Indie
-  Folk"), only in an artist's own metadata.
-  - A daily custodian job, `artist_tags`, reads them into the Plex music index, 300 artists a run,
-    the most-played first, each again after 90 days.
-  - About half of the artists have moods.
 
 Tests: `tests/test_plex_players.py`.
 

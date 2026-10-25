@@ -1,18 +1,15 @@
-"""The player of every Plex play, and the moods of every artist (2026-10-25).
+"""The player of every Plex play (2026-10-25).
 
 Measured on the real server:
 - every history event names its device (deviceID; /devices: "iPhone" /
   "iOS"); nothing stored it, so "phone after midnight" was impossible;
 - most music events no longer carry a ratingKey (the track was re-added),
   so a stored play is found by its second and title as well;
-- Plex keeps moods and styles per artist, only in the artist's own metadata.
 
     python tests/test_plex_players.py
 """
 import calendar
-import json
 import sys
-import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +23,6 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, WatchHistoryEntry as W  # noqa: E402
 import src.services.plex_players as pp  # noqa: E402
-from src.services import lyrics  # noqa: E402
 from src.services import plex_sync as ps  # noqa: E402
 
 PASS = FAIL = 0
@@ -101,37 +97,11 @@ check("Spotify keeps its own platform", got["sp"] == (None, "android"))
 check("the backfill runs once (a state key), the custodian holds it, no model",
       pp.PLAYERS_DONE_KEY == "plex_players_backfilled")
 
-# ── an artist's moods ───────────────────────────────────────────────────────
-tmp = Path(tempfile.mkdtemp()) / "lyrics.db"
-con = lyrics._connect(tmp)
-for key, tracks, tags_at in (("a1", 50, None), ("a2", 80, "2026-01-01T00:00:00"),
-                             ("a3", 10, "2026-10-20T00:00:00"), ("a4", 0, None)):
-    con.execute("INSERT INTO plex_artists (artist_key, name, tracks, updated_at, tags_at) VALUES (?,?,?,?,?)",
-                (key, key, tracks, "x", tags_at))
-con.commit()
-con.close()
-due = pp._due_artists(10, now=datetime(2026, 10, 25), db_path=tmp)
-check("artists without tags, or with tags older than 90 days, the most tracks first; none without tracks",
-      due == ["a2", "a1"])
-md = {"Mood": [{"tag": "Atmospheric"}, {"tag": "Melodic"}], "Style": [{"tag": "Indie Folk"}],
-      "Genre": [{"tag": "Folk"}], "Country": [{"tag": "Germany"}]}
-t = pp.tags_of(md)
-check("moods, styles, genres and the country of an artist's metadata",
-      t == {"moods": ["Atmospheric", "Melodic"], "styles": ["Indie Folk"], "genres": ["Folk"], "country": "Germany"})
-pp.save_artist_tags({"a1": t}, now=datetime(2026, 10, 25), db_path=tmp)
-con = lyrics._connect(tmp)
-row = con.execute("SELECT moods, styles, country, tags_at FROM plex_artists WHERE artist_key='a1'").fetchone()
-con.close()
-check("...stored on the artist in the music index",
-      json.loads(row[0]) == ["Atmospheric", "Melodic"] and json.loads(row[1]) == ["Indie Folk"]
-      and row[2] == "Germany" and row[3].startswith("2026-10-25"))
-check("...and not due again", pp._due_artists(10, now=datetime(2026, 10, 26), db_path=tmp) == ["a2"])
-
 from src.services.data_custodian import _registry  # noqa: E402
 
 jobs = {t.job_id: t for t in _registry()}
-check("both jobs run in the custodian without a model",
-      all(j in jobs and not jobs[j].needs_llm for j in ("plex_players", "artist_tags")))
+check("the backfill runs in the custodian without a model; the artist moods are music_tags' alone",
+      "plex_players" in jobs and not jobs["plex_players"].needs_llm and "artist_tags" not in jobs)
 conn = (ROOT / "src/database/connection.py").read_text(encoding="utf-8")
 check("existing installs get the player column", '("watch_history",          "player",' in conn)
 

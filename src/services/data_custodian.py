@@ -423,13 +423,6 @@ async def _run_plex_players(deep: bool = False, task=None) -> bool:
     return await run_player_backfill(task=task)
 
 
-async def _run_artist_tags(deep: bool = False, task=None) -> bool:
-    """Every artist's Plex moods and styles into the music index, a budget a
-    run (services/plex_players). No model."""
-    from src.services.plex_players import run_artist_tags
-    return await run_artist_tags(task=task)
-
-
 async def _run_music_tags(deep: bool = False, task=None) -> bool:
     """Plex's moods and styles on the music (services/music_tags). No model."""
     from src.services.music_tags import run_music_tags
@@ -869,9 +862,8 @@ def _registry() -> list[Task]:
         # track, for the wrap-up's moods by time of day. No model.
         Task("music_tags", "Music moods and styles", 72.0, _run_music_tags, takes_task=True),
         # The Wrap-Up's rhythm clock: the device of every play ("phone after
-        # midnight") and the moods of every artist. Plex only, no model.
+        # midnight"). Plex only, no model.
         Task("plex_players", "Players of the Plex plays", 24.0, _run_plex_players, takes_task=True),
-        Task("artist_tags", "Artist moods and styles", 24.0, _run_artist_tags, takes_task=True),
         # The Wrap-Up's taste river: nanogenres of titles, then their names.
         Task("nanogenres", "Nanogenres", 24.0, _run_nanogenres, takes_task=True),
         Task("nanogenre_names", "Nanogenre names", 24.0, _run_nanogenre_names,
