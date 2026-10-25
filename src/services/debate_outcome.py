@@ -26,6 +26,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import func
+
 from src.database.connection import get_db_session
 
 logger = logging.getLogger(__name__)
@@ -56,8 +58,10 @@ def user_turns(db, user_id: int, thread_id: Optional[str]) -> int:
     if not thread_id:
         return 0
     from src.database.models import ConversationMessage as M
-    return (db.query(M).filter(M.user_id == user_id, M.thread_id == thread_id,
-                               M.role == "user").count())
+    # ⚡ Bolt: Use func.count() to avoid full ORM subquery overhead
+    return db.query(func.count(M.id)).filter(M.user_id == user_id,
+                                             M.thread_id == thread_id,
+                                             M.role == "user").scalar()
 
 
 def rule_persuader(outcome: str, resolution_type: str, turns: int,
