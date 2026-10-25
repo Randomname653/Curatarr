@@ -148,10 +148,14 @@ r = al.resolve("radarr", HISTORY[1], titles, keys)
 check("an import is a row: the title's Plex key, the file's size, its own ref",
       r["rk"] == "10" and r["linked"] and r["size_mb"] == 4096.0 and r["ref"] == "radarr:2"
       and r["entity"] == "radarr:1" and r["at"] == datetime(2026, 2, 1, 11))
-check("grabs and departures are not kept (an Upgrade deletion is)",
+check("grabs are not kept; an Upgrade deletion is, and a hand deletion is a removal",
       al.resolve("radarr", HISTORY[0], titles, keys) is None
-      and al.resolve("radarr", HISTORY[5], titles, keys) is None
-      and al.resolve("radarr", HISTORY[3], titles, keys)["deleted"] is True)
+      and al.resolve("radarr", HISTORY[5], titles, keys)["removed"] is True
+      and al.resolve("radarr", HISTORY[3], titles, keys)["deleted"] is True
+      and not al.resolve("radarr", HISTORY[3], titles, keys)["removed"])
+check("a file 'missing from disk' is no departure (seen live: 32,352 episodes on one day)",
+      al.resolve("radarr", rec(99, "2026-04-17T10:00:00Z", "movieFileDeleted", 1, GB, "MissingFromDisk"),
+                 titles, keys) is None)
 check("a title Plex does not list keeps an arr key", al.resolve(
     "radarr", rec(9, "2026-01-01T00:00:00Z", "downloadFolderImported", 3, GB), titles, keys)["rk"] == "arr:radarr:3")
 
@@ -173,7 +177,8 @@ check("an upgrade is only its difference: 2 GB grew, the replaced file neutral",
       and len(events("arr", "added")) == 2)
 check("the Plex walk's addedAt arrivals and their upgrade shrink are removed; departures stay",
       events("plex") == [("12", "gone", 3.0)])
-check("a departure in the arr is left to the Plex walk", not events("arr", "gone"))
+check("a departure in the arr is kept as a neutral removal, never as 'gone'",
+      not events("arr", "gone") and ("11", "removed", 10.0) in events("arr"))
 
 n = len(events())
 asyncio.run(al.walk("radarr", arr, pages=5))
@@ -232,8 +237,47 @@ check("a covered title that loses size without an arr record shrank (a deleted s
       ("11", "shrunk", 8.0) in set(events()))
 
 v = ll.velocity(datetime(2026, 1, 1), WALK1 + timedelta(days=30), ["movie"])
-check("the balance counts arrivals and differences, never the replaced files",
-      v["gb_in"] == 4 + 10 + 2 + 2 + 3 + 1 and v["gb_out"] == 3 + 8)
+check("the balance counts arrivals and differences, never the replaced files; the removal "
+      "before the walk existed is GB out",
+      v["gb_in"] == 4 + 10 + 2 + 2 + 3 + 1 and v["gb_out"] == 3 + 8 + 10)
+
+# ── departures before the Plex walk existed ─────────────────────────────────
+from src.database.models import DeletionProposal  # noqa: E402
+
+START = ll.ledger_start(Session())
+with fake_db_session() as db:
+    db.add(DeletionProposal(user_id=1, title="Old Film", service="radarr", media_id="7", reason="x",
+                            confidence=0.9, storage_mb=5 * 1024, status="deleted", category="movie",
+                            resolved_at=datetime(2026, 4, 3, 12)))
+    db.add(DeletionProposal(user_id=2, title="Old Film", service="radarr", media_id="7", reason="x",
+                            confidence=0.9, storage_mb=5 * 1024, status="deleted", category="movie",
+                            resolved_at=datetime(2026, 4, 3, 13)))
+    db.add(LibraryEvent(at=datetime(2026, 4, 3, 12, 1), kind="removed", bucket="radarr:500", source="arr",
+                        plex_rating_key="arr:radarr:7", media_type="movie", title="Old Film", size_mb=5 * 1024))
+    db.add(LibraryEvent(at=START + timedelta(hours=1), kind="removed", bucket="radarr:501", source="arr",
+                        plex_rating_key="arr:radarr:8", media_type="movie", title="After", size_mb=7 * 1024))
+    db.commit()
+april = ll.velocity(datetime(2026, 4, 1), datetime(2026, 5, 1), ["movie"])
+check("before the walk: Curatarr's deletion counts once, its arr side and its second proposal not",
+      april["gb_out"] == 5 and april["titles_out"] == 1 and april["biggest_out"]["title"] == "Old Film")
+after = ll.velocity(START, START + timedelta(days=2), ["movie"])
+check("after the walk began, a removal in the arr is left to the walk", after["gb_out"] == 0)
+
+# ── a history read before removals were kept is read once more ──────────────
+rows_before = sorted(events("arr"))
+state[al._state_key("radarr")] = json.dumps({"page": 9, "done": True, "since": "2026-10-01T00:00:00",
+                                             "cleaned": True})
+arr3 = FakeArr(HISTORY, page_size=2)
+asyncio.run(al.walk("radarr", arr3, pages=1))
+st3 = json.loads(state[al._state_key("radarr")])
+check("an old read starts again from the first page, and keeps its coverage meanwhile",
+      arr3.calls[0][1].get("page") == 1 and st3["done"] is False and st3.get("reread")
+      and al.covered()["movie"] == {949, 680, 77})
+asyncio.run(al.walk("radarr", arr3, pages=10))
+st3 = json.loads(state[al._state_key("radarr")])
+check("...and when it is through, it is the new generation and nothing doubled",
+      st3["done"] is True and st3["v"] == al._STATE_V and not st3.get("reread")
+      and sorted(events("arr")) == rows_before)
 
 # ── wiring ──────────────────────────────────────────────────────────────────
 from src.services.data_custodian import _registry  # noqa: E402
