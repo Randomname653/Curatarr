@@ -1269,24 +1269,11 @@ ones close the list.
   sanitized: `DOMPurify.sanitize(marked.parse(…))` before every innerHTML
   write — marked passes raw HTML through by design, and LLM output can echo
   text from external metadata sources.
-- CI scanning: CodeQL on pushes/PRs plus an LLM security scan
-  (`.github/workflows/llm-security-scan.yml`) — changed files per PR, weekly
-  full sweep; scan errors hard-fail rather than reporting a clean result.
-  The sweep's scope is the server (`src/`): owner-run CLI tools, `scripts/`,
-  the test suite and vendored code are excluded, because every finding the
-  model produced for them was by-design and came back weekly under a new
-  title (2026-09-07: 733 medium+ findings, the ten alphabetically first
-  filed as issues, all re-reports). The issue step now sorts worst-first,
-  deduplicates against every security issue ever filed, drops findings
-  matched by `.github/llm-scan-accepted.json` (the owner's documented
-  decisions, kept where the next run can read them) and files issues only
-  from `ISSUE_MIN_SEVERITY` up (critical by default); the whole picture
-  lands as a digest table on the run page plus the report artifact. Known
-  limit: the model reads one file at a time and never sees the control in
-  the next file, so its highs are mostly cross-file false positives — and
-  it never reads `frontend/index.html` (no `.html` in its extension list);
-  since the 2026-09-11 split the app module `frontend/js/app.js` is a file it
-  does read, the markup stays CodeQL's job.
+- CI scanning: CodeQL on pushes/PRs, Bandit, OSV-Scanner and Scorecard.
+  The LLM security scan (GPT-4o on changed files and a weekly sweep) was
+  removed on 2026-10-25: it read one file at a time, so its highs were
+  mostly cross-file false positives, and it failed every run once its API
+  credit ran out.
 - **Image proxy** (`src/routers/image_proxy.py`): all external poster URLs
   go through `/api/image/proxy` so TMDB/Deezer don't see per-click browsing.
   Host whitelist + image-only content-type + 5 MB cap + no-auto-redirect
@@ -1741,14 +1728,8 @@ growing this list.
   client-supplied title/reason text is never trusted.
 
 ### CI & benchmarks
-- `.github/scripts/llm_security_scanner.py` — the LLM security scan behind
-  the workflow (§17): structured outputs, scan errors hard-fail,
-  `--exclude-paths` for scan-root-relative files and directories (what a
-  directory name cannot express). `.github/llm-scan-accepted.json` — the
-  owner's by-design decisions the issue step consults (file + type regex +
-  the document that carries the reasoning).
-- `.github/workflows/` — tests, CodeQL, Bandit, OSV-Scanner, Scorecard and
-  the LLM scan; every third-party action is pinned to a full commit SHA.
+- `.github/workflows/` — tests, CodeQL, Bandit, OSV-Scanner and
+  Scorecard; every third-party action is pinned to a full commit SHA.
   `tests/test_workflow_pins.py` keeps the pins full-SHA and one action
   family on one commit: Dependabot bumps `codeql-action/init`, `/analyze`
   and `/upload-sarif` (and the OSV reusable workflow and its PR twin) as

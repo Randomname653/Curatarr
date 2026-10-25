@@ -69,7 +69,6 @@ PYTHON_TARGET = "3.12"          # the CI interpreter; uv resolves for it
 COMPILE_TARGETS: List[Tuple[str, str]] = [
     ("requirements.txt", "lock/requirements.txt"),
     ("lock/requirements-bandit.in", "lock/requirements-bandit.txt"),
-    ("lock/requirements-llm-scan.in", "lock/requirements-llm-scan.txt"),
 ]
 
 _HEADER = """# The tested install, hash-pinned: every package the pins in ../requirements.txt
