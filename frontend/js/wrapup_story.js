@@ -10,7 +10,16 @@
 // Charts are SVG with attributes and classes only (style-src is 'self').
 import { _posterImg, act, countTo, esc, haptic } from './ui.js';
 
-const ADVANCE_MS = 7000;
+// How long a slide stays: long enough to read it. A fixed 7 s cut the
+// curator's longer slides off mid-sentence (2026-10-25). About three words a
+// second after a 3 s look, between 6 and 20 s.
+const DWELL_BASE_MS = 3000, DWELL_PER_WORD_MS = 330, DWELL_MIN_MS = 6000, DWELL_MAX_MS = 20000;
+
+/** The time a slide's html needs to be read, in ms. */
+export function dwellMs(html) {
+  const words = String(html || '').replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
+  return Math.min(DWELL_MAX_MS, Math.max(DWELL_MIN_MS, DWELL_BASE_MS + words * DWELL_PER_WORD_MS));
+}
 const REDUCED = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : {matches: false};
 const HOLD_MS = 400;
 const st = {slides: [], i: 0, timer: null, paused: false, el: null, data: null, answered: null, downAt: 0};
@@ -190,7 +199,7 @@ function _show() {
   stage.innerHTML = sl.html;
   stage.querySelectorAll('.wus-n[data-count]').forEach(n => { n.textContent = '0'; countTo(n, +n.dataset.count, 900); });
   if (st.answered != null && sl.cls === 'quiz') _quizResult();
-  if (!sl.hold && !st.paused && !REDUCED.matches) st.timer = setTimeout(nextWrapupSlide, ADVANCE_MS);
+  if (!sl.hold && !st.paused && !REDUCED.matches) st.timer = setTimeout(nextWrapupSlide, dwellMs(sl.html));
 }
 
 function _key(e) {
@@ -203,7 +212,7 @@ function _key(e) {
 function _hold(on) {
   st.paused = on;
   if (on) clearTimeout(st.timer);
-  else if (st.el && !st.slides[st.i]?.hold && !REDUCED.matches) st.timer = setTimeout(nextWrapupSlide, ADVANCE_MS);
+  else if (st.el && !st.slides[st.i]?.hold && !REDUCED.matches) st.timer = setTimeout(nextWrapupSlide, dwellMs(st.slides[st.i].html));
 }
 
 /** Open the story for this wrap-up's data (the page's GET /api/wrapup answer). */

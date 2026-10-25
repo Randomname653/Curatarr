@@ -90,6 +90,8 @@ console.log(JSON.stringify({
   heat: heatmap(data.facts.tempo.by_day_h, data.facts.period.start, data.facts.period.end),
   heatAll: heatmap({'2020-01-01': 1, '2026-12-01': 2}, '2015-01-01T00:00:00', '2026-12-31T00:00:00'),
   axes: radarAxes(data.facts), axesThin: radarAxes({tempo: {}}), radarThin: radar({tempo: {}}),
+  dwellShort: dwellMs('<b>10h</b>'), dwellLong: dwellMs('<p>' + 'word '.repeat(30) + '</p>'),
+  dwellHuge: dwellMs('word '.repeat(500)),
 }));
 """ % json.dumps(DATA)
     r = subprocess.run([node, "-e", harness], capture_output=True, text=True, encoding="utf-8")
@@ -123,6 +125,9 @@ console.log(JSON.stringify({
     check("...a longer period shows its last 365 days", res.get("heatAll", "").count("<rect") == 365)
     check("the radar has six axes from the facts", [a[0] for a in res.get("axes", [])] == [
         "Acclaim", "Novelty", "Commitment", "Catalogue", "Contrarian", "Focus"])
+    check("a slide stays as long as its text takes to read (seen live: 7 s cut slides off)",
+          res.get("dwellShort") == 6000 and res.get("dwellLong") == 3000 + 30 * 330
+          and res.get("dwellHuge") == 20000)
     check("...and is left out under four known axes", res.get("radarThin") == "" and len(res.get("axesThin", [])) < 4)
 else:
     print("  (node not installed - render checked statically)")
@@ -137,6 +142,8 @@ for name in ("playWrapupStory", "answerWrapupStory", "closeWrapupStory", "nextWr
     check(f"action {name} is registered", re.search(rf"^\s+{name},$", APP, re.M) is not None)
 check("Escape closes it, the arrows move, holding pauses, a hold is not a tap",
       "e.key === 'Escape'" in JS and "ArrowRight" in JS and "_hold(true)" in JS and "_wasHold()" in JS)
+check("auto-advance waits the slide's reading time, also after a hold",
+      JS.count("setTimeout(nextWrapupSlide, dwellMs(") == 2 and "ADVANCE_MS" not in JS)
 check("reduced motion: no slide animation and no auto-advance",
       "@media (prefers-reduced-motion: reduce) { .wus-stage.is-in { animation: none; } }" in CSS
       and "!REDUCED.matches) st.timer = setTimeout(nextWrapupSlide" in JS)
