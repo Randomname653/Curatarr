@@ -260,6 +260,14 @@ whole phrase in its own capitalisation, and a one-word title only when it is emp
 116 (`recommendations_engine.positioned_titles`).
 
 Tests: `tests/test_curator_stance_match.py`.
+**Recommendation posters for titles written with their year.** The curator writes a discovery pick
+as "The Cycle (2026)", and the arr names some titles "Given (2021)". Searched with the year in it,
+TMDB found nothing and the card showed a "?". On the owner's cache that was every movie discovery
+and 7 of 10 anime picks. The year is now the search hint, and a music pick ("Artist - Track") is
+looked up by its artist (`recommendations.poster_query`). The next recommendation refresh fills
+the cards.
+
+Tests: `tests/test_rec_posters.py`.
 **The README shows the app as it is now.** The Preview still showed three pre-redesign images, and the
 block for the new ones had sat behind a comment because no frame had been captured.
 - **A demo household on a real library:** Jane Doe (the fictional owner of `CURATOR_EXAMPLES.md`)
