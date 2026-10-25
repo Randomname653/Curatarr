@@ -289,6 +289,30 @@ block for the new ones had sat behind a comment because no frame had been captur
 
 Tests: `tests/test_readme_screenshots.py`.
 
+**The facet index holds one point per phrase: a third of the size, and searches find the right
+titles.** Each title's ~6 theme phrases were their own vector points: 199,249 points on the owner's
+store, but only 87,922 distinct phrases. The copies crowded every query: the 20 nearest points were
+often the same few phrases, so a contrast search found few titles. Measured on a copy, as title
+recall@20 against an exact search (titles that share a phrase share its score, so ties count as
+found):
+- **Results:** 0.65 → 0.96 without a domain, 0.88 → 0.97 for films.
+- **Size:** the store goes from 1.8 GB to 935 MB on disk.
+- **How it works now:**
+  - The vector collection `media_phrases_v1` holds one point per phrase.
+  - Which titles carry a phrase is a table beside the store (`facet_map.sqlite3`).
+  - The wrapper's `facets_*` calls keep their shapes, so the search probe, the backfill and the
+    nanogenres read it as before.
+  - A query widens when a domain filter leaves the nearest phrases short of titles.
+- **Writing:** a phrase the index already holds is not embedded again.
+- **The move:** the new custodian job `facet_phrases` moves the old per-title collection over once,
+  reusing its vectors (199,249 facets in 104 s on the copy; none lost). A title written meanwhile
+  keeps its new facets, and one that straddles two pages is completed. The job then removes phrase
+  points no title carries, and the index folders Chroma leaves on disk after dropping a collection.
+- **Gone:** the facet compaction and `FACET_COMPACT`. Phrase points are only added or upserted in
+  place, so the index no longer grows dead slots.
+
+Tests: `tests/test_ram_footprint.py` (section 5), `tests/test_facet_index.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

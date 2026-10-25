@@ -44,15 +44,6 @@ app. What the first days of that setup still have to show:
 
 ## Next
 
-**A smaller facet index**
-- 199k facet points carry only 88k distinct phrases. Deduplicating the
-  phrases (one vector per phrase, titles pointing at it) would about halve
-  the index and probably help recall.
-- A compaction that keeps recall. The rebuild drops the dead slots
-  (~450 MB), but the rebuilt graph answered worse (recall@20 0.81 against
-  0.89), so `FACET_COMPACT` stays off. Try a higher HNSW `M` / build
-  order before turning it on.
-
 **Needs attention, the rest automated**
 - Collaboration credits from the Plex index ("A & B", "A feat. B") folded
   into the member artists, so they stop counting as artists of their own in
@@ -106,8 +97,8 @@ app. What the first days of that setup still have to show:
   Docker socket, which is root on the host. The sidebar says when an image
   is published; the redeploy stays with the host (`pull_policy: always`
   makes it one save).
-- **Compaction on by default** — see "A smaller facet index": less memory
-  is not worth worse search.
+- **A facet compaction** — the rebuilt per-title graph answered worse;
+  one point per phrase (2026-10-25) made it unnecessary.
 - **Resolving anime through AniDB ids.** That id space drifts; measured, it
   led to sequels and specials. Names in the offline snapshot, with the
   year, are the fallback instead.

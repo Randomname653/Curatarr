@@ -576,15 +576,10 @@ async def _run_facet_backfill(task=None) -> bool:
     return await run_facet_backfill(task=task)
 
 
-async def _run_facet_compact(task=None) -> bool:
-    """Rebuild the facet index when its dead share is large (see
-    facet_index.compact_facets_if_needed). Waits for the backfill: a
-    half-built index is not worth compacting twice."""
-    from src.services.facet_index import backfill_done, compact_facets_if_needed
-    from src.database.runner import run_read
-    if not await run_read(backfill_done):
-        return True
-    return await compact_facets_if_needed(task=task)
+async def _run_facet_phrases(task=None) -> bool:
+    """The facet index as one point per phrase (services/facet_index.migrate_facets)."""
+    from src.services.facet_index import migrate_facets
+    return await migrate_facets(task=task)
 
 
 async def _run_collections(deep: bool = False, task=None) -> bool:
@@ -931,11 +926,11 @@ def _registry() -> list[Task]:
              takes_task=True),
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
-        # Rebuilds the facet HNSW index when deleted points hold a quarter
-        # of its slots (all resident in RAM). A no-op check of one small
-        # file otherwise; weekly is plenty now that the writer upserts.
-        Task("facet_compact",    "Facet index compaction", 168.0,
-             _run_facet_compact, takes_task=True),
+        # One point per phrase: moves the old per-title facet collection
+        # over once (vectors reused), then drops phrase points no title
+        # carries. A no-op check after that.
+        Task("facet_phrases",    "Facet index: one point per phrase", 168.0,
+             _run_facet_phrases, takes_task=True),
         # LLM-free raw-cache warmer: keeps API source data fresh in the
         # background (discovery cards, expired prefetch incl. gone media)
         # so evidence/zombie-rebuilds never stand on cold rows.

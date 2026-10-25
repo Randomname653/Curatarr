@@ -5,8 +5,8 @@ Each fix keeps its behaviour and drops memory that was measured, not guessed:
   2. the taste rebuild shares equal strings and reads profiles in chunks
   3. SQLite's per-connection page cache is 8 MB, not 64 MB
   4. the arr library cache drops fields nothing reads
-  5. the facet writer upserts in place (delete + add burned an HNSW slot per
-     point), and a bloated index can be rebuilt without losing a point
+  5. the facet index holds one point per phrase (the per-title points were
+     60% copies), moved over once without embedding anything again
 
     python tests/test_ram_footprint.py
 """
@@ -222,151 +222,98 @@ readers = [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*.py")
                          p.read_text(encoding="utf-8", errors="ignore"))]
 check("no other module in src/ reads the dropped fields", readers == [])
 
-# ── 5. facet index: in-place rewrite + compaction ───────────────────────────
+# ── 5. facet index: one point per phrase ────────────────────────────────────
 print("facet index")
+import numpy as np  # noqa: E402
+
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 import src.services.facet_index as fi  # noqa: E402
 
 wr = cw.ChromaDBWrapper(collection_name="ram_test_main")
 DIM = 8
+POOL = [f"phrase {i}" for i in range(20)]       # themes repeat across titles
 
 
 def vec(seed):
-    import numpy as np
     return np.random.RandomState(seed).rand(DIM).astype("float32")
 
 
-def put(parent, n, seed0, method="replace"):
-    ids = [f"{parent}::f{i}" for i in range(n)]
-    docs = [f"phrase {parent} {i}" for i in range(n)]
-    embs = [vec(seed0 + i) for i in range(n)]
-    metas = [{"parent": parent, "title": parent, "domain": "movie", "facet": "theme"} for _ in ids]
-    if method == "replace":
-        return wr.facets_replace(parent, docs, embs, metas, ids)
-    wr.facets_delete_by_parent(parent)
-    return wr.facets_add(docs, embs, metas, ids)
+PV = {p: vec(1000 + i) for i, p in enumerate(POOL)}
+
+
+def put(parent, phrases, domain="movie"):
+    ids = [f"{parent}::f{i}" for i in range(len(phrases))]
+    metas = [{"parent": parent, "title": parent.upper(), "domain": domain, "genres": "Drama",
+              "facet": "theme", "emb_model": "m1"} for _ in ids]
+    return wr.facets_replace(parent, phrases, [PV.get(p, vec(hash(p) % 999)) for p in phrases],
+                             metas, ids)
 
 
 for p in range(60):
-    put(f"d{p}", 5, p * 10)
-check("60 titles x 5 facets written", wr.facets_count() == 300)
-put("d3", 3, 900)
-have = sorted(wr._facets_collection().get(where={"parent": "d3"}, include=[])["ids"])
-check("a rewrite with fewer facets removes exactly the surplus ids",
-      have == ["d3::f0", "d3::f1", "d3::f2"] and wr.facets_count() == 298)
-got = wr._facets_collection().get(ids=["d3::f0"], include=["embeddings", "documents"])
-import numpy as np  # noqa: E402
-check("the rewritten point carries the NEW vector and document",
-      np.allclose(got["embeddings"][0], vec(900)) and got["documents"][0] == "phrase d3 0")
-check("a failed write reports False (embeddings of the wrong width)",
-      wr.facets_replace("d3", ["x"], [[1.0, 2.0]], [{"parent": "d3"}], ["d3::f0"]) is False)
+    put(f"d{p}", [POOL[(p + k) % 20] for k in range(5)], "movie" if p % 2 else "anime")
+check("60 titles x 5 facets: 300 facets on 20 phrase points",
+      wr.facets_count() == 300 and wr._phrases_collection().count() == 20)
+put("d3", ["phrase 1", "phrase 2", "a phrase of its own"])
+rows = wr._map_rows("SELECT idx, phrase FROM facet_map WHERE parent = 'd3' ORDER BY idx")
+check("a rewrite replaces the title's facets; only the new phrase is a new point",
+      rows == [(0, "phrase 1"), (1, "phrase 2"), (2, "a phrase of its own")]
+      and wr.facets_count() == 298 and wr._phrases_collection().count() == 21)
+check("a failed write (vectors of the wrong width) reports False and keeps the old facets",
+      wr.facets_replace("d3", ["brand new"], [[1.0, 2.0]], [{"parent": "d3"}], ["d3::f0"]) is False
+      and wr.facets_count() == 298)
+res = wr.facets_query([PV["phrase 7"].tolist()], n_results=5)
+near = [m["parent"] for m in res["metadatas"][0]]
+check("a query answers the titles behind the nearest phrase, in the per-title shape",
+      len(set(near)) >= 5 and res["documents"][0][0] == "phrase 7"
+      and all(i.count("::f") == 1 for i in res["ids"][0]))
+res = wr.facets_query([PV["phrase 7"].tolist()], n_results=5, where=cw.domain_where("movie"))
+check("...and only those in the domain asked for",
+      res["metadatas"][0] and all(m["domain"] == "movie" for m in res["metadatas"][0]))
+page = wr.facets_page(0, 7)
+again = wr.facets_by_ids(page["ids"])
+check("a page and the same ids by id carry the phrase vectors",
+      len(page["ids"]) == 7 and page["ids"] == again["ids"]
+      and np.allclose(np.asarray(page["embeddings"][0]), PV[page["documents"][0]]))
+known = wr.facets_phrase_vectors(["phrase 3", "never seen"], "m1")
+check("the vectors of phrases already stored are handed back (no embed for them)",
+      list(known) == ["phrase 3"] and wr.facets_phrase_vectors(["phrase 3"], "other model") == {})
+wr.facets_delete_by_parent("d3")
+check("a deleted title's own phrase is swept, the shared ones stay",
+      wr.facets_sweep() == 1 and wr._phrases_collection().count() == 20
+      and wr.facets_count() == 295)
 
-# Inflate the index the old way (delete + add) so a rebuild has work to do.
-for rnd in range(3):
-    for p in range(60, 100):
-        put(f"d{p}", 5, p * 10 + rnd, method="old")
-live_before = wr.facets_count()
-check("setup: 298 + 40 x 5 live facets", live_before == 498)
-snapshot = wr._facets_collection().get(include=["embeddings", "documents", "metadatas"])
-want = {i: (np.asarray(e, dtype="float32"), d, m["parent"])
-        for i, e, d, m in zip(snapshot["ids"], snapshot["embeddings"],
-                              snapshot["documents"], snapshot["metadatas"])}
-
-fi._COMPACT_MIN_LIVE = 10
-stats = {"v": (live_before + 10, live_before)}
-wr.facets_slot_stats = lambda: stats["v"]
+# ── the move from the old per-title collection ──────────────────────────────
+legacy = wr.client.create_collection(wr.LEGACY_FACETS, metadata={"hnsw:space": "cosine"})
+L = {}
+for t in range(30):
+    for k in range(4):
+        L[f"old{t}::f{k}"] = (POOL[(t * 3 + k) % 20], f"old{t}")
+legacy.add(ids=list(L), embeddings=[PV[p] for p, _ in L.values()], documents=[p for p, _ in L.values()],
+           metadatas=[{"parent": par, "title": par, "domain": "show", "genres": "", "facet": "theme",
+                       "emb_model": "m1"} for _, par in L.values()])
+before = wr.facets_count()
+first = wr.facets_migrate_step(page=50)       # old12 straddles the page boundary
+put("old20", ["phrase 9"], "show")            # written fresh while the move runs
+steps = 1
+while True:
+    r = wr.facets_migrate_step(page=50)
+    steps += 1
+    if r["done"]:
+        break
+rows = {(p, ph) for p, ph in wr._map_rows("SELECT parent, phrase FROM facet_map WHERE parent LIKE 'old%'")}
+want = {(par, p) for p, par in L.values() if par != "old20"} | {("old20", "phrase 9")}
+check("every old facet moved, a title split across pages complete, a fresh write kept",
+      not first["done"] and steps == 3 and rows == want
+      and wr.facets_count() == before + len(want))
+check("the old collection is dropped and no phrase point was added for known phrases",
+      wr.facets_legacy_count() is None and wr._phrases_collection().count() == 20)
 cw.get_chroma_db = lambda: wr
-check("compaction is off by default (it costs recall), whatever the dead share",
-      settings.FACET_COMPACT is False
-      and "FACET_COMPACT: bool = False" in (ROOT / "src/config.py").read_text(encoding="utf-8"))
-settings.FACET_COMPACT = True       # the rest of this section runs it
-check("a healthy index is left alone (dead share below the threshold)",
-      asyncio.run(fi.compact_facets_if_needed()) is True
-      and wr._compact is None and wr.facets_count() == live_before)
-
-# a write that lands in the middle of a compaction must survive it
-stats["v"] = (live_before * 2, live_before)
-orig_step = wr.facets_compact_step
-state = {"n": 0}
-
-
-def step_with_write(page=2000):
-    state["n"] += 1
-    if state["n"] == 1:
-        put("d5", 2, 5000)               # rewritten while the copy is running
-        put("late", 3, 7000)             # brand new title
-        wr.facets_delete_by_parent("d6")  # a title removed meanwhile
-    return orig_step(page=100)           # small pages: several steps
-
-
-wr.facets_compact_step = step_with_write
-ok = asyncio.run(fi.compact_facets_if_needed())
-wr.facets_compact_step = orig_step
-# Under load Chroma's Rust core can answer a paged read that overlaps a
-# delete with "Error finding id" (seen in the full battery, never alone).
-# The rebuild then aborts and keeps the old index - that is the contract
-# too: either it swapped in a complete copy, or nothing changed.
-check("the rebuild either finishes, or aborts cleanly with the old index kept",
-      ok in (True, False) and wr._compact is None)
-check("the rebuilt (or kept) collection holds the name; the temporary ones are gone",
-      sorted(c.name for c in wr.client.list_collections()) ==
-      sorted([wr.collection_name, wr.FACETS_COLLECTION]))
-
-
-def _read_all():
-    import time as _t
-    for attempt in range(5):
-        try:
-            return wr._facets_collection().get(include=["embeddings", "documents", "metadatas"])
-        except Exception:  # noqa: BLE001 - the same transient read error, retried
-            if attempt == 4:
-                raise
-            _t.sleep(0.5)
-
-
-after = _read_all()
-got = {i: (np.asarray(e, dtype="float32"), d, m["parent"])
-       for i, e, d, m in zip(after["ids"], after["embeddings"],
-                             after["documents"], after["metadatas"])}
-expect = dict(want)
-for k in [k for k in expect if expect[k][2] in ("d5", "d6")]:
-    del expect[k]
-for i in range(2):
-    expect[f"d5::f{i}"] = (vec(5000 + i), f"phrase d5 {i}", "d5")
-for i in range(3):
-    expect[f"late::f{i}"] = (vec(7000 + i), f"phrase late {i}", "late")
-
-
-def _same(a, b):
-    return bool(np.allclose(a[0], b[0], atol=1e-5)) and a[1:] == b[1:]
-
-
-check("every point survived with its vector, document and parent; writes made "
-      "during the copy are in; the removed title is out",
-      set(got) == set(expect) and all(_same(got[k], expect[k]) for k in expect))
-res = wr.facets_query([vec(900).tolist()], n_results=3)
-check("queries are served by the rebuilt index", res["ids"][0][0] == "d3::f0")
-check("fresh client after the swap answers (release_indexes)",
-      wr.release_indexes() is True and wr.facets_count() == len(expect)
-      and wr.get_count() == 0)
-
-# a failing copy keeps the old collection in service
-orig_get = wr.facets_compact_step
-boom = {"n": 0}
-
-
-def failing_step(page=2000):
-    raise RuntimeError("disk full")
-
-
-wr.facets_compact_step = failing_step
-stats["v"] = (len(expect) * 2, len(expect))
-check("a copy that fails returns False and drops the half-built collection",
-      asyncio.run(fi.compact_facets_if_needed()) is False and wr._compact is None
-      and wr.facets_count() == len(expect)
-      and wr.client.list_collections() is not None
-      and all(c.name != wr._COMPACT_TMP for c in wr.client.list_collections()))
-wr.facets_compact_step = orig_get
+check("the custodian job is a no-op check once the move is done",
+      asyncio.run(fi.migrate_facets()) is True and wr.facets_legacy_count() is None)
+src = (ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
+check("the custodian runs it weekly; the compaction is gone",
+      'Task("facet_phrases"' in src and "facet_compact" not in src
+      and "FACET_COMPACT" not in (ROOT / "src/config.py").read_text(encoding="utf-8"))
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

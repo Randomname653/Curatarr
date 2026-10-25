@@ -300,7 +300,7 @@ class ChromaDBWrapper:
             SharedSystemClient.clear_system_cache()   # else the same System comes back
             self.client = self._open_client()
             self.collection = self._get_or_create_collection()
-            self._facets = None
+            self._phrases = None
             del old
             gc.collect()
             return True
@@ -347,253 +347,419 @@ class ChromaDBWrapper:
         logger.warning("ChromaDB reset(): wiping all collections at %s", settings.CHROMADB_PATH)
         self.client.reset()
         self.collection = self._get_or_create_collection()
-        self._facets = None
+        self._phrases = None
+        with self._fmap_lock:                 # the phrase map goes with the store
+            con = self._facet_map()
+            for t in ("facet_map", "facet_meta", "facet_migrated"):
+                con.execute(f"DELETE FROM {t}")  # nosec B608 - the three table names above
+            con.commit()
 
-    # ── FACET COLLECTION (multi-vector items, stage 1) ───────────────────────
-    # Facet points live in their OWN collection (media_facets_v1) so every
-    # consumer of the one-point-per-title assumption in the main collection
-    # (n_results slots, anchor resolution, embeddings_for_domain calibration
-    # with its 30k cap, count_by_id_prefix coverage) stays byte-identical.
-    # Same PersistentClient — the process lock forbids a second one.
+    # ── FACET INDEX: one point per phrase (multi-vector items, stage 1) ──────
+    # A title's ~6 theme phrases are its facets. They live OUTSIDE the main
+    # collection so every consumer of the one-point-per-title assumption
+    # there (n_results slots, anchor resolution, the 30k calibration cap,
+    # coverage by id prefix) stays byte-identical. Same PersistentClient -
+    # the process lock forbids a second one.
+    #
+    # One point per distinct PHRASE, not per (title, phrase): themes repeat
+    # (199k facet points held 80k phrases on the owner's store, 2026-10-25),
+    # and the copies crowded every query - the 20 nearest points were often
+    # the same three phrases, so a probe found few titles. Measured on a copy
+    # against an exact search: title recall@20 0.52 with a point per title
+    # and phrase, 0.81 with a point per phrase, and 262 MB of index instead
+    # of 651 MB. Which titles carry a phrase is a small SQLite table beside
+    # the store (facet_map.sqlite3); the methods below keep the shapes the
+    # per-title collection had, so the probe, the backfill and the
+    # nanogenres read it as before. A phrase point is never deleted while a
+    # title carries it and an upsert keeps its slot, so the index does not
+    # grow dead slots the way the per-title one did.
 
-    FACETS_COLLECTION = "media_facets_v1"
-    _facets = None
+    PHRASES_COLLECTION = "media_phrases_v1"
+    LEGACY_FACETS = "media_facets_v1"
+    FACET_MAP_FILE = "facet_map.sqlite3"
+    _phrases = None
+    _fmap = None
+    _fmap_lock = threading.Lock()
 
-    def _facets_collection(self):
-        if self._facets is None:
+    @staticmethod
+    def phrase_id(phrase: str) -> str:
+        import hashlib
+        return "ph:" + hashlib.sha1((phrase or "").strip().encode("utf-8"),
+                                    usedforsecurity=False).hexdigest()[:24]
+
+    def _phrases_collection(self):
+        if self._phrases is None:
             try:
-                coll = self.client.get_collection(self.FACETS_COLLECTION)
+                coll = self.client.get_collection(self.PHRASES_COLLECTION)
                 if (coll.metadata or {}).get("hnsw:space") != "cosine":
                     raise RuntimeError(
-                        f"facet collection '{self.FACETS_COLLECTION}' is not "
-                        "in cosine space")
+                        f"phrase collection '{self.PHRASES_COLLECTION}' is not in cosine space")
             except RuntimeError:
                 raise
             except Exception:
                 coll = self.client.create_collection(
-                    name=self.FACETS_COLLECTION,
-                    metadata={"hnsw:space": "cosine"})
-            self._facets = coll
-        return self._facets
+                    name=self.PHRASES_COLLECTION, metadata={"hnsw:space": "cosine"})
+            self._phrases = coll
+        return self._phrases
 
-    def facets_add(self, documents, embeddings, metadatas, ids) -> bool:
-        try:
-            embeddings = np.array(embeddings, dtype=np.float32)
-            self._facets_collection().add(
-                documents=documents, embeddings=embeddings,
-                metadatas=metadatas, ids=ids)
-            return True
-        except Exception as e:
-            # WARNING: the title is left with NO facets (delete-by-parent ran
-            # first) — at DEBUG a dimension mismatch emptied the index unseen.
-            logger.warning("[chroma] facets_add failed: %s", e)
-            return False
+    def _facet_map(self):
+        """The (title -> phrase) table, opened once; every call takes the lock."""
+        if self._fmap is None:
+            from pathlib import Path
+            base = Path(str(settings.CHROMADB_PATH))
+            base.mkdir(parents=True, exist_ok=True)
+            con = sqlite_connect(str(base / self.FACET_MAP_FILE), timeout=30,
+                                 check_same_thread=False)
+            con.execute("PRAGMA journal_mode=WAL")
+            con.executescript("""
+                CREATE TABLE IF NOT EXISTS facet_map (
+                    parent TEXT NOT NULL, idx INTEGER NOT NULL, phrase_id TEXT NOT NULL,
+                    phrase TEXT NOT NULL, title TEXT, domain TEXT, genres TEXT,
+                    facet TEXT, emb_model TEXT, PRIMARY KEY (parent, idx));
+                CREATE INDEX IF NOT EXISTS ix_facet_map_phrase ON facet_map(phrase_id);
+                CREATE TABLE IF NOT EXISTS facet_meta (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS facet_migrated (parent TEXT PRIMARY KEY);
+            """)
+            con.commit()
+            self._fmap = con
+        return self._fmap
 
-    def facets_query(self, query_embeddings, n_results: int = 20,
-                     where=None) -> Dict:
-        try:
-            return self._facets_collection().query(
-                query_embeddings=query_embeddings, n_results=n_results,
-                where=where)
-        except Exception as e:
-            _log_read_failure("facets_query", e)
-            _count_fallback("query")
-            return {"ids": [[]], "distances": [[]], "documents": [[]],
-                    "metadatas": [[]]}
+    @staticmethod
+    def _parse_point_id(pid: str):
+        parent, sep, idx = str(pid).rpartition("::f")
+        return (parent, int(idx)) if sep and idx.isdigit() else (str(pid), 0)
+
+    def _map_rows(self, sql: str, args=()) -> list:
+        with self._fmap_lock:
+            return self._facet_map().execute(sql, args).fetchall()
+
+    def _put_phrases(self, documents, embeddings, metadatas) -> None:
+        """Upsert the phrase points that are new, or whose vector came from
+        another embedding model. Raises on a vector Chroma refuses."""
+        emb = np.array(embeddings, dtype=np.float32)
+        coll = self._phrases_collection()
+        pids = [self.phrase_id(d) for d in documents]
+        have = {}
+        uniq = list(dict.fromkeys(pids))
+        for i in range(0, len(uniq), 1000):
+            got = coll.get(ids=uniq[i:i + 1000], include=["metadatas"])
+            have.update({h: (m or {}).get("emb_model") for h, m in
+                         zip(got.get("ids") or [], got.get("metadatas") or [])})
+        put = {}
+        for k, (pid, md) in enumerate(zip(pids, metadatas)):
+            model = (md or {}).get("emb_model", "")
+            if pid not in put and (pid not in have or (model and have[pid] != model)):
+                put[pid] = k
+        if put:
+            ks = list(put.values())
+            coll.upsert(ids=list(put), embeddings=emb[ks],
+                        documents=[documents[k].strip() for k in ks],
+                        metadatas=[{"emb_model": (metadatas[k] or {}).get("emb_model", ""),
+                                    "facet": (metadatas[k] or {}).get("facet", "theme")}
+                                   for k in ks])
+
+    def _map_insert(self, con, documents, metadatas, ids) -> None:
+        con.executemany(
+            "INSERT OR REPLACE INTO facet_map (parent, idx, phrase_id, phrase, title, domain,"
+            " genres, facet, emb_model) VALUES (?,?,?,?,?,?,?,?,?)",
+            [(*self._parse_point_id(i), self.phrase_id(d), d.strip(), (m or {}).get("title"),
+              (m or {}).get("domain"), (m or {}).get("genres"), (m or {}).get("facet"),
+              (m or {}).get("emb_model")) for d, m, i in zip(documents, metadatas, ids)])
 
     def facets_replace(self, parent_id: str, documents, embeddings, metadatas,
                        ids) -> bool:
-        """Replace one title's facet points IN PLACE: upsert the new points
-        (same ids -> same HNSW slots) and delete only the ids that are no
-        longer wanted. ``delete`` + ``add`` burns a fresh HNSW slot per
-        point every time (Chroma never reuses a deleted slot): measured on
-        the owner's store, 333k slots held 199k live facets - 40% of a
-        1.2 GB index, all of it resident in RAM, growing with every
-        re-enrichment. An unchanged id keeps its slot."""
+        """Replace one title's facets: its phrases (only the new ones are
+        stored) and its rows in the map. A failed write leaves the title's
+        old rows in place."""
         try:
-            emb = np.array(embeddings, dtype=np.float32)
-            coll = self._facets_collection()
-            coll.upsert(documents=documents, embeddings=emb,
-                        metadatas=metadatas, ids=ids)
-            have = coll.get(where={"parent": str(parent_id)}, include=[]).get("ids") or []
-            wanted = set(ids)
-            stale = [i for i in have if i not in wanted]
-            if stale:
-                coll.delete(ids=stale)
-            self._facet_touched(parent_id)
+            self._put_phrases(documents, embeddings, metadatas)
+            with self._fmap_lock:
+                con = self._facet_map()
+                con.execute("DELETE FROM facet_map WHERE parent = ?", (str(parent_id),))
+                con.execute("DELETE FROM facet_migrated WHERE parent = ?", (str(parent_id),))
+                self._map_insert(con, documents, metadatas, ids)
+                con.commit()
             return True
         except Exception as e:
             logger.warning("[chroma] facets_replace(%s) failed: %s", parent_id, e)
             return False
 
-    def facets_page(self, offset: int, limit: int, embeddings: bool = True) -> Dict:
-        """One page of the facet points (ids, documents, metadatas and, when
-        asked, embeddings) for a whole-index walk (services/nanogenres)."""
-        include = ["documents", "metadatas"] + (["embeddings"] if embeddings else [])
-        return self._facets_collection().get(limit=limit, offset=offset, include=include)
-
-    def facets_by_ids(self, ids: List[str]) -> Dict:
-        """These facet points with their embeddings."""
-        return self._facets_collection().get(ids=list(ids), include=["documents", "metadatas", "embeddings"])
-
-    def facets_delete_by_parent(self, parent_id: str) -> bool:
-        """Drop every facet of one title (a title whose themes vanished, or
-        whose re-embed failed: stale points must not outlive the data)."""
+    def facets_add(self, documents, embeddings, metadatas, ids) -> bool:
+        """Add facets beside a title's existing ones (facets_replace is the
+        writer the app uses)."""
         try:
-            self._facets_collection().delete(where={"parent": str(parent_id)})
-            self._facet_touched(parent_id)
+            self._put_phrases(documents, embeddings, metadatas)
+            with self._fmap_lock:
+                con = self._facet_map()
+                self._map_insert(con, documents, metadatas, ids)
+                con.commit()
             return True
         except Exception as e:
-            # The old facets stay beside the re-added ones: stale points.
-            logger.warning("[chroma] facets_delete_by_parent(%s) failed: %s",
-                           parent_id, e)
+            logger.warning("[chroma] facets_add failed: %s", e)
+            return False
+
+    def facets_delete_by_parent(self, parent_id: str) -> bool:
+        """Drop every facet of one title. Its phrase points stay for the other
+        titles that carry them (facets_sweep removes the orphans)."""
+        try:
+            with self._fmap_lock:
+                con = self._facet_map()
+                con.execute("DELETE FROM facet_map WHERE parent = ?", (str(parent_id),))
+                con.execute("DELETE FROM facet_migrated WHERE parent = ?", (str(parent_id),))
+                con.commit()
+            return True
+        except Exception as e:
+            logger.warning("[chroma] facets_delete_by_parent(%s) failed: %s", parent_id, e)
             return False
 
     def facets_count(self) -> int:
+        """Facet rows (title x phrase), as the per-title index counted points."""
         try:
-            return self._facets_collection().count()
+            return int(self._map_rows("SELECT count(*) FROM facet_map")[0][0])
         except Exception as e:
             logger.warning("[chroma] facets_count failed: %s", e)
             return 0
 
-    # ── FACET INDEX COMPACTION ────────────────────────────────────────────────
-    # Chroma's HNSW never reuses the slot of a deleted point, and the whole
-    # index is resident in RAM (3.2 KB per slot at 768 dims). Stores written
-    # by the old delete+add facet writer carry a large dead share (measured:
-    # 333k slots, 199k live). A rebuild into a fresh collection drops it.
-    # Every step is its own short call on the one Chroma thread, so queries
-    # and writes interleave with the copy; titles written meanwhile are
-    # tracked and replayed before the swap.
-    _COMPACT_TMP = "media_facets_v1_compact"
-    _COMPACT_OLD = "media_facets_v1_old"
-    _compact = None
-
-    def _facet_touched(self, parent_id) -> None:
-        st = self._compact
-        if st is not None:
-            st["dirty"].add(str(parent_id))
-
-    def facets_slot_stats(self):
-        """(slots, live) of the facet HNSW index, or None when unknown.
-        ``slots`` counts deleted points too: the persisted ``length.bin``
-        holds 4 bytes per slot. Read-only; no index is loaded."""
-        try:
-            from pathlib import Path
-            live = self._facets_collection().count()
-            base = Path(str(settings.CHROMADB_PATH))
-            con = sqlite_connect(f"file:{(base / 'chroma.sqlite3').as_posix()}?mode=ro",
-                                 uri=True, timeout=30)
-            try:
-                row = con.execute(
-                    "SELECT s.id FROM segments s JOIN collections c "
-                    "ON c.id = s.collection WHERE c.name = ? AND s.scope = 'VECTOR'",
-                    (self.FACETS_COLLECTION,)).fetchone()
-            finally:
-                con.close()
-            if not row:
-                return None
-            length_bin = base / str(row[0]) / "length.bin"
-            if not length_bin.exists():
-                return None
-            return length_bin.stat().st_size // 4, live
-        except Exception as e:  # noqa: BLE001 - an unreadable stat only means "no rebuild now"
-            logger.debug("[chroma] facets_slot_stats failed: %s", e)
+    @staticmethod
+    def _domains(where):
+        """The domains a domain_where clause allows, or None for any."""
+        d = (where or {}).get("domain") if isinstance(where, dict) else None
+        if d is None:
             return None
-
-    def facets_compact_begin(self) -> bool:
-        if self._compact is not None:
-            return True
-        try:
-            try:
-                self.client.delete_collection(self._COMPACT_TMP)   # a crashed earlier run
-            except Exception:  # noqa: BLE001 - usually "does not exist"
-                pass
-            new = self.client.create_collection(
-                name=self._COMPACT_TMP, metadata={"hnsw:space": "cosine"})
-            self._compact = {"new": new, "offset": 0, "dirty": set()}
-            return True
-        except Exception as e:
-            logger.warning("[chroma] facet compaction could not start: %s", e)
-            return False
+        if isinstance(d, dict):
+            return list(d.get("$in") or [])
+        return [d]
 
     @staticmethod
-    def _copy_points(src_res: Dict, dest) -> int:
-        ids = src_res.get("ids")
-        if ids is None or len(ids) == 0:
-            return 0
-        emb = src_res.get("embeddings")
-        dest.upsert(ids=list(ids),
-                    embeddings=np.asarray(emb, dtype=np.float32),
-                    documents=src_res.get("documents"),
-                    metadatas=src_res.get("metadatas"))
-        return len(ids)
+    def _row_meta(r) -> dict:
+        return {"parent": r[0], "title": r[4] or "", "domain": r[5] or "",
+                "genres": r[6] or "", "facet": r[7] or "theme", "emb_model": r[8] or ""}
 
-    _POINT_FIELDS = ["embeddings", "documents", "metadatas"]
+    _MAP_COLS = "parent, idx, phrase_id, phrase, title, domain, genres, facet, emb_model"
 
-    def facets_compact_step(self, page: int = 2000) -> bool:
-        """Copy the next page of live facets; True once the source is read out."""
-        st = self._compact
-        if st is None:
-            return True
-        res = self._facets_collection().get(
-            include=self._POINT_FIELDS, limit=page, offset=st["offset"])
-        n = self._copy_points(res, st["new"])
-        st["offset"] += n
-        return n < page
-
-    def facets_compact_abort(self) -> None:
-        self._compact = None
+    def facets_query(self, query_embeddings, n_results: int = 20,
+                     where=None) -> Dict:
+        """The nearest phrases, each standing for every title that carries it
+        (in the domain asked for), in the per-title shape: one entry per
+        (title, phrase), nearest first, until ``n_results`` titles. A domain
+        filter can leave the nearest phrases short of titles; the search
+        then widens (x4, up to 4,000 phrases) until enough are found."""
+        empty = {"ids": [[]], "distances": [[]], "documents": [[]], "metadatas": [[]]}
         try:
-            self.client.delete_collection(self._COMPACT_TMP)
-        except Exception:  # noqa: BLE001 - nothing to abort
-            pass
-
-    def facets_compact_finish(self) -> Dict:
-        """Reconcile what the paged copy could miss, check the counts, swap.
-        Returns {"ok", "before", "after"}; on any problem the old collection
-        stays in service and the half-built one is dropped."""
-        st = self._compact
-        if st is None:
-            return {"ok": False}
-        old, new = self._facets_collection(), st["new"]
-        try:
-            old_ids = list(old.get(include=[]).get("ids") or [])
-            new_ids = list(new.get(include=[]).get("ids") or [])
-            so, sn = set(old_ids), set(new_ids)
-            extra = [i for i in new_ids if i not in so]
-            for i in range(0, len(extra), 1000):
-                new.delete(ids=extra[i:i + 1000])
-            # Offset paging skips rows when a delete lands mid-copy: copy by id.
-            missing = [i for i in old_ids if i not in sn]
-            for i in range(0, len(missing), 1000):
-                self._copy_points(old.get(ids=missing[i:i + 1000],
-                                          include=self._POINT_FIELDS), new)
-            # Titles rewritten meanwhile: the same ids may carry new values.
-            for parent in list(st["dirty"]):
-                new.delete(where={"parent": parent})
-                self._copy_points(old.get(where={"parent": parent},
-                                          include=self._POINT_FIELDS), new)
-            before, after = old.count(), new.count()
-            if before != after:
-                raise RuntimeError(f"count mismatch after copy: {before} vs {after}")
-            old.modify(name=self._COMPACT_OLD)
-            try:
-                new.modify(name=self.FACETS_COLLECTION)
-            except Exception:
-                old.modify(name=self.FACETS_COLLECTION)   # put the original back
-                raise
-            self._facets = None
-            self._compact = None
-            try:
-                self.client.delete_collection(self._COMPACT_OLD)
-            except Exception as e:  # noqa: BLE001 - the swap is done; the leftover is only disk
-                logger.warning("[chroma] old facet collection not dropped: %s", e)
-            return {"ok": True, "before": before, "after": after}
+            coll = self._phrases_collection()
+            total = coll.count()
+            if not total:
+                return {k: [[] for _ in query_embeddings] for k in empty}
+            domains = self._domains(where)
+            out = {k: [] for k in empty}
+            for q in query_embeddings:
+                width = max(60, n_results * 3)
+                while True:
+                    res = coll.query(query_embeddings=[q], n_results=min(total, width),
+                                     include=["distances"])
+                    got = self._expand(res["ids"][0], res["distances"][0], domains, n_results)
+                    if len(set(m["parent"] for m in got[2])) >= n_results                             or width >= min(total, 4000):
+                        break
+                    width *= 4
+                for k, v in zip(("ids", "documents", "metadatas", "distances"), got):
+                    out[k].append(v)
+            return out
         except Exception as e:
-            logger.warning("[chroma] facet compaction abandoned, old index kept: %s", e)
-            self.facets_compact_abort()
-            return {"ok": False}
-    
+            _log_read_failure("facets_query", e)
+            _count_fallback("query")
+            return empty
+
+    def _expand(self, pids, dists, domains, n_results: int) -> tuple:
+        """(ids, documents, metadatas, distances) of the titles behind these
+        phrases, nearest phrase first, until ``n_results`` titles."""
+        rows = {}
+        for i in range(0, len(pids), 500):
+            chunk = pids[i:i + 500]
+            sql = (f"SELECT {self._MAP_COLS} FROM facet_map WHERE phrase_id IN "
+                   f"({','.join('?' * len(chunk))})")
+            args = list(chunk)
+            if domains:
+                sql += f" AND domain IN ({','.join('?' * len(domains))})"
+                args += domains
+            for r in self._map_rows(sql + " ORDER BY parent, idx", args):  # nosec B608 - placeholders only
+                rows.setdefault(r[2], []).append(r)
+        ids_, docs, metas, ds, seen = [], [], [], [], set()
+        for pid, dist in zip(pids, dists):
+            for r in rows.get(pid, []):
+                if len(seen) >= n_results and r[0] not in seen:
+                    continue
+                seen.add(r[0])
+                ids_.append(f"{r[0]}::f{r[1]}")
+                docs.append(r[3])
+                metas.append(self._row_meta(r))
+                ds.append(dist)
+            if len(seen) >= n_results:
+                break
+        return ids_, docs, metas, ds
+
+    def _with_vectors(self, rows) -> Dict:
+        vec = {}
+        pids = list(dict.fromkeys(r[2] for r in rows))
+        coll = self._phrases_collection()
+        for i in range(0, len(pids), 1000):
+            got = coll.get(ids=pids[i:i + 1000], include=["embeddings"])
+            for h, e in zip(got.get("ids") or [], got.get("embeddings")
+                            if got.get("embeddings") is not None else []):
+                vec[h] = e
+        keep = [r for r in rows if r[2] in vec]
+        return {"ids": [f"{r[0]}::f{r[1]}" for r in keep],
+                "documents": [r[3] for r in keep],
+                "metadatas": [self._row_meta(r) for r in keep],
+                "embeddings": [vec[r[2]] for r in keep]}
+
+    def facets_page(self, offset: int, limit: int, embeddings: bool = True) -> Dict:
+        """One page of the facets (title x phrase), ordered by title, for a
+        whole-index walk (services/nanogenres)."""
+        rows = self._map_rows(f"SELECT {self._MAP_COLS} FROM facet_map ORDER BY parent, idx "  # nosec B608 - column list is a constant
+                              "LIMIT ? OFFSET ?", (int(limit), int(offset)))
+        if embeddings:
+            return self._with_vectors(rows)
+        return {"ids": [f"{r[0]}::f{r[1]}" for r in rows], "documents": [r[3] for r in rows],
+                "metadatas": [self._row_meta(r) for r in rows]}
+
+    def facets_by_ids(self, ids: List[str]) -> Dict:
+        """These facets (``parent::fN``) with their vectors."""
+        want = {self._parse_point_id(i) for i in ids}
+        parents = sorted({p for p, _ in want})
+        rows = []
+        for i in range(0, len(parents), 500):
+            chunk = parents[i:i + 500]
+            rows += [r for r in self._map_rows(
+                f"SELECT {self._MAP_COLS} FROM facet_map WHERE parent IN "  # nosec B608 - placeholders only
+                f"({','.join('?' * len(chunk))}) ORDER BY parent, idx", chunk) if (r[0], r[1]) in want]
+        return self._with_vectors(rows)
+
+    def facets_phrase_vectors(self, phrases, emb_model: str = "") -> Dict:
+        """{phrase: vector} for the phrases already stored (in ``emb_model``
+        when given): a rewrite embeds only the phrases that are new."""
+        uniq = list(dict.fromkeys((p or "").strip() for p in phrases if (p or "").strip()))
+        if not uniq:
+            return {}
+        by_id = {self.phrase_id(p): p for p in uniq}
+        out = {}
+        try:
+            coll = self._phrases_collection()
+            ids = list(by_id)
+            for i in range(0, len(ids), 1000):
+                got = coll.get(ids=ids[i:i + 1000], include=["embeddings", "metadatas"])
+                embs = got.get("embeddings") if got.get("embeddings") is not None else []
+                for h, e, m in zip(got.get("ids") or [], embs, got.get("metadatas") or []):
+                    if not emb_model or (m or {}).get("emb_model") == emb_model:
+                        out[by_id[h]] = list(np.asarray(e, dtype=np.float32))
+        except Exception as e:  # noqa: BLE001 - a miss only means the phrases are embedded again
+            logger.debug("[chroma] facets_phrase_vectors failed: %s", e)
+        return out
+
+    def facets_sweep(self) -> int:
+        """Drop the phrase points no title carries any more. Returns how many."""
+        coll = self._phrases_collection()
+        have = set(coll.get(include=[]).get("ids") or [])
+        used = {r[0] for r in self._map_rows("SELECT DISTINCT phrase_id FROM facet_map")}
+        orphans = sorted(have - used)
+        for i in range(0, len(orphans), 1000):
+            coll.delete(ids=orphans[i:i + 1000])
+        return len(orphans)
+
+    def drop_orphan_segment_dirs(self) -> int:
+        """Remove the index folders no collection uses any more; bytes freed.
+        Chroma leaves a deleted collection's HNSW folder on disk (the old
+        facet index: 1.1 GB on the owner's store). Only folders named like a
+        segment id and absent from the segments table go, and only after a
+        fresh client (release_indexes) has let go of their files; a folder
+        still held is left for the next run."""
+        import re
+        import shutil
+        from pathlib import Path
+        base = Path(str(settings.CHROMADB_PATH))
+        con = sqlite_connect(f"file:{(base / 'chroma.sqlite3').as_posix()}?mode=ro", uri=True, timeout=30)
+        try:
+            used = {r[0] for r in con.execute("SELECT id FROM segments")}
+        finally:
+            con.close()
+        uuid = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        freed = 0
+        for d in base.iterdir():
+            if d.is_dir() and uuid.match(d.name) and d.name not in used:
+                size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                try:
+                    shutil.rmtree(d)
+                    freed += size
+                except OSError as e:
+                    logger.info("[chroma] unused index folder %s still held: %s", d.name, e)
+        return freed
+
+    # ── the per-title collection, moved over once ──────────────────────────
+    def facets_legacy_count(self):
+        """Points left in the old per-title collection, None when it is gone."""
+        try:
+            return self.client.get_collection(self.LEGACY_FACETS).count()
+        except Exception:  # noqa: BLE001 - "does not exist" is the normal answer
+            return None
+
+    def facets_migrate_step(self, page: int = 2000) -> Dict:
+        """Move the next page of the old per-title collection over, reusing
+        its vectors (nothing is embedded again). A title written since the
+        move began keeps its new rows; a title split across pages is
+        completed. {"done", "moved", "offset"}; at the end the old
+        collection is dropped."""
+        legacy = self.client.get_collection(self.LEGACY_FACETS)
+        with self._fmap_lock:
+            row = self._facet_map().execute(
+                "SELECT value FROM facet_meta WHERE key = 'migrate_offset'").fetchone()
+        offset = int(row[0]) if row else 0
+        res = legacy.get(limit=page, offset=offset, include=["embeddings", "documents", "metadatas"])
+        ids = list(res.get("ids") or [])
+        moved = 0
+        if ids:
+            docs, metas = res.get("documents") or [], res.get("metadatas") or []
+            embs = res.get("embeddings")
+            parents = sorted({(m or {}).get("parent") or self._parse_point_id(i)[0]
+                              for i, m in zip(ids, metas)})
+            with self._fmap_lock:
+                con = self._facet_map()
+                written, migrated = set(), set()
+                for i in range(0, len(parents), 500):
+                    chunk = parents[i:i + 500]
+                    q = ','.join('?' * len(chunk))
+                    written |= {r[0] for r in con.execute(  # nosec B608 - placeholders only
+                        f"SELECT DISTINCT parent FROM facet_map WHERE parent IN ({q})", chunk)}
+                    migrated |= {r[0] for r in con.execute(  # nosec B608 - placeholders only
+                        f"SELECT parent FROM facet_migrated WHERE parent IN ({q})", chunk)}
+            keep = [k for k, (i, m) in enumerate(zip(ids, metas))
+                    if ((m or {}).get("parent") or self._parse_point_id(i)[0]) not in written - migrated]
+            if keep:
+                kd = [docs[k] for k in keep]
+                km = [dict(metas[k] or {}) for k in keep]
+                for k, m in zip(keep, km):
+                    m.setdefault("parent", self._parse_point_id(ids[k])[0])
+                self._put_phrases(kd, np.asarray(embs, dtype=np.float32)[keep], km)
+                with self._fmap_lock:
+                    con = self._facet_map()
+                    self._map_insert(con, kd, km, [ids[k] for k in keep])
+                    con.executemany("INSERT OR IGNORE INTO facet_migrated (parent) VALUES (?)",
+                                    [(m["parent"],) for m in km])
+                    con.commit()
+                moved = len(keep)
+        offset += len(ids)
+        done = len(ids) < page
+        with self._fmap_lock:
+            con = self._facet_map()
+            if done:
+                con.execute("DELETE FROM facet_meta WHERE key = 'migrate_offset'")
+                con.execute("DELETE FROM facet_migrated")
+            else:
+                con.execute("INSERT OR REPLACE INTO facet_meta (key, value) VALUES ('migrate_offset', ?)",
+                            (str(offset),))
+            con.commit()
+        if done:
+            self.client.delete_collection(self.LEGACY_FACETS)
+        return {"done": done, "moved": moved, "offset": offset}
+
     def add_documents(
         self,
         documents: List[str],

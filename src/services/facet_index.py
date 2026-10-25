@@ -74,27 +74,28 @@ async def _write_facets(doc_id: str, title: str, domain: str,
         if not phrases:
             await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
             return 0
+        # emb_model stamp (external eval catch): without it a profile
+        # rollback would probe v1 queries against v2 facet points with no
+        # way to tell the spaces apart.
+        emb_model = get_profile().get("model") or ""
         try:
-            if vec_map is not None:
-                lookup = dict(vec_map)
-                missing = [p for p in phrases if not lookup.get(p)]
-                if missing:
-                    mv = await embed_documents(missing)
-                    lookup.update({p: v for p, v in zip(missing, mv) if v})
-                pairs = [(p, lookup[p]) for p in phrases if lookup.get(p)]
-            else:
-                vecs = await embed_documents(phrases)
-                pairs = [(p, v) for p, v in zip(phrases, vecs) if v]
+            lookup = dict(vec_map or {})
+            # A phrase the index already holds (in this model) is not
+            # embedded again: themes repeat across titles.
+            unknown = [p for p in phrases if not lookup.get(p)]
+            if unknown:
+                lookup.update(await run_chroma(chroma.facets_phrase_vectors, unknown, emb_model))
+            missing = [p for p in phrases if not lookup.get(p)]
+            if missing:
+                mv = await embed_documents(missing)
+                lookup.update({p: v for p, v in zip(missing, mv) if v})
+            pairs = [(p, lookup[p]) for p in phrases if lookup.get(p)]
         except Exception:
             await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
             raise
         if not pairs:
             await run_chroma(chroma.facets_delete_by_parent, str(doc_id))
             return 0
-        # emb_model stamp (external eval catch): without it a profile
-        # rollback would probe v1 queries against v2 facet points with no
-        # way to tell the spaces apart.
-        emb_model = get_profile().get("model") or ""
         ok = await run_chroma(
             chroma.facets_replace, str(doc_id),
             documents=[p for p, _ in pairs],
@@ -147,69 +148,62 @@ async def facet_probe(constraint_vecs: list, domain: str = None,
     return out
 
 
-# A facet index whose dead share passes this is rebuilt (see
-# ChromaDBWrapper.facets_compact_*). Needs a few thousand points to matter.
-COMPACT_DEAD_SHARE = 0.25
-_COMPACT_MIN_LIVE = 5000
-
-
-async def compact_facets_if_needed(task=None) -> bool:
-    """Rebuild the facet HNSW index when deleted points hold a quarter or
-    more of its slots. The whole index sits in RAM, dead slots included.
-    True when nothing is left to do, False when a try failed (the custodian
-    backs off and retries). One-shot for a store the old writer inflated;
-    afterwards a no-op check of one small file."""
-    from src.config import settings
-    if not getattr(settings, "FACET_COMPACT", False):
-        # Off unless asked for (owner's call, 2026-10-23): a rebuilt graph
-        # answered worse (recall@20 against exact search 0.81, from 0.89 on
-        # the grown index) for 450 MB less memory. The in-place writer alone
-        # stops the growth; FACET_COMPACT=true takes the trade.
-        return True
+async def migrate_facets(task=None) -> bool:
+    """One point per phrase (2026-10-25, ChromaDBWrapper's facet index):
+    move the old per-title collection over once - its vectors are reused,
+    nothing is embedded again - then drop the phrase points no title
+    carries any more. True when done, False when a step failed (the
+    custodian retries next tick; the move resumes where it stopped)."""
     from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
     chroma = get_chroma_db()
-    stats = await run_chroma(chroma.facets_slot_stats)
-    if not stats:
-        return True
-    slots, live = stats
-    if live < _COMPACT_MIN_LIVE or slots <= 0 or (slots - live) / slots < COMPACT_DEAD_SHARE:
-        return True
-    logger.info("[facets] compacting the index: %d live points in %d slots (%.0f%% dead)",
-                live, slots, 100 * (slots - live) / slots)
-    if not await run_chroma(chroma.facets_compact_begin):
-        return False
+    left = await run_chroma(chroma.facets_legacy_count)
 
-    def _report(done: int, message: str) -> None:
+    def _report(done: int, total: int, message: str) -> None:
         if task is None:
             return
         try:
             from src.services.task_monitor import task_monitor
-            task_monitor.update(task, processed=min(done, live), total=live, message=message)
-        except Exception:  # noqa: BLE001 - the progress card only; the rebuild is unaffected
+            task_monitor.update(task, processed=min(done, total), total=total, message=message)
+        except Exception:  # noqa: BLE001 - the progress card only; the move is unaffected
             pass
 
+    if left is not None:
+        logger.info("[facets] moving %d per-title facets onto one point per phrase", left)
+        moved = 0
+        try:
+            while True:
+                r = await run_chroma(chroma.facets_migrate_step)
+                moved += r["moved"]
+                _report(r["offset"], left, f"{moved:,} facets moved")
+                if r["done"]:
+                    break
+                await asyncio.sleep(0)    # other Chroma calls queue between pages
+        except Exception as e:
+            logger.warning("[facets] the move to one point per phrase stopped: %s", e)
+            return False
     try:
-        pages = 0
-        while True:
-            _report(pages * 2000, f"copying {live:,} facet points into a compact index")
-            if await run_chroma(chroma.facets_compact_step):
-                break
-            pages += 1
-            await asyncio.sleep(0)    # other Chroma calls queue between pages
+        swept = await run_chroma(chroma.facets_sweep)
     except Exception as e:
-        logger.warning("[facets] compaction copy failed: %s", e)
-        await run_chroma(chroma.facets_compact_abort)
+        logger.warning("[facets] phrase sweep failed: %s", e)
         return False
-    _report(live, "checking the copy and swapping it in")
-    res = await run_chroma(chroma.facets_compact_finish)
-    if res.get("ok"):
-        # The old index is still resident (deleted collections stay loaded):
-        # a fresh client is what returns the memory.
+    if left is not None:
+        # The dropped collection's index stays resident until a fresh client.
         await run_chroma(chroma.release_indexes)
-        logger.info("[facets] index compacted: %d points, %d slots freed",
-                    res["after"], slots - res["after"])
-        return True
-    return False
+    # Chroma leaves a dropped collection's folder on disk; one still held
+    # open is left for the next run.
+    try:
+        freed = await run_chroma(chroma.drop_orphan_segment_dirs)
+        if freed:
+            logger.info("[facets] %d MB of unused index folders removed", freed // (1024 * 1024))
+    except Exception as e:  # noqa: BLE001 - only disk; the next run tries again
+        logger.warning("[facets] unused index folders not removed: %s", e)
+    if left is not None:
+        logger.info("[facets] %d facets on %d phrase points; the per-title index is gone",
+                    await run_chroma(chroma.facets_count),
+                    await run_chroma(lambda: chroma._phrases_collection().count()))
+    elif swept:
+        logger.info("[facets] %d phrase point(s) no title carries any more were dropped", swept)
+    return True
 
 
 def backfill_done() -> bool:
