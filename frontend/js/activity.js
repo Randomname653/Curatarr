@@ -2,7 +2,7 @@
 // Moved state.taskEventSource to state
 // Moved state.taskStreamRetries to state
 import { state } from './state.js';
-import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, pulseHeldBy, setBadge, setPulse, toast } from './ui.js';
+import { CAT_LABELS, EL, EVENT, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, pulseHeldBy, setBadge, setPulse, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api, sessionEnded } from './api.js';
 
 // One task stream per tab. The guard used to sit BEFORE the ticket fetch, so
@@ -164,7 +164,7 @@ function _taskRowHtml(t) {
   const live = t.status === 'running' || t.status === 'pending';
   const meta = [
     t.elapsed_s > 0 ? fmtTime(Math.round(t.elapsed_s)) : '',
-    t.processed && t.total ? `${t.processed.toLocaleString()} / ${t.total.toLocaleString()}` : '',
+    t.processed && t.total ? `${t.processed.toLocaleString(loc())} / ${t.total.toLocaleString(loc())}` : '',
     t.rate > 0 ? `${t.rate.toFixed(1)}/s` : '',
     t.eta_s ? `<span class="t-amber">ETA ${fmtTime(t.eta_s)}</span>` : '',
   ].filter(Boolean).join(' · ');
@@ -226,7 +226,7 @@ function _enrichRowHtml(t) {
   const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
   const current = t.logs && t.logs.length ? t.logs[t.logs.length - 1].msg : '';
   return `<div class="mb-8" data-enrich-cat="${escAttr(t.category)}">
-        <div class="row fs-12 js-count-line"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString()} / ${(t.total || 0).toLocaleString()}${rate}${eta}</span></div>
+        <div class="row fs-12 js-count-line"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString(loc())} / ${(t.total || 0).toLocaleString(loc())}${rate}${eta}</span></div>
         <div class="mt-4 progress-bar"><div class="progress-fill" data-style="width:${pct}%"></div></div>
         <div class="ellipsis fs-10 t3 mono mt-4 js-current"${current ? '' : ' hidden'} title="${escAttr(current)}">${esc(current)}</div>
       </div>`;

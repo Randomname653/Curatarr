@@ -8,7 +8,7 @@
 // is short. The bento stays behind it as "Explore".
 //
 // Charts are SVG with attributes and classes only (style-src is 'self').
-import { _posterImg, act, countTo, esc, haptic } from './ui.js';
+import { _posterImg, act, countTo, esc, haptic, loc } from './ui.js';
 
 // How long a slide stays: long enough to read it. A fixed 7 s cut the
 // curator's longer slides off mid-sentence (2026-10-25). About three words a
@@ -27,7 +27,7 @@ const _wasHold = () => Date.now() - st.downAt > HOLD_MS && st.downAt > 0;
 
 const _s = v => esc(String(v ?? ''));
 const _pct = v => Math.round(100 * (v || 0));
-const _fmt = n => (Math.round((n || 0) * 10) / 10).toLocaleString();
+const _fmt = n => (Math.round((n || 0) * 10) / 10).toLocaleString(loc());
 
 // ── charts ──────────────────────────────────────────────────────────────────
 /** GitHub-style grid of the period (the last 365 days of a longer one): a
@@ -129,7 +129,7 @@ function build(d) {
   if (t.hours) {
     const days = t.hours / 24;
     out.push({cls: 'open', share: `${_fmt(t.hours)} hours — ${f.period?.label || ''}`,
-      html: `<div class="wus-eyebrow">${period}</div><div class="wus-big"><span class="wus-n" data-count="${Math.round(t.hours)}">${Math.round(t.hours).toLocaleString()}</span><span class="wus-unit">hours</span></div>
+      html: `<div class="wus-eyebrow">${period}</div><div class="wus-big"><span class="wus-n" data-count="${Math.round(t.hours)}">${Math.round(t.hours).toLocaleString(loc())}</span><span class="wus-unit">hours</span></div>
         <p class="wus-text">${days >= 1 ? `That is ${_fmt(days)} full days. ` : ''}${_s(t.plays)} plays on ${_s(t.active_days)} days.</p>`});
   }
   const top = f.top || [];

@@ -2,7 +2,7 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, setStatus, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, loc, setStatus, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 export async function recomputeTaste(statusId = null) {
@@ -56,7 +56,7 @@ export function _renderHistoryStats(s) {
     <div class="stat-row">
       <div class="stat-box"><div class="num" data-count>${esc(shown)}</div><div class="lbl">Entries synced</div></div>
       <div class="stat-box">
-        <div class="num ${coverageOk ? 't-amber' : 't-danger'}">${tv.watch_count?.toLocaleString()||0}</div>
+        <div class="num ${coverageOk ? 't-amber' : 't-danger'}">${tv.watch_count?.toLocaleString(loc())||0}</div>
         <div class="lbl">In taste profile ${coverageOk?'':'<span class="t-amber">— outdated</span>'}</div>
       </div>
       <div class="stat-box"><div class="fs-16 num">${tv.computed?'Ready':'Pending'}</div><div class="lbl">Profile status</div></div>
@@ -124,7 +124,7 @@ export function showTasteTabData(byType, summary, type) {
         ${cb.dropped?`<span><strong class="t-danger">${cb.dropped}</strong> <span class="fs-12 t2">dropped &lt;40%</span></span>`:''}
         ${cb.nearly_done?`<span><strong class="t-info">${cb.nearly_done}</strong> <span class="fs-12 t2">&gt;80% done</span></span>`:''}
       </div>`
-    : `<div class="mb-12"><span class="fs-22 fw-700 t-amber">${d.watch_count?.toLocaleString()||0}</span><span class="fs-12 t2 ml-6">items</span></div>`;
+    : `<div class="mb-12"><span class="fs-22 fw-700 t-amber">${d.watch_count?.toLocaleString(loc())||0}</span><span class="fs-12 t2 ml-6">items</span></div>`;
   document.getElementById('taste-content').innerHTML=`
     <div class="mb-16 card">
       ${compRow}

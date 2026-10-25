@@ -1,6 +1,6 @@
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
 // Two questions, two result areas — the second answer no longer overwrites the first.
-import { CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
+import { CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
@@ -13,12 +13,12 @@ export async function loadMappingStats(btn) {
     const s = await api('/api/enrichment/mapping-stats');
     el.innerHTML = `
       <div class="gap-16 row mt-4">
-        <span><b class="t-amber">${(s.total_entries || 0).toLocaleString()}</b> <span class="t2">total entries</span></span>
-        <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString()}</b> <span class="t2">TVDB mapped</span></span>
-        <span><b>${(s.anilist_resolved || 0).toLocaleString()}</b> <span class="t2">AniList resolved</span></span>
-        <span><b class="t-danger">${(s.anilist_missing || 0).toLocaleString()}</b> <span class="t2">AniList pending</span></span>
+        <span><b class="t-amber">${(s.total_entries || 0).toLocaleString(loc())}</b> <span class="t2">total entries</span></span>
+        <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString(loc())}</b> <span class="t2">TVDB mapped</span></span>
+        <span><b>${(s.anilist_resolved || 0).toLocaleString(loc())}</b> <span class="t2">AniList resolved</span></span>
+        <span><b class="t-danger">${(s.anilist_missing || 0).toLocaleString(loc())}</b> <span class="t2">AniList pending</span></span>
       </div>
-      <div class="fs-11 t3 mt-4">Downloaded: ${s.downloaded_at ? esc(new Date(s.downloaded_at).toLocaleString()) : 'never'} · refreshes weekly</div>`;
+      <div class="fs-11 t3 mt-4">Downloaded: ${s.downloaded_at ? esc(new Date(s.downloaded_at).toLocaleString(loc())) : 'never'} · refreshes weekly</div>`;
   } catch (e) { el.innerHTML = _errHtml(e); }
   btnDone(btn);
 }
@@ -64,7 +64,7 @@ export async function loadProfiles(offset = 0) {
     const block = (label, html, mono) => html
       ? `<div class="mb-8"><div class="caps fs-10 t3">${label}</div><div class="lh-16 break-word ${mono ? 'fs-11 t3 mono' : 'fs-12 t2'} mt-4">${html}</div></div>` : '';
     el.innerHTML = `
-      <div class="fs-12 t3 mb-8">${r.total.toLocaleString()} enriched · showing ${offset + 1}–${Math.min(offset + PROFILE_PAGE, r.total)}</div>
+      <div class="fs-12 t3 mb-8">${r.total.toLocaleString(loc())} enriched · showing ${offset + 1}–${Math.min(offset + PROFILE_PAGE, r.total)}</div>
       ${r.profiles.map(p => `
         <details class="panel-item">
           <summary class="panel-item-head">
@@ -74,7 +74,7 @@ export async function loadProfiles(offset = 0) {
                 <span class="badge ${p.source?.includes('+llm') ? 'success' : p.source?.includes('rule_based') ? 'amber' : 'muted'} badge-sm">${esc(p.source || '?')}</span>
                 <span class="badge muted badge-sm">${esc(srcLabel(p))}</span>
                 ${p.rating ? `<span class="fs-11 t-amber">${SVG_STAR} ${p.rating}</span>` : ''}
-                <span class="fs-11 t3">${p.enriched_at ? new Date(p.enriched_at).toLocaleDateString() : '?'}</span>
+                <span class="fs-11 t3">${p.enriched_at ? new Date(p.enriched_at).toLocaleDateString(loc()) : '?'}</span>
               </div>
               ${p.genres?.length ? `<div class="gap-4 row mt-4">${p.genres.slice(0, 5).map(g => `<span class="badge muted badge-sm">${esc(g)}</span>`).join('')}</div>` : ''}
             </div>
@@ -147,7 +147,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const order = ['movie', 'show', 'anime', 'music'];
   // Every count is a door: click → the list behind it (same classification).
   const num = (v, cat, keys, tip, cls) => v
-    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" ${act('loadKbItems', cat, keys)}>${v.toLocaleString()}</button>`
+    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" ${act('loadKbItems', cat, keys)}>${v.toLocaleString(loc())}</button>`
     : `<span class="t3" title="${escAttr(tip)}">0</span>`;
   // One card per library: how far enrichment got (a meter over the one
   // denominator, downloaded arr items), the states still open as chips —
@@ -167,28 +167,28 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
       return v ? `<span class="kb-chip">${label} ${num(v, cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</span>` : '';
     }).join('');
     const waits = [];
-    if (op.due_now) waits.push(`${op.due_now.toLocaleString()} due next run`);
-    if (op.waiting) waits.push(`${op.waiting.toLocaleString()} on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
+    if (op.due_now) waits.push(`${op.due_now.toLocaleString(loc())} due next run`);
+    if (op.waiting) waits.push(`${op.waiting.toLocaleString(loc())} on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
     const attnLink = op.needs_attention
-      ? `<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${op.needs_attention.toLocaleString()} need attention</button>` : '';
+      ? `<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${op.needs_attention.toLocaleString(loc())} need attention</button>` : '';
     return `<article class="kb-lib${pct >= 95 ? ' is-done' : ''}">
       <div class="kb-lib-head"><h4>${esc(CAT_LABELS[cat] || cat)}</h4>
-        <span class="fs-12 t3">${dl.toLocaleString()} of ${d.arr_total.toLocaleString()} downloaded</span></div>
+        <span class="fs-12 t3">${dl.toLocaleString(loc())} of ${d.arr_total.toLocaleString(loc())} downloaded</span></div>
       <div class="kb-lib-pct"><b>${pct}%</b><span>enriched · ${num(done, cat, 'enriched,enriched_provisional', defs.enriched)}</span></div>
       <progress class="kb-meter" max="100" value="${pct}" aria-label="${escAttr(`${CAT_LABELS[cat] || cat}: ${pct}% enriched`)}"></progress>
       ${chips ? `<div class="kb-chips">${chips}</div>` : '<div class="kb-chips"><span class="fs-12 t3">Nothing open.</span></div>'}
       ${waits.length || attnLink ? `<div class="kb-lib-wait">${waits.join(' · ')}${waits.length && attnLink ? ' · ' : ''}${attnLink}</div>` : ''}
       <div class="kb-lib-foot">
-        <span title="Items with at least one vector-store entry (deduplicated by item identity)">Vectors <b>${c.vectors.indexed.toLocaleString()}</b></span>
-        <span title="Live raw cache entries carrying Wikipedia significance">Wikipedia <b>${c.wikipedia.significance_cached.toLocaleString()}</b></span>
-        <span title="Live raw cache entries with OMDb data (writer / awards / extended plot)">OMDb <b>${c.omdb.covered.toLocaleString()}</b></span>
+        <span title="Items with at least one vector-store entry (deduplicated by item identity)">Vectors <b>${c.vectors.indexed.toLocaleString(loc())}</b></span>
+        <span title="Live raw cache entries carrying Wikipedia significance">Wikipedia <b>${c.wikipedia.significance_cached.toLocaleString(loc())}</b></span>
+        <span title="Live raw cache entries with OMDb data (writer / awards / extended plot)">OMDb <b>${c.omdb.covered.toLocaleString(loc())}</b></span>
       </div>
     </article>`;
   }).join('');
 
   const wh = o.watch_history_only || {};
   const whRows = order.filter(c => wh[c]).map(c =>
-    `<tr><td class="cell-primary">${esc(CAT_LABELS[c] || c)}</td><td class="t-right">${wh[c].rows.toLocaleString()}</td><td class="t-right">${wh[c].enriched.toLocaleString()}</td><td class="t-right t3">${(wh[c].not_found || 0).toLocaleString()}</td></tr>`).join('');
+    `<tr><td class="cell-primary">${esc(CAT_LABELS[c] || c)}</td><td class="t-right">${wh[c].rows.toLocaleString(loc())}</td><td class="t-right">${wh[c].enriched.toLocaleString(loc())}</td><td class="t-right t3">${(wh[c].not_found || 0).toLocaleString(loc())}</td></tr>`).join('');
   const st = o.storage || {};
 
   const mb = v => (v || 0) >= 1024 ? `${((v || 0) / 1024).toFixed(1)} GB` : `${Math.round(v || 0)} MB`;
@@ -224,12 +224,12 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
 
   // The Spotify phases live on the Music-pipeline tab, fed by the same payload.
   const mp = o.music_pipeline || {};
-  const phase = (label, pp, def) => pp ? `<tr><td class="cell-primary" title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString()} / ${pp.of.toLocaleString()}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+  const phase = (label, pp, def) => pp ? `<tr><td class="cell-primary" title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString(loc())} / ${pp.of.toLocaleString(loc())}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
   // A queue that never empties used to read as a stuck bar. MusicBrainz
   // simply does not know every artist a Spotify export carries, and those
   // names are parked with a growing backoff rather than re-queried nightly.
   const _parkedNote = (p) => (p && p.waiting)
-    ? `<p class="fs-12 t3 mt-8">${p.waiting.toLocaleString()} artist name${p.waiting === 1 ? '' : 's'} parked — MusicBrainz had no match, so they wait instead of being queried again every night${p.next_retry_at ? `. Next one is due back ${_fmtRel(p.next_retry_at)}` : ''}.</p>`
+    ? `<p class="fs-12 t3 mt-8">${p.waiting.toLocaleString(loc())} artist name${p.waiting === 1 ? '' : 's'} parked — MusicBrainz had no match, so they wait instead of being queried again every night${p.next_retry_at ? `. Next one is due back ${_fmtRel(p.next_retry_at)}` : ''}.</p>`
     : '';
   const mpEl = document.getElementById('music-phases');
   if (mpEl) mpEl.innerHTML = `<section class="section">
@@ -246,9 +246,9 @@ export async function loadCacheInventory(btn) {
   try {
     const r = await api('/api/enrichment/cache-inventory');
     const rows = r.classes.map(c =>
-      `<tr><td class="cell-primary">${esc(c.name)}</td><td class="t-right">${c.rows.toLocaleString()}</td>
-       <td class="t-right">${c.live.toLocaleString()}</td>
-       <td class="t-right t3">${c.expired.toLocaleString()}</td>
+      `<tr><td class="cell-primary">${esc(c.name)}</td><td class="t-right">${c.rows.toLocaleString(loc())}</td>
+       <td class="t-right">${c.live.toLocaleString(loc())}</td>
+       <td class="t-right t3">${c.expired.toLocaleString(loc())}</td>
        <td class="t-right">${c.mb}</td></tr>`).join('');
     const cov = r.coverage;
     document.getElementById('cache-inventory').innerHTML = `
@@ -259,10 +259,10 @@ export async function loadCacheInventory(btn) {
           <th class="t-right">MB</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       <p class="fs-11 t3 mt-6">
-        Raw-layer coverage: Wikipedia significance ${cov.significance_text.toLocaleString()} with text / ${cov.significance_checked.toLocaleString()} checked ·
-        OMDb writer ${cov.omdb_writer.toLocaleString()} · awards ${cov.omdb_awards.toLocaleString()} ·
-        reception ${cov.reception_checked.toLocaleString()} — of ${cov.raw_total.toLocaleString()} raw entries.
-        Total ${r.totals.rows.toLocaleString()} rows · ${r.totals.mb} MB (${r.totals.expired.toLocaleString()} stale).</p>`;
+        Raw-layer coverage: Wikipedia significance ${cov.significance_text.toLocaleString(loc())} with text / ${cov.significance_checked.toLocaleString(loc())} checked ·
+        OMDb writer ${cov.omdb_writer.toLocaleString(loc())} · awards ${cov.omdb_awards.toLocaleString(loc())} ·
+        reception ${cov.reception_checked.toLocaleString(loc())} — of ${cov.raw_total.toLocaleString(loc())} raw entries.
+        Total ${r.totals.rows.toLocaleString(loc())} rows · ${r.totals.mb} MB (${r.totals.expired.toLocaleString(loc())} stale).</p>`;
     if (btn) btn.remove();   // a permanent button for a finished job is clutter
   } catch (e) {
     btnDone(btn, 'Cache inventory (failed — retry)');
@@ -337,7 +337,7 @@ export function _updateKbBadge(o) {
 export function _fmtDate(iso) {
   if (!iso) return '';
   const d = new Date(/Z$|[+-]\d\d:\d\d$/.test(iso) ? iso : iso + 'Z');
-  return isNaN(d) ? '' : d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
+  return isNaN(d) ? '' : d.toLocaleDateString(loc(), {day: 'numeric', month: 'short'});
 }
 
 export function _kbSourceChips(sources) {
@@ -419,7 +419,7 @@ export async function loadKbItems(cat, states, offset = 0) {
     const defs = Object.values(r.definitions || {});
     el.innerHTML = `<section class="section">
       <div class="section-head">
-        <h3>${esc(CAT_LABELS[cat] || cat)} · ${esc(defs.map(d => d.label).join(' / '))} <span class="badge muted badge-sm">${r.total.toLocaleString()}</span></h3>
+        <h3>${esc(CAT_LABELS[cat] || cat)} · ${esc(defs.map(d => d.label).join(' / '))} <span class="badge muted badge-sm">${r.total.toLocaleString(loc())}</span></h3>
         <span class="section-hint">${esc(defs.map(d => `${d.explainer} ${d.next_step || ''}`).join(' '))}</span>
         <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('closeKbDrilldown')}>Close</button></div>
       </div>
@@ -450,7 +450,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
     const r = await api(`/api/enrichment/unmatched?${q.toString()}`);
     el.dataset.loaded = '1';
     const defs = r.reason_definitions || {};
-    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" ${act('loadKbAttention', 0, key || null)} title="${escAttr(defs[key]?.explainer || 'Everything that needs a human')}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString()}</span></button>`;
+    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" ${act('loadKbAttention', 0, key || null)} title="${escAttr(defs[key]?.explainer || 'Everything that needs a human')}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString(loc())}</span></button>`;
     const chips = [chip('', 'All', r.total_all ?? r.total)]
       .concat(Object.entries(r.by_reason || {}).map(([k, n]) => chip(k, defs[k]?.label || k, n))).join('');
     const badgesFor = it => (it.reasons || []).map(k => `<span class="badge amber badge-sm" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}</span>`).join('');
@@ -459,7 +459,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
     const empty = reason ? emptyHtml('Nothing in this group.') : emptyHtml('Nothing needs a human right now.', null, null, {good: true});
     el.innerHTML = `<section class="section">
       <div class="section-head">
-        <h3>Needs attention <span class="badge amber badge-sm">${r.total.toLocaleString()}</span></h3>
+        <h3>Needs attention <span class="badge amber badge-sm">${r.total.toLocaleString(loc())}</span></h3>
         <span class="section-hint">${reason ? esc(defs[reason]?.label || reason) : 'the items the pipeline cannot settle alone'}</span>
       </div>
       <div class="section-body">
@@ -524,7 +524,7 @@ export function _renderCustodianBar(c) {
   // "stays awake" only where the server can keep its machine awake (Windows);
   // a container has nothing to keep awake.
   const awake = c.sprint && c.sprint.awake ? ', this machine stays awake' : '';
-  if (sprint) line = `Keep working until ${sprint.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}${awake} · ${line}`;
+  if (sprint) line = `Keep working until ${sprint.toLocaleTimeString(loc(), {hour: '2-digit', minute: '2-digit'})}${awake} · ${line}`;
   const sprintCtl = sprint
     ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopSprint', EL)} title="Back to the 30-minute rhythm">Stop</button>`
     : `<select id="sprint-hours" class="input w-70" aria-label="How long to keep working">${[2, 4, 6, 8, 10, 12].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h} h</option>`).join('')}</select>
@@ -567,7 +567,7 @@ export async function loadBackfillPanel() {
       <div class="panel-item-sub">${esc(s.blurb)}</div>
       <div class="panel-item-foot">
         <div class="mt-0 progress-bar"><div class="progress-fill" data-style="width:${Number(s.pct) || 0}%"></div></div>
-        <div class="fs-11 t3 mt-4">${s.pct}% · ${s.missing.toLocaleString()} to go</div>
+        <div class="fs-11 t3 mt-4">${s.pct}% · ${s.missing.toLocaleString(loc())} to go</div>
       </div>
     </div>`).join('');
   el.innerHTML = `<section class="section">

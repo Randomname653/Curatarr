@@ -1,7 +1,7 @@
 // ── NOTIFICATION CENTER (bell: proactive messages + system notifications) ────
 import { api } from './api.js';
 import { state } from './state.js';
-import { EL, _errHtml, act, esc, escAttr, setBadge } from './ui.js';
+import { EL, _errHtml, act, esc, escAttr, loc, setBadge } from './ui.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 // seen === true only when the panel is open and the message is on screen —
 // the 60 s badge poll must not count as an impression, or every message
@@ -79,7 +79,7 @@ export async function loadUnreadMessages(seen) {
         <div class="mi-text">${esc(m.message)}</div>
         <div class="inline-flex gap-6 mt-8">
           <span class="mi-badge">${esc(m.trigger_type.replace('_',' '))}</span>
-          <span class="mi-time">${new Date(m.created_at).toLocaleString()}</span>
+          <span class="mi-time">${new Date(m.created_at).toLocaleString(loc())}</span>
         </div>
         <div class="flex gap-8 mt-10">
           <button class="flex-1 btn btn-primary btn-sm" ${act('respondToMessage', m.id, m.message, m.trigger_type)}>Respond</button>

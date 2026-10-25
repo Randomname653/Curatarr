@@ -1,6 +1,6 @@
 // ── MUSIC PIPELINE ────────────────────────────────────────────────────────────
 import { api } from './api.js';
-import { CAT_LABELS, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, toast } from './ui.js';
+import { CAT_LABELS, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, loc, toast } from './ui.js';
 import { loadEnrichStatus } from './kb.js';
 import { showView } from './nav.js';
 let _musicPollTimer = null;
@@ -26,7 +26,7 @@ export function _renderMusicStatus(s) {
     `<b>${stats.source_spotify ?? '—'}</b> from Spotify`,
     `<b>${stats.unmatched_spotify ?? '—'}</b> unmatched`,
     `<b>${stats.missing_genres ?? '—'}</b> missing genres`,
-    s.last_run ? `last run ${new Date(s.last_run).toLocaleString()}` : 'never run',
+    s.last_run ? `last run ${new Date(s.last_run).toLocaleString(loc())}` : 'never run',
   ].join(' · ');
   // Lyrics from Plex: the SoulSync sidecars on file and the artists profiled from them.
   const ly = s.lyrics;
@@ -34,11 +34,11 @@ export function _renderMusicStatus(s) {
   if (lyEl) {
     lyEl.hidden = !ly || !ly.tracks;
     if (ly && ly.tracks) {
-      lyEl.textContent = `Lyrics: ${ly.with_text.toLocaleString()} of ${ly.tracks.toLocaleString()} tracks on file`
-        + ` · ${ly.profiles.toLocaleString()} of ${ly.artists_with_text.toLocaleString()} artists profiled`
+      lyEl.textContent = `Lyrics: ${ly.with_text.toLocaleString(loc())} of ${ly.tracks.toLocaleString(loc())} tracks on file`
+        + ` · ${ly.profiles.toLocaleString(loc())} of ${ly.artists_with_text.toLocaleString(loc())} artists profiled`
         + (ly.explicit_artists ? ` · ${ly.explicit_artists} explicit` : '')
         + (ly.unreachable ? ` · ${ly.unreachable} sidecars Plex cannot serve yet` : '')
-        + (ly.last_run ? ` · collected ${new Date(ly.last_run + 'Z').toLocaleString()}` : '');
+        + (ly.last_run ? ` · collected ${new Date(ly.last_run + 'Z').toLocaleString(loc())}` : '');
     }
   }
 

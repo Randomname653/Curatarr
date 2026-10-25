@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
-import { EL, _errHtml, _errMsg, _posterImg, act, btnBusy, btnDone, countTo, esc, haptic, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
 import { playStory } from './wrapup_story.js';
 
 const WU_KEY = 'curatarr_wrapup';
@@ -198,7 +198,7 @@ function _tile(cls, label, body, share) {
     <button type="button" class="wu-tile-share" aria-label="Share ${esc(label)}" ${act('shareWrapupTile', i)}>
       <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button></div>${body}</article>`;
 }
-const _num = (n, unit = '') => `<span class="wu-num" data-count="${Math.round(n || 0)}">${Math.round(n || 0).toLocaleString()}</span>${unit ? `<span class="wu-unit">${esc(unit)}</span>` : ''}`;
+const _num = (n, unit = '') => `<span class="wu-num" data-count="${Math.round(n || 0)}">${Math.round(n || 0).toLocaleString(loc())}</span>${unit ? `<span class="wu-unit">${esc(unit)}</span>` : ''}`;
 
 function _posterTile(f, x, extra) {
   const m = _isMusic(x.media_type);
