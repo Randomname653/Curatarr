@@ -430,6 +430,19 @@ async def _run_artist_tags(deep: bool = False, task=None) -> bool:
     return await run_artist_tags(task=task)
 
 
+async def _run_nanogenres(deep: bool = False, task=None) -> bool:
+    """Titles clustered into nanogenres, built once, new titles assigned
+    daily (services/nanogenres). No model."""
+    from src.services.nanogenres import run_nanogenres
+    return await run_nanogenres(task=task)
+
+
+async def _run_nanogenre_names(deep: bool = False, task=None) -> bool:
+    """The summarizer names the nanogenres, a budget a run."""
+    from src.services.nanogenres import run_nanogenre_names
+    return await run_nanogenre_names(task=task)
+
+
 async def _run_taste_snapshots(deep: bool = False, task=None) -> bool:
     """Each month's taste as a stored mean of its item vectors
     (services/taste_snapshots). Chroma reads, no model."""
@@ -850,6 +863,10 @@ def _registry() -> list[Task]:
         # midnight") and the moods of every artist. Plex only, no model.
         Task("plex_players", "Players of the Plex plays", 24.0, _run_plex_players, takes_task=True),
         Task("artist_tags", "Artist moods and styles", 24.0, _run_artist_tags, takes_task=True),
+        # The Wrap-Up's taste river: nanogenres of titles, then their names.
+        Task("nanogenres", "Nanogenres", 24.0, _run_nanogenres, takes_task=True),
+        Task("nanogenre_names", "Nanogenre names", 24.0, _run_nanogenre_names,
+             needs_llm=True, llm_role="summarizer", takes_task=True, after=("nanogenres",)),
         # GB in for the wrap-up's balance: Plex's addedAt moves with every
         # replaced file and re-added library, the arrs' history does not.
         Task("arr_ledger", "Library arrivals from the arr history", 6.0, _run_arr_ledger,

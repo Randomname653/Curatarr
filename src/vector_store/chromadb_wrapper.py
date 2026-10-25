@@ -426,6 +426,16 @@ class ChromaDBWrapper:
             logger.warning("[chroma] facets_replace(%s) failed: %s", parent_id, e)
             return False
 
+    def facets_page(self, offset: int, limit: int, embeddings: bool = True) -> Dict:
+        """One page of the facet points (ids, documents, metadatas and, when
+        asked, embeddings) for a whole-index walk (services/nanogenres)."""
+        include = ["documents", "metadatas"] + (["embeddings"] if embeddings else [])
+        return self._facets_collection().get(limit=limit, offset=offset, include=include)
+
+    def facets_by_ids(self, ids: List[str]) -> Dict:
+        """These facet points with their embeddings."""
+        return self._facets_collection().get(ids=list(ids), include=["documents", "metadatas", "embeddings"])
+
     def facets_delete_by_parent(self, parent_id: str) -> bool:
         """Drop every facet of one title (a title whose themes vanished, or
         whose re-embed failed: stale points must not outlive the data)."""

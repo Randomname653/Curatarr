@@ -60,7 +60,7 @@ _ELIGIBLE_HOURS = 3
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
 # 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
 # 6: hours per day for the story mode's heatmap.
-FACTS_VERSION = 8
+FACTS_VERSION = 9
 
 
 @dataclass(frozen=True)
@@ -294,6 +294,7 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)
         out["court"] = _sections.court_record(db, user_id, period, scope)
         out["time_to_watch"] = _sections.time_to_watch(db, W, user_id, period, types)
+        out["nanogenres"] = _sections.nanogenres(db, W, user_id, period, types)
         if is_admin:
             # the server is the owner's to fill and to prune
             out["velocity"] = _sections.library_velocity(db, period, types)

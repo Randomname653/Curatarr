@@ -12,7 +12,9 @@ section is then left out.
 * ``time_to_watch`` — how long the period's new titles waited on the
   server before the first play (LibraryItem.added_at);
 * ``auteurs`` — the director, studio and actor with the most of the period's
-  hours (services/credits_index).
+  hours (services/credits_index);
+* ``nanogenres`` — the period's hours per named nanogenre, and the ones new to
+  the user (services/nanogenres).
 """
 import statistics
 from collections import Counter, defaultdict
@@ -194,3 +196,61 @@ def auteurs(db, titles: list) -> dict:
     out = {k: best(people[k]) for k in ("director", "actor")}
     out["studio"] = best(studios)
     return {k: v for k, v in out.items() if v}
+
+
+# ── nanogenres ───────────────────────────────────────────────────────────────
+
+_NANO_TOP = 6
+_NANO_MIN_SHARE = 0.25     # under this share of the hours mapped, say nothing
+
+
+def nanogenres(db, W, user_id: int, period, types: list) -> dict:
+    """The period's played hours per named nanogenre (a title's nanogenre by
+    its title and group), the biggest first, and the ones the user had never
+    played before the period."""
+    from sqlalchemy import func
+    from src.database.models import Nanogenre as N, TitleNanogenre as T
+    from src.services.nanogenres import group_of
+    from src.services.wrapup_facts import a_play, played_ms_sql
+    ms = played_ms_sql(W)
+    key = func.coalesce(W.series_title, W.title)
+    played = [(k, mt, float(v or 0)) for k, mt, v in db.query(key, W.media_type, func.sum(ms)).filter(
+        W.user_id == user_id, W.media_type.in_(types), a_play(W), *_in(W.viewed_at, period))
+        .group_by(key, W.media_type) if k and v]
+    total = sum(v for _, _, v in played)
+    if not played or not total:
+        return {}
+    names = sorted({k for k, _, _ in played})
+    genre_of: dict = {}            # (title, group) -> (nanogenre id, name)
+    for i in range(0, len(names), 500):
+        for t, d, nid, name in (db.query(T.title, T.domain, N.id, N.name)
+                                .join(N, N.id == T.nanogenre_id)
+                                .filter(T.title.in_(names[i:i + 500]), N.name.isnot(None))):
+            genre_of.setdefault((t, group_of(d)), (nid, name))
+    hours: dict = defaultdict(float)
+    titles: dict = defaultdict(Counter)
+    for k, mt, v in played:
+        g = genre_of.get((k, group_of(mt)))
+        if g:
+            hours[g] += v
+            titles[g][k] += v
+    mapped = sum(hours.values())
+    if not hours or mapped < _NANO_MIN_SHARE * total:
+        return {}
+    before: set = set()
+    if period.key != "all":
+        for i in range(0, len(names), 500):
+            for (k,) in db.query(key).filter(W.user_id == user_id, W.media_type.in_(types),
+                                             W.viewed_at < period.start,
+                                             key.in_(names[i:i + 500])).distinct():
+                before.add(k)
+    new = [g for g in hours if not any(t in before for t in titles[g])]
+    top = sorted(hours, key=hours.get, reverse=True)
+    return {
+        "top": [{"name": g[1], "hours": round(hours[g] / 3_600_000, 1),
+                 "share": round(hours[g] / mapped, 3),
+                 "titles": [t for t, _ in titles[g].most_common(3)]} for g in top[:_NANO_TOP]],
+        "new_to_you": [g[1] for g in sorted(new, key=hours.get, reverse=True)[:3]] if period.key != "all" else [],
+        "count": len(hours),
+        "coverage": round(mapped / total, 3),
+    }
