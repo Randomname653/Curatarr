@@ -57,67 +57,81 @@ tidy on its own.
 Nothing is sent to a hosted LLM. Nothing about your library leaves the
 machine except the metadata lookups the enrichment pipeline needs.
 
-## Preview
+## A look around
 
-![The curator answering a question about a show in the library](docs/screenshots/chat.png)
+*The screenshots show a demo household on a real library: Jane Doe, the
+fictional owner from [CURATOR_EXAMPLES.md](docs/CURATOR_EXAMPLES.md) (slow-burn
+horror, sharp satire, little patience for long sitcoms), and Sam, who lives
+with her and watches The Big Bang Theory. Their 2026 is invented; the titles,
+the metadata and every word the curator wrote are real output.*
 
-*Ask about anything you own. The answer is built from your real viewing
-record — 40 episodes, scattered across two seasons, then abandoned for
-eight months — and from verified facts, not from what a model
-half-remembers about a title.*
+### Wrap-Up
 
-![The Knowledge Base view: enrichment coverage per library](docs/screenshots/knowledge-base.png)
+![Wrap-Up: Jane's 2026 as "The Nocturnal Scout", a hero archetype over a bento grid of earned tiles](docs/screenshots/desktop/wrapup.png)
 
-*Enrichment coverage per library, what each metadata source has filled
-in, the walkers still working through the backlog, and what the whole
-thing costs on disk.*
+*Every household member's own period in review: the last 30 days, six
+months, a year or all time. Every number is computed from the play record
+before the curator writes a word; the archetype, the chapters, the roast and
+the toast are its reading of them.*
 
 <p align="center">
-  <img src="docs/screenshots/bell.png" width="330" alt="Notifications: learned curation principles awaiting review, and a proactive curator message">
+  <img src="docs/screenshots/mobile/story-clock.png" width="200" alt="Story: the hours round the clock, most at 23:00, busiest on Saturdays">
+  <img src="docs/screenshots/mobile/story-river.png" width="200" alt="Story: how the taste moved, nanogenre hours month by month">
+  <img src="docs/screenshots/mobile/story-consensus.png" width="200" alt="Story: your hours against the community's score">
+  <img src="docs/screenshots/mobile/story-pair.png" width="200" alt="Story: a roast and a toast">
 </p>
 
-*Curatarr infers curation principles from the arguments you make with it
-and puts them up for your approval before they influence any verdict —
-and it speaks up when it notices a pattern worth asking about.*
+*On a phone it plays as a story: the hours round the clock, how the taste
+moved month by month, your hours against the community's score, and a roast
+and a toast.*
 
-<!-- SCREENSHOTS OF THE CURRENT UI. The three images above predate the
-     glass redesign and the Wrap-Up. Run scripts/capture_screenshots.py
-     against a configured instance (docs/screenshots/README.md), check every
-     frame, then uncomment this block and delete the three legacy images
-     and their captions above.
+### Ask about anything you own
 
-### On the desktop
+![Chat: asked about The Big Bang Theory, the curator answers that Jane stopped after three episodes, but Sam has watched 135, so it stays](docs/screenshots/desktop/chat.png)
 
-![Wrap-Up: a member's last 30 days as a hero archetype and a bento grid of earned tiles](docs/screenshots/desktop/wrapup.png)
+*The answer is built from the viewing record and verified facts, not from
+what a model half-remembers. Jane gave up after three episodes; Sam has
+watched 135. The household outranks the owner's taste, so the title stays.*
 
-*Wrap-Up: every household member's own period in review. Every number is
-computed from the play record before the curator writes a word about it.*
+### Deletion proposals that argue their case
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/desktop/deletions.png" alt="Deletion proposals: poster cards with a tinted glow, each with its verdict and the case for it"></td>
-    <td width="50%"><img src="docs/screenshots/desktop/chat.png" alt="Chat: the curator answering from the viewing record, with the composer floating as a glass bar"></td>
-  </tr>
-  <tr>
-    <td><em>Deletion proposals argue their case, and every one can be discussed.</em></td>
-    <td><em>Chat answers from your viewing record and verified facts.</em></td>
-  </tr>
-</table>
+![Deletions: proposal cards with their verdict, the case for it and a Why? line](docs/screenshots/desktop/deletions.png)
+
+*A four-pillar judge rules on every candidate from verified evidence and
+writes the case. Keep, discuss or delete: nothing is deleted until you
+approve it.*
 
 ### On a phone
 
 <p align="center">
   <img src="docs/screenshots/mobile/chat.png" width="200" alt="Phone: chat above the floating glass tab bar">
-  <img src="docs/screenshots/mobile/wrapup.png" width="200" alt="Phone: the Wrap-Up bento in two columns">
-  <img src="docs/screenshots/mobile/deletions.png" width="200" alt="Phone: deletion proposals as a card stack">
-  <img src="docs/screenshots/mobile/bottom-sheet.png" width="200" alt="Phone: a dialog as a bottom sheet with a grab handle">
+  <img src="docs/screenshots/mobile/swipe.png" width="200" alt="Phone: Swipe, rating one title at a time">
+  <img src="docs/screenshots/mobile/deletions.png" width="200" alt="Phone: deletion proposals as cards">
+  <img src="docs/screenshots/mobile/bottom-sheet.png" width="200" alt="Phone: a dialog as a bottom sheet">
 </p>
 
-*Installable as an app: a floating tab bar in thumb reach, tables become
-cards, and dialogs become sheets you drag down to close.*
--->
+*Installable as an app: a floating tab bar in thumb reach, Swipe for rating
+titles one at a time, cards instead of tables, and dialogs as sheets you
+drag down to close.*
+
+<details>
+<summary>More: recommendations, the Knowledge Base, history as cards</summary>
+
+![Recommendations: picks from the library with a written pitch each](docs/screenshots/desktop/recommendations.png)
+
+![Knowledge Base: enrichment coverage per library and what it costs on disk](docs/screenshots/desktop/knowledge-base.png)
+
+<p align="center">
+  <img src="docs/screenshots/mobile/history-cards.png" width="200" alt="Phone: history and taste">
+  <img src="docs/screenshots/mobile/wrapup.png" width="200" alt="Phone: the Wrap-Up bento in two columns">
+  <img src="docs/screenshots/mobile/more-drawer.png" width="200" alt="Phone: the drawer behind More">
+</p>
+
+</details>
 
 ## Features
+
+### The curator
 
 - **Taste-aware recommendations** — from your own library or open-ended
   discovery, each with a written pitch explaining *why* it fits you.
@@ -132,7 +146,8 @@ cards, and dialogs become sheets you drag down to close.*
   library carries the full profile.
 - **A curator that learns** — tell it once that you value a franchise, a
   partner's favourite, or archival oddities, and that preference softly
-  protects similar titles in every future proposal.
+  protects similar titles in every future proposal. Principles it infers
+  from your arguments wait for your approval before they count.
 - **Grounded, never hallucinated** — judgments reason from cached facts
   (TMDB, OMDb, AniList, MusicBrainz, Last.fm, Wikipedia), not from the
   model's own memory of a title.
@@ -140,58 +155,84 @@ cards, and dialogs become sheets you drag down to close.*
   signals from the actual subtitle track (words per minute, share of the
   runtime without dialogue, lexical variety), so the judge has evidence
   about *execution*, not just metadata — and a law that sparse dialogue
-  is never thin writing. A discussion can pull the cleaned dialogue text
-  itself into the conversation.
+  is never thin writing.
+
+### The household
+
 - **Multi-user** — every play is attributed to its Plex account; each
   user gets their own taste vector, recommendations, playlists and chat.
+  What the household watches outranks the owner's taste in every keep or
+  cut.
 - **Wrap-Up for every member** — the last 30 days, six months, a year or
-  all time: played hours, the listening clock, binges, comfort rewatches,
-  genre drift and what curation freed. Every number is computed in code;
-  the curator then tells it as chapters, a roast and a toast.
-- **At home on a phone** — installable as an app, with a floating tab bar,
-  card layouts, bottom sheets and a Swipe view for rating titles one by
-  one. The desktop gets the same frosted-glass design.
+  all time: played hours, the clock, binges, comfort rewatches, nanogenres
+  and genre drift, and what curation freed. Every number is computed in
+  code; the curator then tells it as chapters, a roast and a toast, played
+  as a story on the phone. Comparing with the rest of the household is
+  opt-in.
+- **Spotify and Netflix history** — import a member's Spotify listening
+  and Netflix viewing; it counts like their Plex plays, matched onto the
+  library's titles.
+- **Swipe** — rate titles seen anywhere, one card at a time; the stars
+  join the taste vector, "want to watch" goes to the Plex watchlist.
 - **Writes back to Plex** — per-user "Curatarr Recommended" playlists
   (updated in place, not recreated) and rotating collection shelves.
 - **Proactive messages** — a new season for something you binged, a
   strong pick for tonight, a check-in after a long break.
-- **A data custodian instead of a button zoo** — ~30 maintenance tasks
+
+### Library care
+
+- **A data custodian instead of a button zoo** — ~45 maintenance tasks
   each carry a cadence and catch up whenever the machine is on. Every job
   reports live progress in the Activity view.
 - **Self-healing library knowledge** — the profile audit requeues stale
   entries, rebuilds orphaned documents from cache, re-resolves corrupt
-  id clusters, and refuses to mistake an unreachable service for a
-  deleted library. A **Fix match** action (in a proposal card's More menu,
-  or Search & pin in the Knowledge Base) permanently pins the right
-  identity when two same-named works collide.
+  id clusters and anime that resolved to another work, and refuses to
+  mistake an unreachable service for a deleted library. A **Fix match**
+  action (in a proposal card's More menu, or Search & pin in the Knowledge
+  Base) permanently pins the right identity when two same-named works
+  collide.
+
+### Your hardware
+
+- **Local models only** — every prompt runs on Ollama on your own
+  machines; nothing goes to a hosted LLM.
+- **A NAS that borrows the gaming PC** — run Curatarr around the clock in
+  a container, and let a second machine lend its GPU whenever it is on and
+  nobody is playing. Deletion verdicts wait for the big card; Settings
+  shows what each card is doing right now.
 - **Game mode** — when a game starts, the models are evicted from VRAM
   and only keyless API pre-fetching continues. The pipeline resumes by
   itself afterwards.
-- **A NAS that borrows the gaming PC** — run Curatarr around the clock in
-  a container, and let a second machine lend its GPU whenever it is on and
-  nobody is playing. Deletion verdicts wait for the big card.
+- **At home on a phone** — installable as an app, with a floating tab bar,
+  card layouts and bottom sheets. The desktop gets the same frosted-glass
+  design.
 
 ## How it works
 
-```
-   Plex ──history──▶┌──────────────────────────────────┐
-                    │            Curatarr              │
- *arr  ◀──manage───▶│                                  │
-                    │  enrich ▶ embed ▶ taste vector   │
-Metadata ──API────▶ │     │                    │       │
-  APIs              │     ▼                    ▼       │
-                    │  ChromaDB           recommend /  │
- Ollama ◀──prompts─▶│  + SQLite           judge / chat │
- (local)            └──────────────────────────────────┘
+```mermaid
+flowchart LR
+  plex["Plex<br/>plays per member"] --> sync
+  imports["Spotify / Netflix<br/>exports"] --> sync
+  arr["Radarr · Sonarr<br/>(Lidarr optional)"] <-->|"library · deletions"| core
+  apis["TMDB · OMDb · AniList<br/>MusicBrainz · Last.fm · Wikipedia"] --> enrich
+  subgraph core["Curatarr"]
+    sync["Sync"] --> taste["Taste vectors<br/>per member"]
+    enrich["Enrich"] --> embed["Embed<br/>ChromaDB"] --> taste
+    taste --> act["Recommend · Judge<br/>Chat · Wrap-Up"]
+  end
+  act <-->|prompts| ollama["Ollama<br/>this machine, or a PC that lends its card"]
+  act -->|"playlists · collections"| plex
 ```
 
-1. **Sync** — watch history is pulled from Plex and attributed per user.
+1. **Sync** — plays are pulled from Plex and attributed per member;
+   Spotify and Netflix exports join them.
 2. **Enrich** — each title is resolved against the metadata APIs and
    given an LLM-written profile, then embedded into ChromaDB.
 3. **Model taste** — profiles plus watch history plus your stated
    preferences become a per-user, per-category taste vector.
 4. **Act** — that vector drives recommendations, deletion candidates,
-   search ranking and the curator's side of every conversation.
+   search ranking, the Wrap-Up and the curator's side of every
+   conversation.
 
 The full technical reference — data model, pipeline internals, design
 decisions and the invariants learned the hard way — lives in

@@ -645,12 +645,21 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
    real 375px viewport, not just a resized desktop window) -- verify any
    further poster-card change at that width, not just in DevTools. */
 .poster-card { display: flex; align-items: flex-start; gap: 18px; }
+/* On a phone the card is a grid, not a row: a small poster beside the
+   title line, the actions on a line of their own under both, and the text
+   at full width. The 110px poster beside everything else squeezed the
+   pitch into a column of three words and stacked the buttons three high
+   (2026-10-25, the README capture at 390px). .grow and its head dissolve
+   (display: contents) so their children take the grid's places. */
 @media (max-width: 600px) {
-  .poster-card { flex-wrap: wrap; gap: 12px; }
-  .poster-card .glow-interactive { width: 110px !important; }
-  .poster-card .glow-interactive > *:first-child { width: 110px !important; height: 165px !important; }
-  .poster-card .glow-interactive.is-music > *:first-child { height: 110px !important; }
-  .poster-card-actions { flex-basis: 100%; flex-direction: row !important; justify-content: flex-end; flex-wrap: wrap; }
+  .poster-card { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px 12px; align-items: start; }
+  .poster-card > .grow, .poster-card > .grow > .panel-item-head { display: contents; }
+  .poster-card > .grow > *, .poster-card .panel-actions { grid-column: 1 / -1; min-width: 0; }
+  .poster-card > .grow > .panel-item-head > .panel-item-title { grid-column: 2; grid-row: 1; align-self: center; }
+  .poster-card .glow-interactive { grid-column: 1; grid-row: 1; width: 72px !important; }
+  .poster-card .glow-interactive > *:first-child { width: 72px !important; height: 108px !important; }
+  .poster-card .glow-interactive.is-music > *:first-child { height: 72px !important; }
+  .poster-card .panel-actions { margin-left: 0; }
 }
 .del-poster-check svg { filter: drop-shadow(0 1px 4px rgba(0,0,0,.7)); color: var(--text); }
 
