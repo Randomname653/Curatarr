@@ -184,6 +184,20 @@ def _series_dropped(stats: dict, now: datetime) -> bool:
             and all(_is_drop(e, now) for e in stats["partial"]))
 
 
+def _profile_keys(entries: list, canonical_keys: dict) -> list:
+    """The enrichment-cache keys _series_entries may ask about: every played
+    episode's (a Plex episode carries its series profile, aliased by the
+    enrichment), and each series' own canonical key. A play without the
+    alias - an import, a Netflix episode - is found by the canonical one;
+    looking up only the episode keys left such a series out of the taste."""
+    keys = {f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}" for e in entries}
+    for e in entries:
+        k = canonical_keys.get(e.get("series_title") or e.get("title"))
+        if k:
+            keys.add(f"enriched:{e.get('media_type') or 'movie'}:{k}")
+    return sorted(keys)
+
+
 def _series_entries(entries: list, now: datetime, canonical_keys: dict,
                     has_profile) -> list:
     """show/anime: ONE (weight, entry) per series, like the music path does
@@ -1102,7 +1116,7 @@ async def compute_taste_vector_for_user(
         return f"enriched:{e.get('media_type') or 'movie'}:{e.get('plex_item_id')}"
 
     if category in ("show", "anime"):
-        _live_rows = await asyncio.to_thread(_cache_many, [_enriched_key(e) for e in entries])
+        _live_rows = await asyncio.to_thread(_cache_many, _profile_keys(entries, series_key_by_title))
 
         def _has_profile(e: dict) -> bool:
             return _live_rows.get(_enriched_key(e)) is not None

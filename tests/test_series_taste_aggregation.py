@@ -257,5 +257,16 @@ check("row-level drop checks pass `now` (grace window)",
       "_is_drop(e)" not in src and "if _is_drop(e, now):" in src
       and src.count("if _is_drop(e, now):") == 2)
 
+# ── plays without the alias (an import, Netflix): the canonical key ─────────
+keys = te._profile_keys(
+    [{"media_type": "show", "plex_item_id": "netflix:abc", "series_title": "Dark", "title": "Lies"},
+     {"media_type": "show", "plex_item_id": "4711", "series_title": "Friends", "title": "Pilot"}],
+    {"Dark": "sonarr:3397"})
+check("the series' own key is looked up too, so a play without the alias still counts",
+      "enriched:show:sonarr:3397" in keys and "enriched:show:netflix:abc" in keys
+      and "enriched:show:4711" in keys)
+check("...and the rebuild asks for those keys",
+      "_cache_many, _profile_keys(entries, series_key_by_title)" in src)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
