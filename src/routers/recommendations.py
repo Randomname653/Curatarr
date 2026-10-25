@@ -151,7 +151,8 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
     all_recs = []
     for cat in cats:
         recs = await generate_recommendations(user_id=user.id, category=cat, limit=limit)
-        posters = await asyncio.gather(*[_fetch_tmdb(r.get("title", ""), cat) for r in recs])
+        posters = await asyncio.gather(*[fetch_rec_art(r.get("title", ""), cat, r.get("year"))
+                                         for r in recs])
         for rec, (poster, synopsis) in zip(recs, posters):
             rec["poster_url"] = poster
             rec["synopsis"] = synopsis
@@ -190,9 +191,35 @@ async def _run_cache_refresh(user_id: int):
 
 # ── POSTER / SYNOPSIS FETCHING ───────────────────────────────────────────────
 
+_YEAR_SUFFIX = re.compile(r"^(.*\S)\s*\((\d{4})\)\s*$")
+
+
+def poster_query(title: str, category: str) -> tuple:
+    """(search title, year) for a recommendation's title as the curator
+    wrote it. A discovery pick comes as "The Cycle (2026)" and an arr title
+    as "Given (2021)": searched with the year in it, TMDB found nothing and
+    the card showed a "?" (all movie discoveries and 7 of 10 anime picks on
+    the owner's cache, 2026-10-25). The year becomes the hint instead. A
+    music pick names "Artist - Track"; the picture is the artist's."""
+    t = (title or "").strip()
+    year = None
+    m = _YEAR_SUFFIX.match(t)
+    if m:
+        t, year = m.group(1), int(m.group(2))
+    if category == "music" and " - " in t:
+        t = t.split(" - ", 1)[0].strip()
+    return t, year
+
+
+async def fetch_rec_art(title: str, category: str, year=None) -> tuple:
+    """(poster_url, synopsis) for one recommendation title."""
+    t, y = poster_query(title, category)
+    return await _fetch_tmdb(t, category, year=year or y)
+
+
 async def _fetch_poster(title: str, category: str) -> Optional[str]:
     """Fetch poster URL from TMDB (w500). Returns URL or None."""
-    poster, _ = await _fetch_tmdb(title, category)
+    poster, _ = await fetch_rec_art(title, category)
     return poster
 
 

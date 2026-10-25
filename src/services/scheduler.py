@@ -1642,7 +1642,7 @@ async def _cache_recommendations(user_id: int):
         from src.services.recommendations_engine import (
             generate_recommendations, score_arr_items,
         )
-        from src.routers.recommendations import _fetch_arr_unwatched, _fetch_tmdb
+        from src.routers.recommendations import _fetch_arr_unwatched, fetch_rec_art
         from src.database.connection import get_db_session
         from src.database.models import CachedRecommendation, User
         from src.services.app_state import set_state
@@ -1702,8 +1702,8 @@ async def _cache_recommendations(user_id: int):
                     # the 60s busy_timeout → the "database is locked" cascade.
                     for rec in recs:
                         try:
-                            rec["poster_url"], rec["synopsis"] = await _fetch_tmdb(
-                                rec.get("title", ""), cat)
+                            rec["poster_url"], rec["synopsis"] = await fetch_rec_art(
+                                rec.get("title", ""), cat, rec.get("year"))
                         except Exception as e:
                             from src.services.enrichment_state import log_topup_failure
                             log_topup_failure(logger, "[recs] poster", rec.get("title", ""), e)
