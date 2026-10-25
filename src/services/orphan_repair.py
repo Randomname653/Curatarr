@@ -150,9 +150,10 @@ async def apply_orphan_mapping(mappings: list) -> dict:
                                     plex_user_id=u.plex_user_id)
                     for u in db.query(User).all()]
 
-    from src.services.plex_sync import _fetch_account_to_user_map
+    from src.services.plex_sync import _fetch_account_to_user_map, fetch_players
     acct_map = await _fetch_account_to_user_map(plex_url, headers,
                                                 await run_read(_users))
+    players = await fetch_players(plex_url, headers)
 
     # Find admin user, dedupe and insert: read-modify-write, so ONE helper
     # on the writer thread.
@@ -212,6 +213,10 @@ async def apply_orphan_mapping(mappings: list) -> dict:
                     view_offset_ms is None or view_offset_ms >= duration_ms * 0.9
                 )
 
+                try:
+                    _player = players.get(int(item.get("deviceID")), (None, None))
+                except (TypeError, ValueError):
+                    _player = (None, None)
                 db.add(WatchHistoryEntry(
                     user_id=uid,
                     plex_user_id=str(plex_uid),
@@ -227,6 +232,7 @@ async def apply_orphan_mapping(mappings: list) -> dict:
                     completed=completed,
                     genres=",".join(g for g in genres_list if g),
                     tmdb_id=None,
+                    player=_player[0], platform=_player[1],
                 ))
                 existing_keys.add(dedup)
                 synced += 1

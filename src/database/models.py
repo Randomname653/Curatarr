@@ -107,6 +107,9 @@ class WatchHistoryEntry(Base):
     platform    = Column(String(64), nullable=True)
     reason_end  = Column(String(32), nullable=True)
     shuffle     = Column(Boolean, nullable=True)
+    # A Plex play's device ("iPhone"; platform holds its OS), from the
+    # history event's deviceID (plex_sync.player_of, services/plex_players).
+    player      = Column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_wh_user_item", "user_id", "plex_item_id"),

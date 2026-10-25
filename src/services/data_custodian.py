@@ -416,6 +416,20 @@ async def _run_arr_ledger(deep: bool = False, task=None) -> bool:
     return await run_arr_ledger(task=task)
 
 
+async def _run_plex_players(deep: bool = False, task=None) -> bool:
+    """The player of every stored Plex play, once, from Plex's history
+    (services/plex_players). No model."""
+    from src.services.plex_players import run_player_backfill
+    return await run_player_backfill(task=task)
+
+
+async def _run_artist_tags(deep: bool = False, task=None) -> bool:
+    """Every artist's Plex moods and styles into the music index, a budget a
+    run (services/plex_players). No model."""
+    from src.services.plex_players import run_artist_tags
+    return await run_artist_tags(task=task)
+
+
 async def _run_taste_snapshots(deep: bool = False, task=None) -> bool:
     """Each month's taste as a stored mean of its item vectors
     (services/taste_snapshots). Chroma reads, no model."""
@@ -832,6 +846,10 @@ def _registry() -> list[Task]:
         # and month, back-filled from the watch history, the running month
         # rewritten daily. Chroma reads, no model.
         Task("taste_snapshots", "Taste snapshots", 24.0, _run_taste_snapshots, takes_task=True),
+        # The Wrap-Up's rhythm clock: the device of every play ("phone after
+        # midnight") and the moods of every artist. Plex only, no model.
+        Task("plex_players", "Players of the Plex plays", 24.0, _run_plex_players, takes_task=True),
+        Task("artist_tags", "Artist moods and styles", 24.0, _run_artist_tags, takes_task=True),
         # GB in for the wrap-up's balance: Plex's addedAt moves with every
         # replaced file and re-added library, the arrs' history does not.
         Task("arr_ledger", "Library arrivals from the arr history", 6.0, _run_arr_ledger,
