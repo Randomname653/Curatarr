@@ -3,6 +3,9 @@
 POST /api/hosts/pc/goodbye   the PC agent's shutdown notice. No user login:
                              the agent proves itself with PC_AGENT_TOKEN.
 GET  /api/hosts              the PC's state, for admins.
+GET  /api/hosts/cards        admins: what each card does right now - the
+                             lane's holder and queue, the PC's state and
+                             VRAM, the container's memory.
 POST /api/hosts/pc/update    admins: the node's agent fast-forwards its
                              checkout to main and restarts (src/self_update).
 PUT  /api/hosts/pc/name      admins: rename the node (empty = its own name).
@@ -44,6 +47,13 @@ def pc_goodbye(body: Goodbye, x_agent_token: str = Header(default="")):
 @router.get("")
 def hosts_status(user: User = Depends(require_admin)):
     return {"pc": pc_host.status()}
+
+
+@router.get("/cards")
+async def cards_now(user: User = Depends(require_admin)):
+    from src.database.runner import run_read
+    from src.services.compute_cards import cards
+    return await run_read(cards)
 
 
 @router.put("/pc/name")
