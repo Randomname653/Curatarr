@@ -110,6 +110,11 @@ class WatchHistoryEntry(Base):
     # A Plex play's device ("iPhone"; platform holds its OS), from the
     # history event's deviceID (plex_sync.player_of, services/plex_players).
     player      = Column(String(64), nullable=True)
+    # Set by the orphan cleanup when the item left every Plex library
+    # (2026-10-25). The play happened, so the row stays for the year's
+    # record; every ORM read hides it unless the session asks for it
+    # (database/orphaned).
+    orphaned_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("idx_wh_user_item", "user_id", "plex_item_id"),
@@ -1140,3 +1145,63 @@ class TasteSnapshot(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "month", "category", name="uq_taste_snapshot"),
     )
+
+
+class JudgeVerdict(Base):
+    """The judge's verdicts on one title, kept (services/judge_record).
+
+    Verdicts lived only in the 30-day ``verdict:`` cache, so by December the
+    spring's were gone. A row is written when a title's verdict first comes
+    or changes; the same verdict at the next scan only moves ``last_at`` and
+    counts ``scans``. ``item_key`` is the protection identifier: the TMDB id,
+    else the title."""
+    __tablename__ = "judge_verdicts"
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    user_id           = Column(Integer, ForeignKey("users.id"), nullable=False)
+    category          = Column(String(32), nullable=False)
+    item_key          = Column(String(255), nullable=False)
+    title             = Column(String(512), nullable=True)
+    verdict           = Column(String(20), nullable=False)   # after Python's guards
+    model_verdict     = Column(String(20), nullable=True)    # what the model said
+    guard             = Column(String(32), nullable=True)    # e.g. household_floor
+    protecting_pillar = Column(String(16), nullable=True)
+    score             = Column(Float, nullable=True)         # the deletion score that shortlisted it
+    size_mb           = Column(Float, nullable=True)
+    pillars_json      = Column(Text, nullable=True)          # the four findings + bitrate note
+    model             = Column(String(128), nullable=True)
+    verdict_key       = Column(String(64), nullable=True)    # verdict_cache.key: same inputs, same verdict
+    first_at          = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_at           = Column(DateTime, default=datetime.utcnow, nullable=False)
+    scans             = Column(Integer, default=1, nullable=False)
+
+    __table_args__ = (
+        Index("idx_judge_verdict_item", "user_id", "category", "item_key"),
+        Index("idx_judge_verdict_first", "user_id", "first_at"),
+    )
+
+
+class ProtectionHistory(Base):
+    """What a protection was before it was lifted or changed
+    (services/judge_record).
+
+    Lifting deleted the ``ProtectedMedia`` row and re-judging overwrote its
+    verdict, so "you deleted what the judge kept" had nothing to stand on.
+    The live table stays as every reader expects it; its old states land
+    here. ``kind``: lifted | changed | downscaled."""
+    __tablename__ = "protection_history"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    protection_id = Column(Integer, nullable=True)           # the ProtectedMedia row's id
+    user_id       = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    identifier    = Column(String(255), nullable=False)
+    category      = Column(String(32), nullable=True)
+    title         = Column(String(512), nullable=True)
+    source        = Column(String(16), nullable=True)        # manual | judge
+    verdict       = Column(String(20), nullable=True)        # the verdict it held
+    new_verdict   = Column(String(20), nullable=True)        # changed / downscaled: what it became
+    reason        = Column(Text, nullable=True)
+    granted_at    = Column(DateTime, nullable=True)          # the row's created_at
+    kind          = Column(String(16), nullable=False)
+    by_user_id    = Column(Integer, nullable=True)           # who lifted it; NULL = the judge
+    at            = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -65,12 +65,14 @@ def artist_mbids(names: list) -> dict:
     A name alone picks Deezer's most popular artist of that name; the id
     picks the one in the library."""
     from collections import Counter
+    from src.database import orphaned
     from src.database.connection import get_db_session
     from src.database.models import WatchHistoryEntry as W
     out: dict = {}
     if not names:
         return out
     with get_db_session() as db:
+        orphaned.include(db)        # plays of media gone from Plex count
         seen: dict = {}
         for name, mbid in (db.query(W.series_title, W.artist_mbid)
                            .filter(W.media_type == "music", W.series_title.in_(names),

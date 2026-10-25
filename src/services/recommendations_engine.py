@@ -22,6 +22,7 @@ import numpy as np
 
 from src.config import settings
 from src.services.ollama_hosts import host_for
+from src.services import judge_record
 from src.services.pc_guard import ollama_client
 from src.services.llm_utils import clean_llm_text, strip_think_tags, ollama_options, curator_options, CURATOR_KEEP_ALIVE, seasonal_context
 from src.database.connection import get_db_session
@@ -1482,6 +1483,9 @@ def _persist_judge_protection(user_id: int, item: dict, category: str,
                      .first())
             if row:
                 if (row.source or "manual") != "manual":
+                    if row.verdict != verdict_str:
+                        judge_record.archive_protection(db, row, "changed",
+                                                        new_verdict=verdict_str)
                     row.source, row.verdict = "judge", verdict_str
                     row.reason, row.category = reason, category
                     row.title = item.get("title")
@@ -2829,6 +2833,7 @@ async def generate_deletion_proposals(
                     continue
                 consecutive_outages = 0
                 v = (verdict or {}).get("verdict")
+                _model_v = v
                 # HOUSEHOLD FLOOR: Pillar III decided in Python
                 # (pillars._household_claim). A model — above all a small
                 # one — can miss the sacred pillar under a strong taste
@@ -2844,6 +2849,11 @@ async def generate_deletion_proposals(
                                "_guard": "household_floor",
                                "_guard_detail": _claim}
                     v = "STAGNANT"
+                # Kept past the verdict cache's 30 days (services/judge_record):
+                # the Wrap-Up's court record reads the whole year.
+                await judge_record.keep_verdict(
+                    user_id, item, category, verdict, model_verdict=_model_v,
+                    score=cand.get("score"), model=pitch_model, verdict_key=_vkey)
                 if v in ("CUT", "STAGNANT"):
                     # Yield between the verdict and its monologue too: they
                     # are two full generations, and a chat queued during the

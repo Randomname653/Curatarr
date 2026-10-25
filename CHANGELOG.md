@@ -182,6 +182,27 @@ now stores one snapshot per user, category and calendar month (`services/taste_s
 
 Tests: `tests/test_taste_snapshots.py`.
 
+**The judge's record and the plays of removed media are kept, not deleted.**
+- **Verdicts:** they lived only in the 30-day verdict cache, so by December the judge's spring
+  verdicts were gone. Every verdict of a deletion scan now goes into `judge_verdicts`: the verdict
+  after Python's guards and what the model said, the deciding pillar, the four findings, the
+  deletion score and the size (`services/judge_record.py`). A row is written when a title's
+  verdict first comes or changes. The same verdict at the next scan only counts, so nightly scans
+  that reuse cached verdicts add no rows.
+- **Protections:** lifting one deleted its row, and re-judging overwrote its verdict. What it was
+  now goes into `protection_history` first: lifted (and by whom), changed by the judge, or
+  downscaled. The live `protected_media` table is unchanged for every reader.
+- **Plays of removed media:** the maintenance action "Delete history for removed media" deleted
+  the plays of every title that had left Plex. A title deleted in March then lost its plays
+  before the year's Wrap-Up. The action is now "Hide history": it sets `orphaned_at`.
+  - **Hidden:** every ORM read of `watch_history` hides marked rows (`database/orphaned.py`), so
+    history, taste and recommendations look as they did after a delete.
+  - **Counted:** the Wrap-Up and the taste snapshots read them. So does the Plex sync's
+    duplicate check, which would otherwise import a hidden play again.
+  - **Unhidden:** a title back in Plex under its old key gets its plays back on the next run.
+
+Tests: `tests/test_judge_record.py`, `tests/test_plex_history_safety.py`.
+
 **Music: skips kept, albums, and the export's own account of each play.**
 - **Skips:** the Spotify import dropped every play under 30 seconds, which is where skips live. They
   now go into `music_skips`. That table is kept apart from `watch_history` on purpose: every play

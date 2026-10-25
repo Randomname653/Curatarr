@@ -27,6 +27,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from src.database import orphaned
 from src.database.connection import get_db_session
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ def due(now: Optional[datetime] = None) -> list:
     now = now or datetime.utcnow()
     current, model = _month(now), _embed_model()
     with get_db_session() as db:
+        orphaned.include(db)        # plays of media gone from Plex count
         month = func.strftime("%Y-%m", W.viewed_at)
         played = {(u, c, m) for u, c, m in db.query(W.user_id, W.media_type, month)
                   .filter(W.media_type.in_(CATEGORIES), W.viewed_at < now).distinct()}
@@ -71,6 +73,7 @@ def _month_rows(user_id: int, category: str, month: str) -> list:
     ms = played_ms_sql(W)
     key = func.coalesce(W.series_title, W.title)
     with get_db_session() as db:
+        orphaned.include(db)        # plays of media gone from Plex count
         q = (db.query(key, func.max(W.series_title), func.max(W.plex_item_id), func.sum(ms), func.count())
              .filter(W.user_id == user_id, W.media_type == category, a_play(W),
                      func.strftime("%Y-%m", W.viewed_at) == month)

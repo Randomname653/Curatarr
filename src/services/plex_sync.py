@@ -18,6 +18,7 @@ import httpx
 from src.config import settings
 from src.services.ollama_hosts import ollama_for
 from src.services.pc_guard import ollama_client
+from src.database import orphaned
 from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.services.app_state import (get_datetime, set_datetime, get_state, set_state,
@@ -676,6 +677,9 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     def _write_entries() -> None:
         nonlocal synced, skipped, resumed, unattributed
         with get_db_session() as db:
+            # A hidden play of a gone item is still a stored play: the
+            # duplicate check below must see it (database/orphaned).
+            orphaned.include(db)
             users = db.query(User).all()
 
             # Primary map: plex.tv global ID -> local user (set on OAuth login)
@@ -1964,13 +1968,15 @@ async def _section_rating_keys(client, plex_url: str, headers: dict, sec_key: st
 
 
 async def cleanup_orphan_watch_history(force: bool = False) -> dict:
-    """Admin action: drop watch_history rows pointing at media no longer in Plex.
+    """Admin action: hide watch_history rows pointing at media no longer in Plex.
 
     Walks every configured library for the item type history stores there
-    (movies, episodes, tracks), collects their ratingKeys, then deletes
+    (movies, episodes, tracks), collects their ratingKeys, then marks
     WatchHistoryEntry rows whose ``plex_item_id`` is a numeric Plex ratingKey
-    not in that set. Spotify entries are kept — they aren't part of Plex's
-    library universe.
+    not in that set with ``orphaned_at``. The plays happened: they leave the
+    live app (database/orphaned) and stay for the Wrap-Up. A marked row whose
+    item is back in a library is unmarked. Spotify entries are never marked —
+    they aren't part of Plex's library universe.
 
     Refuses — deleting nothing — when any section can't be read in full, when
     a section answers with no items at all (an unmounted share looks exactly
@@ -2004,33 +2010,33 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
             type_num = _history_type_for(sec_type, category)
             if not type_num:
                 return {"error": f"Library section {sec_key} has an unknown type "
-                                 f"({sec_type}/{category}) — refusing to delete history",
-                        "deleted": 0}
+                                 f"({sec_type}/{category}) — refusing to hide history",
+                        "archived": 0}
             try:
                 keys = await _section_rating_keys(client, plex_url, headers, sec_key, type_num)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Orphan-cleanup: section %s unreadable: %s", sec_key, e)
                 # Any unread section aborts: its history would read as orphaned.
                 return {"error": f"Could not read library section {sec_key}: {e}",
-                        "deleted": 0}
+                        "archived": 0}
             if not keys:
                 empty_sections.append(sec_key)
             live_keys |= keys
 
     if empty_sections:
         return {"error": f"Library section(s) {', '.join(empty_sections)} returned no items "
-                         "(unmounted share or Plex still scanning?) — refusing to delete history",
-                "deleted": 0}
+                         "(unmounted share or Plex still scanning?) — refusing to hide history",
+                "archived": 0}
     if not live_keys:
-        return {"error": "No live ratingKeys collected — refusing to delete history",
-                "deleted": 0}
+        return {"error": "No live ratingKeys collected — refusing to hide history",
+                "archived": 0}
 
     logger.info("Orphan-cleanup: %d live ratingKeys collected from Plex", len(live_keys))
 
     def _purge():
-        """Scan, decide and delete in one write call: the refusal guard and
-        the delete must judge the same rows. Returns (examined, ids,
-        refused)."""
+        """Scan, decide and mark in one write call: the refusal guard and
+        the marking must judge the same rows. Returns (examined, ids,
+        refused, returned)."""
         with get_db_session() as db:
             # Same filter as re-attribution: keep ALL Spotify-sourced rows even
             # if music_matcher gave them a numeric Plex ratingKey, because the
@@ -2061,30 +2067,40 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
 
             if (not force and rows
                     and len(to_delete_ids) > ORPHAN_MAX_SHARE * len(rows)):
-                return len(rows), to_delete_ids, True
+                return len(rows), to_delete_ids, True, 0
 
             if to_delete_ids:
                 db.query(WatchHistoryEntry).filter(
                     WatchHistoryEntry.id.in_(to_delete_ids)
-                ).delete(synchronize_session=False)
-                db.commit()
-            return len(rows), to_delete_ids, False
+                ).update({"orphaned_at": datetime.utcnow()}, synchronize_session=False)
+            # An item back in a library under its old ratingKey gets its
+            # plays back.
+            back = [i for i, rk in db.query(WatchHistoryEntry.id, WatchHistoryEntry.plex_item_id)
+                    .filter(WatchHistoryEntry.orphaned_at.isnot(None))
+                    .execution_options(include_orphaned=True) if rk in live_keys]
+            if back:
+                db.query(WatchHistoryEntry).filter(
+                    WatchHistoryEntry.id.in_(back)
+                ).update({"orphaned_at": None}, synchronize_session=False)
+            db.commit()
+            return len(rows), to_delete_ids, False, len(back)
 
-    examined, to_delete_ids, refused = await run_write(_purge)
+    examined, to_delete_ids, refused, returned = await run_write(_purge)
     if refused:
-        logger.warning("Orphan-cleanup: would delete %d of %d rows — refused",
+        logger.warning("Orphan-cleanup: would hide %d of %d rows — refused",
                        len(to_delete_ids), examined)
-        return {"error": f"Would delete {len(to_delete_ids)} of {examined} history rows "
+        return {"error": f"Would hide {len(to_delete_ids)} of {examined} history rows "
                          f"(more than {ORPHAN_MAX_SHARE:.0%}) — refusing; re-run with "
                          "force=true if Plex really lost that much",
-                "deleted": 0, "would_delete": len(to_delete_ids), "examined": examined}
+                "archived": 0, "would_archive": len(to_delete_ids), "examined": examined}
 
-    if to_delete_ids:
+    if to_delete_ids or returned:
         await run_write(set_datetime, "recs_invalidate_at", datetime.utcnow())
 
-    logger.info("Orphan-cleanup done: %d rows deleted", len(to_delete_ids))
+    logger.info("Orphan-cleanup done: %d rows hidden, %d back", len(to_delete_ids), returned)
     return {
-        "deleted": len(to_delete_ids),
+        "archived": len(to_delete_ids),
+        "returned": returned,
         "live_keys_seen": len(live_keys),
         "examined": examined,
     }
