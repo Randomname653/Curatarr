@@ -60,7 +60,7 @@ _ELIGIBLE_HOURS = 3
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
 # 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
 # 6: hours per day for the story mode's heatmap.
-FACTS_VERSION = 10
+FACTS_VERSION = 11
 
 
 @dataclass(frozen=True)
@@ -287,6 +287,14 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
                 out["dismissal"] = _dismissal(extra, enriched)
                 vnames = {t["title"] for t in vtitles}
                 out["auteurs"] = _sections.auteurs(db, [w for w in want if w["title"] in vnames])
+                # Consensus wants more titles than the top of a music-heavy
+                # rollup: the period's own video titles, read from the cache.
+                vbase = base[:3] + (W.media_type.in_(video_types),) + base[4:]
+                vpool = _title_rollup(db, W, ms, vbase)[:_sections.CONSENSUS_POOL]
+                more = [t for t in vpool if t["title"] not in enriched]
+                if more:
+                    enriched = {**enriched, **_verified_lookup(_with_ids(db, more))}
+                out["consensus"] = _sections.consensus(db, user_id, vpool, enriched)
         if "music" in types:
             out["music"] = _music(db, W, ms, user_id, base, period)
             moods = _moods(db, W, ms, base, local)
@@ -339,9 +347,12 @@ def _tempo(db, W, ms, base, local, total_ms, est_ms, plays) -> dict:
             by_hour[int(h)] = int(v or 0)
     dw = func.strftime("%w", local)                     # 0 = Sunday
     by_dow = [0] * 7
-    for d, v in db.query(dw, func.sum(ms)).filter(*base).group_by(dw).all():
-        if d is not None:
-            by_dow[int(d)] = int(v or 0)
+    # weekday x hour for the rhythm clock, Monday first
+    clock = [[0] * 24 for _ in range(7)]
+    for d, h, v in db.query(dw, hr, func.sum(ms)).filter(*base).group_by(dw, hr).all():
+        if d is not None and h is not None:
+            by_dow[int(d)] += int(v or 0)
+            clock[(int(d) + 6) % 7][int(h)] += int(v or 0)
     day = func.date(local)
     days = [r for r in db.query(day, func.sum(ms), func.count()).filter(*base)
             .group_by(day).all() if r[0]]
@@ -362,6 +373,7 @@ def _tempo(db, W, ms, base, local, total_ms, est_ms, plays) -> dict:
         "peak_hour": max(range(24), key=lambda h: by_hour[h]),
         "peak_weekday": max(range(7), key=lambda d: by_dow[d]),
         "by_hour_h": [_h(v) for v in by_hour],
+        "clock_h": [[round((v or 0) / 3_600_000, 2) for v in row] for row in clock],
         "dayparts": {k: round(v / total, 2) for k, v in parts.items()},
         "weekend_share": round((by_dow[0] + by_dow[6]) / max(1, sum(by_dow)), 2),
         "weekend_daytime_share": round(weekend_day / total, 2),

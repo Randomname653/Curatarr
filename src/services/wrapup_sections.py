@@ -201,6 +201,7 @@ def auteurs(db, titles: list) -> dict:
 # ── nanogenres ───────────────────────────────────────────────────────────────
 
 _NANO_TOP = 6
+_NANO_RIVER = 5            # nanogenres drawn in the river
 _NANO_MIN_SHARE = 0.25     # under this share of the hours mapped, say nothing
 
 
@@ -214,9 +215,15 @@ def nanogenres(db, W, user_id: int, period, types: list) -> dict:
     from src.services.wrapup_facts import a_play, played_ms_sql
     ms = played_ms_sql(W)
     key = func.coalesce(W.series_title, W.title)
-    played = [(k, mt, float(v or 0)) for k, mt, v in db.query(key, W.media_type, func.sum(ms)).filter(
-        W.user_id == user_id, W.media_type.in_(types), a_play(W), *_in(W.viewed_at, period))
-        .group_by(key, W.media_type) if k and v]
+    month = func.strftime("%Y-%m", W.viewed_at)
+    per_month = [(k, mt, m, float(v or 0)) for k, mt, m, v in
+                 db.query(key, W.media_type, month, func.sum(ms)).filter(
+                     W.user_id == user_id, W.media_type.in_(types), a_play(W), *_in(W.viewed_at, period))
+                 .group_by(key, W.media_type, month) if k and v]
+    rolled: dict = defaultdict(float)
+    for k, mt, _, v in per_month:
+        rolled[(k, mt)] += v
+    played = [(k, mt, v) for (k, mt), v in rolled.items()]
     total = sum(v for _, _, v in played)
     if not played or not total:
         return {}
@@ -246,6 +253,13 @@ def nanogenres(db, W, user_id: int, period, types: list) -> dict:
                 before.add(k)
     new = [g for g in hours if not any(t in before for t in titles[g])]
     top = sorted(hours, key=hours.get, reverse=True)
+    # the taste river: the leading nanogenres' hours month by month
+    lead = {g[1] for g in top[:_NANO_RIVER]}
+    river: dict = defaultdict(lambda: defaultdict(float))
+    for k, mt, m, v in per_month:
+        g = genre_of.get((k, group_of(mt)))
+        if g and g[1] in lead:
+            river[m][g[1]] += v / 3_600_000
     return {
         "top": [{"name": g[1], "hours": round(hours[g] / 3_600_000, 1),
                  "share": round(hours[g] / mapped, 3),
@@ -253,4 +267,46 @@ def nanogenres(db, W, user_id: int, period, types: list) -> dict:
         "new_to_you": [g[1] for g in sorted(new, key=hours.get, reverse=True)[:3]] if period.key != "all" else [],
         "count": len(hours),
         "coverage": round(mapped / total, 3),
+        "by_month": {m: {n: round(h, 1) for n, h in sorted(row.items())}
+                     for m, row in sorted(river.items())},
     }
+
+
+# ── consensus: your hours against the community's score ─────────────────────
+
+_CONSENSUS_MIN = 6         # points for a scatter worth drawing
+_CONSENSUS_MAX = 40
+CONSENSUS_POOL = _CONSENSUS_MAX
+_CONSENSUS_VOTES = 200     # a community score below this mass is noise
+
+
+def consensus(db, user_id: int, titles: list, enriched: dict) -> dict:
+    """Every played title with a community score: its score, your hours on
+    it, and the judge's last verdict on it (judge_verdicts) — the scatter's
+    top-left is what you loved and the crowd did not."""
+    from src.database.models import JudgeVerdict as J
+    pts = []
+    for t in titles[:_CONSENSUS_MAX]:
+        e = enriched.get(t["title"]) or {}
+        com, votes = e.get("rating"), e.get("votes") or 0
+        # AniList scores carry no vote count (0): a known small count is noise
+        if com is None or 0 < votes < _CONSENSUS_VOTES:
+            continue
+        pts.append({"title": t["title"], "media_type": t["media_type"], "hours": t["hours"],
+                    "community": round(float(com), 1), "votes": int(votes)})
+    if len(pts) < _CONSENSUS_MIN:
+        return {}
+    verdict: dict = {}
+    names = [p["title"] for p in pts]
+    for title, v, at in (db.query(J.title, J.verdict, J.last_at)
+                         .filter(J.user_id == user_id, J.title.in_(names))
+                         .order_by(J.last_at)):
+        verdict[title] = v              # the latest wins
+    for p in pts:
+        v = (verdict.get(p["title"]) or "").upper()
+        p["verdict"] = "cut" if v in ("CUT", "STAGNANT") else ("kept" if v else None)
+    hrs = sorted(p["hours"] for p in pts)
+    mid_h, mid_c = hrs[len(hrs) // 2], sorted(p["community"] for p in pts)[len(pts) // 2]
+    yours = [p["title"] for p in pts if p["hours"] > mid_h and p["community"] < mid_c]
+    return {"points": pts, "median_hours": mid_h, "median_community": mid_c,
+            "yours_alone": yours[:3]}
