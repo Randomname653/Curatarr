@@ -320,11 +320,18 @@ function _story(f, d) {
   const s = d.story;
   if (!s?.era_chapters?.length) return '';
   const refs = s.refs || {};
+  const fan = it => `<div class="wu-fan-item">${_posterImg(it.poster || _poster(f, it.title), 84, _isMusic(it.media_type) ? 84 : 126, _isMusic(it.media_type))}</div>`;
+  const own = s.era_chapters.map(c => (c.item_refs || []).map(r => refs[r]).filter(Boolean).slice(0, 4));
+  // A chapter about a number (hours, a streak, a day) names no title: it
+  // shows the next of the period's top titles no other chapter shows, so
+  // no card keeps an empty picture column; with none left, the column goes.
+  const shown = new Set(own.flat().map(it => it.title));
+  const spare = (f.top || []).filter(t => !shown.has(t.title) && _poster(f, t.title));
   const ch = s.era_chapters.map((c, i) => {
-    const posters = (c.item_refs || []).map(r => refs[r]).filter(Boolean).slice(0, 4)
-      .map(it => `<div class="wu-fan-item">${_posterImg(it.poster || _poster(f, it.title), 84, _isMusic(it.media_type) ? 84 : 126, _isMusic(it.media_type))}</div>`).join('');
-    return `<article class="card wu-chapter">
-      <div class="wu-fan" aria-hidden="true">${posters}</div>
+    const items = own[i].length ? own[i] : spare.splice(0, 1);
+    const posters = items.map(fan).join('');
+    return `<article class="card wu-chapter${posters ? '' : ' wu-chapter-bare'}">
+      ${posters ? `<div class="wu-fan" aria-hidden="true">${posters}</div>` : ''}
       <div class="wu-ch-body"><div class="wu-ch-n">Chapter ${i + 1}</div>
         <h3 class="wu-ch-title">${esc(c.title)}</h3>
         ${c.kicker ? `<div class="wu-ch-kicker">${esc(c.kicker)}</div>` : ''}

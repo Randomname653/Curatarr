@@ -1542,6 +1542,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 
 .wu-chapters { display: grid; gap: 14px; }
 .wu-chapter { display: grid; grid-template-columns: 200px 1fr; gap: 22px; padding: 20px; border-radius: var(--radius-lg); }
+.wu-chapter.wu-chapter-bare { grid-template-columns: 1fr; }
 .wu-fan { position: relative; height: 140px; }
 .wu-fan-item { position: absolute; top: 0; transition: transform var(--dur-2) var(--ease-spring); }
 .wu-fan-item:nth-child(1) { left: 0; transform: rotate(-6deg); }

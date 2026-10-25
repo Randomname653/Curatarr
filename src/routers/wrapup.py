@@ -59,6 +59,38 @@ def poster_wants(facts: dict) -> dict:
     return dict(list(want.items())[:_POSTER_MAX])
 
 
+def artist_mbids(names: list) -> dict:
+    """{artist name: MusicBrainz id} from the plays' own artist_mbid, else the
+    artist's raw enrichment profile. Blocking — call via ``run_read``.
+    A name alone picks Deezer's most popular artist of that name; the id
+    picks the one in the library."""
+    from collections import Counter
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    out: dict = {}
+    if not names:
+        return out
+    with get_db_session() as db:
+        seen: dict = {}
+        for name, mbid in (db.query(W.series_title, W.artist_mbid)
+                           .filter(W.media_type == "music", W.series_title.in_(names),
+                                   W.artist_mbid.isnot(None))):
+            seen.setdefault(name, Counter())[mbid] += 1
+        out = {n: c.most_common(1)[0][0] for n, c in seen.items()}
+    missing = [n for n in names if n not in out]
+    if missing:
+        from src.cache.metadata_cache import MetadataCache
+        mc = MetadataCache()
+        try:
+            for n in missing:
+                raw = (mc.get_cache(f"raw:music:{n[:40]}") or {}).get("response") or {}
+                if isinstance(raw, dict) and raw.get("mbid"):
+                    out[n] = raw["mbid"]
+        finally:
+            mc.close()
+    return out
+
+
 async def attach_posters(facts: dict) -> None:
     """facts["posters"] = {title: url} through the recommendations poster path
     (24 h in-memory cache, id-first). Rows that already carry a poster (a
@@ -66,14 +98,22 @@ async def attach_posters(facts: dict) -> None:
     from src.routers.recommendations import _fetch_tmdb
     from src.services.enrichment_state import log_topup_failure
 
+    from src.database.runner import run_read
+
     posters = dict(facts.get("posters") or {})
     want = {k: v for k, v in poster_wants(facts).items() if k not in posters}
+    try:
+        mbids = await run_read(artist_mbids, [t for t, (mt, _) in want.items() if mt == "music"])
+    except Exception as e:  # noqa: BLE001 - a name search is the fallback
+        logger.debug("[wrapup] artist ids not read: %s", e)
+        mbids = {}
     sem = asyncio.Semaphore(4)
 
     async def one(title, media_type, tmdb_id):
         async with sem:
             try:
-                poster, _ = await _fetch_tmdb(title, media_type, tmdb_id=tmdb_id)
+                poster, _ = await _fetch_tmdb(title, media_type, tmdb_id=tmdb_id,
+                                              mbid=mbids.get(title))
                 return title, poster
             except Exception as e:
                 log_topup_failure(logger, "[wrapup] poster", title, e)
