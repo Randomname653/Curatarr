@@ -399,7 +399,10 @@ deep-dive.
   - Anything that would let one person's words or numbers reach *another*
     member is **opt-in**: a shared slide, a household card, a share card
     showing a quote.
-- **Household comparisons: only with consent.**
+- **Household comparisons: only with consent.** *Done:
+  `services/household_compare.py`. Opt-in per member; compared only with
+  the others who said yes, by rank and median, never by name; worked out on
+  open and never stored or given to the story.*
   - A member appears in another member's comparison only after they agreed
     (a per-user setting, off by default).
   - Members who have not agreed are left out of medians and ranks, not

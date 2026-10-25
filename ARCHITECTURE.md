@@ -1530,6 +1530,9 @@ growing this list.
 - `src/services/library_ledger.py` — what arrived when and what left, from
   the tech walk; only a complete walk marks anything gone (§0 Library
   ledger).
+- `src/services/household_compare.py` — the opt-in household block of a
+  wrap-up: rank by hours, the radar median, "only you"; only among members
+  who said yes, worked out on open, never stored.
 - `src/services/music_tags.py` — Plex's moods and styles per artist, album
   and track, walked through Plex's filter lists; a play takes its track's,
   else its album's, else its artist's (by key, else by names).

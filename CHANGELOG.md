@@ -95,6 +95,20 @@ on the real server named a title for the last 30 days that had been played in Ma
 
 Tests: `tests/test_marked_plays.py`.
 
+**The household in a wrap-up: only among those who said yes.**
+- **Opt-in:** a member can turn on "Compare with the household" under the Wrap-Up's chapters
+  (`/api/wrapup/prefs`, off by default). They are then compared with the other members who
+  turned it on, and with nobody else (`services/household_compare.py`).
+- **What it shows:** their rank by hours, a title in their top five that none of the others ever
+  played, and the household median as a dashed line on the taste radar. The median needs two
+  others at least, so the line is never one person's shape. No other member's name, title or
+  number is shown.
+- **Nothing is stored:** it is worked out from the others' stored wrap-ups each time the page
+  opens, so turning it off takes a member out of every comparison at once. The curator's story
+  is not given it, so no written text keeps it either.
+
+Tests: `tests/test_household_compare.py`.
+
 **How the music felt, and the player of the night, in the Wrap-Up.**
 - **Moods and styles:** a custodian job (`music_tags`, every three days, no model) reads Plex's own
   moods and styles for every music section into `music_tags`. It works the way Plex's filter bar

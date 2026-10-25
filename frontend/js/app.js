@@ -17,7 +17,7 @@ import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcTo
 import { loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { renderLedger } from './report.js';
 import { answerWrapupStory, closeWrapupStory, nextWrapupSlide, prevWrapupSlide } from './wrapup_story.js';
-import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
+import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
 import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
@@ -209,6 +209,7 @@ const actions = {
   generateWrapup,
   pushWrapupPlaylist,
   toggleWrapupQuotes,
+  toggleWrapupHousehold,
   playWrapupStory,
   answerWrapupStory,
   closeWrapupStory,
