@@ -65,7 +65,8 @@ async def fake_build(url, curator, summarizer, base_pitcher=None, num_ctx=None,
     return {"embedding": True, "curator": True, "summarizer": state.get("summarizer_ok", True)}
 
 
-saved = (mc.host_plan, mc.missing_on, mc.embedding_identity, sw.build_ollama_models, oh.split)
+saved = (mc.host_plan, mc.missing_on, mc.embedding_identity, sw.build_ollama_models, oh.split, mc.bake_drift)
+mc.bake_drift = lambda plan, post=None: state.get("drift", {}).get(plan["url"], [])
 mc.host_plan = lambda which="main": MAIN if which == "main" else PC
 mc.missing_on = lambda url, models, get=None: state["missing"].get(url, [])
 mc.embedding_identity = lambda get=None: {"model": "nomic-embed-text-v2-moe", "status": state["ident"],
@@ -114,11 +115,21 @@ try:
           out["embedding"] == "mismatch"
           and any(lv == "ERROR" and "EMBEDDING WEIGHTS DIFFER" in m for lv, m in logs.lines))
 
+    out = run(missing={"http://nas:30068": [], "http://pc:11434": []}, split=True, ident="match",
+              drift={"http://nas:30068": [{"model": "curatarr-summarizer", "reasons": ["system prompt"]}],
+                     "http://pc:11434": [{"model": "curatarr-curator", "reasons": ["num_ctx 8192 (code: 16384)"]}]})
+    check("a bake that differs from the code is named, per host, and nothing is rebuilt",
+          built == [] and out["drift"]["main"][0]["model"] == "curatarr-summarizer"
+          and any(lv == "WARNING" and "curatarr-summarizer on http://nas:30068 differs from the code: system prompt"
+                  in m and "--host main" in m for lv, m in logs.lines)
+          and any("curatarr-curator on http://pc:11434 differs" in m and "--host pc" in m for _, m in logs.lines))
+
     mc.missing_on = lambda *a, **k: 1 / 0
     out = run(ident="match")
     check("it never raises (a startup background task)", isinstance(out, dict))
 finally:
-    mc.host_plan, mc.missing_on, mc.embedding_identity, sw.build_ollama_models, oh.split = saved
+    (mc.host_plan, mc.missing_on, mc.embedding_identity, sw.build_ollama_models, oh.split,
+     mc.bake_drift) = saved
 
 # ── wiring ──────────────────────────────────────────────────────────────────
 main_src = (ROOT / "src/main.py").read_text(encoding="utf-8")

@@ -21,12 +21,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _report_drift(drift, url: str, host: str) -> None:
+    """Name the bakes that no longer match the code. Report only, for now:
+    whether a host rebuilds by itself is decided after the change has been
+    compared on the PC."""
+    for d in drift or []:
+        logger.warning("[models] %s on %s differs from the code: %s - rebuild it with "
+                       "python build_models.py --host %s", d["model"], url, "; ".join(d["reasons"]), host)
+
+
 async def ensure_main_models() -> dict:
     """Build what the main host is missing; report the embedding weights.
     Never raises (a background task at startup). Returns what it did."""
-    from src.services.model_check import embedding_identity, host_plan, missing_on
+    from src.services.model_check import bake_drift, embedding_identity, host_plan, missing_on
     from src.services.ollama_hosts import split
-    out: dict = {"built": None, "missing": None, "embedding": None}
+    out: dict = {"built": None, "missing": None, "embedding": None, "drift": None}
     try:
         plan = await asyncio.to_thread(host_plan, "main")
         missing = await asyncio.to_thread(missing_on, plan["url"], plan["models"])
@@ -51,6 +60,8 @@ async def ensure_main_models() -> dict:
                              ", ".join(failed))
             else:
                 logger.info("[models] %s ready on %s", ", ".join(plan["models"]), plan["url"])
+        out["drift"] = {"main": await asyncio.to_thread(bake_drift, plan)}
+        _report_drift(out["drift"]["main"], plan["url"], "main")
         if split():
             pc = await asyncio.to_thread(host_plan, "pc")
             pc_missing = await asyncio.to_thread(missing_on, pc["url"], pc["models"])
@@ -59,6 +70,8 @@ async def ensure_main_models() -> dict:
                 logger.warning("[models] %s is missing %s - run "
                                "python build_models.py --host pc while it is on",
                                node_name(cap=True), ", ".join(pc_missing))
+            out["drift"]["pc"] = await asyncio.to_thread(bake_drift, pc)
+            _report_drift(out["drift"]["pc"], pc["url"], "pc")
         ident = await asyncio.to_thread(embedding_identity)
         out["embedding"] = ident["status"]
         if ident["status"] == "mismatch":

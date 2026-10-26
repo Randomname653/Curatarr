@@ -318,6 +318,16 @@ server weekly. It read one file at a time, so its highs were mostly cross-file f
 it failed every run once its API credit ran out. CodeQL, Bandit, OSV-Scanner and Scorecard stay.
 Removed: the workflow, its scanner script, its lock and its accepted-findings list.
 
+**The model check names bakes that no longer match the code.** A bake (curator, summariser,
+pitcher) is built once. A changed system prompt reached the NAS and the PC only through a manual
+`build_models.py`, so a host could run a prompt the code had left behind without anyone seeing it.
+At start the check now reads each bake back (`/api/show`) on the main host and the node. It
+compares the system prompt (line endings and trailing whitespace aside), the base model and
+`num_ctx`, and logs every difference with the command that rebuilds it. It only reports: whether a
+host rebuilds by itself is decided after the change has been compared on the PC.
+
+Tests: `tests/test_model_check.py`, `tests/test_model_autobuild.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
