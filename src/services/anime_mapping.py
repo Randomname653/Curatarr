@@ -305,14 +305,39 @@ def update_anilist_id(anidb_id: int, anilist_id: int):
 
 
 async def get_mapping_stats() -> dict:
-    """Return statistics about the mapping database."""
+    """The mapping file, and how many of the library's anime carry an AniList
+    id. The file's own AniList column was never filled (update_anilist_id
+    has no caller; resolving through AniDB ids drifts, see ROADMAP), so the
+    card read "0 resolved, 7,514 pending" forever (2026-10-26). What counts
+    is the enriched profiles: title + year, the offline snapshot, the pins."""
     mapping = await get_anime_mapping()
-    mapped_to_anilist = len(mapping.anidb_to_anilist)
-    return {
+    out = {
         "total_entries": mapping.total_entries,
         "tvdb_mapped": len(mapping.tvdb_to_anidb),
-        "anilist_resolved": mapped_to_anilist,
-        "anilist_missing": mapping.total_entries - mapped_to_anilist,
         "downloaded_at": mapping.loaded_at.isoformat() if mapping.loaded_at else None,
         "db_path": str(MAPPING_DB_PATH),
     }
+    try:
+        from src.database.runner import run_read
+        out.update(await run_read(anilist_coverage))
+    except Exception as e:  # noqa: BLE001 - the card shows the file numbers alone
+        logger.warning("AniList coverage not read: %s", e)
+    return out
+
+
+def anilist_coverage() -> dict:
+    """{"anime", "with_anilist", "pinned", "auto_pinned"}: the Sonarr anime,
+    those whose enriched profile names an AniList id, and the pins among
+    them (the owner's and the TVDB crossref's). Blocking: run via run_read."""
+    from src.cache.metadata_cache import MetadataCache
+    from src.database.connection import get_db_session
+    from src.database.models import ArrEnrichmentStatus as AES, MediaMatchOverride as MO
+    with get_db_session() as db:
+        ids = [a for (a,) in db.query(AES.arr_id).filter(AES.service == "sonarr", AES.category == "anime")]
+        notes = [n or "" for (n,) in db.query(MO.note).filter(
+            MO.service == "sonarr", MO.anilist_id.isnot(None))]
+    with MetadataCache() as cache:
+        got = cache.get_cache_many([f"enriched:anime:sonarr:{a}" for a in ids])
+    with_id = sum(1 for e in got.values() if (e.get("response") or {}).get("anilist_id"))
+    return {"anime": len(ids), "with_anilist": with_id, "pinned": len(notes),
+            "auto_pinned": sum(1 for n in notes if n.startswith("auto:"))}

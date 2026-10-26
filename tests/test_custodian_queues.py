@@ -256,12 +256,20 @@ check("without the flag it is a no-op",
 # ── 7. wiring ────────────────────────────────────────────────────────────────
 sch = (_ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
 check("the interval job starts the queues and returns",
-      "custodian_tick_background,\n        IntervalTrigger(minutes=30)" in sch
+      "custodian_tick_background,\n        IntervalTrigger(minutes=CUSTODIAN_TICK_MINUTES)" in sch
+      and dc.CUSTODIAN_TICK_MINUTES == 30
       and "custodian_tick(first_tick=True, wait=False)" in sch)
 enr = (_ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
 check("run-now refuses only when both queues are busy and never waits",
       "if all(busy.values()):" in enr and "wait=False)" in enr and "_tick_lock" not in enr)
 kb = (_ROOT / "frontend/js/kb.js").read_text(encoding="utf-8")
+_stub = dc._registry
+dc._registry = lambda: real
+every = {t["job_id"]: t["every_tick"] for t in dc.custodian_status()["tasks"]}
+dc._registry = _stub
+check("a task that runs on every tick is marked so; the badge leaves it out",
+      every["plex_followup"] is True and every["memory_catchup"] is True
+      and every["arr_sync"] is False and "t.due && !t.every_tick" in kb)
 check("the Knowledge Base names what each queue is on",
       "c.queues" in kb and "'GPU work'" in kb and "allBusy ? ' disabled'" in kb)
 check("the old single tick lock is gone",

@@ -3917,12 +3917,26 @@ async def check_mapping_coverage(
 
     covered = []
     missing = []
+    # The AniList id a series carries is its enriched profile's (title +
+    # year, the offline snapshot, a pin): the mapping file's own AniList
+    # column is never filled (see anime_mapping.get_mapping_stats).
+    def _profile_ids() -> dict:
+        from src.cache.metadata_cache import MetadataCache
+        keys = {s["id"]: f"enriched:anime:sonarr:{s['id']}" for s in anime_series if s.get("id")}
+        with MetadataCache() as cache:
+            got = cache.get_cache_many(list(keys.values()))
+        return {sid: (got.get(k) or {}).get("response", {}).get("anilist_id") for sid, k in keys.items()}
+    try:
+        profile_anilist = await asyncio.to_thread(_profile_ids)
+    except Exception as e:  # noqa: BLE001 - the coverage still answers from the mapping
+        logger.warning("[mapping] profile AniList ids not read: %s", e)
+        profile_anilist = {}
 
     for s in anime_series:
         tvdb_id = s.get("tvdbId")
         if tvdb_id and tvdb_id in mapping.tvdb_to_anidb:
             anidb_id = mapping.tvdb_to_anidb[tvdb_id]
-            anilist_id = mapping.anidb_to_anilist.get(anidb_id)
+            anilist_id = profile_anilist.get(s.get("id")) or mapping.anidb_to_anilist.get(anidb_id)
             covered.append({
                 "title": s["title"],
                 "tvdb_id": tvdb_id,

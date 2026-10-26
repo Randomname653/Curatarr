@@ -86,6 +86,9 @@ _STARTED = time.monotonic()
 # uvicorn --reload) carries on with it; the power request is per process.
 _SPRINT_KEY = "custodian_sprint_until"
 SPRINT_TICK_MINUTES = 2
+# The regular tick (scheduler). A task whose cadence is shorter runs on every
+# tick by design and is "due" between any two of them.
+CUSTODIAN_TICK_MINUTES = 30
 SPRINT_MAX_HOURS = 24
 # A chunk takes every category: it runs beside the queue, so music's pace
 # (one MusicBrainz request a second) holds no other GPU work up.
@@ -976,6 +979,9 @@ def custodian_status() -> dict:
             "cadence_h": t.cadence_h,
             "last_run": last.isoformat() if last else None,
             "due": _job_overdue(t.job_id, t.cadence_h),
+            # Runs on every tick: due between two ticks, which says nothing -
+            # the "tasks due" badge leaves these out.
+            "every_tick": t.cadence_h * 1.1 * 60 <= CUSTODIAN_TICK_MINUTES,
             "queue": queue_of(t),
         })
     return {"report": report, "tasks": tasks, "ticking": any(_queue_busy.values()),
