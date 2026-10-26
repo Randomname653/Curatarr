@@ -1,9 +1,10 @@
 # Jellyfin support — design
 
 _Status: **Accepted**, 2026-10-26 (draft of the same day, revised with the
-owner's decisions). **Phases 1–3 are built**: the seam and both read
-adapters, `server_id_map`, Jellyfin sign-in and setup, and the four-tier
-play history. A Plex install behaves as before. Endpoint names are from the Jellyfin 10.9/10.10 API and are pinned
+owner's decisions). **Phases 1–5 are built**: the seam and both adapters,
+`server_id_map`, Jellyfin sign-in and setup, the four-tier play history,
+Curatarr's writes into Jellyfin, and the `Plex ⇄ Jellyfin` rebind tool. A
+Plex install behaves as before; phase 6 (parity details) is open. Endpoint names are from the Jellyfin 10.9/10.10 API and are pinned
 by hand-written fixtures (section 11); they have not met a live Jellyfin
 server yet, and anything they do not cover is checked against one before it
 ships._
@@ -584,6 +585,39 @@ the flag the target server's own state is not touched.
 - The tool refuses to run while a manifest without a "completed" or
   "undone" mark exists.
 
+### 8.8 As built (phase 5)
+
+`media_server/rebind.py` and `scripts/rebind_server.py`. Where the build
+differs from, or adds to, the draft above:
+
+- **Doc-id columns are guarded.** `swipe_ratings.doc_id`,
+  `title_nanogenres.parent`, the Chroma docs and the facet parents hold
+  vector-store doc ids (`plex_rating_key or tmdb_id or …`), and a TMDB id can
+  look exactly like a Plex key. There only a value that is an
+  `enrichment_status` key is re-keyed.
+- **The metadata cache is not renamed**, except `raw_prefetch:{key}`:
+  `raw:{cat}:{id}` mixes server keys with TMDB ids in one number space. Those
+  entries expire and are fetched again.
+- **Open deletion proposals** (`service` = the old server, status not
+  deleted / rejected) get the new key, the new service and a deep link into
+  the new server.
+- **Users towards Plex** are plex.tv accounts (what a Plex sign-in stores),
+  not the server's local `/accounts` ids. The id memory keeps each user's
+  plex.tv id (the Plex tech walk files it, and the rebind files both sides),
+  and it wins without a check against `/accounts`. Without it,
+  `PlexAdapter.account_users()` reads the owner and the Home users / friends
+  from plex.tv.
+- **Double episodes on the way back:** a Jellyfin item that stood for two
+  Plex episodes goes back to the first of them; rows written on it while on
+  Jellyfin land there. `--undo` of a rebind is exact anyway: the manifest
+  keeps the row ids that went into such a shared target.
+- **Collisions:** a row whose new key a unique column already holds stays on
+  the old key (`UPDATE OR IGNORE`) and is counted in the report.
+- **`--sync-state` only towards Jellyfin:** Plex marks per account token,
+  which Curatarr does not hold for every member.
+- **Run it with Curatarr stopped:** the re-key is one SQLite transaction;
+  Chroma work runs on the Chroma thread, never on the event loop.
+
 ## 9. Security
 
 - The Jellyfin API key is an admin credential. `SecretStr`, never logged,
@@ -626,7 +660,7 @@ Each phase ships on its own and leaves Plex users where they were.
 | **2 — People** ✔ | Quick Connect + password, membership and admin check; wizard server choice, Jellyfin URL/key step and connection test (refuses < 10.9); library mapping from Jellyfin; Integrations card; SECURITY.md | a member signs in; an account from another server cannot |
 | **3 — History** ✔ | tiers A–D, `record_plays` + merge, `server_play_state`, scheduler / startup / Sync button dispatch, the session poller, the webhook route and its setup dialog, the history badge | taste vectors build from Jellyfin plays |
 | **4 — Writes** ✔ | playlists, collections, Curatarr Watchlist, mark played, delete; the Jellyfin tech walk (moved up from phase 6: recommendations and shelves take their keys from it) | "Curatarr Recommended" appears in each member's client |
-| **5 — Rebind** | `rebind.py` + `scripts/rebind_server.py`: dry run, write, undo, both directions | round trip Plex → Jellyfin → Plex on a fixture DB ends byte-identical in every re-keyed column |
+| **5 — Rebind** ✔ | `rebind.py` + `scripts/rebind_server.py`: dry run, write, undo, both directions, `--sync-state` | round trip Plex → Jellyfin → Plex on a fixture DB ends identical in every re-keyed column, except what Jellyfin itself merged (8.8) |
 | **6 — Parity** | likes as ratings, Genres/Tags for moods, sidecar subtitles, deep links, music deletion candidates without Lidarr | only `Capabilities` gaps remain, each named in the UI |
 
 ## 11. Tests
@@ -729,3 +763,6 @@ migration; it keeps the schema honest if the DB is ever moved.
 | Metadata cache | `raw_prefetch:{key}`, `raw:music:{key}`, dead `enriched:{cat}:{key}` (`routers/library.py:1000`) | rename / drop |
 | App state | playlist push snapshots (`plex_playlists._push_snapshot_key`, `playlist_key`), `plex_section_missing:{key}`, `lib_default:{service}:{key}` | drop; rebuilt on the target |
 | Background task names | `library_reenrich:plex:{key}` | none (ephemeral) |
+| Facet map (`facet_map.sqlite3`) | `facet_map.parent`, `facet_migrated.parent` = doc id | renamed with the Chroma docs (added in phase 5) |
+| Nanogenres | `title_nanogenres.parent` = doc id | re-keyed, doc-id rule (added in phase 5) |
+| Deletion proposals | `deletion_proposals.media_id` where `service` is the server | re-keyed with service and deep link (8.8) |

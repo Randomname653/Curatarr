@@ -407,7 +407,7 @@ def current_env_config() -> dict:
         "plex_url":              s.effective_plex_url,
         "plex_token":            s.effective_plex_token,
         "media_server_type":     getattr(s, "MEDIA_SERVER_TYPE", None) or "",
-        "jellyfin_url":          str(getattr(s, "JELLYFIN_URL", None) or ""),
+        "jellyfin_url":          str(getattr(s, "JELLYFIN_URL", None) or "").rstrip("/"),
         "jellyfin_api_key":      _plain(getattr(s, "JELLYFIN_API_KEY", None)),
         "ollama_endpoint":       s.effective_ollama,
         "base_curator_model":    s.BASE_CURATOR_MODEL,

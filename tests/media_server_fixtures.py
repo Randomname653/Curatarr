@@ -27,6 +27,12 @@ def plex_transport(token: str = "plex-token", log: list = None) -> httpx.MockTra
             return httpx.Response(401)
         path, params = request.url.path, request.url.params
         name = None
+        if request.url.host == "plex.tv":
+            if path == "/api/v2/user":
+                return httpx.Response(200, json=load("plex", "plextv_user.json"))
+            if path == "/api/users":
+                return httpx.Response(200, text=(FIXTURES / "plex" / "plextv_users.xml").read_text(encoding="utf-8"))
+            return httpx.Response(404)
         if path == "/":
             name = "root.json"
         elif path == "/library/sections":

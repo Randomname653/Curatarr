@@ -567,6 +567,16 @@ class JellyfinAdapter:
             async with self._client() as c:
                 await self._send(c, "DELETE", f"/Items/{k}", ok=(200, 204))
 
+    async def set_like(self, user: ServerUser, key: str, likes: bool = True) -> None:
+        """Thumbs up (or down) for ``user`` - Jellyfin's only rating a stock
+        client shows (design D6)."""
+        k = normalize_jellyfin_id(key)
+        if not k:
+            raise JellyfinError(f"not a Jellyfin item id: {key!r}")
+        async with self._client() as c:
+            await self._send(c, "POST", f"/UserItems/{k}/Rating",
+                             params={"userId": user.key, "likes": "true" if likes else "false"})
+
     async def mark_played(self, user: ServerUser, key: str) -> None:
         k = normalize_jellyfin_id(key)
         if not k:

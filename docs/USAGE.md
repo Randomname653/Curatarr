@@ -139,6 +139,7 @@ example `venv\Scripts\python update_db.py`.
 | `python scripts/music_enricher.py` | Clear a large music backlog in a separate process |
 | `python scripts/mbid_speedrunner.py` | Bulk-resolve MusicBrainz ids |
 | `python scripts/dedupe_watch_history.py` | Report play rows that record one viewing twice (`--apply` to remove) |
+| `python scripts/rebind_server.py --to jellyfin` | Move the install from Plex to Jellyfin, or back with `--to plex`, keeping history, enrichment, vectors and open proposals. A dry run by default; `--write` needs Curatarr stopped, backs the database up and prints the `--undo` command. Both servers must be set in `.env` ([JELLYFIN_DESIGN.md](JELLYFIN_DESIGN.md) §8) |
 | `python scripts/facts_speedrunner.py` | Clear the archive-metadata backlog in one go (`--skip-significance` leaves the GPU alone) |
 | `python benchmark.py` | Measure a candidate Ollama model's throughput |
 | `python tests/run_all.py` | Full test battery, what CI runs. **Stop Curatarr first**: the vector store admits one process at a time |

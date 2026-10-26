@@ -259,6 +259,32 @@ class PlexAdapter:
             out.append(ServerUser(key=aid, name=name, is_admin=(aid == "1")))
         return out
 
+    async def account_users(self) -> list[ServerUser]:
+        """The plex.tv accounts with access to this server - owner, Plex Home
+        users, friends - keyed by their plex.tv id, which is what a Plex
+        sign-in stores (routers/auth.py). The server's own /accounts lists
+        local ids instead (the owner is "1")."""
+        import re
+        async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, transport=self._transport) as c:
+            try:
+                me = await c.get("https://plex.tv/api/v2/user", headers=self._headers())
+                friends = await c.get("https://plex.tv/api/users",
+                                      headers={**self._headers(), "Accept": "application/xml"})
+            except httpx.HTTPError as e:
+                raise PlexError(f"plex.tv: {type(e).__name__}") from e
+        if me.status_code != 200:
+            raise PlexError(f"plex.tv /api/v2/user: HTTP {me.status_code}")
+        owner = me.json()
+        out = [ServerUser(key=str(owner.get("id")), name=str(owner.get("username") or owner.get("title") or ""),
+                          is_admin=True, email=owner.get("email"))]
+        if friends.status_code == 200:
+            for tag in re.findall(r"<User\b[^>]*>", friends.text):
+                attrs = dict(re.findall(r'(\w+)="([^"]*)"', tag))
+                if attrs.get("id"):
+                    out.append(ServerUser(key=attrs["id"], name=attrs.get("username") or attrs.get("title") or "",
+                                          email=attrs.get("email") or None))
+        return out
+
     # ── phases 3 and 4 ──────────────────────────────────────────────────────
     async def user_states(self, user, *, since=None):
         raise NotImplementedError("Plex user states move behind the seam in phase 3")
