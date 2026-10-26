@@ -94,3 +94,55 @@ def jellyfin_transport(api_key: str = "jf-key", log: list = None) -> httpx.MockT
             return httpx.Response(200, json=load("jellyfin", name))
         return httpx.Response(404)
     return httpx.MockTransport(handler)
+
+
+class JellyfinAuthServer:
+    """A Jellyfin server's sign-in endpoints. ``approved`` flips the Quick
+    Connect request; ``qc_enabled`` False answers Initiate with 401 as 10.9
+    does; ``passwords`` maps name -> (password, fixture). ``logouts`` collects
+    the tokens Curatarr closed; ``devices`` the DeviceIds it presented."""
+
+    def __init__(self, qc_enabled=True, approved=False, qc_user="jane"):
+        self.qc_enabled, self.approved, self.qc_user = qc_enabled, approved, qc_user
+        self.passwords = {"jane": ("hunter2", "jane"), "Sam": ("pw", "sam")}
+        self.logouts, self.devices, self.bodies = [], [], []
+
+    def transport(self) -> httpx.MockTransport:
+        import re as _re
+        secret = load("jellyfin", "QuickConnect_Initiate.json")["Secret"]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            auth = request.headers.get("Authorization", "")
+            if not auth.startswith("MediaBrowser "):
+                return httpx.Response(400)
+            m = _re.search(r'DeviceId="([^"]+)"', auth)
+            self.devices.append(m.group(1) if m else None)
+            path = request.url.path
+            body = json.loads(request.content) if request.content else {}
+            self.bodies.append((path, body))
+            if path == "/QuickConnect/Enabled":
+                return httpx.Response(200, json=self.qc_enabled)
+            if path == "/QuickConnect/Initiate":
+                if not self.qc_enabled:
+                    return httpx.Response(401)
+                return httpx.Response(200, json=load("jellyfin", "QuickConnect_Initiate.json"))
+            if path == "/QuickConnect/Connect":
+                if request.url.params.get("Secret") != secret:
+                    return httpx.Response(404)
+                return httpx.Response(200, json={**load("jellyfin", "QuickConnect_Initiate.json"),
+                                                 "Authenticated": self.approved})
+            if path == "/Users/AuthenticateWithQuickConnect":
+                if body.get("Secret") != secret or not self.approved:
+                    return httpx.Response(401)
+                return httpx.Response(200, json=load("jellyfin", f"AuthenticationResult_{self.qc_user}.json"))
+            if path == "/Users/AuthenticateByName":
+                want = self.passwords.get(body.get("Username"))
+                if not want or want[0] != body.get("Pw"):
+                    return httpx.Response(401)
+                return httpx.Response(200, json=load("jellyfin", f"AuthenticationResult_{want[1]}.json"))
+            if path == "/Sessions/Logout":
+                t = _re.search(r'Token="([^"]+)"', auth)
+                self.logouts.append(t.group(1) if t else None)
+                return httpx.Response(204)
+            return httpx.Response(404)
+        return httpx.MockTransport(handler)

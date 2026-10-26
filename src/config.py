@@ -411,7 +411,10 @@ class Settings(BaseSettings):
 
     @property
     def is_configured(self) -> bool:
-        """True when the minimum required credentials are present."""
+        """True when the minimum required credentials are present: the
+        chosen media server's address and key, and the JWT secret."""
+        if self.MEDIA_SERVER_TYPE == "jellyfin":
+            return bool(self.JELLYFIN_URL and self.JELLYFIN_API_KEY and self.JWT_SECRET)
         return bool(
             self.effective_plex_url
             and self.effective_plex_token

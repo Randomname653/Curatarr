@@ -551,7 +551,17 @@ the flag the target server's own state is not touched.
   Nothing else changes in the delete path (re-read after delete, limbo).
 - The rebind tool runs offline against both servers with keys from `.env`;
   it opens no port.
-- [SECURITY.md](../SECURITY.md) gets a Jellyfin section with phase 2.
+- [SECURITY.md](../SECURITY.md) has the Jellyfin sign-in rules ("Who can log
+  in", since phase 2).
+
+**As built in phase 2:** `media_server/jellyfin_auth.py` and five routes in
+`routers/auth.py`: `GET /api/auth/server` (which server, Quick Connect on or
+off), `POST /api/auth/jellyfin/quickconnect` and
+`GET /api/auth/jellyfin/quickconnect/{login_id}` (nonce in
+`X-Jellyfin-Login-Nonce`), `POST /api/auth/jellyfin/login`. The Plex PIN
+route answers 404 on a Jellyfin install and the Jellyfin routes 404 on a Plex
+one. Each sign-in runs under its own device id, and the session Jellyfin
+opens for it is closed right away.
 
 ## 10. Build order
 
@@ -562,7 +572,7 @@ Each phase ships on its own and leaves Plex users where they were.
 | **1a — Seam** ✔ | `base.py`; `plex_adapter.py` (read path) as in 6.3; `key_namespace` replaces the `isdigit()` guesses (A.3); seam ratchet test | suite green, no behaviour change |
 | **1b — Jellyfin read path** ✔ | `jellyfin_adapter.py`: `ping`, libraries, items, `item`, `children`, `key_exists`, users, `live_sessions`, deep links; contract test over both adapters | contract tests green on the fixture set. The wizard step moves to phase 2, with sign-in |
 | **1c — id memory** ✔ | `server_id_map` table + upsert from every tech walk | the map fills on a Plex install with no other change |
-| **2 — People** | Quick Connect + password, membership and admin check | a member signs in; an account from another server cannot |
+| **2 — People** ✔ | Quick Connect + password, membership and admin check; wizard server choice, Jellyfin URL/key step and connection test (refuses < 10.9); library mapping from Jellyfin; Integrations card; SECURITY.md | a member signs in; an account from another server cannot |
 | **3 — History** | tier A, C, then B, then D; `record_play` + merge; UI badge | taste vectors build from Jellyfin plays |
 | **4 — Writes** | playlists, collections, Curatarr Watchlist, mark played, delete | "Curatarr Recommended" appears in each member's client |
 | **5 — Rebind** | `rebind.py` + `scripts/rebind_server.py`: dry run, write, undo, both directions | round trip Plex → Jellyfin → Plex on a fixture DB ends byte-identical in every re-keyed column |

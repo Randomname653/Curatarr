@@ -361,7 +361,8 @@ def test_appsec_leftovers():
     wiz = (ROOT / "src/services/setup_wizard.py").read_text(encoding="utf-8")
     lib = (ROOT / "src/routers/library.py").read_text(encoding="utf-8")
     check("the connection tests resolve before connecting",
-          wiz.count("await _refused_target(") == 3 and "await resolved_refusal(" in lib)
+          # Plex, Ollama, the arrs - and Jellyfin since 2026-10-26.
+          wiz.count("await _refused_target(") == 4 and "await resolved_refusal(" in lib)
     hosted = wiz[wiz.index("async def test_tmdb"):wiz.index("# ── ENV WRITER")]
     check("no fixed-host test answers with exception text",
           '"error": str(e)' not in hosted and hosted.count("_test_failed(_HOSTED, e)") == 3)

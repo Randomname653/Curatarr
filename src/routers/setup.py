@@ -23,14 +23,14 @@ from src.routers.auth import require_admin_or_first_run, require_admin
 from src.services.endpoint_policy import (
     NEW_ADDRESS_NEEDS_KEY, resolved_refusal, secret_for_target, validate_service_url)
 from src.services.setup_wizard import (
-    test_plex, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
+    test_plex, test_jellyfin, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
     endpoint_privacy_note,   # Pass 97
 )
 
 logger = logging.getLogger(__name__)
 
-_URL_FIELDS = ("plex_url", "ollama_endpoint", "radarr_url", "sonarr_url",
+_URL_FIELDS = ("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
                "lidarr_url", "soulsync_url")
 
 
@@ -66,6 +66,8 @@ def setup_status():
         "first_run": settings.FIRST_RUN,
         "configured": settings.is_configured,
         "has_plex": bool(settings.effective_plex_url and settings.effective_plex_token),
+        "media_server_type": settings.MEDIA_SERVER_TYPE or "plex",
+        "has_jellyfin": bool(settings.JELLYFIN_URL and settings.JELLYFIN_API_KEY),
         "has_ollama": bool(settings.effective_ollama),
         "has_tmdb": bool(settings.TMDB_API_KEY),
         "has_lastfm": bool(settings.LASTFM_API_KEY),
@@ -121,7 +123,13 @@ async def test_connection(
             return secret_for_target(req.url, supplied, stored_url, stored_secret)
         except ValueError:
             raise HTTPException(status_code=400, detail=NEW_ADDRESS_NEEDS_KEY)
-    if req.service == "plex":
+    if req.service == "jellyfin":
+        stored_url = str(settings.JELLYFIN_URL) if settings.JELLYFIN_URL else ""
+        stored_key = (settings.JELLYFIN_API_KEY.get_secret_value()
+                      if settings.JELLYFIN_API_KEY else "")
+        result = await test_jellyfin(req.url or stored_url,
+                                     _secret(req.api_key or req.token, stored_url, stored_key))
+    elif req.service == "plex":
         result = await test_plex(req.url or settings.effective_plex_url,
                                  _secret(req.token, settings.effective_plex_url,
                                          settings.effective_plex_token))
@@ -146,7 +154,7 @@ async def test_connection(
     # Only the endpoint-style services have a URL to classify. TMDB /
     # Last.fm / Spotify go to fixed public hostnames by design — no
     # warning makes sense there.
-    if req.service in ("plex", "ollama", "radarr", "sonarr", "lidarr"):
+    if req.service in ("plex", "jellyfin", "ollama", "radarr", "sonarr", "lidarr"):
         url = req.url or (settings.effective_ollama if req.service == "ollama" else "")
         warn = endpoint_privacy_note(url)
         if warn and isinstance(result, dict):
@@ -249,8 +257,13 @@ async def minibench(req: MinibenchRequest,
 
 
 class SetupCompleteRequest(BaseModel):
-    plex_url: str
-    plex_token: str
+    # One media server per install: Plex (the default) or Jellyfin. The
+    # chosen one's address and key are required; the other's may stay blank.
+    media_server_type: str = "plex"
+    plex_url: str = ""
+    plex_token: str = ""
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
     ollama_endpoint: str = "http://localhost:11434"
     base_curator_model: str = "gemma4:31b"
     base_summarizer_model: str = "granite4.1:8b"
@@ -284,8 +297,16 @@ class SetupCompleteRequest(BaseModel):
     llm_cpu_threads: int = 6
     llm_cpu_min_free_mb: int = 12000
 
-    _urls = field_validator("plex_url", "ollama_endpoint", "radarr_url", "sonarr_url", "lidarr_url",
-                           "soulsync_url")(validate_service_url)
+    _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
+                           "lidarr_url", "soulsync_url")(validate_service_url)
+
+    @field_validator("media_server_type")
+    @classmethod
+    def _known_server(cls, v):
+        v = (v or "plex").strip().lower()
+        if v not in ("plex", "jellyfin"):
+            raise ValueError("media_server_type must be plex or jellyfin")
+        return v
 
 
 class ReconfigureRequest(BaseModel):
@@ -293,6 +314,8 @@ class ReconfigureRequest(BaseModel):
     "" = clear. Same keys the wizard writes, so one write_env serves both."""
     plex_url: Optional[str] = None
     plex_token: Optional[str] = None
+    jellyfin_url: Optional[str] = None
+    jellyfin_api_key: Optional[str] = None
     ollama_endpoint: Optional[str] = None
     base_curator_model: Optional[str] = None
     base_summarizer_model: Optional[str] = None
@@ -323,8 +346,8 @@ class ReconfigureRequest(BaseModel):
     llm_cpu_threads: Optional[int] = None
     llm_cpu_min_free_mb: Optional[int] = None
 
-    _urls = field_validator("plex_url", "ollama_endpoint", "radarr_url", "sonarr_url", "lidarr_url",
-                           "soulsync_url")(validate_service_url)
+    _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
+                           "lidarr_url", "soulsync_url")(validate_service_url)
 
 
 @router.post("/complete")
@@ -339,11 +362,17 @@ async def complete_setup(
     """
     # Blank Plex fields used to flip FIRST_RUN=false anyway, leaving an
     # install the UI could never route back into the wizard.
-    if not req.plex_url.strip() or not req.plex_token.strip():
+    if req.media_server_type == "jellyfin":
+        if not req.jellyfin_url.strip() or not req.jellyfin_api_key.strip():
+            raise HTTPException(status_code=422,
+                                detail="Jellyfin URL and API key are required to complete setup")
+    elif not req.plex_url.strip() or not req.plex_token.strip():
         raise HTTPException(status_code=422,
                             detail="Plex URL and token are required to complete setup")
     # Write .env - enable_pitcher becomes the baked name the runtime keys on
     cfg = req.dict()
+    # Blank = plex in .env, the same as every install before Jellyfin support.
+    cfg["media_server_type"] = "" if req.media_server_type == "plex" else req.media_server_type
     await _refuse_resolved(cfg)
     cfg["pitcher_model"] = "curatarr-pitcher" if req.enable_pitcher else ""
     # On a worker: write_env does file I/O and, on Windows, two icacls
@@ -425,6 +454,10 @@ async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
         raise HTTPException(status_code=422, detail="Plex URL cannot be empty")
     if "plex_token" in changes and not changes["plex_token"].strip():
         raise HTTPException(status_code=422, detail="Plex token cannot be empty")
+    if settings.MEDIA_SERVER_TYPE == "jellyfin":
+        for key in ("jellyfin_url", "jellyfin_api_key"):
+            if key in changes and not changes[key].strip():
+                raise HTTPException(status_code=422, detail=f"{key} cannot be empty on a Jellyfin install")
     await _refuse_resolved(changes)
     before = current_env_config()
     merged = merge_env_config(before, changes)
@@ -432,7 +465,7 @@ async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
     settings.__init__()   # live reload, same as the library panel does
     models_changed = any(before.get(k) != merged.get(k) for k in _MODEL_KEYS)
     endpoints_changed = any(before.get(k) != merged.get(k)
-                            for k in ("plex_url", "ollama_endpoint"))
+                            for k in ("plex_url", "jellyfin_url", "ollama_endpoint"))
     logger.info("[setup] integrations reconfigured by admin: %s",
                 ", ".join(sorted(changes)))
     return {"ok": True, "changed": sorted(changes),

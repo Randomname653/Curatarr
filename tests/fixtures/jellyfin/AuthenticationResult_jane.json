@@ -1,0 +1,23 @@
+{
+ "User": {
+  "Name": "jane",
+  "ServerId": "d4e3c2b1a0f9e8d7c6b5a4938271605f",
+  "Id": "b0c1d2e3f405162738495a6b7c8d9e0f",
+  "HasPassword": true,
+  "HasConfiguredPassword": true,
+  "Policy": {
+   "IsAdministrator": true,
+   "IsDisabled": false
+  }
+ },
+ "SessionInfo": {
+  "Id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "UserId": "b0c1d2e3f405162738495a6b7c8d9e0f",
+  "UserName": "jane",
+  "Client": "Curatarr",
+  "DeviceName": "Curatarr sign-in",
+  "DeviceId": "curatarr-login-x"
+ },
+ "AccessToken": "tok-jane",
+ "ServerId": "d4e3c2b1a0f9e8d7c6b5a4938271605f"
+}

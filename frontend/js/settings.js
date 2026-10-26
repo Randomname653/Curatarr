@@ -165,6 +165,11 @@ const INTEGRATION_CARDS = [
     {id: 'plex_url', label: 'Server URL', placeholder: 'http://192.168.1.100:32400'},
     {id: 'plex_token', label: 'Auth state.token', secret: true, required: true},
   ]},
+  {key: 'jellyfin', title: 'Jellyfin', test: 'jellyfin',
+   hint: 'Used when this install runs on Jellyfin (MEDIA_SERVER_TYPE=jellyfin).', fields: [
+    {id: 'jellyfin_url', label: 'Server URL', placeholder: 'http://192.168.1.100:8096'},
+    {id: 'jellyfin_api_key', label: 'API key', secret: true},
+  ]},
   {key: 'models', title: 'Ollama & models', test: 'ollama', fields: [
     {id: 'ollama_endpoint', label: 'Ollama endpoint', placeholder: 'http://localhost:11434'},
     {id: 'base_curator_model', label: 'Curator model (chat & recommendations)'},
@@ -315,6 +320,7 @@ export async function testIntegration(cardKey, btn) {
   // without re-typing a key that is already saved.
   let body;
   if (cardKey === 'plex') body = {service: 'plex', url: val('plex_url'), token: val('plex_token')};
+  else if (cardKey === 'jellyfin') body = {service: 'jellyfin', url: val('jellyfin_url'), api_key: val('jellyfin_api_key')};
   else if (cardKey === 'models') body = {service: 'ollama', url: val('ollama_endpoint')};
   else if (cardKey === 'metadata') body = {service: 'tmdb', api_key: val('tmdb_api_key')};
   else if (cardKey === 'music') body = val('spotify_client_id') || val('spotify_client_secret')

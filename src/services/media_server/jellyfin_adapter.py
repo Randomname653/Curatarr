@@ -246,6 +246,20 @@ class JellyfinAdapter:
                     continue
                 yield it
 
+    async def count_items(self, library: Library) -> int:
+        """How many top-level titles a library holds (films, series, album
+        artists) - the number the library mapping shows. One request, no
+        items (``Limit=0``)."""
+        if library.kind == "music":
+            path, params = "/Artists/AlbumArtists", {"ParentId": library.key}
+        else:
+            path = "/Items"
+            params = {"ParentId": library.key, "Recursive": "true",
+                      "IncludeItemTypes": "Movie" if library.kind == "movie" else "Series"}
+        async with self._client() as c:
+            body = await self._get(c, path, params={**params, "Limit": 0})
+        return _int(body.get("TotalRecordCount")) or 0
+
     async def _by_ids(self, keys: Sequence[str]) -> list[dict]:
         async with self._client() as c:
             body = await self._get(c, "/Items", params={"Ids": ",".join(keys), "Fields": _FIELDS})

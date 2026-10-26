@@ -66,6 +66,22 @@ returns a nonce that `/plex/poll` must echo in a header, so another LAN client t
 learns a pending PIN id cannot collect the session it approves, and polls
 are budgeted per client address as well as per PIN (2026-09-25).
 
+**On a Jellyfin install** (`MEDIA_SERVER_TYPE=jellyfin`, 2026-10-26) the Plex
+routes answer 404 and people sign in against the one configured Jellyfin
+server, so a successful sign-in is itself the membership proof: there are no
+outside accounts to keep out. The **first** account must be a Jellyfin
+administrator (`Policy.IsAdministrator`), the counterpart of the Plex server
+owner. Quick Connect is the preferred way in: no password passes through
+Curatarr, and the Quick Connect secret never leaves the server: the browser
+holds an opaque login id plus a nonce that the poll must echo in a header,
+like the Plex PIN. The password fallback sends the name and password to the
+Jellyfin server once; nothing is stored or logged, and wrong passwords are
+budgeted per client address and across all clients (ten and a hundred per 15
+minutes; a locked client stays locked even with the right password). Every
+session Jellyfin opens for a sign-in is closed right away (`/Sessions/Logout`):
+Curatarr keeps no Jellyfin user token. The Jellyfin API key in `.env` is an
+admin credential for the media server and is handled like the Plex token.
+
 ## Sessions
 
 JWTs live 7 days and are silently re-issued once a day old — but always
@@ -116,7 +132,7 @@ the internet is down (2026-10-22).
 
 ## Connection tests and service addresses
 
-Plex, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:
+Plex, Jellyfin, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:
 no credentials, query string or fragment (a `#` would cut off the API path
 the client appends), and no link-local or cloud-metadata address. A host
 name is resolved before a test or setup step connects to it, and is refused

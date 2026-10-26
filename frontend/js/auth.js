@@ -101,6 +101,91 @@ export async function startPlexLogin() {
   schedulePoll(POLL_MS);
 }
 
+// ── Jellyfin (docs/JELLYFIN_DESIGN.md) ───────────────────────────────────────
+// The login screen asks which server signs people in before it draws its
+// buttons; a failed ask keeps the Plex screen, which is every install from
+// before Jellyfin support.
+export async function prepareLogin() {
+  let srv;
+  try { srv = await api('/api/auth/server'); } catch (e) { console.warn('[auth] server kind not read - Plex screen stays', e); return; }
+  if (srv?.kind !== 'jellyfin') return;
+  document.getElementById('auth-tagline').textContent = 'Your personal AI media curator for Jellyfin. Sign in to continue.';
+  document.getElementById('plex-login-btn').hidden = true;
+  document.getElementById('jf-login').hidden = false;
+  // Quick Connect is off by default on a Jellyfin server: then the password
+  // form is the way in, and says so instead of offering a dead button.
+  if (srv.quick_connect === false) {
+    document.getElementById('jf-qc-btn').hidden = true;
+    document.getElementById('jf-pw-intro').textContent = 'Sign in with your Jellyfin name and password:';
+  }
+}
+
+function _signedIn(r) {
+  state.token = r.token; localStorage.setItem('curatarr_token', state.token);
+  stopTaskStream();
+  state.taskStreamRetries = 0;
+  setUser(r.user); showApp();
+}
+
+function _detail(e, fallback) {
+  try { return JSON.parse(e.message).detail || fallback; } catch { return fallback; }
+}
+
+export async function startJellyfinQuickConnect() {
+  let data;
+  try {
+    data = await api('/api/auth/jellyfin/quickconnect', 'POST');
+  } catch (e) {
+    toast(`Couldn't start Quick Connect — ${_detail(e, _errMsg(e))}`, 'danger');
+    return;
+  }
+  const code = String(data.code || '');
+  document.getElementById('jf-qc-box').hidden = false;
+  document.getElementById('jf-qc-code').textContent = code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code;
+  const status = document.getElementById('jf-qc-status');
+  status.textContent = 'Waiting for approval…';
+  if (state.pollInterval) clearInterval(state.pollInterval);
+  const expiresAt = Date.now() + (data.expires_in || 600) * 1000;
+  // 5 s: the poll is a LAN call to Curatarr and one to Jellyfin, budgeted
+  // per client at 30 a minute (auth.py MAX_POLLS_PER_IP_PER_MINUTE).
+  const POLL_MS = 5000;
+  let misses = 0;
+  const stop = (note) => { clearInterval(state.pollInterval); state.pollInterval = null; if (note) status.textContent = note; };
+  state.pollInterval = setInterval(async () => {
+    if (Date.now() > expiresAt) { stop('Code expired — select Sign in with Quick Connect again'); return; }
+    try {
+      const r = await api(`/api/auth/jellyfin/quickconnect/${encodeURIComponent(data.login_id)}`, 'GET', null, false,
+                          {'X-Jellyfin-Login-Nonce': data.nonce});
+      misses = 0;
+      status.textContent = 'Waiting for approval…';
+      if (r.status === 'ok') { stop(); _signedIn(r); }
+    } catch (e) {
+      // 403: the server no longer knows this sign-in, or refused the account.
+      if (e.status === 403) stop(_detail(e, 'Sign-in expired — select Sign in with Quick Connect again'));
+      else if (++misses >= 3) status.textContent = 'Jellyfin is not answering — retrying';
+    }
+  }, POLL_MS);
+}
+
+export async function jellyfinPasswordLogin(ev) {
+  if (ev) ev.preventDefault();
+  const user = document.getElementById('jf-user').value.trim();
+  const pass = document.getElementById('jf-pass');
+  const btn = document.getElementById('jf-pw-btn');
+  if (!user) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/auth/jellyfin/login', 'POST', {username: user, password: pass.value});
+    pass.value = '';
+    _signedIn(r);
+  } catch (e) {
+    pass.value = '';
+    toast(_detail(e, `Sign-in failed — ${_errMsg(e)}`), 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // The code is shown split for reading ("ABCD EFGH"); plex.tv/link wants it whole.
 export async function copyPlexCode(btn) {
   const code = (document.getElementById('pin-code')?.textContent || '').replace(/\s+/g, '');

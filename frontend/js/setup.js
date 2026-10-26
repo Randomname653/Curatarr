@@ -5,9 +5,48 @@ import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBus
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
+function serverChoice() {
+  const kind = state.setupData.media_server_type === 'jellyfin' ? 'jellyfin' : 'plex';
+  return `<div class="form-group">
+      <label for="s-media-server">Media server</label>
+      <select id="s-media-server" ${actOn('change', 'setupServerKind')}>
+        <option value="plex"${kind === 'plex' ? ' selected' : ''}>Plex</option>
+        <option value="jellyfin"${kind === 'jellyfin' ? ' selected' : ''}>Jellyfin</option>
+      </select>
+      <div class="hint">One media server per install. Curatarr reads who watched what from it and writes its playlists there.</div>
+    </div>`;
+}
+
+// The signed-in install's media server, for labels (auth.py /status "server").
+function serverLabel() {
+  return state.currentUser?.server === 'jellyfin' ? 'Jellyfin' : 'Plex';
+}
+
+export function setupServerKind() {
+  collectStep();
+  state.setupData.media_server_type = document.getElementById('s-media-server')?.value === 'jellyfin' ? 'jellyfin' : 'plex';
+  renderSetupStep(state.setupStep);
+}
+
 const SETUP_CONTENT = {
-  plex: () => `
+  // One media server per install (docs/JELLYFIN_DESIGN.md): Plex, or Jellyfin.
+  plex: () => state.setupData.media_server_type === 'jellyfin' ? `
+    <h2 class="setup-heading">Jellyfin Connection</h2>
+    ${serverChoice()}
+    <div class="form-group">
+      <label for="s-jellyfin-url">Jellyfin Server URL</label>
+      <input id="s-jellyfin-url" placeholder="http://192.168.1.100:8096" value="${esc(state.setupData.jellyfin_url||'')}">
+      <div class="hint">The local address of your Jellyfin server (10.9 or newer).</div>
+    </div>
+    <div class="form-group">
+      <label for="s-jellyfin-key">Jellyfin API Key</label>
+      <input id="s-jellyfin-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(state.setupData.jellyfin_api_key||'')}">
+      <div class="hint">Dashboard → API Keys → +. Household members sign in with their own Jellyfin accounts; turn on Quick Connect (Dashboard → General) so they can without typing a password here.</div>
+    </div>
+    <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>Test connection</button>
+    <div id="test-jellyfin-result"></div>` : `
     <h2 class="setup-heading">Plex Connection</h2>
+    ${serverChoice()}
     <div class="form-group">
       <label for="s-plex-url">Plex Server URL</label>
       <input id="s-plex-url" placeholder="http://192.168.1.100:32400" value="${state.setupData.plex_url||''}">
@@ -204,8 +243,16 @@ export function renderSetupStep(step) {
 export function collectStep() {
   const key = SETUP_STEPS[state.setupStep];
   if (key === 'plex') {
-    state.setupData.plex_url = document.getElementById('s-plex-url')?.value?.trim() || '';
-    state.setupData.plex_token = document.getElementById('s-plex-token')?.value?.trim() || '';
+    const kind = document.getElementById('s-media-server')?.value;
+    if (kind) state.setupData.media_server_type = kind;
+    if (document.getElementById('s-plex-url')) {
+      state.setupData.plex_url = document.getElementById('s-plex-url').value.trim();
+      state.setupData.plex_token = document.getElementById('s-plex-token')?.value?.trim() || '';
+    }
+    if (document.getElementById('s-jellyfin-url')) {
+      state.setupData.jellyfin_url = document.getElementById('s-jellyfin-url').value.trim();
+      state.setupData.jellyfin_api_key = document.getElementById('s-jellyfin-key')?.value?.trim() || '';
+    }
   } else if (key === 'ollama') {
     state.setupData.ollama_endpoint = document.getElementById('s-ollama')?.value?.trim() || 'http://localhost:11434';
     state.setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'gemma4:31b';
@@ -246,6 +293,7 @@ export async function testConn(service) {
 
   let url='', token_='', apiKey='';
   if (service==='plex') { url=document.getElementById('s-plex-url')?.value; token_=document.getElementById('s-plex-token')?.value; }
+  else if (service==='jellyfin') { url=document.getElementById('s-jellyfin-url')?.value; apiKey=document.getElementById('s-jellyfin-key')?.value; }
   else if (service==='ollama') { url=document.getElementById('s-ollama')?.value || state.setupData.ollama_endpoint; }
   else if (service==='radarr') { url=document.getElementById('s-radarr-url')?.value; apiKey=document.getElementById('s-radarr-key')?.value; }
   else if (service==='sonarr') { url=document.getElementById('s-sonarr-url')?.value; apiKey=document.getElementById('s-sonarr-key')?.value; }
@@ -433,8 +481,8 @@ export async function renderOnboardingStep(step) {
   const sub = document.getElementById('onboarding-sub');
 
   if (step === 'libraries') {
-    title.textContent = 'Step 1 — Configure your Plex libraries';
-    sub.textContent = 'Tell Curatarr what each Plex library contains so it can handle them correctly.';
+    title.textContent = `Step 1 — Configure your ${serverLabel()} libraries`;
+    sub.textContent = `Tell Curatarr what each ${serverLabel()} library contains so it can handle them correctly.`;
 
     // A failed discover used to read as "no libraries": an empty table whose
     // Save & Continue stored an empty mapping. It is an error with a Retry.
@@ -443,14 +491,14 @@ export async function renderOnboardingStep(step) {
     catch (e) {
       state.discoverSections = [];
       body.innerHTML = `${_errHtml(e, act('retryOnboardingStep'))}
-        <p class="fs-12 t3 mt-8">Curatarr could not reach Plex to list your libraries. Check that Plex is running, then retry.</p>`;
+        <p class="fs-12 t3 mt-8">Curatarr could not reach ${serverLabel()} to list your libraries. Check that ${serverLabel()} is running, then retry.</p>`;
       return;
     }
     state.discoverSections = disc.sections || [];
 
     body.innerHTML = `
       <div class="mb-20 tbl-wrap">
-        <table class="tbl tbl-cards"><thead><tr><th>Library</th><th>Plex type</th><th>Category</th></tr></thead><tbody>
+        <table class="tbl tbl-cards"><thead><tr><th>Library</th><th>${serverLabel()} type</th><th>Category</th></tr></thead><tbody>
         ${state.discoverSections.map(s=>`<tr>
           <td class="cell-primary fw-500">${esc(s.title)}</td>
           <td class="t3 fs-12">${esc(s.type)}</td>
@@ -467,7 +515,7 @@ export async function renderOnboardingStep(step) {
 
   else if (step === 'sync') {
     title.textContent = 'Step 2 — Initial sync';
-    sub.textContent = 'Curatarr will now pull your complete watch history from Plex and compute your taste profile. This takes a moment.';
+    sub.textContent = `Curatarr will now pull your complete watch history from ${serverLabel()} and compute your taste profile. This takes a moment.`;
     body.innerHTML = `
       <div class="mb-20" id="ob-sync-status">
         <div class="mb-8 progress-bar"><div class="w-0 progress-fill" id="ob-sync-bar"></div></div>

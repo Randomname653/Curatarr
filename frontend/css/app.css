@@ -834,6 +834,15 @@ h1[tabindex="-1"]:focus { outline: none; }
 #pin-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; text-align: center; width: 340px; }
 #pin-box .pin-code { font-size: 36px; font-weight: 800; letter-spacing: 10px; color: var(--amber); margin: 12px 0; font-family: monospace; }
 #pin-box small { font-size: 12px; color: var(--text2); }
+#jf-login { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+#jf-login[hidden] { display: none; }
+#auth-overlay .pin-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; text-align: center; width: 340px; max-width: calc(100vw - 32px); }
+#auth-overlay .pin-box .pin-code { font-size: 36px; font-weight: 800; letter-spacing: 10px; color: var(--amber); margin: 12px 0; font-family: monospace; }
+#auth-overlay .pin-box small { font-size: 12px; color: var(--text2); }
+#jf-pw-form { text-align: left; }
+#jf-pw-form p, #jf-pw-form label { text-align: left; }
+#jf-pw-form p { margin-bottom: 12px; }
+#jf-pw-form .btn { display: block; margin-left: auto; }
 
 /* ── MESSAGES PANEL ── */
 #msg-panel { position: fixed; right: 16px; top: 60px; width: 360px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 50; display: none; }

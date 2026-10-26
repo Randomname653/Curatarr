@@ -2,7 +2,7 @@ import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdat
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, openLibraryItem, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
+import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, setupServerKind, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
@@ -22,7 +22,7 @@ import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
-import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
+import { copyPlexCode, jellyfinPasswordLogin, prepareLogin, setUser, showApp, startJellyfinQuickConnect, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
@@ -76,6 +76,7 @@ window.onload = async () => {
       }
     }
   }
+  await prepareLogin();
   document.getElementById('auth-overlay').classList.remove('hidden');
   // api.sessionEnded() reloads into this screen; say why, once.
   let ended = null;
@@ -161,6 +162,7 @@ const actions = {
   clearNetflixFiles,
   hideOnError,
   posterLoaded,
+  jellyfinPasswordLogin,
   jumpLatest,
   hideOnboarding,
   installApp,
@@ -290,6 +292,7 @@ const actions = {
   setPrinciple,
   setRecLane,
   setupNav,
+  setupServerKind,
   showKbTab,
   showLibrariesForce,
   showSettingsAccount,
@@ -303,6 +306,7 @@ const actions = {
   startEnrichNew,
   startMusicPipeline,
   startOnboardingSync,
+  startJellyfinQuickConnect,
   startPlexLogin,
   startSprint,
   stopBackfill,

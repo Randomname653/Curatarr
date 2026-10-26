@@ -67,8 +67,29 @@
 <!-- AUTH OVERLAY -->
 <div id="auth-overlay" class="hidden">
   <div class="logo-big">Curatarr</div>
-  <p>Your personal AI media curator for Plex. Sign in to continue.</p>
-  <button class="pad-12-28 fs-14 btn btn-primary" data-action="startPlexLogin">Sign in with Plex</button>
+  <p id="auth-tagline">Your personal AI media curator for Plex. Sign in to continue.</p>
+  <button class="pad-12-28 fs-14 btn btn-primary" id="plex-login-btn" data-action="startPlexLogin">Sign in with Plex</button>
+  <!-- Jellyfin installs (docs/JELLYFIN_DESIGN.md): Quick Connect first, the password as the fallback -->
+  <div hidden id="jf-login">
+    <button class="pad-12-28 fs-14 btn btn-primary" id="jf-qc-btn" data-action="startJellyfinQuickConnect">Sign in with Quick Connect</button>
+    <div hidden id="jf-qc-box" class="pin-box">
+      <p class="fs-13 t2">In any Jellyfin app you are signed in to, open <strong>Settings → Quick Connect</strong> and enter this code:</p>
+      <div class="pin-code" id="jf-qc-code">··· ···</div>
+      <small id="jf-qc-status">Waiting for approval…</small>
+    </div>
+    <form id="jf-pw-form" class="pin-box" data-on-submit="jellyfinPasswordLogin" data-args='["$event"]'>
+      <p class="fs-13 t2" id="jf-pw-intro">Or sign in with your Jellyfin name and password:</p>
+      <div class="form-group">
+        <label for="jf-user">Jellyfin user</label>
+        <input id="jf-user" autocomplete="username" required maxlength="256">
+      </div>
+      <div class="form-group">
+        <label for="jf-pass">Password</label>
+        <input id="jf-pass" type="password" autocomplete="current-password" maxlength="1024">
+      </div>
+      <button class="btn btn-secondary" type="submit" id="jf-pw-btn">Sign in</button>
+    </form>
+  </div>
   <div hidden id="pin-box">
     <p class="fs-13 t2">Go to <a href="https://plex.tv/link" target="_blank" rel="noopener noreferrer" class="t-amber">plex.tv/link</a> and enter this code:</p>
     <div class="pin-code" id="pin-code">···· ····</div>
