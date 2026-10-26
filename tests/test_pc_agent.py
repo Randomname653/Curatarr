@@ -98,7 +98,7 @@ pc_host._state.update(available=False, draining=False, misses=0, snapshot=None)
 def poll(result):
     async def fetch(url, tok):
         assert url == "http://pc:11435/status" and tok == TOKEN
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             raise result
         return result
     asyncio.run(pc_host.poll_once(fetch))
@@ -115,6 +115,10 @@ try:
           not pc_host.available() and pc_host.snapshot() is None)
     poll(report)
     check("back as soon as it answers", pc_host.available())
+    misses = pc_host._state["misses"]
+    poll(asyncio.CancelledError())
+    check("a poll cancelled by the app stopping is no missed poll and raises nothing",
+          pc_host.available() and pc_host._state["misses"] == misses)
     poll({**report, "shutting_down": True})
     check("a report that says shutting down: gone at once, draining",
           not pc_host.available() and pc_host.status()["draining"])

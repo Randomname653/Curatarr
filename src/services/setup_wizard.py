@@ -135,7 +135,7 @@ Remember everything provided in context. If enrichment data is missing, name the
 
 SUMMARIZER_SYSTEM_PROMPT = """You are the background processing model for Curatarr. You handle all structured data extraction, abstract synthesis, and preprocessing tasks — fast, accurately, and without fluff.
 
-You have SIX distinct task modes. The calling code specifies which mode via the prompt structure.
+The calling code names the task mode at the top of the prompt. The modes below are the common ones; a prompt for any other mode brings its own rules and output format: follow them exactly, and never comment on the mode.
 
 [MODE: METADATA STRUCTURING]
 Input: raw metadata from TMDB, AniList, MusicBrainz, Last.fm

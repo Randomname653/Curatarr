@@ -318,6 +318,33 @@ server weekly. It read one file at a time, so its highs were mostly cross-file f
 it failed every run once its API credit ran out. CodeQL, Bandit, OSV-Scanner and Scorecard stay.
 Removed: the workflow, its scanner script, its lock and its accepted-findings list.
 
+**Knowledge Base maintenance: lyrics profiles, the "tasks due" badge, the anime card.**
+- **Lyrics profiles ask for their JSON shape.** The summariser bake's system prompt lists six modes,
+  and LYRICS PROFILE is not one of them. The model often opened with "the requested mode is not
+  among the six defined task modes" and then wrote prose: 79 of 166 artists failed on the NAS one
+  night. The call now sends Ollama the answer's schema, which carries the cleaner's checks: at
+  least two themes and a real profile. In a replay 0 of 12 failed with it, 4 of 12 without. The
+  bake's prompt no longer insists on six modes either; that takes effect with the next
+  `build_models.py`.
+- **No guessing from almost nothing.** A text with fewer than 10 real words (an "[Instrumental]",
+  a title shouted four times) is not shown to the model. An artist whose texts hold fewer than 40
+  in all is counted as "without real lyrics", not as a failed profile.
+- **No copied examples.** The prompt named two example themes, and the model copied them verbatim
+  into 13 of 772 profiles ("leaving a small town", "grief turned into anger"; 3 of 20 in a replay,
+  0 without). The examples are gone, and a profile carrying one is made again.
+- **"N tasks due" no longer counts the every-tick tasks.** `plex_followup` and `memory_catchup`
+  run on every 30-minute tick by design (cadence 0.4 h), so they were always due between two ticks
+  and the badge never left 2 (`every_tick` in the custodian status).
+- **The anime card counts what carries an AniList id.** It showed "0 AniList resolved, 7,514
+  pending" forever: the mapping file's AniList column has no writer, because resolving through AniDB
+  ids drifts. It now shows the library's anime whose enriched profile names an AniList id (2,017 of
+  2,421 on the owner's data) and the pins, the crossref's among them. The coverage check reads the
+  profiles too.
+- **No ERROR on every stop.** The PC agent poll that is in flight when the app stops was cancelled
+  and logged as a job failure with a traceback; it now ends quietly and counts as no missed poll.
+
+Tests: `tests/test_kb_maintenance_fixes.py`, `tests/test_custodian_queues.py`, `tests/test_pc_agent.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
