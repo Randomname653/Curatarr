@@ -119,9 +119,11 @@ for name, a in ADAPTERS.items():
     except Exception as e:  # noqa: BLE001 - the raise IS the assertion
         loud = "401" in str(e)
     check("a wrong credential raises with the status, never an empty library", loud)
-    later_here = (("upsert_playlist", (users[0], "t", [])), ("delete_item", (heat.key,)))
-    if name == "plex":       # Jellyfin's arrived with phase 3; Plex's move behind the seam later
-        later_here = (("user_states", (users[0],)), ("plays", (users[0],))) + later_here
+    # Jellyfin's history (phase 3) and writes (phase 4) are there; Plex's move
+    # behind the seam later - its own modules still do that work.
+    later_here = () if name == "jellyfin" else (
+        ("user_states", (users[0],)), ("plays", (users[0],)),
+        ("upsert_playlist", (users[0], "t", [])), ("delete_item", (heat.key,)))
     for meth, args in later_here:
         try:
             run(getattr(a, meth)(*args))

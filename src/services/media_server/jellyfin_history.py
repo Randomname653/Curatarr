@@ -439,17 +439,6 @@ async def sync_history(*, adapter=None, followup: bool = True) -> dict:
         return {"synced": synced, "merged": merged, "users": per_user}
 
 
-async def walk_library(*, adapter=None) -> dict:
-    """The daily library walk on Jellyfin: every item filed in the id memory
-    (server_id_map), as the Plex tech walk does on Plex."""
-    from src.services.media_server import get_adapter, id_map
-    adapter = adapter or get_adapter()
-    items = []
-    for lib in await adapter.libraries():
-        items += [it async for it in adapter.items(lib)]
-    return await id_map.record_walk("jellyfin", items, adapter=adapter)
-
-
 async def history_sources() -> dict:
     """Which witnesses this install has, for the UI badge (design §4.5)."""
     from src.services.app_state import get_state

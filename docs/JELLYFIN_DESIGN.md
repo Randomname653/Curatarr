@@ -201,8 +201,8 @@ snapshot). Where the build differs from the draft above:
   URL, header, events and template; *New secret* rotates it. No secret, no
   route (401).
 - **The scheduled sync** (`job_plex_sync`, job id unchanged) runs tiers D and
-  C on Jellyfin, then a library walk that fills `server_id_map`; tech
-  profiles stay Plex-only until phase 6. Startup and the Sync button set
+  C on Jellyfin, then the Jellyfin tech walk (phase 4), which also fills
+  `server_id_map`. Startup and the Sync button set
   the custodian's follow-up flag, so the taste work runs as after a Plex
   sync.
 - **Tier D counts a report row as a play from 80 % of the runtime**, the
@@ -254,6 +254,33 @@ honestly, as the Plex path refuses an ambiguous Discover match.
 1★ PlexAmp rating gets, so it reaches the taste engine as a dislike. Plex
 star ratings survive a rebind in the table as they are; 8.6 says what is
 written back to the server.
+
+### 5.5 As built (phase 4)
+
+`media_server/jellyfin_writes.py` holds the Jellyfin side of the three Plex
+write modules; `plex_playlists.push_user_playlists` / `push_user_music_playlist`
+/ `push_wrapup_playlist`, `plex_collections.push_collections` and
+`plex_watchlist.add_to_watchlist` hand over to it on a Jellyfin install, with
+the same inputs and answers, so the custodian jobs, the Wrap-Up page, the
+Swipe view and the chat's protection hook are unchanged. Differences from
+the draft and from Plex:
+
+- **Edited in place, never recreated:** playlists and collections keep their
+  id (and a member's pins) across refreshes; extra same-name copies go.
+- **Key self-heal:** a recommendation's key Jellyfin no longer has, or one
+  from before a server switch, is found again by title in the category's
+  libraries (an exact name first; a name two works share with different
+  years is no match) and healed onto the row.
+- **The tech walk moved up from phase 6** (`media_server/jellyfin_tech.py`):
+  `MediaTechProfile`, the library ledger and `server_id_map` from one walk of
+  MediaSources. Recommendations and the collection designer take their
+  server keys from `MediaTechProfile`; without it there was nothing to write.
+- **Deleting** (`service="jellyfin"` proposals): configured check, probe,
+  `DELETE /Items/{id}` and a re-read through the adapter; an item that stays
+  is a failure. Limbo asks `key_exists`. No candidate source produces such
+  proposals yet (Plex's comes from its music index): on Jellyfin, music
+  deletion needs Lidarr for now; the rebind turns open Plex proposals into
+  Jellyfin ones.
 
 ## 6. Code shape
 
@@ -598,9 +625,9 @@ Each phase ships on its own and leaves Plex users where they were.
 | **1c — id memory** ✔ | `server_id_map` table + upsert from every tech walk | the map fills on a Plex install with no other change |
 | **2 — People** ✔ | Quick Connect + password, membership and admin check; wizard server choice, Jellyfin URL/key step and connection test (refuses < 10.9); library mapping from Jellyfin; Integrations card; SECURITY.md | a member signs in; an account from another server cannot |
 | **3 — History** ✔ | tiers A–D, `record_plays` + merge, `server_play_state`, scheduler / startup / Sync button dispatch, the session poller, the webhook route and its setup dialog, the history badge | taste vectors build from Jellyfin plays |
-| **4 — Writes** | playlists, collections, Curatarr Watchlist, mark played, delete | "Curatarr Recommended" appears in each member's client |
+| **4 — Writes** ✔ | playlists, collections, Curatarr Watchlist, mark played, delete; the Jellyfin tech walk (moved up from phase 6: recommendations and shelves take their keys from it) | "Curatarr Recommended" appears in each member's client |
 | **5 — Rebind** | `rebind.py` + `scripts/rebind_server.py`: dry run, write, undo, both directions | round trip Plex → Jellyfin → Plex on a fixture DB ends byte-identical in every re-keyed column |
-| **6 — Parity** | likes as ratings, Genres/Tags for moods, sidecar subtitles, deep links | only `Capabilities` gaps remain, each named in the UI |
+| **6 — Parity** | likes as ratings, Genres/Tags for moods, sidecar subtitles, deep links, music deletion candidates without Lidarr | only `Capabilities` gaps remain, each named in the UI |
 
 ## 11. Tests
 

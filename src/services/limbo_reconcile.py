@@ -93,6 +93,19 @@ def _item_url(service: str, media_id) -> tuple:
 async def item_gone(client, service: str, media_id):
     """True = the service answers 404/410 for it, False = still there,
     None = no answer worth acting on."""
+    if service == "jellyfin":
+        # Through the adapter: Jellyfin answers a deleted id with an empty
+        # list, not a 404, and only the media-server package builds its URLs.
+        from src.routers.recommendations import _require_media_id
+        mid = _require_media_id(media_id, "jellyfin")
+        if mid is None:
+            return None
+        try:
+            from src.services.media_server import get_adapter
+            return not await get_adapter().key_exists(mid)
+        except Exception as e:  # noqa: BLE001 - no proof either way; tomorrow again
+            logger.debug("[limbo] jellyfin lookup failed: %s", e)
+            return None
     url, headers = _item_url(service, media_id)
     if url is None:
         return None

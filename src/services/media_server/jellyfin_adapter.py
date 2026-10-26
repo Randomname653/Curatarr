@@ -198,7 +198,7 @@ class JellyfinAdapter:
         return await self._send(client, "GET", path, params=params)
 
     async def _send(self, client: httpx.AsyncClient, method: str, path: str, *,
-                    params: Optional[dict] = None, json=None):
+                    params: Optional[dict] = None, json=None, ok=(200,)):
         try:
             r = await client.request(method, f"{self._base}{path}", params=params, json=json,
                                      headers=self._headers())
@@ -206,9 +206,9 @@ class JellyfinAdapter:
             raise JellyfinError(f"Jellyfin {path}: {type(e).__name__}") from e
         if r.status_code == 404 and path.startswith("/user_usage_stats/"):
             raise PluginMissing(f"Jellyfin {path}: the Playback Reporting plugin is not installed")
-        if r.status_code != 200:
+        if r.status_code not in ok:
             raise JellyfinError(f"Jellyfin {path}: HTTP {r.status_code}")
-        return r.json()
+        return r.json() if r.content else None
 
     async def _pages(self, path: str, params: dict) -> AsyncIterator[dict]:
         start = 0
@@ -263,6 +263,15 @@ class JellyfinAdapter:
         """Every item of ``kinds`` in ``library``, paged. Artists come from
         /Artists/AlbumArtists: /Items lists only artists that own a folder.
         ``since`` filters on the added date after the fetch."""
+        async for raw in self.raw_items(library, kinds=kinds):
+            it = to_media_item(raw, library.key)
+            if it is None or (since and it.added_at and it.added_at < since):
+                continue
+            yield it
+
+    async def raw_items(self, library: Library, *, kinds: Sequence[ItemKind] = ()) -> AsyncIterator[dict]:
+        """The library walk's BaseItemDto dicts, MediaStreams included - the
+        tech-profile walk reads codecs and languages from them."""
         for kind in kinds or _DEFAULT_KINDS.get(library.kind, ()):
             if kind == "artist":
                 pages = self._pages("/Artists/AlbumArtists",
@@ -274,10 +283,7 @@ class JellyfinAdapter:
             else:
                 continue
             async for raw in pages:
-                it = to_media_item(raw, library.key)
-                if it is None or (since and it.added_at and it.added_at < since):
-                    continue
-                yield it
+                yield raw
 
     async def count_items(self, library: Library) -> int:
         """How many top-level titles a library holds (films, series, album
@@ -412,16 +418,173 @@ class JellyfinAdapter:
                             device=rec.get("DeviceName") or None, client=rec.get("ClientName") or None))
         return out
 
-    # ── phase 4 ─────────────────────────────────────────────────────────────
+    # ── finding things (the writes' key resolution) ─────────────────────────
+    async def search(self, title: str, kind: ItemKind, *, library_keys: Sequence[str] = (),
+                     year: Optional[int] = None, artist: Optional[str] = None) -> Optional[str]:
+        """The key of the library item called ``title`` (an exact,
+        case-insensitive name match first, else the server's first hit), or
+        None. ``year`` and ``artist`` narrow it; a year that two matches
+        disagree on is no match (the Momoiro rule: same name, other work)."""
+        if not title:
+            return None
+        want = title.casefold().strip()
+        if kind == "artist":
+            path, params = "/Artists/AlbumArtists", {"SearchTerm": title}
+        else:
+            path = "/Items"
+            params = {"SearchTerm": title, "Recursive": "true", "IncludeItemTypes": _ITEM_TYPE[kind],
+                      "Fields": "ProviderIds,Path"}
+        hits = []
+        async with self._client() as c:
+            for lib in (library_keys or [None]):
+                q = {**params, "Limit": 20, **({"ParentId": lib} if lib else {})}
+                hits += (await self._get(c, path, params=q)).get("Items") or []
+        if artist:
+            a = artist.casefold().strip()
+            hits = [h for h in hits if a in {str(x.get("Name") or "").casefold()
+                                             for x in h.get("AlbumArtists") or h.get("ArtistItems") or []}
+                    or str(h.get("AlbumArtist") or "").casefold() == a]
+        exact = [h for h in hits if str(h.get("Name") or "").casefold().strip() == want]
+        pool = exact or hits
+        if year:
+            dated = [h for h in pool if _int(h.get("ProductionYear")) in (year, year - 1, year + 1)]
+            pool = dated or pool
+        if exact and len({_int(h.get("ProductionYear")) for h in pool}) > 1 and not year:
+            return None
+        return normalize_jellyfin_id(pool[0].get("Id")) if pool else None
 
-    async def upsert_playlist(self, user, title, keys):
-        raise NotImplementedError("Jellyfin writes arrive with phase 4")
+    async def next_episode(self, user: ServerUser, series_key: str) -> Optional[str]:
+        """The user's next unwatched episode of a series, else its first. A
+        series id in a playlist expands to every episode."""
+        async with self._client() as c:
+            for extra in ({"IsPlayed": "false"}, {}):
+                body = await self._get(c, "/Items", params={
+                    "userId": user.key, "ParentId": series_key, "Recursive": "true",
+                    "IncludeItemTypes": "Episode", "SortBy": "ParentIndexNumber,IndexNumber",
+                    "SortOrder": "Ascending", "Limit": 1, **extra})
+                found = body.get("Items") or []
+                if found:
+                    return normalize_jellyfin_id(found[0].get("Id"))
+        return None
 
-    async def upsert_collection(self, library, title, keys):
-        raise NotImplementedError("Jellyfin writes arrive with phase 4")
+    async def unheard_album(self, user: ServerUser, artist_key: str) -> Optional[str]:
+        """The artist's first album this user has not played, else the first."""
+        async with self._client() as c:
+            for extra in ({"IsPlayed": "false"}, {}):
+                body = await self._get(c, "/Items", params={
+                    "userId": user.key, "AlbumArtistIds": artist_key, "Recursive": "true",
+                    "IncludeItemTypes": "MusicAlbum", "SortBy": "ProductionYear,SortName",
+                    "Limit": 1, **extra})
+                found = body.get("Items") or []
+                if found:
+                    return normalize_jellyfin_id(found[0].get("Id"))
+        return None
 
-    async def mark_played(self, user, key):
-        raise NotImplementedError("Jellyfin writes arrive with phase 4")
+    # ── writes (design §5) ──────────────────────────────────────────────────
+    async def playlists(self, user: ServerUser, title: Optional[str] = None) -> list[dict]:
+        """The user's playlists (``{"key", "title"}``), only those named
+        ``title`` when given."""
+        async with self._client() as c:
+            body = await self._get(c, "/Items", params={"userId": user.key, "Recursive": "true",
+                                                        "IncludeItemTypes": "Playlist"})
+        return [{"key": normalize_jellyfin_id(i.get("Id")), "title": i.get("Name") or ""}
+                for i in body.get("Items") or []
+                if normalize_jellyfin_id(i.get("Id")) and (title is None or i.get("Name") == title)]
 
-    async def delete_item(self, key):
-        raise NotImplementedError("Jellyfin deletes arrive with phase 4")
+    async def playlist_keys(self, user: ServerUser, title: str) -> list[str]:
+        """The item ids in ``user``'s playlist ``title``, in order; [] when
+        there is no such playlist."""
+        mine = await self.playlists(user, title)
+        if not mine:
+            return []
+        async with self._client() as c:
+            body = await self._get(c, f"/Playlists/{mine[0]['key']}/Items", params={"userId": user.key})
+        return [k for k in (normalize_jellyfin_id(i.get("Id")) for i in body.get("Items") or []) if k]
+
+    async def upsert_playlist(self, user: ServerUser, title: str, keys: Sequence[str],
+                              media_type: str = "Video") -> str:
+        """``user``'s playlist ``title`` holding exactly ``keys``. An existing
+        one is edited in place (its id, and the user's pins, survive); extra
+        copies of the same name are removed. Returns the playlist id."""
+        keys = [k for k in (normalize_jellyfin_id(k) for k in keys) if k]
+        mine = await self.playlists(user, title)
+        async with self._client() as c:
+            for extra in mine[1:]:
+                await self._send(c, "DELETE", f"/Items/{extra['key']}", ok=(200, 204))
+            if not mine:
+                body = await self._send(c, "POST", "/Playlists", json={
+                    "Name": title, "Ids": keys, "UserId": user.key, "MediaType": media_type})
+                return normalize_jellyfin_id((body or {}).get("Id")) or ""
+            pid = mine[0]["key"]
+            current = (await self._get(c, f"/Playlists/{pid}/Items", params={"userId": user.key})).get("Items") or []
+            have = {normalize_jellyfin_id(i.get("Id")): i.get("PlaylistItemId") for i in current}
+            drop = [entry for k, entry in have.items() if k not in set(keys) and entry]
+            add = [k for k in keys if k not in have]
+            if drop:
+                await self._send(c, "DELETE", f"/Playlists/{pid}/Items",
+                                 params={"entryIds": ",".join(drop)}, ok=(200, 204))
+            if add:
+                await self._send(c, "POST", f"/Playlists/{pid}/Items",
+                                 params={"ids": ",".join(add), "userId": user.key}, ok=(200, 204))
+            return pid
+
+    async def collections(self, prefix: str = "") -> list[dict]:
+        """Every collection (``{"key", "title"}``) whose name starts with
+        ``prefix``. Jellyfin collections are server-wide."""
+        async with self._client() as c:
+            body = await self._get(c, "/Items", params={"Recursive": "true", "IncludeItemTypes": "BoxSet"})
+        return [{"key": normalize_jellyfin_id(i.get("Id")), "title": i.get("Name") or ""}
+                for i in body.get("Items") or []
+                if normalize_jellyfin_id(i.get("Id")) and str(i.get("Name") or "").startswith(prefix)]
+
+    async def upsert_collection(self, library: Optional[Library], title: str,
+                                keys: Sequence[str]) -> str:
+        """The collection ``title`` holding exactly ``keys`` (created, or
+        edited in place). ``library`` is ignored: collections span libraries."""
+        keys = [k for k in (normalize_jellyfin_id(k) for k in keys) if k]
+        found = [c for c in await self.collections(title) if c["title"] == title]
+        async with self._client() as c:
+            if not found:
+                body = await self._send(c, "POST", "/Collections",
+                                        params={"Name": title, "Ids": ",".join(keys)})
+                return normalize_jellyfin_id((body or {}).get("Id")) or ""
+            cid = found[0]["key"]
+            have = {normalize_jellyfin_id(i.get("Id"))
+                    for i in (await self._get(c, "/Items", params={"ParentId": cid})).get("Items") or []}
+            drop, add = [k for k in have if k and k not in set(keys)], [k for k in keys if k not in have]
+            if drop:
+                await self._send(c, "DELETE", f"/Collections/{cid}/Items",
+                                 params={"ids": ",".join(drop)}, ok=(200, 204))
+            if add:
+                await self._send(c, "POST", f"/Collections/{cid}/Items",
+                                 params={"ids": ",".join(add)}, ok=(200, 204))
+            return cid
+
+    async def remove_collection(self, key: str) -> None:
+        """Deletes the collection object only; its titles stay."""
+        k = normalize_jellyfin_id(key)
+        if k:
+            async with self._client() as c:
+                await self._send(c, "DELETE", f"/Items/{k}", ok=(200, 204))
+
+    async def mark_played(self, user: ServerUser, key: str) -> None:
+        k = normalize_jellyfin_id(key)
+        if not k:
+            raise JellyfinError(f"not a Jellyfin item id: {key!r}")
+        async with self._client() as c:
+            await self._send(c, "POST", f"/UserPlayedItems/{k}", params={"userId": user.key})
+
+    async def delete_item(self, key: str) -> bool:
+        """Deletes the item WITH its files (the API key's user needs "allow
+        media deletion"), then re-reads it: an item that is still there is a
+        failure, never a success (the Plex delete's rule). Only the stored
+        GUID spelling reaches the URL."""
+        if not is_jellyfin_key(key):
+            return False
+        async with self._client() as c:
+            try:
+                await self._send(c, "DELETE", f"/Items/{key}", ok=(200, 204))
+            except JellyfinError as e:
+                if "HTTP 404" not in str(e):
+                    raise
+        return not await self.key_exists(key)

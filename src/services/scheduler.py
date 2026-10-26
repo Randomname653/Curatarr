@@ -600,18 +600,14 @@ async def job_plex_sync(chain_llm: bool = True):
     # Size-outlier intelligence: refresh per-item tech profiles (resolution /
     # codec / size / runtime) for the whole library, then recompute the
     # MB-per-minute class norms. Rate-limited (12h) inside sync_tech_profiles.
-    if jellyfin:
-        # Tech profiles are Plex-only so far (design §10, phase 6); the
-        # library walk still fills the id memory a server switch runs on.
-        try:
-            from src.services.media_server.jellyfin_history import walk_library
-            logger.info("[scheduler] Jellyfin library walk: %s", await walk_library())
-        except Exception as e:  # noqa: BLE001 - the sync above stands; the next walk files the ids
-            logger.warning("[scheduler] Jellyfin library walk failed: %s", e)
-        return ok
     try:
-        from src.services.plex_sync import sync_tech_profiles
         from src.services.size_norms import compute_size_norms
+        if jellyfin:
+            # The same tables from Jellyfin's MediaSources, plus the id memory
+            # a server switch runs on (media_server/jellyfin_tech).
+            from src.services.media_server.jellyfin_tech import sync_tech_profiles
+        else:
+            from src.services.plex_sync import sync_tech_profiles
         tech = await sync_tech_profiles(force=False)
         if not tech.get("skipped"):
             from src.database.runner import run_write

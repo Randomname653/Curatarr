@@ -1438,6 +1438,8 @@ def _service_configured(service: str) -> bool:
     for good."""
     if service == "plex":
         return bool(settings.effective_plex_url and settings.effective_plex_token)
+    if service == "jellyfin":
+        return bool(settings.JELLYFIN_URL and settings.JELLYFIN_API_KEY)
     url, key = {"radarr": (settings.RADARR_URL, settings.RADARR_API_KEY),
                 "sonarr": (settings.SONARR_URL, settings.SONARR_API_KEY),
                 "lidarr": (settings.LIDARR_URL, settings.LIDARR_API_KEY)}.get(service, (None, None))
@@ -1693,7 +1695,7 @@ async def _arr_recycle_bin(service: str, client=None) -> dict:
     (0 = until emptied by hand). None means unknown — not configured or not
     answering — and the dialog says so rather than guessing. A Plex delete
     has no recycle bin: Plex removes the files directly."""
-    if service == "plex":
+    if service in ("plex", "jellyfin"):
         return {"recycle_bin": False, "cleanup_days": None}
     conf = {
         "radarr": (settings.RADARR_URL, settings.RADARR_API_KEY, settings.effective_radarr_url, "v3"),
@@ -2956,6 +2958,19 @@ async def _probe_arr(service: str) -> bool:
     Hits the /system/status endpoint (read-only, fast) with a tight timeout.
     Returns True only when the service responds with HTTP 200.
     """
+    if service == "jellyfin":
+        # A proposal rebound from Plex (scripts/rebind_server.py) deletes
+        # through Jellyfin; the adapter's ping is its cheapest call.
+        try:
+            from src.services.media_server.jellyfin_adapter import JellyfinAdapter
+            if not (settings.JELLYFIN_URL and settings.JELLYFIN_API_KEY):
+                return False
+            await JellyfinAdapter(str(settings.JELLYFIN_URL),
+                                  settings.JELLYFIN_API_KEY.get_secret_value()).ping()
+            return True
+        except Exception as e:
+            log_topup_failure(logger, "[deletions] probe", service, e)
+            return False
     if service == "plex":
         # Plex-music proposals (Lidarr not configured) — without this branch
         # every one of them went straight to limbo and _plex_delete_artist
@@ -3184,6 +3199,18 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
             return _check(r, p.service)
         if p.service == "plex":
             return await _plex_delete_artist(str(p.media_id), gone_ok=retry)
+        if p.service == "jellyfin":
+            media_id = _require_media_id(p.media_id, "jellyfin")
+            if media_id is None:
+                logger.error("[jellyfin] delete refused for %r: malformed item id %r", p.title, p.media_id)
+                return False
+            from src.services.media_server.jellyfin_adapter import JellyfinAdapter
+            gone = await JellyfinAdapter(str(settings.JELLYFIN_URL),
+                                         settings.JELLYFIN_API_KEY.get_secret_value()).delete_item(media_id)
+            if not gone:
+                logger.error("[jellyfin] %r is still there after the delete - is media "
+                             "deletion allowed for the API key's user?", p.title)
+            return gone
     except Exception as e:
         logger.error("[arr] delete failed: %s", e)
     return False
