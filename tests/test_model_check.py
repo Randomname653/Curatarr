@@ -82,6 +82,45 @@ def test_the_launchers_share_the_list():
     assert 'add_argument("--check"' in builder and "def check(" in builder
 
 
+
+def test_bake_drift_names_what_differs_from_the_code():
+    """2026-10-26: a bake is built once; a changed prompt reached the hosts
+    only by hand. Read back (/api/show) and compared, report only."""
+    from types import SimpleNamespace
+    import src.services.model_check as mc
+    from src.config import settings
+    from src.services import setup_wizard as sw
+    plan = {"url": "http://host:11434", "num_ctx": 16384, "curator": "gemma4:31b",
+            "summarizer": "granite4.1:8b", "pitcher": None}
+    show = {
+        "curatarr-curator": {"system": sw.CURATOR_SYSTEM_PROMPT.replace("\n", "\r\n") + "\n\n",
+                             "details": {"parent_model": "gemma4:31b"},
+                             "parameters": "top_p 0.95\nnum_ctx 16384\ntemperature 0.7"},
+        "curatarr-summarizer": {"system": sw.SUMMARIZER_SYSTEM_PROMPT,
+                                "details": {"parent_model": "granite4.1:8b:latest"},
+                                "parameters": "num_ctx 8192\ntemperature 0.7"},
+    }
+
+    def post(url, json=None, timeout=None):
+        d = show.get(json["model"])
+        return SimpleNamespace(status_code=200 if d else 404, json=lambda: d)
+
+    saved = settings.CURATOR_MODEL, settings.SUMMARIZER_MODEL
+    settings.CURATOR_MODEL, settings.SUMMARIZER_MODEL = "curatarr-curator", "curatarr-summarizer"
+    try:
+        assert mc.bake_drift(plan, post=post) == [], "line endings and trailing blank lines do not count"
+        show["curatarr-summarizer"] = {**show["curatarr-summarizer"], "system": "You have SIX distinct task modes."}
+        show["curatarr-curator"] = {**show["curatarr-curator"], "details": {"parent_model": "gemma4:26b"},
+                                    "parameters": "num_ctx 8192"}
+        got = {d["model"]: d["reasons"] for d in mc.bake_drift(plan, post=post)}
+        assert got == {"curatarr-summarizer": ["system prompt"],
+                       "curatarr-curator": ["base gemma4:26b (code: gemma4:31b)", "num_ctx 8192 (code: 16384)"]}, got
+        assert mc.bake_drift(plan, post=lambda *a, **k: 1 / 0) is None, "no answer is unknown, not 'no drift'"
+        settings.CURATOR_MODEL = "gemma4:31b"
+        assert "gemma4:31b" not in mc.expected_bakes(plan), "a raw base model is nobody's bake"
+    finally:
+        settings.CURATOR_MODEL, settings.SUMMARIZER_MODEL = saved
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

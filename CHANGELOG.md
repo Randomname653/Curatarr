@@ -344,6 +344,15 @@ Removed: the workflow, its scanner script, its lock and its accepted-findings li
   and logged as a job failure with a traceback; it now ends quietly and counts as no missed poll.
 
 Tests: `tests/test_kb_maintenance_fixes.py`, `tests/test_custodian_queues.py`, `tests/test_pc_agent.py`.
+**The model check names bakes that no longer match the code.** A bake (curator, summariser,
+pitcher) is built once. A changed system prompt reached the NAS and the PC only through a manual
+`build_models.py`, so a host could run a prompt the code had left behind without anyone seeing it.
+At start the check now reads each bake back (`/api/show`) on the main host and the node. It
+compares the system prompt (line endings and trailing whitespace aside), the base model and
+`num_ctx`, and logs every difference with the command that rebuilds it. It only reports: whether a
+host rebuilds by itself is decided after the change has been compared on the PC.
+
+Tests: `tests/test_model_check.py`, `tests/test_model_autobuild.py`.
 
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:

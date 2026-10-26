@@ -219,3 +219,75 @@ def record_embedding_digest(get=None) -> dict:
         record_digest(ident["host"])
         ident = {**ident, "recorded": ident["host"], "status": "match"}
     return ident
+
+
+# ── bakes that no longer match the code ─────────────────────────────────────
+# A bake is built once: a changed system prompt (setup_wizard) reached the
+# hosts only through a manual build_models.py, so the NAS and the PC could
+# run prompts the code had left behind without anyone seeing it. This reads
+# each bake's prompt, base and window back (/api/show) and names the
+# differences. Report only: whether a host rebuilds by itself is decided
+# after the change has been compared on the PC (2026-10-26).
+
+def _norm_prompt(text: Optional[str]) -> str:
+    return "\n".join(line.rstrip() for line in (text or "").replace("\r\n", "\n").strip().split("\n"))
+
+
+def _num_ctx(parameters: Optional[str]) -> Optional[int]:
+    parts = (parameters or "").split()
+    for i, word in enumerate(parts[:-1]):
+        if word == "num_ctx" and parts[i + 1].isdigit():
+            return int(parts[i + 1])
+    return None
+
+
+def _base(name: Optional[str]) -> str:
+    n = (name or "").strip()
+    return n[:-len(":latest")] if n.endswith(":latest") else n
+
+
+def expected_bakes(plan: dict) -> dict:
+    """{bake name: (base, system prompt, num_ctx)} as build_ollama_models
+    would make them for this host plan. Only Curatarr's own bakes: a model
+    name set to a raw base model is nobody's bake."""
+    from src.config import settings
+    from src.services.llm_utils import CURATOR_NUM_CTX
+    from src.services.setup_wizard import CURATOR_SYSTEM_PROMPT, SUMMARIZER_SYSTEM_PROMPT
+    ctx = int(plan.get("num_ctx") or CURATOR_NUM_CTX)
+    want = {(settings.CURATOR_MODEL or "").strip(): (plan.get("curator"), CURATOR_SYSTEM_PROMPT, ctx),
+            (settings.SUMMARIZER_MODEL or "").strip(): (plan.get("summarizer"), SUMMARIZER_SYSTEM_PROMPT, 8192)}
+    if plan.get("pitcher"):
+        want[(settings.PITCHER_MODEL or "").strip()] = (plan["pitcher"], CURATOR_SYSTEM_PROMPT, ctx)
+    return {k: v for k, v in want.items() if k.startswith("curatarr-")}
+
+
+def bake_drift(plan: dict, post=None) -> Optional[List[dict]]:
+    """[{"model", "reasons"}] for the bakes on ``plan``'s host that differ
+    from the code; [] when all match; None when the host does not answer.
+    A bake that is not there is missing_on's business, not drift."""
+    import httpx
+    post = post or httpx.post
+    url = plan["url"].rstrip("/")
+    out = []
+    for name, (base, system, ctx) in expected_bakes(plan).items():
+        try:
+            r = post(f"{url}/api/show", json={"model": name}, timeout=10)
+        except Exception:  # noqa: BLE001 - "does not answer" is the answer
+            return None
+        if r.status_code == 404:
+            continue
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        reasons = []
+        if _norm_prompt(d.get("system")) != _norm_prompt(system):
+            reasons.append("system prompt")
+        have_base = _base((d.get("details") or {}).get("parent_model"))
+        if base and have_base and have_base != _base(base):
+            reasons.append(f"base {have_base} (code: {_base(base)})")
+        have_ctx = _num_ctx(d.get("parameters"))
+        if have_ctx and ctx and have_ctx != ctx:
+            reasons.append(f"num_ctx {have_ctx} (code: {ctx})")
+        if reasons:
+            out.append({"model": name, "reasons": reasons})
+    return out
