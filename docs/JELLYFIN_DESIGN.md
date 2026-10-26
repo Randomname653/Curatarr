@@ -1,10 +1,12 @@
 # Jellyfin support — design
 
 _Status: **Accepted**, 2026-10-26 (draft of the same day, revised with the
-owner's decisions). Phase 1 has started: `src/services/media_server/base.py`
-exists; nothing calls it yet. Endpoint names are from the Jellyfin
-10.9/10.10 API and are pinned by fixtures (section 11); anything a fixture
-does not cover is checked against a live server before it ships._
+owner's decisions). **Phase 1 is built** (1a seam + Plex read adapter, 1b
+Jellyfin read adapter, 1c `server_id_map`); no user-visible behaviour has
+changed. Endpoint names are from the Jellyfin 10.9/10.10 API and are pinned
+by hand-written fixtures (section 11); they have not met a live Jellyfin
+server yet, and anything they do not cover is checked against one before it
+ships._
 
 ---
 
@@ -558,7 +560,7 @@ Each phase ships on its own and leaves Plex users where they were.
 | Phase | Scope | Done when |
 |---|---|---|
 | **1a — Seam** ✔ | `base.py`; `plex_adapter.py` (read path) as in 6.3; `key_namespace` replaces the `isdigit()` guesses (A.3); seam ratchet test | suite green, no behaviour change |
-| **1b — Jellyfin read path** | `jellyfin_adapter.py`: libraries, items, users, external ids, files, tech profiles, added dates, `key_exists`; wizard step | contract tests green on the fixture set |
+| **1b — Jellyfin read path** ✔ | `jellyfin_adapter.py`: `ping`, libraries, items, `item`, `children`, `key_exists`, users, `live_sessions`, deep links; contract test over both adapters | contract tests green on the fixture set. The wizard step moves to phase 2, with sign-in |
 | **1c — id memory** ✔ | `server_id_map` table + upsert from every tech walk | the map fills on a Plex install with no other change |
 | **2 — People** | Quick Connect + password, membership and admin check | a member signs in; an account from another server cannot |
 | **3 — History** | tier A, C, then B, then D; `record_play` + merge; UI badge | taste vectors build from Jellyfin plays |
@@ -567,6 +569,19 @@ Each phase ships on its own and leaves Plex users where they were.
 | **6 — Parity** | likes as ratings, Genres/Tags for moods, sidecar subtitles, deep links | only `Capabilities` gaps remain, each named in the UI |
 
 ## 11. Tests
+
+As built in phase 1: `tests/test_media_server_seam.py` (key helpers, the
+validator, the URL ratchet, PlexAdapter), `tests/test_server_id_map.py` (the
+id memory) and `tests/test_media_server_contract.py`, which walks the Plex
+and the Jellyfin fixture sets of one library and requires the same 11
+canonical keys from both, the double episode included.
+
+Open points the fixtures cannot settle, to check on live servers:
+
+- which MusicBrainz level Plex's `mbid://` guid names on an album (the
+  adapter files it as the release group) and on a track (as the recording);
+- that `/Items?Ids=` answers with the API key alone on 10.9 and 10.10;
+- the Webhook plugin's notification names (phase 3).
 
 - **Fixtures** under `tests/fixtures/jellyfin/`, one JSON file per endpoint
   and case, shaped by the Jellyfin 10.9/10.10 OpenAPI spec: `Items`

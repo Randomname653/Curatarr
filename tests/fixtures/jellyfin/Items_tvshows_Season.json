@@ -1,0 +1,19 @@
+{
+ "Items": [
+  {
+   "Name": "Season 1",
+   "Id": "1f2e3d4c5b6a79880796a5b4c3d2e1f0",
+   "Type": "Season",
+   "IsFolder": true,
+   "IndexNumber": 1,
+   "SeriesId": "9a8b7c6d5e4f30211203f4e5d6c7b8a9",
+   "SeriesName": "Dark",
+   "ParentId": "9a8b7c6d5e4f30211203f4e5d6c7b8a9",
+   "ProviderIds": {},
+   "DateCreated": "2023-11-14T22:30:00.0000000Z",
+   "Path": "/media/tv/Dark/Season 01"
+  }
+ ],
+ "TotalRecordCount": 1,
+ "StartIndex": 0
+}

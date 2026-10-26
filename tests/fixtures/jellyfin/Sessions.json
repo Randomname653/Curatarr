@@ -1,0 +1,33 @@
+[
+ {
+  "Id": "e5f60718293a4b5c6d7e8f90a1b2c3d4",
+  "UserId": "c1d2e3f405162738495a6b7c8d9e0fa1",
+  "UserName": "Sam",
+  "Client": "Jellyfin Android",
+  "DeviceName": "Pixel 8",
+  "DeviceId": "abc",
+  "ApplicationVersion": "2.6.2",
+  "NowPlayingItem": {
+   "Name": "Secrets",
+   "Id": "2a3b4c5d6e7f80910a1b2c3d4e5f6071",
+   "Type": "Episode",
+   "RunTimeTicks": 30000000000
+  },
+  "PlayState": {
+   "PositionTicks": 25500000000,
+   "IsPaused": false,
+   "CanSeek": true
+  }
+ },
+ {
+  "Id": "f60718293a4b5c6d7e8f90a1b2c3d4e5",
+  "UserId": "b0c1d2e3f405162738495a6b7c8d9e0f",
+  "UserName": "jane",
+  "Client": "Jellyfin Web",
+  "DeviceName": "Firefox",
+  "DeviceId": "def",
+  "PlayState": {
+   "CanSeek": false
+  }
+ }
+]

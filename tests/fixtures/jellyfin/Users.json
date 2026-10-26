@@ -1,0 +1,22 @@
+[
+ {
+  "Name": "jane",
+  "ServerId": "d4e3c2b1a0f9e8d7c6b5a4938271605f",
+  "Id": "b0c1d2e3f405162738495a6b7c8d9e0f",
+  "HasPassword": true,
+  "Policy": {
+   "IsAdministrator": true,
+   "IsDisabled": false
+  }
+ },
+ {
+  "Name": "Sam",
+  "ServerId": "d4e3c2b1a0f9e8d7c6b5a4938271605f",
+  "Id": "c1d2e3f405162738495a6b7c8d9e0fa1",
+  "HasPassword": true,
+  "Policy": {
+   "IsAdministrator": false,
+   "IsDisabled": false
+  }
+ }
+]

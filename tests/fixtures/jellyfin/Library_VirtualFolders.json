@@ -1,0 +1,49 @@
+[
+ {
+  "Name": "Movies",
+  "Locations": [
+   "/media/movies"
+  ],
+  "CollectionType": "movies",
+  "LibraryOptions": {
+   "EnableRealtimeMonitor": true
+  },
+  "ItemId": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+  "RefreshStatus": "Idle"
+ },
+ {
+  "Name": "Shows",
+  "Locations": [
+   "/media/tv"
+  ],
+  "CollectionType": "tvshows",
+  "LibraryOptions": {
+   "EnableRealtimeMonitor": true
+  },
+  "ItemId": "a656b907eb3a73532e40e44b968d0225",
+  "RefreshStatus": "Idle"
+ },
+ {
+  "Name": "Music",
+  "Locations": [
+   "/media/music"
+  ],
+  "CollectionType": "music",
+  "LibraryOptions": {
+   "EnableRealtimeMonitor": true
+  },
+  "ItemId": "7e64e319657a9516ec78490da03edccb",
+  "RefreshStatus": "Idle"
+ },
+ {
+  "Name": "Mixed",
+  "Locations": [
+   "/media/misc"
+  ],
+  "LibraryOptions": {
+   "EnableRealtimeMonitor": true
+  },
+  "ItemId": "0c41907140d802bb58430fed7e2cd79e",
+  "RefreshStatus": "Idle"
+ }
+]

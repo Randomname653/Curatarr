@@ -1,0 +1,86 @@
+{
+ "Items": [
+  {
+   "Name": "Hunter",
+   "Id": "8f90a1b2c3d4e5f60718293a4b5c6d7e",
+   "Type": "Audio",
+   "IsFolder": false,
+   "IndexNumber": 1,
+   "ParentIndexNumber": 1,
+   "Album": "Homogenic",
+   "AlbumId": "7e8f90a1b2c3d4e5f60718293a4b5c6d",
+   "AlbumArtist": "Björk",
+   "AlbumArtists": [
+    {
+     "Name": "Björk",
+     "Id": "6d7e8f90a1b2c3d4e5f60718293a4b5c"
+    }
+   ],
+   "RunTimeTicks": 3050000000,
+   "DateCreated": "2023-11-14T22:46:40.0000000Z",
+   "ProviderIds": {
+    "MusicBrainzTrack": "e8e0b8e3-4c1b-4f3c-9d2a-1b2c3d4e5f60"
+   },
+   "Path": "/media/music/Björk/Homogenic/01 - Hunter.flac",
+   "MediaSources": [
+    {
+     "Protocol": "File",
+     "Id": "x",
+     "Path": "/media/music/Björk/Homogenic/01 - Hunter.flac",
+     "Type": "Default",
+     "Container": "flac",
+     "Size": 30000001,
+     "MediaStreams": [
+      {
+       "Type": "Audio",
+       "Codec": "flac",
+       "Channels": 2,
+       "Index": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "Name": "Jóga",
+   "Id": "90a1b2c3d4e5f60718293a4b5c6d7e8f",
+   "Type": "Audio",
+   "IsFolder": false,
+   "IndexNumber": 2,
+   "ParentIndexNumber": 1,
+   "Album": "Homogenic",
+   "AlbumId": "7e8f90a1b2c3d4e5f60718293a4b5c6d",
+   "AlbumArtist": "Björk",
+   "AlbumArtists": [
+    {
+     "Name": "Björk",
+     "Id": "6D7E8F90-A1B2-C3D4-E5F6-0718293A4B5C"
+    }
+   ],
+   "RunTimeTicks": 3050000000,
+   "DateCreated": "2023-11-14T22:46:40.0000000Z",
+   "ProviderIds": {},
+   "Path": "/media/music/Björk/Homogenic/02 - Jóga.flac",
+   "MediaSources": [
+    {
+     "Protocol": "File",
+     "Id": "x",
+     "Path": "/media/music/Björk/Homogenic/02 - Jóga.flac",
+     "Type": "Default",
+     "Container": "flac",
+     "Size": 30000002,
+     "MediaStreams": [
+      {
+       "Type": "Audio",
+       "Codec": "flac",
+       "Channels": 2,
+       "Index": 0
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "TotalRecordCount": 2,
+ "StartIndex": 0
+}

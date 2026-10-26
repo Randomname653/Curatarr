@@ -249,7 +249,7 @@ check(f"no listed file builds more of them (grown: {grown})", not grown)
 check(f"the ratchet is tight - lower the counts that shrank (shrunk: {shrunk})", not shrunk)
 pkg = ROOT / "src/services/media_server"
 check("the adapters themselves are where the URLs live",
-      url_literals(pkg / "plex_adapter.py") > 0)
+      url_literals(pkg / "plex_adapter.py") > 0 and url_literals(pkg / "jellyfin_adapter.py") > 0)
 
 print("\n-- PlexAdapter over recorded payloads --")
 import asyncio  # noqa: E402
