@@ -353,9 +353,11 @@ compares the system prompt (line endings and trailing whitespace aside), the bas
 host rebuilds by itself is decided after the change has been compared on the PC.
 
 **The summariser bake follows the code by itself.** When the start-up check finds the summariser
-bake differing from the code, it is made again on that host, the NAS and the node alike. It is
-built from the base model already there (nothing is pulled; the bake is a new manifest over the same
-weights) and then unloaded, so the next call reads it. Before this went automatic, the new
+bake differing from the code, it is made again on that host, the NAS and the node alike, and then
+unloaded so the next call reads it. Only a bake that has to change triggers this. When its base model
+is not on the host, the base is pulled for the rebuild and removed again afterwards. The removal
+frees nothing (the bake is the same weights under its own name) but leaves the host's model list as
+it was, and when the weights are still there the pull fetches no layer (1.9 s on the PC). Before this went automatic, the new
 summariser prompt was compared with the old one on the PC, each three times (old, old again, new),
 on real jobs:
 - **60 films and series:** profiles moved no more than two runs of the same bake do (embedding text

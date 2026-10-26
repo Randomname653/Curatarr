@@ -31,11 +31,17 @@ def _report_drift(drift, url: str, host: str) -> None:
                        "python build_models.py --host %s", d["model"], url, "; ".join(d["reasons"]), host)
 
 
-def rebake_summarizer(plan: dict, drift, post=None, tags=None) -> bool:
+def _delete_model(url: str, model: str) -> None:
+    import httpx
+    httpx.request("DELETE", f"{url}/api/delete", json={"model": model}, timeout=60)
+
+
+def rebake_summarizer(plan: dict, drift, post=None, tags=None, delete=None) -> bool:
     """Rebuild the summariser bake on ``plan``'s host when it differs from
-    the code: from its base model already on the host (nothing is pulled,
-    the bake is a new manifest over the same weights), then unload it so the
-    next call reads the new one. The curator and the pitcher are left alone.
+    the code - from its base model, pulled for the rebuild and removed again
+    when the host does not hold it - then unload it so the next call reads
+    the new one. Nothing happens unless the bake has to change. The curator
+    and the pitcher are left alone.
 
     Measured before this went automatic (2026-10-26, PC, the summariser's
     system prompt "modes are open" against the old six-mode one): on 60
@@ -53,14 +59,25 @@ def rebake_summarizer(plan: dict, drift, post=None, tags=None) -> bool:
         return False
     base = plan.get("summarizer")
     have = (tags or host_tags)(plan["url"])
-    if not base or have is None or (base not in have and f"{base}:latest" not in have):
-        logger.warning("[models] %s on %s differs from the code, but its base %s is not on that "
-                       "host - not pulled automatically; python build_models.py rebuilds it",
-                       name, plan["url"], base)
+    if not base or have is None:
         return False
     post = post or httpx.post
     url = plan["url"].rstrip("/")
+    # Only when the bake has to change: a missing base is pulled for the
+    # rebuild and removed again after it (the owner's call, 2026-10-26).
+    # The removal frees nothing - the bake is the same weights under its own
+    # name - it leaves the host's model list as it was. When the weights are
+    # still there (the old bake holds them) the pull fetches no layer.
+    pulled = base not in have and f"{base}:latest" not in have
     try:
+        if pulled:
+            logger.info("[models] %s on %s needs a rebuild and its base %s is not there - "
+                        "pulling it for the rebuild", name, url, base)
+            r = post(f"{url}/api/pull", json={"model": base, "stream": False}, timeout=3600)
+            if r.status_code != 200:
+                logger.warning("[models] pulling %s on %s failed: HTTP %s - %s keeps its old bake",
+                               base, url, r.status_code, name)
+                return False
         r = post(f"{url}/api/create", json={"model": name, "from": base, "system": SUMMARIZER_SYSTEM_PROMPT,
                                             "parameters": {"temperature": 0.7, "num_ctx": 8192},
                                             "stream": False}, timeout=300)
@@ -71,7 +88,14 @@ def rebake_summarizer(plan: dict, drift, post=None, tags=None) -> bool:
     except Exception as e:  # noqa: BLE001 - the old bake keeps working; the next start tries again
         logger.warning("[models] rebuilding %s on %s failed: %s", name, url, e)
         return False
-    logger.info("[models] %s on %s rebuilt from %s with the code's system prompt", name, url, base)
+    finally:
+        if pulled:
+            try:
+                (delete or _delete_model)(url, base)
+            except Exception as e:  # noqa: BLE001 - only a name in the list; the bake is unaffected
+                logger.info("[models] the pulled base %s on %s was not removed again: %s", base, url, e)
+    logger.info("[models] %s on %s rebuilt from %s with the code's system prompt%s", name, url, base,
+                " (base pulled for it and removed again)" if pulled else "")
     return True
 
 
