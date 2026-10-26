@@ -36,9 +36,18 @@
        "Codec": "flac",
        "Channels": 2,
        "Index": 0
+      },
+      {
+       "Type": "Lyric",
+       "Codec": "lrc",
+       "Index": 1,
+       "IsExternal": true
       }
      ]
     }
+   ],
+   "Tags": [
+    "Intense"
    ]
   },
   {

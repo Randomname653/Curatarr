@@ -186,7 +186,7 @@ heat_p, dark_p = prof.get(HEAT), prof.get(DARK)
 check("a film's profile: size, runtime, 1080p HEVC, languages, its TMDB id",
       heat_p is not None and heat_p.media_type == "movie" and round(heat_p.size_mb) == 7000
       and heat_p.resolution == "1080" and heat_p.codec == "hevc" and heat_p.audio_langs == "eng"
-      and heat_p.sub_langs == "ger" and heat_p.tmdb_id == 949 and heat_p.hdr is False)
+      and heat_p.sub_langs == "eng,fre,ger" and heat_p.tmdb_id == 949 and heat_p.hdr is False)
 check("a series' profile sums its episodes and carries the series ids",
       dark_p is not None and dark_p.item_count == 2 and round(dark_p.size_mb) == round(4.5e9 / 1048576)
       and dark_p.tvdb_id == 334824 and dark_p.title == "Dark")

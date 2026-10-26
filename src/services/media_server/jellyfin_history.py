@@ -359,6 +359,48 @@ async def poll_user(adapter, user_id: int, user_key: str, now: Optional[datetime
     return {**res, "items": len(states), "first": not seeded}
 
 
+# ── ratings (design D6) ──────────────────────────────────────────────────────
+
+def _store_ratings(user_id: int, rated: list) -> dict:
+    """Replace this user's Jellyfin-sourced music ratings (Plex stars carried
+    over by a rebind have source NULL and stay)."""
+    from src.database.connection import get_db_session
+    from src.database.models import PlexRating
+    with get_db_session() as db:
+        mine = {r.plex_item_id: r for r in db.query(PlexRating).filter(
+            PlexRating.user_id == user_id, PlexRating.source == "jellyfin_like").all()}
+        others = {k for (k,) in db.query(PlexRating.plex_item_id).filter(
+            PlexRating.user_id == user_id, PlexRating.source.is_(None)).all()}
+        added = changed = 0
+        keep = set()
+        for r in rated:
+            if r["key"] in others:
+                continue                     # a Plex star rating on the same item wins
+            keep.add(r["key"])
+            row = mine.get(r["key"])
+            if row is None:
+                db.add(PlexRating(user_id=user_id, plex_item_id=r["key"], media_type=r["kind"],
+                                  rating=r["rating"], rated_at=r["rated_at"],
+                                  artist_name=(r["artist"] or "")[:512] or None, source="jellyfin_like"))
+                added += 1
+            elif row.rating != r["rating"]:
+                row.rating = r["rating"]
+                changed += 1
+        removed = 0
+        for key, row in mine.items():
+            if key not in keep:
+                db.delete(row)
+                removed += 1
+        db.commit()
+    return {"added": added, "changed": changed, "removed": removed}
+
+
+async def sync_ratings(adapter, user_id: int, user_key: str) -> dict:
+    from src.database.runner import run_write
+    rated = await adapter.rated_music(ServerUser(key=user_key, name=""))
+    return await run_write(_store_ratings, user_id, rated)
+
+
 # ── tier D ───────────────────────────────────────────────────────────────────
 
 async def import_report(adapter, user_id: int, user_key: str) -> dict:
@@ -425,6 +467,7 @@ async def sync_history(*, adapter=None, followup: bool = True) -> dict:
             try:
                 rep = await import_report(adapter, uid, key)
                 poll = await poll_user(adapter, uid, key)
+                poll["ratings"] = await sync_ratings(adapter, uid, key)
             except Exception as e:  # noqa: BLE001 - one member's failure must not cost the others; logged
                 logger.warning("[jellyfin] history of user %s not synced: %s", uid, e)
                 per_user[uid] = {"error": type(e).__name__}

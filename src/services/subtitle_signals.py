@@ -875,6 +875,41 @@ async def _bounded_text(client, url: str, headers: dict, cap: int = _OS_MAX_BYTE
         return None
 
 
+async def _acquire_jellyfin(key: str, *, title_hint: str = "", media_hint: str = "",
+                            tmdb_hint=None, tvdb_hint=None):
+    """The Jellyfin leg of acquire_subtitle_text: Jellyfin's own track first
+    (sidecar OR embedded text track - Jellyfin extracts those), then the
+    same fallbacks the Plex leg has. Tri-state as everywhere here."""
+    from src.services.media_server import get_adapter
+    from src.services.media_server.jellyfin_adapter import JellyfinError
+    if not key:
+        return {}
+    try:
+        adapter = get_adapter()
+        info = await adapter.subtitle_streams(str(key))
+        if info is None:
+            return {}
+        stream = pick_subtitle_stream(info["streams"])
+        if stream:
+            txt = await adapter.subtitle_text(stream["key"])
+            name = " ".join(str(stream.get(k) or "") for k in ("title", "displayTitle", "extendedDisplayTitle"))
+            return (txt, {"language": stream.get("language") or "",
+                          "source": "jellyfin_sidecar" if stream.get("external") else "jellyfin_embedded",
+                          "track_name": name.strip(), "duration_min": info["duration_min"],
+                          "episode_ref": info["episode_ref"]})
+    except JellyfinError as e:
+        if "HTTP 404" in str(e):
+            return {}
+        logger.warning("[subtitles] %s: Jellyfin read failed - retried later: %s", key, e)
+        return None
+    except Exception as e:  # noqa: BLE001 - not reachable now; the tri-state says retry later
+        logger.warning("[subtitles] %s: Jellyfin read failed: %s", key, e)
+        return None
+    return await _acquire_fallbacks(key, info["imdb_id"], info["duration_min"], info["episode_ref"],
+                                    title_hint=title_hint, media_hint=media_hint,
+                                    tmdb_hint=tmdb_hint, tvdb_hint=tvdb_hint)
+
+
 async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
                                 media_hint: str = "", tmdb_hint=None,
                                 tvdb_hint=None):
@@ -886,6 +921,10 @@ async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
     cut on disk, which a downloaded track need not.
     """
     import httpx
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        return await _acquire_jellyfin(plex_rating_key, title_hint=title_hint, media_hint=media_hint,
+                                       tmdb_hint=tmdb_hint, tvdb_hint=tvdb_hint)
     base, token = _plex()
     if not base or not token or not plex_rating_key:
         return {}
@@ -962,6 +1001,16 @@ async def acquire_subtitle_text(plex_rating_key: str, *, title_hint: str = "",
         logger.warning("[subtitles] %s: plex read failed: %s", plex_rating_key, e)
         return None
 
+    return await _acquire_fallbacks(plex_rating_key, imdb_id, duration_min, episode_ref,
+                                    title_hint=title_hint, media_hint=media_hint,
+                                    tmdb_hint=tmdb_hint, tvdb_hint=tvdb_hint)
+
+
+async def _acquire_fallbacks(plex_rating_key: str, imdb_id: str, duration_min: float, episode_ref,
+                             *, title_hint: str = "", media_hint: str = "", tmdb_hint=None,
+                             tvdb_hint=None):
+    """What follows when the media server has no track to give: the
+    operator's own subtitle service, then OpenSubtitles by IMDb id."""
     # An operator's own service comes before the public one: better coverage
     # for the catalogue titles that dominate deletion candidates, no daily
     # quota, and no third party involved. Unconfigured, it answers None in a

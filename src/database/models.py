@@ -621,6 +621,9 @@ class PlexRating(Base):
     # Always lowercase-comparable; we store as-typed and use func.lower at
     # query time for case-insensitive matches against Lidarr artistName.
     artist_name   = Column(String(512), nullable=True, index=True)
+    # NULL = a Plex star rating; "jellyfin_like" = a Jellyfin like (10),
+    # favourite (10) or dislike (2) (media_server/jellyfin_history.sync_ratings).
+    source        = Column(String(16), nullable=True)
 
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

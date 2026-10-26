@@ -112,8 +112,13 @@ def store_section(sec: str, rows: list, now: Optional[datetime] = None) -> int:
 
 
 async def run_music_tags(task=None) -> bool:
-    """Custodian task: walk every music section's moods and styles."""
+    """Custodian task: walk every music section's moods and styles (on a
+    Jellyfin install, its Genres and Tags: media_server/jellyfin_music)."""
     import httpx
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server.jellyfin_music import run_music_tags as jellyfin_tags
+        return await jellyfin_tags(task)
     from src.config import settings
     from src.database.runner import run_read, run_write
     from src.services.http_client import tls_context

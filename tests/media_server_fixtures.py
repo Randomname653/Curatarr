@@ -190,6 +190,7 @@ class JellyfinWriteServer:
         self.api_key, self.deny_delete = api_key, deny_delete
         self.playlists, self.collections = {}, {}
         self.played, self.deleted, self.calls = set(), set(), []
+        self.likes, self.dislikes = {}, {}          # user id -> item ids (POST /UserItems/{id}/Rating)
         self._n = 0
         self.lib_of, self.items = {}, {}
         for p in sorted((FIXTURES / "jellyfin").glob("*.json")):
@@ -234,18 +235,49 @@ class JellyfinWriteServer:
                 term = q["SearchTerm"].casefold()
                 return items([it for it in self.items.values() if it.get("Type") == "MusicArtist"
                               and term in it["Name"].casefold()])
-            if m == "GET" and path == "/Items" and types == {"Episode"} and q.get("userId"):
+            if m == "GET" and path == "/Items" and types == {"Episode"} and q.get("ParentId") \
+                    and (q.get("userId") or q.get("Limit") == "1"):
                 eps = sorted((it for it in self.items.values() if it.get("Type") == "Episode"
                               and it.get("SeriesId") == q.get("ParentId")),
                              key=lambda e: (e.get("ParentIndexNumber") or 0, e.get("IndexNumber") or 0))
-                if q.get("IsPlayed") == "false":
+                if q.get("IsPlayed") == "false" and q.get("userId"):
                     seen = {i["Id"] for i in load("jellyfin", f"Items_played_{q['userId']}.json")["Items"]} \
                         if (FIXTURES / "jellyfin" / f"Items_played_{q['userId']}.json").exists() else set()
                     eps = [e for e in eps if e["Id"] not in seen | self.played]
                 return items(eps[:1])
             if m == "GET" and path == "/Items" and types == {"MusicAlbum"} and q.get("AlbumArtistIds"):
-                return items([it for it in self.items.values() if it.get("Type") == "MusicAlbum"
-                              and any(a["Id"] == q["AlbumArtistIds"] for a in it.get("AlbumArtists") or [])][:1])
+                albums = [it for k, it in self.items.items() if it.get("Type") == "MusicAlbum" and k not in self.deleted
+                          and any(a["Id"].lower().replace("-", "") == q["AlbumArtistIds"] for a in it.get("AlbumArtists") or [])]
+                return items(albums[:int(q["Limit"])] if q.get("Limit") else albums)
+            if m == "GET" and path == "/Items" and q.get("Filters") in ("Likes", "Dislikes", "IsFavorite") and q.get("userId"):
+                uid, flt = q["userId"], q["Filters"]
+                played = load("jellyfin", f"Items_played_{uid}.json")["Items"] \
+                    if (FIXTURES / "jellyfin" / f"Items_played_{uid}.json").exists() else []
+                if flt == "IsFavorite":
+                    ids = {i["Id"] for i in played if (i.get("UserData") or {}).get("IsFavorite")}
+                elif flt == "Likes":
+                    ids = {i["Id"] for i in played if (i.get("UserData") or {}).get("Likes")} | self.likes.get(uid, set())
+                else:
+                    ids = self.dislikes.get(uid, set())
+                return items([self.items[i] for i in ids if i in self.items and self.items[i].get("Type") in types])
+            if m == "POST" and path.startswith("/UserItems/") and path.endswith("/Rating"):
+                k, uid = path.split("/")[2], q["userId"]
+                (self.likes if q.get("likes") == "true" else self.dislikes).setdefault(uid, set()).add(k)
+                return httpx.Response(200, json={"Likes": q.get("likes") == "true"})
+            if m == "GET" and path.startswith("/Audio/") and path.endswith("/Lyrics"):
+                name = f"Audio_Lyrics_{path.split('/')[2]}.json"
+                if (FIXTURES / "jellyfin" / name).exists():
+                    return httpx.Response(200, json=load("jellyfin", name))
+                return httpx.Response(404)
+            if m == "GET" and path.startswith("/Videos/") and "/Subtitles/" in path:
+                parts = path.split("/")
+                it = self.items.get(parts[2]) or {}
+                idx = int(parts[5])
+                st = [x for s in it.get("MediaSources") or [] for x in s.get("MediaStreams") or []
+                      if x.get("Type") == "Subtitle" and x.get("Index") == idx]
+                if not st:
+                    return httpx.Response(404)
+                return httpx.Response(200, text=f"1\n00:00:01,000 --> 00:00:03,000\n[{st[0]['Language']} track {idx}]\n")
             if m == "POST" and path == "/Playlists":
                 pid = self._id()
                 self.playlists[pid] = {"name": body["Name"], "user": body["UserId"], "media": body.get("MediaType"),

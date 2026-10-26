@@ -76,8 +76,9 @@ app. What the first days of that setup still have to show:
   without losing history (`rebind-server`, with a permanent id memory).
   Per-play history works without plugins (live session polling); the
   Webhook and Playback Reporting plugins add precision and backfill.
-  Phases 1–5 (seam, adapters, id memory, sign-in, play history, writes,
-  the rebind tool) are built; parity details remain. Design and build order in
+  Phases 1–6 (seam, adapters, id memory, sign-in, play history, writes,
+  the rebind tool, parity: music index, moods, likes, subtitles) are built;
+  live-server checks remain. Design and build order in
   [docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md).
 - **Tautulli importer** — full historical watch attribution for setups
   that have it.

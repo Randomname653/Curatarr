@@ -18,7 +18,14 @@
     "MusicBrainzReleaseGroup": "2c5c5a5b-6f5e-37b2-9a3e-3b2a5a3c1d6e",
     "MusicBrainzAlbum": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
     "MusicBrainzAlbumArtist": "87c5dedd-371d-4a53-9f7f-80522fb7f3cb"
-   }
+   },
+   "Tags": [
+    "Melancholic"
+   ],
+   "Genres": [
+    "Electronic",
+    "Art Pop"
+   ]
   }
  ],
  "TotalRecordCount": 1,

@@ -1075,8 +1075,13 @@ async def _discover_music_sections(client, base: str, headers: dict) -> list:
 async def run_lyrics_sync(task=None) -> bool:
     """Collect from the Plex music sections — the mapped ones, else every
     artist-type section Plex has. True = the walk finished (or there is
-    nothing to walk); False = the fetch budget ran out."""
+    nothing to walk); False = the fetch budget ran out. On a Jellyfin
+    install the same index is filled from Jellyfin (media_server/jellyfin_music)."""
     import httpx
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server.jellyfin_music import run_music_index
+        return await run_music_index(task)
 
     base, token = settings.effective_plex_url, settings.effective_plex_token
     if not base or not token:

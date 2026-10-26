@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 30.0
 _PAGE = 500
-_FIELDS = "ProviderIds,Genres,DateCreated,MediaSources,Path,ParentId"
+_FIELDS = "ProviderIds,Genres,Tags,DateCreated,MediaSources,Path,ParentId"
 _TICKS_PER_MS = 10_000
 
 _CLIENT_VERSION = "1"
@@ -384,6 +384,29 @@ class JellyfinAdapter:
             await pages.aclose()         # an early stop closes the client now, not at GC
         return out
 
+    async def rated_music(self, user: ServerUser) -> list[dict]:
+        """The user's music likes, favourites and dislikes (design D6):
+        ``{"key", "kind", "rating", "artist", "rated_at"}`` - 10 for a like or a
+        favourite, 2 for a dislike (a 1-star PlexAmp rating's value). A like
+        beats a dislike on the same item."""
+        kinds = {"Audio": "track", "MusicAlbum": "album", "MusicArtist": "artist"}
+        out = {}
+        for flt, rating in (("Dislikes", 2.0), ("IsFavorite", 10.0), ("Likes", 10.0)):
+            async with self._client() as c:
+                body = await self._get(c, "/Items", params={
+                    "userId": user.key, "Recursive": "true", "Filters": flt,
+                    "IncludeItemTypes": ",".join(kinds), "EnableUserData": "true"})
+            for raw in body.get("Items") or []:
+                key = normalize_jellyfin_id(raw.get("Id"))
+                kind = kinds.get(raw.get("Type") or "")
+                if not key or not kind:
+                    continue
+                artist = raw.get("Name") if kind == "artist" else (
+                    raw.get("AlbumArtist") or ((raw.get("AlbumArtists") or [{}])[0].get("Name")))
+                out[key] = {"key": key, "kind": kind, "rating": rating, "artist": artist,
+                            "rated_at": _ts((raw.get("UserData") or {}).get("LastPlayedDate"))}
+        return list(out.values())
+
     async def user_state(self, user_key: str, item_key: str) -> Optional[UserItemState]:
         """One user's state of one item - the webhook's re-read (tier B)."""
         u, i = normalize_jellyfin_id(user_key), normalize_jellyfin_id(item_key)
@@ -576,6 +599,100 @@ class JellyfinAdapter:
         async with self._client() as c:
             await self._send(c, "POST", f"/UserItems/{k}/Rating",
                              params={"userId": user.key, "likes": "true" if likes else "false"})
+
+    async def subtitle_streams(self, key: str) -> Optional[dict]:
+        """A title's subtitle tracks in the Plex stream shape
+        (``subtitle_signals.pick_subtitle_stream`` reads them), plus what the
+        measurement needs: ``{"imdb_id", "duration_min", "episode_ref",
+        "streams"}``; None when Jellyfin does not know the item. A series is
+        measured on its first episode. Jellyfin hands out embedded text
+        tracks too (it extracts them), not only sidecars - unlike Plex."""
+        k = normalize_jellyfin_id(key)
+        if not k:
+            return None
+        found = await self._by_ids([k])
+        if not found:
+            return None
+        item = found[0]
+        imdb = (item.get("ProviderIds") or {}).get("Imdb") or ""
+        episode_ref = None
+        if item.get("Type") == "Series" or not item.get("MediaSources"):
+            async with self._client() as c:
+                body = await self._get(c, "/Items", params={
+                    "ParentId": k, "Recursive": "true", "IncludeItemTypes": "Episode",
+                    "SortBy": "ParentIndexNumber,IndexNumber", "SortOrder": "Ascending",
+                    "Limit": 1, "Fields": _FIELDS})
+            eps = body.get("Items") or []
+            if not eps:
+                return {"imdb_id": imdb, "duration_min": 0.0, "episode_ref": None, "streams": []}
+            item = eps[0]
+            episode_ref = (_int(item.get("ParentIndexNumber")) or 1, _int(item.get("IndexNumber")) or 1)
+        iid = normalize_jellyfin_id(item.get("Id"))
+        streams = []
+        for src in (item.get("MediaSources") or [])[:1]:
+            msid = str(src.get("Id") or iid)
+            for st in src.get("MediaStreams") or []:
+                if st.get("Type") != "Subtitle" or st.get("Index") is None:
+                    continue
+                streams.append({
+                    "streamType": 3, "key": f"/Videos/{iid}/{msid}/Subtitles/{int(st['Index'])}/Stream.srt",
+                    "codec": str(st.get("Codec") or "").lower(), "forced": bool(st.get("IsForced")),
+                    "title": st.get("Title") or "", "displayTitle": st.get("DisplayTitle") or "",
+                    "extendedDisplayTitle": "SDH" if st.get("IsHearingImpaired") else "",
+                    "language": st.get("Language") or "", "external": bool(st.get("IsExternal"))})
+        return {"imdb_id": imdb, "duration_min": (_ms(item.get("RunTimeTicks")) or 0) / 60000.0,
+                "episode_ref": episode_ref, "streams": streams}
+
+    async def subtitle_text(self, stream_key: str) -> str:
+        """The text of one track from ``subtitle_streams`` (as SRT)."""
+        if not stream_key.startswith("/Videos/"):
+            raise JellyfinError(f"not a subtitle stream: {stream_key!r}")
+        try:
+            async with self._client() as c:
+                r = await c.get(f"{self._base}{stream_key}", headers=self._headers())
+        except httpx.HTTPError as e:
+            raise JellyfinError(f"Jellyfin subtitle: {type(e).__name__}") from e
+        if r.status_code != 200:
+            raise JellyfinError(f"Jellyfin subtitle: HTTP {r.status_code}")
+        return r.text
+
+    async def lyrics(self, key: str) -> Optional[bytes]:
+        """A track's lyrics as plain lines (``GET /Audio/{id}/Lyrics``, 10.9+),
+        or None when there are none / the server refused."""
+        k = normalize_jellyfin_id(key)
+        if not k:
+            return None
+        async with self._client() as c:
+            try:
+                body = await self._get(c, f"/Audio/{k}/Lyrics")
+            except JellyfinError as e:
+                if "HTTP 404" in str(e):
+                    return None
+                raise
+        lines = [str(x.get("Text") or "") for x in (body or {}).get("Lyrics") or []]
+        return "\n".join(lines).encode("utf-8") if any(lines) else None
+
+    async def delete_artist(self, key: str) -> bool:
+        """Delete an artist WITH its files, album by album: an album is a
+        folder Jellyfin can remove, an artist entry is not always one. Then
+        re-read: any album still there is a failure, never a success."""
+        if not is_jellyfin_key(key):
+            return False
+
+        async def albums() -> list:
+            async with self._client() as c:
+                body = await self._get(c, "/Items", params={"AlbumArtistIds": key, "Recursive": "true",
+                                                            "IncludeItemTypes": "MusicAlbum"})
+            return [k for k in (normalize_jellyfin_id(i.get("Id")) for i in body.get("Items") or []) if k]
+
+        for album in await albums():
+            async with self._client() as c:
+                try:
+                    await self._send(c, "DELETE", f"/Items/{album}", ok=(200, 204))
+                except JellyfinError as e:
+                    if "HTTP 404" not in str(e):
+                        raise
+        return not await albums()
 
     async def mark_played(self, user: ServerUser, key: str) -> None:
         k = normalize_jellyfin_id(key)

@@ -2632,22 +2632,36 @@ async def _plex_music_candidates() -> list:
         return []
     if not arts:
         return []
-    mid = None
-    try:
-        from src.services.plex_playlists import get_machine_identifier
-        mid = await get_machine_identifier()
-    except Exception as e:
-        log_topup_failure(logger, "[plex] machine id", "music candidates", e)
+    from src.services.media_server import active_kind
+    service = active_kind()     # the index holds the active server's artists
+    mid, jf = None, None
+    if service == "jellyfin":
+        # The index was filled from Jellyfin (media_server/jellyfin_music):
+        # the same candidates, deleted and linked through Jellyfin.
+        from src.services.media_server import get_adapter
+        try:
+            jf = get_adapter()
+        except Exception as e:
+            log_topup_failure(logger, "[jellyfin] adapter", "music candidates", e)
+    else:
+        try:
+            from src.services.plex_playlists import get_machine_identifier
+            mid = await get_machine_identifier()
+        except Exception as e:
+            log_topup_failure(logger, "[plex] machine id", "music candidates", e)
     base = str(settings.effective_plex_url).rstrip("/")
     items = []
     for a in arts:
         key = str(a["artist_key"])
-        link = (f"{base}/web/index.html#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
-                if mid else f"{base}/web/index.html")
+        if jf is not None:
+            link = jf.deep_link(key)
+        else:
+            link = (f"{base}/web/index.html#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
+                    if mid else f"{base}/web/index.html")
         items.append({
             "title": a.get("name") or "", "year": None, "genres": "",
             "size_mb": (a.get("size_bytes") or 0) / (1024 * 1024),
-            "service": "plex", "arr_id": key, "plex_rating_key": key, "arr_url": link,
+            "service": service, "arr_id": key, "plex_rating_key": key, "arr_url": link,
             "category": "music", "musicbrainz_id": a.get("mbid"), "monitored": True,
             "album_count": a.get("albums") or 0, "track_count": a.get("tracks") or 0,
         })
@@ -3205,8 +3219,18 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
                 logger.error("[jellyfin] delete refused for %r: malformed item id %r", p.title, p.media_id)
                 return False
             from src.services.media_server.jellyfin_adapter import JellyfinAdapter
-            gone = await JellyfinAdapter(str(settings.JELLYFIN_URL),
-                                         settings.JELLYFIN_API_KEY.get_secret_value()).delete_item(media_id)
+            jf = JellyfinAdapter(str(settings.JELLYFIN_URL), settings.JELLYFIN_API_KEY.get_secret_value())
+            if getattr(p, "category", None) == "music":
+                # A music-index artist (no Lidarr): album by album, then the index.
+                gone = await jf.delete_artist(media_id)
+                if gone:
+                    try:
+                        from src.services.lyrics import mark_artist_gone
+                        await asyncio.to_thread(mark_artist_gone, media_id)
+                    except Exception as e:
+                        logger.warning("[jellyfin] artist %s gone, index update failed: %s", media_id, e)
+            else:
+                gone = await jf.delete_item(media_id)
             if not gone:
                 logger.error("[jellyfin] %r is still there after the delete - is media "
                              "deletion allowed for the API key's user?", p.title)

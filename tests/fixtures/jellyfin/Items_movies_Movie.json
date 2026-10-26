@@ -49,6 +49,31 @@
        "Language": "ger",
        "IsExternal": true,
        "Index": 2
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "subrip",
+       "Language": "eng",
+       "IsExternal": false,
+       "IsHearingImpaired": true,
+       "Title": "English SDH",
+       "Index": 3
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "subrip",
+       "Language": "eng",
+       "IsExternal": false,
+       "IsForced": true,
+       "Title": "Forced",
+       "Index": 4
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "PGS",
+       "Language": "fre",
+       "IsExternal": false,
+       "Index": 5
       }
      ]
     }

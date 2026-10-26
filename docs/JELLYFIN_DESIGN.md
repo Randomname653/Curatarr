@@ -278,10 +278,47 @@ the draft and from Plex:
   server keys from `MediaTechProfile`; without it there was nothing to write.
 - **Deleting** (`service="jellyfin"` proposals): configured check, probe,
   `DELETE /Items/{id}` and a re-read through the adapter; an item that stays
-  is a failure. Limbo asks `key_exists`. No candidate source produces such
-  proposals yet (Plex's comes from its music index): on Jellyfin, music
-  deletion needs Lidarr for now; the rebind turns open Plex proposals into
-  Jellyfin ones.
+  is a failure. Limbo asks `key_exists`. The rebind turns open Plex
+  proposals into Jellyfin ones; music candidates without Lidarr follow in
+  phase 6 (5.6).
+
+### 5.6 As built (phase 6)
+
+Parity work. Each piece hands over inside the Plex module it mirrors, so the
+custodian tasks, pages and the curator read the same tables as on Plex:
+
+- **The music index** (`media_server/jellyfin_music.py`): `lyrics.sync_lyrics`
+  walks Jellyfin's tracks and artists, shaped like the Plex listing (sizes
+  from `MediaSources`, MusicBrainz artist ids, albums and artists as
+  parents). Lyrics come from `GET /Audio/{id}/Lyrics` (10.9+), asked only
+  for tracks whose streams list a `Lyric` stream (`HasLyrics`). The Music
+  page, the lyrics profiles and the Wrap-Up read it unchanged.
+- **Music deletion candidates without Lidarr** come from that index with
+  `service="jellyfin"` and a Jellyfin deep link. Deleting an artist removes
+  its albums one by one (an album is a folder Jellyfin can remove, an artist
+  entry is not always one) and re-reads them: an album that stays is a
+  failure. The artist then leaves the index at once.
+- **Moods and styles** (`music_tags`): `Genres` on artists and albums read as
+  styles, `Tags` (where MOOD file tags land) as moods on every level. A
+  library's rows are replaced only by a walk that read all of it.
+- **Likes as ratings** as in 5.4, read with each history sync
+  (`Filters=Likes` / `IsFavorite` / `Dislikes` over tracks, albums and
+  artists). A like beats a dislike on the same item. Only rows with
+  `source="jellyfin_like"` are replaced; a Plex star rating carried over by
+  a rebind (`source` NULL) wins on the same item and stays. New column
+  `plex_ratings.source`, migrated.
+- **Subtitles:** `acquire_subtitle_text` reads Jellyfin's own track first
+  (`/Videos/{id}/{source}/Subtitles/{index}/Stream.srt`), with the same
+  choice as on Plex: never a forced one, a plain one over SDH, text codecs
+  only. Unlike Plex, Jellyfin extracts embedded text tracks, so those count
+  too (`source="jellyfin_embedded"`). A series is measured on its first
+  episode. Then the same fallbacks (own subtitle service, OpenSubtitles).
+- **Deep links** were already in the read path (1b): `/web/#/details?id=…`
+  (with `serverId` when known).
+
+Remaining differences, by nature of the server rather than open work: no
+Discover watchlist (the playlist of D7 stands in), collections are
+server-wide, and Jellyfin's ratings are thumbs, not stars.
 
 ## 6. Code shape
 
@@ -661,7 +698,7 @@ Each phase ships on its own and leaves Plex users where they were.
 | **3 — History** ✔ | tiers A–D, `record_plays` + merge, `server_play_state`, scheduler / startup / Sync button dispatch, the session poller, the webhook route and its setup dialog, the history badge | taste vectors build from Jellyfin plays |
 | **4 — Writes** ✔ | playlists, collections, Curatarr Watchlist, mark played, delete; the Jellyfin tech walk (moved up from phase 6: recommendations and shelves take their keys from it) | "Curatarr Recommended" appears in each member's client |
 | **5 — Rebind** ✔ | `rebind.py` + `scripts/rebind_server.py`: dry run, write, undo, both directions, `--sync-state` | round trip Plex → Jellyfin → Plex on a fixture DB ends identical in every re-keyed column, except what Jellyfin itself merged (8.8) |
-| **6 — Parity** | likes as ratings, Genres/Tags for moods, sidecar subtitles, deep links, music deletion candidates without Lidarr | only `Capabilities` gaps remain, each named in the UI |
+| **6 — Parity** ✔ | likes as ratings, Genres/Tags for moods, subtitles (sidecar and extracted embedded tracks), deep links, the music index with lyrics, music deletion candidates without Lidarr (5.6) | `tests/test_jellyfin_parity.py` green; what remains differs by nature of the server (5.6) |
 
 ## 11. Tests
 
