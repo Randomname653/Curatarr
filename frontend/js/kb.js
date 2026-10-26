@@ -15,8 +15,8 @@ export async function loadMappingStats(btn) {
       <div class="gap-16 row mt-4">
         <span><b class="t-amber">${(s.total_entries || 0).toLocaleString(loc())}</b> <span class="t2">total entries</span></span>
         <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString(loc())}</b> <span class="t2">TVDB mapped</span></span>
-        <span><b>${(s.anilist_resolved || 0).toLocaleString(loc())}</b> <span class="t2">AniList resolved</span></span>
-        <span><b class="t-danger">${(s.anilist_missing || 0).toLocaleString(loc())}</b> <span class="t2">AniList pending</span></span>
+        ${s.anime != null ? `<span><b>${(s.with_anilist || 0).toLocaleString(loc())} of ${s.anime.toLocaleString(loc())}</b> <span class="t2">library anime with an AniList id</span></span>
+        <span><b>${(s.pinned || 0).toLocaleString(loc())}</b> <span class="t2">pinned (${(s.auto_pinned || 0).toLocaleString(loc())} by the TVDB crossref)</span></span>` : ''}
       </div>
       <div class="fs-11 t3 mt-4">Downloaded: ${s.downloaded_at ? esc(new Date(s.downloaded_at).toLocaleString(loc())) : 'never'} · refreshes weekly</div>`;
   } catch (e) { el.innerHTML = _errHtml(e); }
@@ -495,7 +495,8 @@ export function kbFixMatch(btn) {
 export function _renderCustodianBar(c) {
   const el = document.getElementById('custodian-bar');
   if (!el) return;
-  const due = (c.tasks || []).filter(t => t.due).length;
+  // Tasks that run on every tick are always "due" between two ticks.
+  const due = (c.tasks || []).filter(t => t.due && !t.every_tick).length;
   // Two queues since 2026-09-27: model work and everything else, side by
   // side. Name what each one is on, so a long deletion scan no longer reads
   // as "maintenance is stuck".

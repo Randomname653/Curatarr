@@ -232,10 +232,10 @@ def start_scheduler():
     # custodian_tick_background returns once the idle queues are started:
     # the model queue may run for hours, and an interval job that waited for
     # it would block its own next run — and with it the background queue.
-    from src.services.data_custodian import custodian_tick_background
+    from src.services.data_custodian import CUSTODIAN_TICK_MINUTES, custodian_tick_background
     scheduler.add_job(
         custodian_tick_background,
-        IntervalTrigger(minutes=30),
+        IntervalTrigger(minutes=CUSTODIAN_TICK_MINUTES),
         id="data_custodian",
         name="Data custodian tick (debt-based maintenance)",
         replace_existing=True,

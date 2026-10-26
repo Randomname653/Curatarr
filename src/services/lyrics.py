@@ -792,6 +792,28 @@ def _clean_profile(obj, block: str) -> Optional[dict]:
     }
 
 
+# The answer's shape, enforced by Ollama. Without it the summariser bake
+# (whose system prompt lists six modes, not this one) often opened with
+# "Note: the requested mode LYRICS PROFILE is not among the six defined
+# task modes" and then wrote prose instead of JSON: 79 of 166 artists
+# failed on the NAS on 2026-10-26; 4 of 12 in a replay, 0 of 12 with it.
+_PROFILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lyrical_profile": {"type": "string"},
+        "themes": {"type": "array", "items": {"type": "string"}},
+        "languages": {"type": "array", "items": {"type": "string"}},
+        "explicit": {"type": "boolean"},
+        "explicit_note": {"type": "string"},
+        "motifs": {"type": "array", "items": {"type": "string"}},
+        "tone": {"type": "array", "items": {"type": "string"}},
+        "quotes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["lyrical_profile", "themes", "languages", "explicit", "explicit_note",
+                 "motifs", "tone", "quotes"],
+}
+
+
 async def _call_summarizer(prompt: str) -> Optional[dict]:
     import httpx
     from src.services.llm_utils import ollama_options, parse_llm_json
@@ -800,7 +822,8 @@ async def _call_summarizer(prompt: str) -> Optional[dict]:
         async with ollama_client(timeout=180) as c:
             r = await c.post(f"{ollama_for("enrich")}/api/chat",
                              json={"model": model, "messages": [{"role": "user", "content": prompt}],
-                                   "stream": False, **ollama_options(temperature=0.1, num_predict=900)})
+                                   "stream": False, "format": _PROFILE_SCHEMA,
+                                   **ollama_options(temperature=0.1, num_predict=900)})
     except Exception as e:
         logger.warning("[lyrics] summariser unreachable: %s", e)
         return None

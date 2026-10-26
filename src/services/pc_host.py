@@ -14,6 +14,7 @@ Curatarr reads its own machine, as before.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Optional
@@ -227,6 +228,10 @@ async def poll_once(fetch=None) -> None:
     url = _settings().PC_AGENT_URL.rstrip("/") + "/status"
     try:
         report = await (fetch or _fetch)(url, token())
+    except asyncio.CancelledError:
+        # The app is stopping (the scheduler cancels the poll in flight): no
+        # missed poll, and no ERROR traceback in every shutdown's log.
+        return
     except Exception as e:  # noqa: BLE001 - every failure is one missed poll
         record(None, f"{type(e).__name__}: {e}"[:200])
         return
@@ -242,7 +247,6 @@ async def poll_once(fetch=None) -> None:
     # that starts takes the PC out of the routing within seconds.
     from src.services.ollama_hosts import split
     if available() and split():
-        import asyncio
         from src.services.process_monitor import pc_busy
         try:
             value, why = await asyncio.to_thread(pc_busy, report)
