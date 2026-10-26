@@ -136,7 +136,7 @@ def test_the_wiring_reads_music_service():
     rec = (_ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
     assert "PLEX MUSIC (Lidarr optional)" in rec and 'if p.service == "plex":' in rec
     js = (_ROOT / "frontend/js/deletions.js").read_text(encoding="utf-8")
-    assert "p.service !== 'plex' ? {label: 'Fix match'" in js, "no arr to pin a match against"
+    assert "!_MEDIA_SERVERS.has(p.service) ? {label: 'Fix match'" in js, "no arr to pin a match against"
 
 
 if __name__ == "__main__":

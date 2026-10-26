@@ -178,6 +178,9 @@ def library_status(_user: User = Depends(get_current_user)):
             # the Plex music index instead.
             from src.services.music_source import music_service
             out[svc]["music_source"] = music_service()
+            # 'plex' names the media server's music index; which server it is:
+            from src.services.media_server import active_kind
+            out[svc]["media_server"] = active_kind()
     return out
 
 

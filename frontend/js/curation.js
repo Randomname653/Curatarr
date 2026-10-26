@@ -311,7 +311,9 @@ export async function loadRedundancy() {
     const CAT = { movie: 'Movies', show: 'TV Shows', anime: 'Anime', music: 'Music' };
     const ARR = { movie: 'radarr', show: 'sonarr', anime: 'sonarr', music: 'lidarr' };
     const links = (e) => {
-      const plex = r.plex_web_base && e.plex_rating_key
+      const plex = e.server_url
+        ? `<a href="${esc(e.server_url)}" aria-label="Open ${escAttr(e.title || 'media')} in Jellyfin" target="_blank" class="btn btn-secondary btn-sm">Open in Jellyfin</a>`
+        : r.plex_web_base && e.plex_rating_key
         ? `<a href="${esc(r.plex_web_base + encodeURIComponent('/library/metadata/' + e.plex_rating_key))}" aria-label="Open ${escAttr(e.title || 'media')} in Plex" target="_blank" class="btn btn-secondary btn-sm">Open in Plex</a>` : '';
       const arr = e.arr_url
         ? `<a href="${esc(e.arr_url)}" target="_blank" aria-label="Open ${escAttr(e.title || 'media')} in ${esc(ARR[e.media_type] || 'arr')}" class="btn btn-secondary btn-sm">Open in ${esc(ARR[e.media_type] || 'arr')}</a>` : '';

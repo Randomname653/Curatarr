@@ -152,8 +152,21 @@ try:
     with conn_mod.get_db_session() as db:
         joga = db.query(PlexRating).filter(PlexRating.plex_item_id == JOGA).one().rating
     check("a dislike turned like is changed in place", joga == 10.0 and res["changed"] == 1 and res["added"] == 0)
-    check("the history sync reads the ratings too",
-          "sync_ratings(adapter, uid, key)" in inspect.getsource(jellyfin_history.sync_history))
+    class RatingsDown:
+        async def rated_music(self, user):
+            raise RuntimeError("down")
+
+    async def _rep(adapter, uid, key):
+        return {"inserted": 1, "merged": 0}
+    real_rep, real_poll = jellyfin_history.import_report, jellyfin_history.poll_user
+    jellyfin_history.import_report = jellyfin_history.poll_user = _rep
+    try:
+        res = asyncio.run(jellyfin_history.sync_history(adapter=RatingsDown(), followup=False))
+    finally:
+        jellyfin_history.import_report, jellyfin_history.poll_user = real_rep, real_poll
+    u = res["users"].get(1) or {}
+    check("the history sync reads the ratings; their failure costs no plays",
+          res["synced"] == 2 and "report" in u and u.get("ratings") == {"error": "RuntimeError"})
 
     print("\n-- subtitles --")
     info = asyncio.run(A.subtitle_streams(HEAT))
@@ -184,6 +197,19 @@ try:
           "run_music_index" in inspect.getsource(lyrics.run_lyrics_sync)
           and "jellyfin_tags" in inspect.getsource(music_tags.run_music_tags)
           and "_acquire_jellyfin" in inspect.getsource(subtitle_signals.acquire_subtitle_text))
+    check("the delete dialog knows Jellyfin deletes (no recycle bin, SoulSync ban)",
+          "jellyfin" in rec._DELETE_SERVICES
+          and asyncio.run(rec._arr_recycle_bin("jellyfin")) == {"recycle_bin": False, "cleanup_days": None}
+          and '("plex", "jellyfin", "lidarr")' in inspect.getsource(rec.deletion_delete_target))
+    check("the redundancy report links into Jellyfin", 'e["server_url"] = link' in inspect.getsource(rec.get_redundancy))
+    from src.routers import library as library_router
+    check("the Music page is told which server its index is from",
+          'out[svc]["media_server"] = active_kind()' in inspect.getsource(library_router))
+    js = {n: (ROOT / "frontend" / "js" / n).read_text(encoding="utf-8") for n in ("deletions.js", "arr.js", "state.js")}
+    check("the deletion UI treats Jellyfin as a media server, not an arr",
+          "new Set(['plex', 'jellyfin'])" in js["deletions.js"] and "jellyfin: 'Jellyfin'" in js["deletions.js"])
+    check("the Music page names the server", "via ${serverLabel()}" in js["arr.js"]
+          and "export function serverLabel()" in js["state.js"])
     check("the ratings' source column is migrated",
           '("plex_ratings",           "source", "VARCHAR(16)")' in inspect.getsource(conn_mod._migrate_columns))
 finally:

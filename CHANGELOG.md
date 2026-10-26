@@ -33,6 +33,28 @@ follow them:
 - **Deployment**: a container image for a NAS, the gaming PC as a named
   compute node that lends its GPU, per-machine model bakes, and an update
   check with "Update available" under the sidebar.
+- **Jellyfin**: one install runs on Plex *or* Jellyfin 10.9+, behind one
+  media-server seam, and moves between them both ways without losing
+  anything (`scripts/rebind_server.py`).
+
+**Jellyfin support (docs/JELLYFIN_DESIGN.md).** `MEDIA_SERVER_TYPE=jellyfin`
+runs the install on Jellyfin instead of Plex. Sign-in through Quick Connect
+or the Jellyfin password, only for the server's own users, the first one an
+administrator; the wizard picks the server, tests it (refusing anything
+older than 10.9) and maps its libraries. Play history comes in four tiers,
+none of which needs a plugin to start: live session polling (a play counts
+from 80 %), a delta poll of each user's played state, and, when installed,
+the Webhook plugin and a Playback Reporting backfill, merged into one play
+per viewing. Writes match Plex's: "Curatarr Recommended" playlists per
+member and collections, edited in place; the watchlist is a "Curatarr
+Watchlist" playlist; mark played; deletes with a re-read. Parity: the music
+index with lyrics, music deletion candidates without Lidarr, moods and
+styles from Genres and Tags, likes and favourites as ratings, subtitle
+signals from Jellyfin's own tracks, deep links. `scripts/rebind_server.py
+--to jellyfin|plex` re-keys history, enrichment, vectors, verdicts and open
+proposals onto the other server's ids: a dry run first, `--write` with a
+backup and a manifest, `--undo`, and a permanent id memory
+(`server_id_map`) so a move back finds every title again.
 
 **Wrap-Up: every household member's own period in review (the Curation Report folded in).**
 A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year

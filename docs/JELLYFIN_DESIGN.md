@@ -315,6 +315,11 @@ custodian tasks, pages and the curator read the same tables as on Plex:
   episode. Then the same fallbacks (own subtitle service, OpenSubtitles).
 - **Deep links** were already in the read path (1b): `/web/#/details?id=…`
   (with `serverId` when known).
+- **The UI names the server:** the Music page ("via Jellyfin"), library
+  counts, the history cleanup and the Swipe hints say Jellyfin on a
+  Jellyfin install; the delete dialog treats a `jellyfin` proposal like a
+  Plex one (no recycle bin, no arr import list, no "Fix match"), and the
+  redundancy report links each entry into Jellyfin.
 
 Remaining differences, by nature of the server rather than open work: no
 Discover watchlist (the playlist of D7 stands in), collections are

@@ -1,5 +1,5 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
 import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, loc, toast } from './ui.js';
 import { api } from './api.js';
@@ -17,10 +17,6 @@ function serverChoice() {
     </div>`;
 }
 
-// The signed-in install's media server, for labels (auth.py /status "server").
-function serverLabel() {
-  return state.currentUser?.server === 'jellyfin' ? 'Jellyfin' : 'Plex';
-}
 
 export function setupServerKind() {
   collectStep();

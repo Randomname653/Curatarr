@@ -467,7 +467,6 @@ async def sync_history(*, adapter=None, followup: bool = True) -> dict:
             try:
                 rep = await import_report(adapter, uid, key)
                 poll = await poll_user(adapter, uid, key)
-                poll["ratings"] = await sync_ratings(adapter, uid, key)
             except Exception as e:  # noqa: BLE001 - one member's failure must not cost the others; logged
                 logger.warning("[jellyfin] history of user %s not synced: %s", uid, e)
                 per_user[uid] = {"error": type(e).__name__}
@@ -475,6 +474,11 @@ async def sync_history(*, adapter=None, followup: bool = True) -> dict:
             synced += rep.get("inserted", 0) + poll.get("inserted", 0)
             merged += rep.get("merged", 0) + poll.get("merged", 0)
             per_user[uid] = {"report": rep, "poll": poll}
+            try:
+                per_user[uid]["ratings"] = await sync_ratings(adapter, uid, key)
+            except Exception as e:  # noqa: BLE001 - the plays are stored; ratings retry next sync; logged
+                logger.warning("[jellyfin] ratings of user %s not synced: %s", uid, e)
+                per_user[uid]["ratings"] = {"error": type(e).__name__}
         if synced and followup:
             # The flag scheduler.job_plex_sync sets for Plex: a fresh value,
             # so a follow-up already running does not clear these plays.

@@ -6,7 +6,7 @@ import { loadLibrarySettings } from './library_settings.js';
 import { loadUsers } from './admin.js';
 import { loadLibraryConfig } from './libraries.js';
 import { showView } from './nav.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { loadNodes } from './nodes.js';
 export async function reattributeHistory(btn) {
@@ -62,13 +62,13 @@ export async function cleanupOrphans(btn) {
       const again = await confirmDialog({
         title: `Hide ${r.would_archive} of ${r.examined} history entries?`,
         confirmLabel: 'Hide anyway',
-        body: '<p>That is more than a fifth of all history. This usually means a library was not fully readable, not that the media is gone.</p><p class="t3 fs-12 mt-8">Only continue if you really removed that much from Plex.</p>',
+        body: `<p>That is more than a fifth of all history. This usually means a library was not fully readable, not that the media is gone.</p><p class="t3 fs-12 mt-8">Only continue if you really removed that much from ${serverLabel()}.</p>`,
       });
       if (!again.ok) { setStatus(status, r.error + ' (hidden: 0)', 'err'); return; }
       r = await api('/api/history/admin/cleanup-orphans?force=true', 'POST');
     }
     if (r.error) { setStatus(status, r.error + ' (hidden: 0)', 'err'); return; }
-    const back = r.returned ? `, ${r.returned} back in Plex` : '';
+    const back = r.returned ? `, ${r.returned} back in ${serverLabel()}` : '';
     setStatus(status, `Done — hid ${r.archived} of ${r.examined} entries checked${back}`, 'ok');
     toast(`Hid ${r.archived} history entries for removed media`, 'success');
     if (r.archived > 0 || r.returned > 0) setTimeout(loadHistoryStatus, 800);
