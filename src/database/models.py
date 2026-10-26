@@ -1275,3 +1275,31 @@ class TitleNanogenre(Base):
     assigned_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (Index("idx_title_nanogenre_title", "title", "domain"),)
+
+
+class ServerIdMap(Base):
+    """The id memory a rebind runs on (services/media_server/id_map,
+    docs/JELLYFIN_DESIGN.md §8.2): every title, user and library under a
+    server-independent ``canonical_key`` ("tmdb:949", "tvdb:334824/s01e02",
+    "file:<relative path>|<size>#s01e02", "user:3"), with the id each server
+    knows it by. The active server's column is refreshed by every library
+    walk; a rebind fills the other one and never deletes a row.
+
+    The server-id columns are indexed, not unique: Jellyfin files a double
+    episode as one item that Plex lists as two, so one Jellyfin id can stand
+    for two canonical keys."""
+    __tablename__ = "server_id_map"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type      = Column(String(16), nullable=False)   # movie series season episode artist album track library user
+    canonical_key    = Column(String(512), nullable=False)
+    plex_id          = Column(String(64), nullable=True)
+    jellyfin_id      = Column(String(64), nullable=True)
+    match_method     = Column(String(16), nullable=False)   # external_id | file | name | server | user_flag | manual
+    last_verified_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "canonical_key", name="uq_server_id_map_key"),
+        Index("idx_server_id_map_plex", "entity_type", "plex_id"),
+        Index("idx_server_id_map_jellyfin", "entity_type", "jellyfin_id"),
+    )

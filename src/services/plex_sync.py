@@ -2727,6 +2727,8 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
     task_monitor.start(_task)
     agg: dict = {}
     scanned, incomplete = set(), set()   # categories safe to prune vs. never
+    from src.services.media_server.plex_adapter import to_media_item
+    id_items: list = []                  # the same walk, for the id memory (server_id_map)
 
     async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
         for sec_key, (category, sec_title) in lib_configs.items():
@@ -2742,6 +2744,9 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                 incomplete.add(category)   # partial or empty: this category is not pruned
             task_monitor.log(_task, f"{sec_title}: {len(items)} parts")
             for it in items:
+                mi = to_media_item(it, str(sec_key))
+                if mi is not None:
+                    id_items.append(mi)
                 if category == "movie":
                     ck = str(it.get("ratingKey"))
                     title = it.get("title")
@@ -2781,6 +2786,9 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
             # Shows: merge series ids/title from the show items (type 2).
             if category in ("show", "anime"):
                 for sh in await _fetch_section_all(client, plex_url, headers, sec_key, "2"):
+                    mi = to_media_item(sh, str(sec_key))
+                    if mi is not None:
+                        id_items.append(mi)
                     rk = str(sh.get("ratingKey"))
                     if rk in agg:
                         gids = _parse_guids(sh)
@@ -2789,6 +2797,16 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                         agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
 
     written = await run_write(_persist_tech_profiles, agg)
+    try:
+        # The same walk, filed in the id memory a server switch runs on
+        # (docs/JELLYFIN_DESIGN.md §8.2). Additive: it never deletes a row.
+        from src.services.media_server import active_kind, id_map
+        if active_kind() == "plex":
+            ids = await id_map.record_walk("plex", id_items)
+            task_monitor.log(_task, f"id memory: {ids['added']} new, {ids['updated']} changed, "
+                                    f"{ids['verified']} confirmed")
+    except Exception as e:  # noqa: BLE001 - the profiles stand without it; the next walk files the ids
+        logger.warning("[id-map] server ids not filed this walk (%s)", e)
     arr_cov = None
     try:
         # The arrs' own record first (services/arr_ledger): what they imported

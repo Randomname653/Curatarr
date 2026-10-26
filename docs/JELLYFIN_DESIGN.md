@@ -404,12 +404,20 @@ server_id_map
   canonical_key    TEXT NOT NULL   -- server-independent identity, below
   plex_id          TEXT NULL
   jellyfin_id      TEXT NULL
-  match_method     TEXT NOT NULL   -- external_id | file | name | user_flag | manual
+  match_method     TEXT NOT NULL   -- external_id | file | name | server | user_flag | manual
   last_verified_at DATETIME NOT NULL
   UNIQUE (entity_type, canonical_key)
-  UNIQUE (entity_type, plex_id)     WHERE plex_id IS NOT NULL
-  UNIQUE (entity_type, jellyfin_id) WHERE jellyfin_id IS NOT NULL
+  INDEX  (entity_type, plex_id)
+  INDEX  (entity_type, jellyfin_id)
 ```
+
+The server-id columns are indexed, **not unique** (changed in phase 1c):
+Jellyfin files a double episode as one item (`IndexNumber` 2,
+`IndexNumberEnd` 3) that Plex lists as two, so one Jellyfin id legitimately
+stands for two canonical keys. The other direction stays one-to-one per
+walk: two server ids with one canonical key (a film in a 4K and a 1080p
+library) are a duplicate, the first keeps the row, and a rebind matches the
+other copy by file.
 
 `canonical_key` is built from the strongest identity the item has
 (`base.canonical_key`), most specific first:
@@ -432,8 +440,13 @@ on one file, and the bare stem would make them collide under
 `UNIQUE (entity_type, canonical_key)`. (A number-less episode or track keeps
 the bare stem.)
 
-The map is written **all the time, not only during a rebind**: every sync
-upserts the active server's id next to the canonical key. So when a
+The map is written **all the time, not only during a rebind**: every library
+walk upserts the active server's id next to the canonical key. On Plex that
+is the tech-profile walk (`plex_sync.sync_tech_profiles`, twice a day): its
+movies, shows and episodes (seasons derived from the episodes), the
+libraries with their roots, and every Curatarr user. Music joins when that
+walk runs with `include_music` (off by default; a large music library is
+hundreds of thousands of tracks), or with the rebind's own walk. So when a
 household switches, most of the target side is the only unknown; and when
 it switches back, the old side's ids are still in the map, re-verified
 (`key_exists`) instead of re-matched. Rows are never deleted by a rebind;
@@ -544,9 +557,9 @@ Each phase ships on its own and leaves Plex users where they were.
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **1a — Seam** | `base.py` ✔; `plex_adapter.py` as in 6.3; `key_namespace` replaces the `isdigit()` guesses (A.3); seam ratchet test | suite green, no behaviour change |
+| **1a — Seam** ✔ | `base.py`; `plex_adapter.py` (read path) as in 6.3; `key_namespace` replaces the `isdigit()` guesses (A.3); seam ratchet test | suite green, no behaviour change |
 | **1b — Jellyfin read path** | `jellyfin_adapter.py`: libraries, items, users, external ids, files, tech profiles, added dates, `key_exists`; wizard step | contract tests green on the fixture set |
-| **1c — id memory** | `server_id_map` table + upsert from every sync | the map fills on a Plex install with no other change |
+| **1c — id memory** ✔ | `server_id_map` table + upsert from every tech walk | the map fills on a Plex install with no other change |
 | **2 — People** | Quick Connect + password, membership and admin check | a member signs in; an account from another server cannot |
 | **3 — History** | tier A, C, then B, then D; `record_play` + merge; UI badge | taste vectors build from Jellyfin plays |
 | **4 — Writes** | playlists, collections, Curatarr Watchlist, mark played, delete | "Curatarr Recommended" appears in each member's client |

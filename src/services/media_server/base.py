@@ -172,6 +172,9 @@ class MediaItem:
     grandparent_title: Optional[str] = None
     season_number: Optional[int] = None
     episode_number: Optional[int] = None
+    # Jellyfin files a double episode as ONE item (IndexNumber 2,
+    # IndexNumberEnd 3); Plex lists two. None for a single episode.
+    episode_number_end: Optional[int] = None
     disc_number: Optional[int] = None
     track_number: Optional[int] = None
     external_ids: ExternalIds = field(default_factory=ExternalIds)
