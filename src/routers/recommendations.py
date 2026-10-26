@@ -2995,15 +2995,22 @@ async def _probe_arr(service: str) -> bool:
         return False
 
 
-# Arr ids and Plex rating keys are positive integers. Anything else - "" from
+# Arr ids are positive integers; a media server's keys have that server's own
+# shape (Plex: the same integers, Jellyfin: 32 hex). Anything else - "" from
 # a proposal built without an arr_id, "None", a path fragment - must never
 # reach a DELETE URL: "" turns /movie/{id} into the collection path, and httpx
 # collapses "../" segments into a different endpoint (2026-10-10 audit).
 _MEDIA_ID = re.compile(r"[1-9][0-9]{0,9}")
+_SERVER_SERVICES = ("plex", "jellyfin")
 
 
-def _require_media_id(value) -> Optional[str]:
-    """The id as a canonical string, or None when it is not one."""
+def _require_media_id(value, service: Optional[str] = None) -> Optional[str]:
+    """The id as a canonical string, or None when it is not one. A proposal
+    of a media server (``service`` plex / jellyfin) is checked against that
+    server's key shape, every other id against the arr shape."""
+    if service in _SERVER_SERVICES:
+        from src.services.media_server.base import require_server_key
+        return require_server_key(service, value)
     s = str(value if value is not None else "").strip()
     return s if _MEDIA_ID.fullmatch(s) else None
 
@@ -3021,7 +3028,7 @@ async def _plex_delete_artist(key: str, client=None,
     if not base or not token:
         logger.error("[plex] delete: Plex not configured")
         return False
-    checked = _require_media_id(key)
+    checked = _require_media_id(key, "plex")
     if checked is None:
         logger.error("[plex] delete refused: malformed rating key %r", key)
         return False

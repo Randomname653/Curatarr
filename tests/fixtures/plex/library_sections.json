@@ -1,0 +1,51 @@
+{
+ "MediaContainer": {
+  "size": 4,
+  "Directory": [
+   {
+    "key": "1",
+    "type": "movie",
+    "title": "Movies",
+    "Location": [
+     {
+      "id": 1,
+      "path": "/data/media/movies"
+     }
+    ]
+   },
+   {
+    "key": "2",
+    "type": "show",
+    "title": "TV Shows",
+    "Location": [
+     {
+      "id": 2,
+      "path": "/data/media/tv"
+     }
+    ]
+   },
+   {
+    "key": "3",
+    "type": "artist",
+    "title": "Music",
+    "Location": [
+     {
+      "id": 3,
+      "path": "/data/media/music"
+     }
+    ]
+   },
+   {
+    "key": "4",
+    "type": "photo",
+    "title": "Photos",
+    "Location": [
+     {
+      "id": 4,
+      "path": "/data/photos"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -157,7 +157,7 @@ class LibraryConfig(Base):
     __tablename__ = "library_config"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    plex_section_key = Column(String(16), nullable=False, unique=True)
+    plex_section_key = Column(String(64), nullable=False, unique=True)
     plex_section_title = Column(String(256), nullable=False)
     plex_section_type = Column(String(32), nullable=False)   # artist/show/movie
     media_category = Column(String(32), nullable=False)      # music/anime/show/movie
@@ -780,7 +780,7 @@ class MediaIdentity(Base):
     __tablename__ = "media_identities"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    plex_rating_key = Column(String(50), unique=True, nullable=False, index=True)
+    plex_rating_key = Column(String(64), unique=True, nullable=False, index=True)
     media_type      = Column(String(20), nullable=False)   # movie/show/anime/music
     title           = Column(String(500), nullable=False)
     year            = Column(Integer, nullable=True)
@@ -1195,9 +1195,9 @@ class MusicTag(Base):
     __tablename__ = "music_tags"
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    section_key = Column(String(32), nullable=False)
+    section_key = Column(String(64), nullable=False)
     level       = Column(String(8), nullable=False)      # artist | album | track
-    item_key    = Column(String(32), nullable=False)     # the Plex ratingKey
+    item_key    = Column(String(64), nullable=False)     # the server item key
     kind        = Column(String(8), nullable=False)      # mood | style
     tag         = Column(String(128), nullable=False)
     seen_at     = Column(DateTime, default=datetime.utcnow, nullable=False)

@@ -70,7 +70,7 @@ def _item_url(service: str, media_id) -> tuple:
     """(url, headers) of the item a proposal deletes, or (None, None)."""
     from src.config import settings
     from src.routers.recommendations import _require_media_id
-    mid = _require_media_id(media_id)
+    mid = _require_media_id(media_id, service)
     if mid is None:
         return None, None
     if service == "plex":

@@ -125,6 +125,10 @@ item's `RunTimeTicks`.
 - `completed` follows the rule the Plex path uses (`completion ≥ 0.9`,
   `plex_sync.py:817`), so an 80–89 % play counts as a play but not as
   finished, exactly as on Plex.
+- **Rewind / restart:** when a tracked pair's high-water mark is already
+  ≥ 80 % and a later poll finds the position back below 15 % (the song or
+  episode started again in the same session), the first run is written as
+  a play right there and the high-water mark restarts for the new run.
 - Paused sessions stay tracked; a pause longer than 4 h ends the pair.
 - The tracker is in memory. A restart loses only plays in progress, and
   tier C picks those up.
@@ -264,7 +268,7 @@ the season/episode/track numbers, all external ids, the file path and size.
 | `UserItemState` | `user_key`, `item_key`, `played`, `play_count`, `last_played_at`, `position_ms`, `liked`, `favorite`, `rating` |
 | `LiveSession` | `session_key`, `user_key`, `item_key`, `position_ms`, `duration_ms`, `paused`, `device`, `client` |
 | `Play` | `user_key`, `item_key`, `played_at`, `position_ms`, `duration_ms`, `completed`, `device`, `client`, `source`, `date_only` |
-| `Capabilities` | `per_play_history`, `live_sessions`, `star_ratings`, `native_watchlist`, `music_moods`, `per_user_tokens` |
+| `Capabilities` | `per_play_history`, `now_playing` (`live_sessions()` answers), `star_ratings`, `native_watchlist`, `music_moods`, `per_user_tokens` |
 
 `MediaServerAdapter` (a `typing.Protocol`, async):
 
@@ -287,11 +291,19 @@ Plus the pure helpers the audit asked for (Appendix A):
   upper-case GUIDs become 32 lower-case hex; anything else is rejected).
 - `canonical_key(item)` → the `server_id_map` key (8.2).
 
-### 6.3 `plex_adapter.py` — the cut (not written yet)
+### 6.3 `plex_adapter.py` — the cut
 
-Phase 1 moves **no** Plex logic. The adapter wraps what exists, so the
-seam lands without a behaviour change, and `plex_sync.py` is split only
-afterwards, function by function, each with its own test run.
+Phase 1 moves **no** Plex logic. `plex_sync.py` is split only afterwards,
+function by function, each with its own test run.
+
+**As built in 1a:** the adapter implements the *read* half itself (`ping`,
+`libraries`, `items`, `item`, `children`, `key_exists`, `users`,
+`is_server_key`, `deep_link`), with a paged walk that raises on any failed
+page instead of returning a partial list. Nothing calls it yet; today's
+modules keep running, and the seam ratchet (`tests/test_media_server_seam.py`)
+counts the direct URL builders that remain. `plays` and `user_states` raise
+`NotImplementedError` until phase 3, the writes and `delete_item` until
+phase 4. The table is the target of the full move:
 
 | Adapter method | Wraps today | Change needed first |
 |---|---|---|
@@ -302,7 +314,7 @@ afterwards, function by function, each with its own test run.
 | `users` | `plex_sync._fetch_account_to_user_map` (`/accounts`) | none |
 | `plays` | `plex_sync._owner_history_entries`, `_member_history_entries` | return `Play`; keep the watermark logic in `plex_sync` |
 | `user_states` | `plex_sync._sync_music_ratings` | split the rating read from the DB write |
-| `live_sessions` | none (Plex history covers it) | `[]`; `capabilities.live_sessions = False` |
+| `live_sessions` | none (Plex history covers plays) | `[]`; `capabilities.now_playing = False`. `/status/sessions` can switch it on later for a "now playing" badge |
 | `upsert_playlist` | `plex_playlists.create_playlist` / `reconcile_playlist` | needs the user's token: the adapter reads `users.plex_token` |
 | `upsert_collection` | `plex_collections.create_collection` | none |
 | `mark_played` | nothing: Curatarr never marks Plex items played today | new, `/:/scrobble`; only `rebind --sync-state` (8.6) calls it |
@@ -407,12 +419,18 @@ server_id_map
 | movie | `tmdb:{id}` → `imdb:{tt…}` → `file:{stem}` |
 | series | `tvdb:{id}` → `tmdb-tv:{id}` → `imdb:{tt…}` → `file:{stem}` |
 | season | `{series canonical}/s{nn}` |
-| episode | `tvdb-ep:{id}` → `{series canonical}/s{nn}e{nn}` → `file:{stem}` |
+| episode | `tvdb-ep:{id}` → `{series canonical}/s{nn}e{nn}` → `file:{stem}#s{nn}e{nn}` |
 | artist | `mb-artist:{mbid}` → `name:{normalized}` |
 | album | `mb-rg:{mbid}` → `{artist canonical}/{normalized title}` |
-| track | `mb-rec:{mbid}` → `{album canonical}/d{n}t{nn}` → `file:{stem}` |
+| track | `mb-rec:{mbid}` → `{album canonical}/d{n}t{nn}` → `file:{stem}#d{n}t{nn}` |
 | user | `user:{curatarr users.id}` |
 | library | `library:{kind}:{normalized title}` |
+
+The `file:` fallback of an episode or a track always carries its number:
+a double episode (`S01E01E02.mkv`) or a single-file album is several items
+on one file, and the bare stem would make them collide under
+`UNIQUE (entity_type, canonical_key)`. (A number-less episode or track keeps
+the bare stem.)
 
 The map is written **all the time, not only during a rebind**: every sync
 upserts the active server's id next to the canonical key. So when a
@@ -460,8 +478,10 @@ Every column in Appendix A.1, keyed by namespace: only `key_namespace ==
 
 - **Chroma vectors** whose doc id is a server key
   (`store_profile_vector`: `plex_rating_key or tmdb_id or …`): the vector is
-  copied under the new id, the old id deleted after the DB commit. Chroma
-  has no rename; copying keeps the embedding, so no model runs.
+  copied under the new id with **`upsert`**, never `add` (a resumed run
+  meets copies it already made), and the old id deleted after the DB
+  commit. Chroma has no rename; copying keeps the embedding, so no model
+  runs.
 - **Metadata cache** keys that embed a server key (`raw_prefetch:{key}` and
   the dead `enriched:{cat}:{key}` form, ARCHITECTURE §cache): renamed, or
   dropped where they are dead.
@@ -491,7 +511,10 @@ the flag the target server's own state is not touched.
   column, old, new)`, every Chroma and cache rename, the settings flip.
 - **`--undo manifest.json`** replays the manifest backwards, row by row, so
   plays recorded *after* the rebind survive the undo (restoring the backup
-  file would drop them). The backup file stays as the last resort.
+  file would drop them). For Chroma it upserts the vector back under the
+  old id and then **deletes the copy under the new id** explicitly, so no
+  twin vectors remain to surface twice in recommendations. The backup file
+  stays as the last resort.
 - The tool refuses to run while a manifest without a "completed" or
   "undone" mark exists.
 
@@ -554,8 +577,9 @@ user ids) stored or treated as integers, and what must change for 32-char
 Jellyfin GUIDs and the `server_id_map`?
 
 **Result: no integer storage.** Every key column is `String`, no Pydantic
-schema or type hint declares a server key as `int`, and no raw SQL casts a
-key. Parent and grandparent keys are not stored at all (they live only in
+schema declares a server key as `int`, and no raw SQL casts a key. One type
+hint did: `arr_client.PlexClient.get_library_items(section_id: int)`, a
+method nothing calls; it is `str` since phase 1a. Parent and grandparent keys are not stored at all (they live only in
 the sync's in-memory payloads). The work is in A.2 (two short declarations),
 A.3 (shape guessing) and A.4 (keys embedded outside key columns).
 

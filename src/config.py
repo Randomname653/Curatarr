@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, HttpUrl
 from pydantic.types import SecretStr
-from typing import Optional
+from typing import Literal, Optional
 
 from src.paths import ROOT, ENV_FILE
 
@@ -61,7 +61,15 @@ class Settings(BaseSettings):
     PLEX_CLIENT_ID: str = "Curatarr"
     PLEX_REDIRECT_URI: HttpUrl = "http://localhost:8000"
 
-    @field_validator("PLEX_URL", mode="before")
+    # ── Media server choice (docs/JELLYFIN_DESIGN.md) ───────────────────────
+    # Exactly one media server per running install. Unset = Plex, which every
+    # install before Jellyfin support runs. Jellyfin support is being built:
+    # its read path exists, nothing switches to it yet.
+    MEDIA_SERVER_TYPE: Optional[Literal["plex", "jellyfin"]] = None
+    JELLYFIN_URL: Optional[HttpUrl] = None
+    JELLYFIN_API_KEY: Optional[SecretStr] = None
+
+    @field_validator("PLEX_URL", "JELLYFIN_URL", "MEDIA_SERVER_TYPE", mode="before")
     @classmethod
     def _blank_optional_url_is_none(cls, v):
         # A hand-edited (or older-wizard-written) ``PLEX_URL=`` used to fail

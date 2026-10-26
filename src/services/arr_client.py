@@ -356,7 +356,7 @@ class PlexClient(MediaService):
         )
         return result.get("MediaContainer", {}).get("Directory", [])
 
-    async def get_library_items(self, section_id: int) -> List[Dict]:
+    async def get_library_items(self, section_id: str) -> List[Dict]:
         """Fetch all items in a library section."""
         result = await self.request(
             "GET",

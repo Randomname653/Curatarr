@@ -1,0 +1,31 @@
+{
+ "MediaContainer": {
+  "size": 1,
+  "Metadata": [
+   {
+    "ratingKey": "2001",
+    "type": "show",
+    "title": "Dark",
+    "year": 2017,
+    "librarySectionID": 2,
+    "addedAt": 1700001000,
+    "Guid": [
+     {
+      "id": "imdb://tt5753856"
+     },
+     {
+      "id": "tmdb://70523"
+     },
+     {
+      "id": "tvdb://334824"
+     }
+    ],
+    "Genre": [
+     {
+      "tag": "Drama"
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -68,6 +68,18 @@ def normalize_jellyfin_id(value) -> Optional[str]:
     return s.replace("-", "").lower()
 
 
+def require_server_key(kind: ServerKind, value) -> Optional[str]:
+    """``value`` as a canonical key of server ``kind``, or None. The deletion
+    path's validator for server keys (design §9): nothing else may reach a
+    DELETE URL. Jellyfin keys must already be in the stored spelling."""
+    s = str(value if value is not None else "").strip()
+    if kind == "plex":
+        return s if is_plex_key(s) else None
+    if kind == "jellyfin":
+        return s if is_jellyfin_key(s) else None
+    return None
+
+
 def key_namespace(value) -> KeyNamespace:
     """What a value in a ``plex_*`` key column is. Only ``"server"`` values
     belong to the media server: a rebind re-keys those and nothing else."""
@@ -223,7 +235,10 @@ class Play:
 class Capabilities:
     """What the server can do, so callers branch on facts, not on ``kind``."""
     per_play_history: bool                   # Plex: yes. Jellyfin core: no
-    live_sessions: bool
+    # ``live_sessions()`` answers with what plays right now. Jellyfin: yes
+    # (/Sessions, history tier A). Plex: no for now - its history covers
+    # plays; /status/sessions can switch it on for a "now playing" badge.
+    now_playing: bool
     star_ratings: bool                       # Plex: PlexAmp stars. Jellyfin: likes only
     native_watchlist: bool                   # Plex Discover; Jellyfin uses a playlist
     music_moods: bool
@@ -276,8 +291,13 @@ def canonical_key(item: MediaItem, *, parent_canonical: Optional[str] = None,
     if item.kind == "episode":
         if x.tvdb_episode_id:
             return f"tvdb-ep:{x.tvdb_episode_id}"
-        if parent_canonical and item.season_number is not None and item.episode_number is not None:
+        numbered = item.season_number is not None and item.episode_number is not None
+        if parent_canonical and numbered:
             return f"{parent_canonical}/s{item.season_number:02d}e{item.episode_number:02d}"
+        # A double episode (S01E01E02.mkv) is two items on one file: the
+        # number keeps their keys apart under UNIQUE(entity_type, canonical_key).
+        if file_key and numbered:
+            return f"{file_key}#s{item.season_number:02d}e{item.episode_number:02d}"
         return file_key
     if item.kind == "artist":
         if x.mb_artist_id:
@@ -294,6 +314,9 @@ def canonical_key(item: MediaItem, *, parent_canonical: Optional[str] = None,
             return f"mb-rec:{x.mb_recording_id}"
         if parent_canonical and item.track_number is not None:
             return f"{parent_canonical}/d{item.disc_number or 1}t{item.track_number:02d}"
+        # A single-file album (one FLAC + cue) puts every track on one file.
+        if file_key and item.track_number is not None:
+            return f"{file_key}#d{item.disc_number or 1}t{item.track_number:02d}"
         return file_key
     return None
 

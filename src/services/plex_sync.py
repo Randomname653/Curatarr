@@ -46,6 +46,7 @@ from src.services.llm_utils import (
 )
 from src.services.http_client import tls_context
 from src.services.library_ledger import note_arrival, persist_ledger
+from src.services.media_server.base import key_namespace
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2067,8 +2068,9 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
                     continue
                 if rk in live_keys:
                     continue
-                # Only consider numeric ratingKeys (skip oddball custom IDs)
-                if not rk.isdigit():
+                # Only server keys: Spotify / Netflix placeholders and *arr
+                # forms are not library items (a GUID is, on Jellyfin).
+                if key_namespace(rk) != "server":
                     continue
                 to_delete_ids.append(row.id)
 

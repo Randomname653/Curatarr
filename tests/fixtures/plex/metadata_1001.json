@@ -1,0 +1,49 @@
+{
+ "MediaContainer": {
+  "size": 1,
+  "Metadata": [
+   {
+    "ratingKey": "1001",
+    "key": "/library/metadata/1001",
+    "type": "movie",
+    "title": "Heat",
+    "year": 1995,
+    "librarySectionID": 1,
+    "addedAt": 1700000000,
+    "duration": 10200000,
+    "Guid": [
+     {
+      "id": "imdb://tt0113277"
+     },
+     {
+      "id": "tmdb://949"
+     },
+     {
+      "id": "tvdb://1221"
+     }
+    ],
+    "Genre": [
+     {
+      "tag": "Crime"
+     },
+     {
+      "tag": "Thriller"
+     }
+    ],
+    "Media": [
+     {
+      "id": 1,
+      "videoResolution": "1080",
+      "Part": [
+       {
+        "id": 1,
+        "file": "/data/media/movies/Heat (1995)/Heat (1995).mkv",
+        "size": 7340032000
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}
