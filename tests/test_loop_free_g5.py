@@ -279,7 +279,7 @@ for i in range(10):
                     "grandparentTitle": "The Band", "parentTitle": "First", "title": f"Song {i}",
                     "duration": 200000,
                     "Media": [{"Part": [{"Stream": [{"streamType": 4, "codec": "txt", "key": skey}]}]}]})
-    _texts[skey] = f"Line one {i}\nRiver runs cold tonight\nChorus {i}\n".encode()
+    _texts[skey] = f"Line one {i}\nRiver runs cold tonight\nThe last train leaves at nine\nChorus {i}\n".encode()
 
 
 async def _list_tracks(sec):

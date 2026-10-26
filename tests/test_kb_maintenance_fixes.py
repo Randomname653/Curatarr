@@ -70,6 +70,33 @@ check("...and its answer still parses", got and got["themes"] == ["leaving", "ho
 wiz = (ROOT / "src/services/setup_wizard.py").read_text(encoding="utf-8")
 check("the summariser bake no longer insists on six modes (takes effect on the next build)",
       "You have SIX distinct task modes" not in wiz and "never comment on the mode" in wiz)
+sch = ly._PROFILE_SCHEMA["properties"]
+check("the schema carries the checks the cleaner makes (2+ themes, a real profile)",
+      sch["themes"]["minItems"] == 2 and sch["lyrical_profile"]["minLength"] >= 20)
+
+# ── lyrics: no guessing from almost nothing, no copied examples ─────────────
+check("a lyric's real words leave out [tags], (asides) and 'Instrumental'",
+      ly.real_words("[Verse 1]\nRiver runs cold (yeah)") == 3 and ly.real_words("[Instrumental]") == 0
+      and ly.real_words("Instrumental") == 0)
+check("the prompt shows no example themes for the model to copy",
+      "leaving a small town" not in ly.LYRICS_PROFILE_PROMPT and "grief turned into anger" not in ly.LYRICS_PROFILE_PROMPT)
+check("a profile that copied a former example is made again",
+      ly._copied_example({"profile": {"themes": ["Leaving a small town", "rivers"]}})
+      and not ly._copied_example({"profile": {"themes": ["anger after a loss"]}}))
+tmp = Path(tempfile.mkdtemp()) / "lyrics.db"
+con = ly._connect(tmp)
+for i, text in enumerate(["[Instrumental]", "Hey hey hey", "Instrumental"]):
+    con.execute("INSERT INTO track_lyrics (plex_rating_key, artist_key, album_key, artist, album, title, text, lines,"
+                " checked_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (f"k{i}", "a1", "al", "Artist", "Album", f"T{i}", text, 1, "2026-10-26T00:00:00"))
+con.commit()
+con.close()
+block, shown, used = ly._profile_input("a1", tmp, listens={})
+check("an artist whose texts hold no real lyrics is not shown to the model",
+      shown == 0 and block == "" and used == [])
+src = (ROOT / "src/services/lyrics.py").read_text(encoding="utf-8")
+check("...and is counted as without real lyrics, not as a failed profile",
+      "no_lyrics += 1" in src and "without real lyrics" in src)
 
 # ── the anime card ───────────────────────────────────────────────────────────
 from sqlalchemy import create_engine  # noqa: E402

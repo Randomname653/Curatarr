@@ -54,7 +54,7 @@ def _seed(name, artists):
 
 
 _GOOD = {"lyrical_profile": "Small-town leaving songs sung to a lost friend; plain words, river imagery.",
-         "themes": ["leaving home", "grief turned into anger", "rivers as time"],
+         "themes": ["leaving home", "anger after a loss", "rivers as time"],
          "languages": ["English"], "explicit": False, "explicit_note": "",
          "motifs": ["cold rivers", "last trains"], "tone": ["melancholic", "Nostalgic", "not-a-mood"],
          "quotes": ["River runs cold tonight", "This line was never in the lyrics", "“River runs cold tonight”"]}
@@ -214,7 +214,7 @@ def test_the_summariser_prompt_reads_the_profile_or_its_absence():
     assert _lyrics_prompt_block({"bio": "x"}) == "none on file — make no claims about the words"
     block = _lyrics_prompt_block({"lyrics": {**_GOOD, "based_on": {"with_text": 10, "tracks": 12}}})
     assert block.startswith("<<<UNTRUSTED_SOURCE:lyrics_profile>>>") and "(10 of 12 tracks on file)" in block
-    assert "themes: leaving home, grief turned into anger, rivers as time" in block and "explicit: no" in block
+    assert "themes: leaving home, anger after a loss, rivers as time" in block and "explicit: no" in block
     label, text = _lyrics_line({**_GOOD, "explicit": True, "based_on": {"with_text": 10, "tracks": 12}})
     assert label == "Lyrics (10 of 12 tracks on file)" and text.endswith("Explicit: yes.")
     assert _lyrics_line(None) == (None, None)

@@ -545,6 +545,21 @@ _LINES_PER_TRACK = 40
 _CHARS_PER_TRACK = 1200
 _MAX_INPUT_CHARS = 14_000
 _MAX_QUOTE_WORDS = 12
+# A text with fewer real words than this is no lyric ("[Instrumental]",
+# a title shouted four times); an artist whose texts on show hold fewer than
+# _MIN_ARTIST_WORDS in all is not profiled - the model was left to guess.
+_MIN_TRACK_WORDS = 10
+_MIN_ARTIST_WORDS = 40
+_TAG = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+# The prompt's former examples, copied verbatim into 13 of 772 profiles
+# (2026-10-26): a profile carrying one is made again.
+_EXAMPLE_COPIES = {"leaving a small town", "grief turned into anger"}
+
+
+def real_words(text: str) -> int:
+    """Words of a lyric without its [tags] and (asides); "instrumental" is none."""
+    words = _TAG.sub(" ", text or "").split()
+    return 0 if len(words) <= 2 and any(w.strip(".:-").lower() == "instrumental" for w in words) else len(words)
 
 _MOODS = ("bleak", "melancholic", "intense", "kinetic", "darkly comedic", "unsettling",
           "contemplative", "optimistic", "cathartic", "euphoric", "romantic", "epic",
@@ -559,7 +574,7 @@ ON FILE: {with_text} of {tracks} tracks have lyrics; {shown} of them are below, 
 
 RULES
 - Only what these lyrics show. No knowledge about the artist from elsewhere, no songs that are not below.
-- Themes are subjects and stances ("leaving a small town", "grief turned into anger"), never genre words.
+- Themes are concrete subjects and stances taken from these lyrics, never genre words.
 - Quotes are lines copied verbatim from below, at most {max_quote_words} words each, at most 3.
 - explicit is true only for profanity, sexual explicitness or graphic violence in the words themselves.
 
@@ -659,6 +674,11 @@ def _cooling(a: dict, fail: Optional[dict], now: datetime) -> bool:
     return (now - last).total_seconds() < _failure_backoff_days(fail.get("attempts")) * 86400
 
 
+def _copied_example(p: dict) -> bool:
+    themes = (p.get("profile") or {}).get("themes") or []
+    return any(str(t).strip().lower() in _EXAMPLE_COPIES for t in themes)
+
+
 def eligible_artists(db_path: Optional[Path] = None, now: Optional[datetime] = None) -> list:
     """Artists with enough lyrics on file and no profile under the rules in
     force today, or whose texts on file grew by ``_REGROW`` since theirs.
@@ -674,7 +694,7 @@ def eligible_artists(db_path: Optional[Path] = None, now: Optional[datetime] = N
         if not enough:
             continue
         p = have.get(a["artist_key"])
-        if (p is None or p["lyrics_v"] != _LYRICS_PROMPT_VERSION
+        if (p is None or p["lyrics_v"] != _LYRICS_PROMPT_VERSION or _copied_example(p)
                 or a["with_text"] >= max(p["based_on"].get("with_text", 0), 1) * _REGROW):
             if not _cooling(a, fails.get(a["artist_key"]), now):
                 out.append(a)
@@ -721,6 +741,9 @@ def _profile_input(artist_key: str, db_path: Optional[Path] = None, listens: Opt
                 chosen.append(lst[depth])
         depth += 1
     parts, used, total = [], [], 0
+    chosen = [t for t in chosen if real_words(t.get("text")) >= _MIN_TRACK_WORDS]
+    if sum(real_words(t.get("text")) for t in chosen) < _MIN_ARTIST_WORDS:
+        return "", 0, []
     for t in chosen:
         body = "\n".join((t.get("text") or "").split("\n")[:_LINES_PER_TRACK])[:_CHARS_PER_TRACK]
         head = f"## {t.get('title') or '?'}" + (f" ({t['album']})" if t.get("album") else "")
@@ -800,8 +823,8 @@ def _clean_profile(obj, block: str) -> Optional[dict]:
 _PROFILE_SCHEMA = {
     "type": "object",
     "properties": {
-        "lyrical_profile": {"type": "string"},
-        "themes": {"type": "array", "items": {"type": "string"}},
+        "lyrical_profile": {"type": "string", "minLength": 40},
+        "themes": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 8},
         "languages": {"type": "array", "items": {"type": "string"}},
         "explicit": {"type": "boolean"},
         "explicit_note": {"type": "string"},
@@ -902,7 +925,7 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
     budget = _PROFILE_BUDGET if budget is None else budget
     now = now or datetime.utcnow()
     owns = cache is None
-    made = failed = reattached = 0
+    made = failed = reattached = no_lyrics = 0
     todo = []
 
     # Every cache, plex_music.db and history read below runs on a worker
@@ -946,10 +969,11 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
         # _listen_counts inside reads the watch history.
         block, shown, used = await run_read(_profile_input, a["artist_key"], db_path)
         if not shown:
-            # Nothing to show the model: the same answer next tick, so it
-            # waits like a failure instead of holding a place in line.
+            # No lyrics worth the name (instrumentals, a few shouted words):
+            # the model is not asked to guess. The same answer next tick, so
+            # it waits out the backoff like a failure, counted on its own.
             await asyncio.to_thread(_note_failure, a, db_path, now)
-            failed += 1
+            no_lyrics += 1
             continue
         prompt = LYRICS_PROFILE_PROMPT.format(
             artist=a["artist"], with_text=a["with_text"], tracks=a["tracks"], shown=shown,
@@ -979,8 +1003,8 @@ async def run_lyrics_profiles(task=None, *, db_path: Optional[Path] = None, call
         made += 1
         _report(f"{made} profiled this run ({a['artist']})")
     remaining = max(0, len(todo) - budget)
-    logger.info("[lyrics] profiles: %d made, %d failed, %d re-attached, %d remaining",
-                made, failed, reattached, remaining)
+    logger.info("[lyrics] profiles: %d made, %d failed, %d without real lyrics, %d re-attached, "
+                "%d remaining", made, failed, no_lyrics, reattached, remaining)
     return remaining == 0
 
 
