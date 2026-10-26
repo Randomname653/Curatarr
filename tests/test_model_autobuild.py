@@ -172,11 +172,27 @@ calls.clear()
 check("a curator or pitcher drift is not rebuilt",
       ab.rebake_summarizer(PLAN, [{"model": "curatarr-curator", "reasons": ["system prompt"]}],
                            post=_post, tags=lambda url: {"granite4.1:8b": "d1"}) is False and calls == [])
-check("its base missing on the host: nothing is pulled, nothing created",
-      ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {}) is False and calls == [])
+deleted = []
+ok = ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {},
+                          delete=lambda url, model: deleted.append(model))
+check("its base missing: pulled for the rebuild, the bake made, the base removed again",
+      ok is True and [c[0] for c in calls] == ["pull", "create", "generate"]
+      and calls[0][1]["model"] == "granite4.1:8b" and deleted == ["granite4.1:8b"])
+calls.clear()
+deleted.clear()
+ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {"granite4.1:8b": "d1"},
+                     delete=lambda url, model: deleted.append(model))
+check("a base the host already holds is neither pulled nor removed",
+      "pull" not in [c[0] for c in calls] and deleted == [])
+calls.clear()
+check("no drift: nothing is pulled, nothing built",
+      ab.rebake_summarizer(PLAN, [], post=_post, tags=lambda url: {}) is False and calls == [])
 state["create_status"] = 500
-check("a failed create keeps the old bake and reports False",
-      ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {"granite4.1:8b": "d1"}) is False)
+deleted.clear()
+check("a failed pull or create keeps the old bake, reports False, and still removes a pulled base",
+      ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {},
+                           delete=lambda url, model: deleted.append(model)) is False
+      and deleted == ["granite4.1:8b"])
 
 # ── wiring ──────────────────────────────────────────────────────────────────
 main_src = (ROOT / "src/main.py").read_text(encoding="utf-8")
