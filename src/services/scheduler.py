@@ -553,13 +553,21 @@ async def job_plex_sync(chain_llm: bool = True):
     running, so the custodian keeps the task due and retries next tick —
     swallowing the exception and returning None stamped a failed day as
     done, and the next attempt waited a full cadence."""
-    logger.info("[scheduler] Starting daily Plex sync")
+    from src.services.media_server import active_kind
+    jellyfin = active_kind() == "jellyfin"
+    logger.info("[scheduler] Starting daily %s sync", "Jellyfin" if jellyfin else "Plex")
     ok = True
     try:
         from src.services.plex_sync import sync_plex_history
 
-        result = (await sync_plex_history(force=False) if chain_llm
-                  else await sync_plex_history(force=False, recompute_taste=False))
+        if jellyfin:
+            # Tiers C and D (docs/JELLYFIN_DESIGN.md §4): no taste work inside,
+            # so both chain_llm paths below apply unchanged.
+            from src.services.media_server.jellyfin_history import sync_history
+            result = await sync_history(followup=False)
+        else:
+            result = (await sync_plex_history(force=False) if chain_llm
+                      else await sync_plex_history(force=False, recompute_taste=False))
         if result.get("error"):
             logger.warning("[scheduler] Plex sync not run: %s", result["error"])
             ok = False
@@ -592,6 +600,15 @@ async def job_plex_sync(chain_llm: bool = True):
     # Size-outlier intelligence: refresh per-item tech profiles (resolution /
     # codec / size / runtime) for the whole library, then recompute the
     # MB-per-minute class norms. Rate-limited (12h) inside sync_tech_profiles.
+    if jellyfin:
+        # Tech profiles are Plex-only so far (design §10, phase 6); the
+        # library walk still fills the id memory a server switch runs on.
+        try:
+            from src.services.media_server.jellyfin_history import walk_library
+            logger.info("[scheduler] Jellyfin library walk: %s", await walk_library())
+        except Exception as e:  # noqa: BLE001 - the sync above stands; the next walk files the ids
+            logger.warning("[scheduler] Jellyfin library walk failed: %s", e)
+        return ok
     try:
         from src.services.plex_sync import sync_tech_profiles
         from src.services.size_norms import compute_size_norms

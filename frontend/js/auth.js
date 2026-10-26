@@ -214,6 +214,10 @@ export function setUser(u) {
   syncTimezone(u);
   document.getElementById('user-name').textContent = u.username || 'User';
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
+  if (u.server === 'jellyfin') {
+    const lib = document.getElementById('libraries-btn');
+    if (lib) lib.textContent = 'Jellyfin libraries';
+  }
   if (u.is_admin) {
     // Admin-only chrome: the sidebar's Curate section, the admin Settings
     // tabs, inline admin actions (e.g. Force sync) — let CSS decide layout

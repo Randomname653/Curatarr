@@ -1303,3 +1303,22 @@ class ServerIdMap(Base):
         Index("idx_server_id_map_plex", "entity_type", "plex_id"),
         Index("idx_server_id_map_jellyfin", "entity_type", "jellyfin_id"),
     )
+
+
+class ServerPlayState(Base):
+    """What a media server said about one user's item at the last poll
+    (history tier C, services/media_server/jellyfin_history): play count and
+    last-played date. Jellyfin keeps only the CURRENT state of an item, so a
+    new play is the difference between two polls. One row per user and item."""
+    __tablename__ = "server_play_state"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    user_id        = Column(Integer, ForeignKey("users.id"), nullable=False)
+    item_key       = Column(String(64), nullable=False)
+    play_count     = Column(Integer, nullable=False, default=0)
+    last_played_at = Column(DateTime, nullable=True)
+    seen_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "item_key", name="uq_server_play_state"),
+    )

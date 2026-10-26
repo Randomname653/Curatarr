@@ -1,0 +1,49 @@
+{
+ "colums": [
+  "DateCreated",
+  "UserId",
+  "ItemId",
+  "ItemType",
+  "ItemName",
+  "PlaybackMethod",
+  "ClientName",
+  "DeviceName",
+  "PlayDuration"
+ ],
+ "results": [
+  [
+   "2025-12-31 22:05:11.1234567",
+   "b0c1d2e3f405162738495a6b7c8d9e0f",
+   "4b1d2f3e5a6c7b8d9e0f1a2b3c4d5e6f",
+   "Movie",
+   "Heat",
+   "DirectPlay",
+   "Jellyfin Web",
+   "Firefox",
+   "9900"
+  ],
+  [
+   "2026-01-02 20:00:00.0000000",
+   "b0c1d2e3f405162738495a6b7c8d9e0f",
+   "2a3b4c5d6e7f80910a1b2c3d4e5f6071",
+   "Episode",
+   "Secrets",
+   "Transcode",
+   "Jellyfin Android",
+   "Pixel 8",
+   "300"
+  ],
+  [
+   "2026-01-03 08:00:00.0000000",
+   "c1d2e3f405162738495a6b7c8d9e0fa1",
+   "4b1d2f3e5a6c7b8d9e0f1a2b3c4d5e6f",
+   "Movie",
+   "Heat",
+   "DirectPlay",
+   "Infuse",
+   "Apple TV",
+   "10100"
+  ]
+ ],
+ "message": ""
+}

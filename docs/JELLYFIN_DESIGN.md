@@ -1,9 +1,9 @@
 # Jellyfin support — design
 
 _Status: **Accepted**, 2026-10-26 (draft of the same day, revised with the
-owner's decisions). **Phase 1 is built** (1a seam + Plex read adapter, 1b
-Jellyfin read adapter, 1c `server_id_map`); no user-visible behaviour has
-changed. Endpoint names are from the Jellyfin 10.9/10.10 API and are pinned
+owner's decisions). **Phases 1–3 are built**: the seam and both read
+adapters, `server_id_map`, Jellyfin sign-in and setup, and the four-tier
+play history. A Plex install behaves as before. Endpoint names are from the Jellyfin 10.9/10.10 API and are pinned
 by hand-written fixtures (section 11); they have not met a live Jellyfin
 server yet, and anything they do not cover is checked against one before it
 ships._
@@ -186,7 +186,31 @@ Python. `source="jellyfin_report"`.
 After a Plex → Jellyfin rebind the whole Curatarr history is already there
 (section 8); tier D only adds what was played on Jellyfin before.
 
-### 4.5 One play, many witnesses
+### 4.5 As built (phase 3)
+
+`media_server/jellyfin_history.py` (tiers A, C, D, `record_plays`,
+`sync_history`, `walk_library`), `media_server/jellyfin_hook.py` and
+`routers/jellyfin.py` (tier B), table `server_play_state` (tier C's
+snapshot). Where the build differs from the draft above:
+
+- **Tier C reads 24 hours back** past the last poll, not 1: a play started
+  before a poll and finished after it can carry a last-played date from
+  before that poll. The snapshot keeps the re-read from counting twice.
+- **The webhook secret lives in app_state**, not in `.env`: the admin's
+  Settings → Integrations → Jellyfin → *Webhook setup* creates it and shows
+  URL, header, events and template; *New secret* rotates it. No secret, no
+  route (401).
+- **The scheduled sync** (`job_plex_sync`, job id unchanged) runs tiers D and
+  C on Jellyfin, then a library walk that fills `server_id_map`; tech
+  profiles stay Plex-only until phase 6. Startup and the Sync button set
+  the custodian's follow-up flag, so the taste work runs as after a Plex
+  sync.
+- **Tier D counts a report row as a play from 80 % of the runtime**, the
+  same bar as tier A; shorter starts are skipped.
+- Plays of Jellyfin users who never signed in to Curatarr, and of unmapped
+  or ignored libraries, are skipped, as the Plex sync skips them.
+
+### 4.6 One play, many witnesses
 
 `record_play` keys a play on `(user_id, server item key)` and merges any
 two reports less than 20 minutes apart. The richer one wins field by
@@ -573,7 +597,7 @@ Each phase ships on its own and leaves Plex users where they were.
 | **1b — Jellyfin read path** ✔ | `jellyfin_adapter.py`: `ping`, libraries, items, `item`, `children`, `key_exists`, users, `live_sessions`, deep links; contract test over both adapters | contract tests green on the fixture set. The wizard step moves to phase 2, with sign-in |
 | **1c — id memory** ✔ | `server_id_map` table + upsert from every tech walk | the map fills on a Plex install with no other change |
 | **2 — People** ✔ | Quick Connect + password, membership and admin check; wizard server choice, Jellyfin URL/key step and connection test (refuses < 10.9); library mapping from Jellyfin; Integrations card; SECURITY.md | a member signs in; an account from another server cannot |
-| **3 — History** | tier A, C, then B, then D; `record_play` + merge; UI badge | taste vectors build from Jellyfin plays |
+| **3 — History** ✔ | tiers A–D, `record_plays` + merge, `server_play_state`, scheduler / startup / Sync button dispatch, the session poller, the webhook route and its setup dialog, the history badge | taste vectors build from Jellyfin plays |
 | **4 — Writes** | playlists, collections, Curatarr Watchlist, mark played, delete | "Curatarr Recommended" appears in each member's client |
 | **5 — Rebind** | `rebind.py` + `scripts/rebind_server.py`: dry run, write, undo, both directions | round trip Plex → Jellyfin → Plex on a fixture DB ends byte-identical in every re-keyed column |
 | **6 — Parity** | likes as ratings, Genres/Tags for moods, sidecar subtitles, deep links | only `Capabilities` gaps remain, each named in the UI |

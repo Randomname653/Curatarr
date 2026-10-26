@@ -21,8 +21,8 @@ import httpx
 
 from src.services.http_client import tls_context
 from src.services.media_server.base import (
-    Capabilities, ExternalIds, FileRef, ItemKind, Library, LiveSession, MediaItem,
-    ServerInfo, ServerUser, is_jellyfin_key, normalize_jellyfin_id,
+    Capabilities, ExternalIds, FileRef, ItemKind, Library, LiveSession, MediaItem, Play,
+    ServerInfo, ServerUser, UserItemState, is_jellyfin_key, normalize_jellyfin_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,32 @@ _CAPABILITIES = Capabilities(
 
 class JellyfinError(RuntimeError):
     """Jellyfin did not answer, or answered with an error."""
+
+
+class PluginMissing(JellyfinError):
+    """The optional plugin a call needs is not installed (HTTP 404)."""
+
+
+# What a play is on Jellyfin: films, episodes and tracks. The played state of
+# a series or an album is derived from these, never counted itself.
+_PLAYABLE = "Movie,Episode,Audio"
+# The Playback Reporting plugin's own table (jellyfin-plugin-playbackreporting).
+# A fixed string: nothing a caller passes ever reaches the query (design §4.4).
+_REPORT_QUERY = ("SELECT DateCreated, UserId, ItemId, ItemType, ItemName, PlaybackMethod, "
+                 "ClientName, DeviceName, PlayDuration FROM PlaybackActivity ORDER BY DateCreated")
+
+
+def to_user_state(user_key: str, item: dict) -> Optional[UserItemState]:
+    key = normalize_jellyfin_id(item.get("Id"))
+    ud = item.get("UserData") or {}
+    if not key:
+        return None
+    likes = ud.get("Likes")
+    return UserItemState(
+        user_key=user_key, item_key=key, played=bool(ud.get("Played")),
+        play_count=_int(ud.get("PlayCount")) or 0, last_played_at=_ts(ud.get("LastPlayedDate")),
+        position_ms=_ms(ud.get("PlaybackPositionTicks")),
+        liked=None if likes is None else bool(likes), favorite=bool(ud.get("IsFavorite")))
 
 
 def _int(value) -> Optional[int]:
@@ -169,10 +195,17 @@ class JellyfinAdapter:
 
     async def _get(self, client: httpx.AsyncClient, path: str, *,
                    params: Optional[dict] = None):
+        return await self._send(client, "GET", path, params=params)
+
+    async def _send(self, client: httpx.AsyncClient, method: str, path: str, *,
+                    params: Optional[dict] = None, json=None):
         try:
-            r = await client.get(f"{self._base}{path}", params=params, headers=self._headers())
+            r = await client.request(method, f"{self._base}{path}", params=params, json=json,
+                                     headers=self._headers())
         except httpx.HTTPError as e:
             raise JellyfinError(f"Jellyfin {path}: {type(e).__name__}") from e
+        if r.status_code == 404 and path.startswith("/user_usage_stats/"):
+            raise PluginMissing(f"Jellyfin {path}: the Playback Reporting plugin is not installed")
         if r.status_code != 200:
             raise JellyfinError(f"Jellyfin {path}: HTTP {r.status_code}")
         return r.json()
@@ -322,12 +355,64 @@ class JellyfinAdapter:
                 device=s.get("DeviceName") or None, client=s.get("Client") or None))
         return out
 
-    # ── phases 3 and 4 ──────────────────────────────────────────────────────
-    async def user_states(self, user, *, since=None):
-        raise NotImplementedError("Jellyfin user states arrive with phase 3")
+    # ── what people played (design §4) ──────────────────────────────────────
+    async def user_states(self, user: ServerUser, *,
+                          since: Optional[datetime] = None) -> list[UserItemState]:
+        """Every film, episode and track ``user`` has played, newest first, with
+        play count and last-played date (history tier C). With ``since`` the
+        walk stops at the first item last played before it."""
+        out = []
+        params = {"userId": user.key, "Recursive": "true", "Filters": "IsPlayed",
+                  "IncludeItemTypes": _PLAYABLE, "SortBy": "DatePlayed", "SortOrder": "Descending",
+                  "Fields": "ParentId", "EnableUserData": "true"}
+        pages = self._pages("/Items", params)
+        try:
+            async for raw in pages:
+                st = to_user_state(user.key, raw)
+                if st is None:
+                    continue
+                if since and st.last_played_at and st.last_played_at < since:
+                    break
+                out.append(st)
+        finally:
+            await pages.aclose()         # an early stop closes the client now, not at GC
+        return out
 
-    async def plays(self, user, *, since=None):
-        raise NotImplementedError("Jellyfin plays arrive with phase 3 (history tiers A-D)")
+    async def user_state(self, user_key: str, item_key: str) -> Optional[UserItemState]:
+        """One user's state of one item - the webhook's re-read (tier B)."""
+        u, i = normalize_jellyfin_id(user_key), normalize_jellyfin_id(item_key)
+        if not (u and i):
+            return None
+        async with self._client() as c:
+            body = await self._get(c, "/Items", params={"userId": u, "Ids": i,
+                                                        "EnableUserData": "true"})
+        found = body.get("Items") or []
+        return to_user_state(u, found[0]) if found else None
+
+    async def plays(self, user: ServerUser, *, since: Optional[datetime] = None) -> list[Play]:
+        """Per-play history from the Playback Reporting plugin (tier D), oldest
+        first. Raises PluginMissing without the plugin. ``position_ms`` is how
+        long it played; whether that counts as a play is the caller's call,
+        against the item's runtime."""
+        async with self._client() as c:
+            body = await self._send(c, "POST", "/user_usage_stats/submit_custom_query",
+                                    json={"CustomQueryString": _REPORT_QUERY, "ReplaceUserId": False})
+        cols = [str(x) for x in (body.get("colums") or body.get("columns") or [])]   # the plugin spells it "colums"
+        out = []
+        for row in body.get("results") or []:
+            rec = dict(zip(cols, row))
+            if normalize_jellyfin_id(rec.get("UserId")) != user.key:
+                continue
+            item, at = normalize_jellyfin_id(rec.get("ItemId")), _ts(str(rec.get("DateCreated") or "").replace(" ", "T"))
+            if not item or not at or (since and at < since):
+                continue
+            secs = _int(rec.get("PlayDuration"))
+            out.append(Play(user_key=user.key, item_key=item, played_at=at, source="jellyfin_report",
+                            position_ms=secs * 1000 if secs is not None else None,
+                            device=rec.get("DeviceName") or None, client=rec.get("ClientName") or None))
+        return out
+
+    # ── phase 4 ─────────────────────────────────────────────────────────────
 
     async def upsert_playlist(self, user, title, keys):
         raise NotImplementedError("Jellyfin writes arrive with phase 4")

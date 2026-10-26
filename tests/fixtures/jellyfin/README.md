@@ -23,6 +23,9 @@ Deliberate cases:
 | a dashed, upper-case GUID (plugins and some endpoints send them) | `Items_music_Audio.json`, Jóga's `AlbumArtists[0].Id` |
 | a library with no `CollectionType` (mixed; skipped) | `Library_VirtualFolders.json`, "Mixed" |
 | a session with nothing playing (skipped) | `Sessions.json`, the second entry |
+| a user's played items with `UserData` (counts, last-played dates, a like, a favourite) | `Items_played_{user id}.json` |
+| the Playback Reporting plugin's answer: `colums` (sic), every value as text, two users | `PlaybackReporting_query.json` |
+| sign-in results for an admin and a member; a Quick Connect request | `AuthenticationResult_*.json`, `QuickConnect_Initiate.json` |
 
 File names: `{Endpoint}_{library CollectionType}_{IncludeItemTypes}.json` for
 library walks, otherwise the endpoint path with `/` as `_`.

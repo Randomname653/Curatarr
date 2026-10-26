@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     MEDIA_SERVER_TYPE: Optional[Literal["plex", "jellyfin"]] = None
     JELLYFIN_URL: Optional[HttpUrl] = None
     JELLYFIN_API_KEY: Optional[SecretStr] = None
+    # How often the live sessions are read (history tier A): a play is seen
+    # when its session ends past 80 %. Backs off to 5 min after a quiet day.
+    JELLYFIN_SESSION_POLL_S: int = 45
 
     @field_validator("PLEX_URL", "JELLYFIN_URL", "MEDIA_SERVER_TYPE", mode="before")
     @classmethod

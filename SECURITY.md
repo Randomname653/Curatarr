@@ -82,6 +82,15 @@ session Jellyfin opens for a sign-in is closed right away (`/Sessions/Logout`):
 Curatarr keeps no Jellyfin user token. The Jellyfin API key in `.env` is an
 admin credential for the media server and is handled like the Plex token.
 
+The Jellyfin Webhook plugin posts to `POST /api/jellyfin/webhook`, the one
+route without a user: it needs a shared secret in `X-Curatarr-Secret`
+(constant-time compare; the admin creates and rotates it in Settings →
+Integrations; without one the route refuses everything), takes JSON objects
+of at most 64 KB, is budgeted per client, and treats a post only as a hint:
+a play is written when the Jellyfin server itself, re-read with the API key,
+says the item is played and was last played within half an hour. A forged
+or replayed post costs one read (2026-10-26).
+
 ## Sessions
 
 JWTs live 7 days and are silently re-issued once a day old — but always

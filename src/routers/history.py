@@ -44,7 +44,12 @@ def trigger_sync(
 
 
 async def _run_sync(force: bool = False):
-    result = await sync_plex_history(force=force)
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server.jellyfin_history import sync_history
+        result = await sync_history()
+    else:
+        result = await sync_plex_history(force=force)
     logger.info("Sync result: %s", result)
 
 

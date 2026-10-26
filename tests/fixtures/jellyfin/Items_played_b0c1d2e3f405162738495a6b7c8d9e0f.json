@@ -1,0 +1,49 @@
+{
+ "Items": [
+  {
+   "Name": "Hunter",
+   "Id": "8f90a1b2c3d4e5f60718293a4b5c6d7e",
+   "Type": "Audio",
+   "UserData": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 3,
+    "IsFavorite": true,
+    "Played": true,
+    "LastPlayedDate": "2026-10-25T07:40:00.0000000Z",
+    "Key": "x",
+    "ItemId": "00000000000000000000000000000000"
+   }
+  },
+  {
+   "Name": "Heat",
+   "Id": "4b1d2f3e5a6c7b8d9e0f1a2b3c4d5e6f",
+   "Type": "Movie",
+   "UserData": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 2,
+    "IsFavorite": false,
+    "Played": true,
+    "LastPlayedDate": "2026-10-20T21:00:00.0000000Z",
+    "Key": "x",
+    "ItemId": "00000000000000000000000000000000",
+    "Likes": true
+   }
+  },
+  {
+   "Name": "Secrets",
+   "Id": "2a3b4c5d6e7f80910a1b2c3d4e5f6071",
+   "Type": "Episode",
+   "UserData": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 1,
+    "IsFavorite": false,
+    "Played": true,
+    "LastPlayedDate": "2026-10-18T22:10:00.0000000Z",
+    "Key": "x",
+    "ItemId": "00000000000000000000000000000000"
+   }
+  }
+ ],
+ "TotalRecordCount": 3,
+ "StartIndex": 0
+}

@@ -119,8 +119,10 @@ for name, a in ADAPTERS.items():
     except Exception as e:  # noqa: BLE001 - the raise IS the assertion
         loud = "401" in str(e)
     check("a wrong credential raises with the status, never an empty library", loud)
-    for meth, args in (("user_states", (users[0],)), ("plays", (users[0],)),
-                       ("upsert_playlist", (users[0], "t", [])), ("delete_item", (heat.key,))):
+    later_here = (("upsert_playlist", (users[0], "t", [])), ("delete_item", (heat.key,)))
+    if name == "plex":       # Jellyfin's arrived with phase 3; Plex's move behind the seam later
+        later_here = (("user_states", (users[0],)), ("plays", (users[0],))) + later_here
+    for meth, args in later_here:
         try:
             run(getattr(a, meth)(*args))
             later = False
@@ -157,7 +159,7 @@ check("no 10.8 route: nothing under /Users/{id}/Items",
       not any(p.startswith("/Users/") for p, _ in jlog))
 check("library walks ask for the fields a rebind needs",
       all({"ProviderIds", "MediaSources", "Path", "DateCreated"} <= set(q.get("Fields", "").split(","))
-          for p, q in jlog if p == "/Items" and q.get("Recursive") == "true"))
+          for p, q in jlog if p == "/Items" and q.get("Recursive") == "true" and "userId" not in q))
 check("artists come from /Artists/AlbumArtists", any(p == "/Artists/AlbumArtists" for p, _ in jlog))
 check("the dashed upper-case artist id is stored in the one spelling",
       [i for i in ji if i.title == "Jóga"][0].grandparent_key == "6d7e8f90a1b2c3d4e5f60718293a4b5c")

@@ -53,15 +53,19 @@ JELLYFIN_LIBRARIES = {                    # library ItemId -> CollectionType
 }
 
 
-def jellyfin_transport(api_key: str = "jf-key", log: list = None) -> httpx.MockTransport:
+def jellyfin_transport(api_key: str = "jf-key", log: list = None, played: dict = None,
+                       report: bool = True, sessions: list = None) -> httpx.MockTransport:
     """Answers the Jellyfin paths the adapter reads; 401 unless the
     MediaBrowser header carries the key, 404 for anything not recorded.
     ``/Items?Ids=`` and ``/Items?ParentId=`` (no Recursive) are answered
-    from the recorded library walks."""
+    from the recorded library walks. ``played`` (user id -> items with
+    UserData) replaces Items_played_{user}.json, so a test can move counts
+    between polls; ``report=False`` answers the Playback Reporting query with
+    404 (no plugin); ``sessions`` replaces Sessions.json."""
     def every_item() -> list:
         out = []
         for p in sorted((FIXTURES / "jellyfin").glob("*.json")):
-            if p.name.startswith(("Items_", "Artists_")):
+            if p.name.startswith(("Items_", "Artists_")) and not p.name.startswith("Items_played_"):
                 out += load("jellyfin", p.name).get("Items") or []
         return out
 
@@ -72,6 +76,28 @@ def jellyfin_transport(api_key: str = "jf-key", log: list = None) -> httpx.MockT
         if not auth.startswith("MediaBrowser ") or f'Token="{api_key}"' not in auth:
             return httpx.Response(401)
         path, q = request.url.path, request.url.params
+        if path == "/user_usage_stats/submit_custom_query":
+            if not report or request.method != "POST":
+                return httpx.Response(404)
+            return httpx.Response(200, json=load("jellyfin", "PlaybackReporting_query.json"))
+        if path == "/Sessions" and sessions is not None:
+            return httpx.Response(200, json=sessions)
+        uid = q.get("userId")
+        if path == "/Items" and uid:
+            mine = (played or {}).get(uid)
+            if mine is None and (FIXTURES / "jellyfin" / f"Items_played_{uid}.json").exists():
+                mine = load("jellyfin", f"Items_played_{uid}.json")["Items"]
+            mine = mine or []
+            if q.get("Ids"):
+                want = set(q["Ids"].split(","))
+                found = [i for i in mine if i["Id"] in want]
+                if not found:      # not played: the item without play state
+                    found = [{**i, "UserData": {"Played": False, "PlayCount": 0}}
+                             for i in every_item() if i["Id"] in want]
+                return httpx.Response(200, json={"Items": found, "TotalRecordCount": len(found)})
+            start, limit = int(q.get("StartIndex", 0)), int(q.get("Limit", 500))
+            return httpx.Response(200, json={"Items": mine[start:start + limit],
+                                             "TotalRecordCount": len(mine), "StartIndex": start})
         simple = {"/System/Info": "System_Info.json", "/Library/VirtualFolders": "Library_VirtualFolders.json",
                   "/Users": "Users.json", "/Sessions": "Sessions.json"}
         if path in simple:

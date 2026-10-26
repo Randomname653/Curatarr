@@ -1,5 +1,5 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, openModal, setStatus, toast, trackDirty } from './ui.js';
 import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
@@ -251,7 +251,9 @@ export function renderIntegrationCard(card, cfg) {
   const testBtn = card.test
     ? `<button type="button" class="btn btn-secondary btn-sm" ${act('testIntegration', card.key, EL)}>Test connection</button>` : '';
   const rebuild = card.key === 'models'
-    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>` : '';
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>`
+    : card.key === 'jellyfin' && state.currentUser?.server === 'jellyfin'
+      ? `<button type="button" class="btn btn-secondary btn-sm" ${act('showJellyfinWebhook')}>Webhook setup</button>` : '';
   el.innerHTML = `
     <div class="section-head"><h3>${esc(card.title)}</h3>${card.hint ? `<span class="section-hint">${esc(card.hint)}</span>` : ''}</div>
     <div class="section-body">
@@ -311,6 +313,30 @@ export async function clearIntegrationSecret(fieldId, cardKey, btn) {
     toast('Key cleared', 'success');
     setTimeout(loadIntegrations, 800);
   } catch (e) { setStatus(msg, _errMsg(e), 'err'); btnDone(btn); }
+}
+
+// The Webhook plugin's destination (history tier B, design §4.2): what to
+// paste into Jellyfin. Opening it creates the shared secret.
+export async function showJellyfinWebhook(rotate = false) {
+  let w;
+  try {
+    if (rotate) await api('/api/jellyfin/webhook/rotate', 'POST');
+    w = await api('/api/jellyfin/webhook/setup');
+  } catch (e) { toast(`Webhook setup not available — ${_errMsg(e)}`, 'danger'); return; }
+  const url = `${location.origin}${w.path}`;
+  openModal({title: 'Jellyfin Webhook plugin', size: 'wide', body: `
+    <p class="fs-13 t2 mb-12">Optional: plays arrive the moment they end, with their exact time. Without it Curatarr reads the live sessions and the played state, which works too.</p>
+    <ol class="fs-13 t2 lh-15 mb-12">
+      <li>Jellyfin Dashboard → Plugins → Catalog: install <strong>Webhook</strong>, restart Jellyfin.</li>
+      <li>Plugins → Webhook → <strong>Add Generic Destination</strong>.</li>
+      <li>Webhook URL: <code>${esc(url)}</code></li>
+      <li>Notification types: <strong>${w.events.map(esc).join(', ')}</strong>; tick "Send All Properties" off.</li>
+      <li>Add request header <code>${esc(w.header)}</code> with this value: <code>${esc(w.secret)}</code></li>
+      <li>Template:</li>
+    </ol>
+    <pre class="webhook-template mono">${esc(w.template)}</pre>`,
+    foot: `<button type="button" class="btn btn-secondary" ${act('showJellyfinWebhook', true)}>New secret</button>
+           <button type="button" class="btn btn-primary" ${act('closeModal')}>Done</button>`});
 }
 
 export async function testIntegration(cardKey, btn) {

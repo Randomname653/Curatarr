@@ -308,10 +308,11 @@
           <button class="btn btn-secondary" data-action="recomputeTaste">Recompute taste</button>
           <div class="toolbar-right">
             <button class="btn btn-secondary" data-action="loadHistoryStatus">Refresh</button>
-            <button class="btn btn-secondary" data-action="showLibrariesForce">Plex libraries</button>
+            <button class="btn btn-secondary" id="libraries-btn" data-action="showLibrariesForce">Plex libraries</button>
           </div>
         </div>
         <div class="mb-20" id="history-stats"></div>
+        <p class="fs-12 t3 mb-12" id="history-sources" hidden></p>
         <div class="cat-tabs" id="taste-tabs"></div>
         <div id="taste-content"></div>
         <hr class="divider">

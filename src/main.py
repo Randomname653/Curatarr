@@ -200,6 +200,11 @@ async def lifespan(app: FastAPI):
     if settings.is_configured:
         from src.services.vector_reconcile import boot_drift_check
         track_task(boot_drift_check(), name="vector_drift_check")
+        from src.services.media_server import active_kind
+        if active_kind() == "jellyfin":
+            # History tier A (docs/JELLYFIN_DESIGN.md §4.1): what plays right now.
+            from src.services.media_server.jellyfin_history import run_session_poller
+            track_task(run_session_poller(), name="jellyfin_sessions")
         if settings.AUTO_BUILD_MODELS:
             # The container's start.bat step: missing bakes are pulled and
             # built in the background while the server already answers.
@@ -373,13 +378,18 @@ async def _startup_sync():
     """Run Plex sync, write marker, check proactive messages."""
     try:
         from pathlib import Path
-        from src.services.plex_sync import sync_plex_history
         from src.database.connection import get_db_session
         from src.database.models import User
         from src.database.runner import run_read
+        from src.services.media_server import active_kind
         from src.services.proactive_messages import check_and_generate_messages
 
-        result = await sync_plex_history()
+        if active_kind() == "jellyfin":
+            from src.services.media_server.jellyfin_history import sync_history
+            result = await sync_history()
+        else:
+            from src.services.plex_sync import sync_plex_history
+            result = await sync_plex_history()
         logger.info("Sync: %d new, %d skipped", result.get("synced", 0), result.get("skipped", 0))
         (DATA_DIR / ".last_sync").touch()
 
@@ -483,6 +493,7 @@ from src.routers import hosts
 from src.routers import stats
 from src.routers import wrapup
 from src.routers import model_updates
+from src.routers import jellyfin
 from src.routers.auth import require_admin
 
 # Admin-only routers: enrichment runs heavy LLM jobs that block the GPU
@@ -511,6 +522,7 @@ app.include_router(wrapup.router,          prefix="/api/wrapup",          tags=[
 app.include_router(imports.router,         prefix="/api/import",          tags=["import"])
 app.include_router(swipe.router,           prefix="/api/swipe",           tags=["swipe"])
 app.include_router(hosts.router,           prefix="/api/hosts",           tags=["hosts"])
+app.include_router(jellyfin.router,        prefix="/api/jellyfin",        tags=["jellyfin"])
 app.include_router(model_updates.router,   prefix="/api/system/model-updates", tags=["models"],
                    dependencies=_ADMIN_ONLY)
 

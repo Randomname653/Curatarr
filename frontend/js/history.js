@@ -5,6 +5,7 @@
 import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, loc, setStatus, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
+import { state } from './state.js';
 export async function recomputeTaste(statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
@@ -71,7 +72,25 @@ export function _renderHistoryStats(s) {
 // folding it into the same cache key would make that click bypass a
 // generic cache built around the wrong assumption (one payload per key).
 // It stays exactly as it was: re-runs on every visit to this view.
+// Which witnesses a Jellyfin install's history comes from (design §4.5):
+// live sessions always, the Webhook plugin when it posted this week, the
+// Playback Reporting backfill when one was found. Plex installs show nothing.
+export async function loadHistorySources() {
+  const el = document.getElementById('history-sources');
+  if (!el || state.currentUser?.server !== 'jellyfin') return;
+  try {
+    const s = await api('/api/jellyfin/history-sources');
+    const have = ['live sessions'];
+    if (s.webhook) have.push('webhook');
+    if (s.playback_reporting) have.push('Playback Reporting backfill');
+    el.textContent = `History from Jellyfin: ${have.join(' + ')}`
+      + (s.webhook ? '' : ' — add the Webhook plugin for exact stop times (Settings → Integrations → Jellyfin)');
+    el.hidden = false;
+  } catch (e) { console.warn('[history] sources not read - the line stays hidden', e); }
+}
+
 export async function loadHistoryStatus() {
+  loadHistorySources();
   try {
     const s = await _swrRun('history-stats', () => api('/api/history/status'), _renderHistoryStats);
     const tv=s.taste_vector;
