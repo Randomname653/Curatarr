@@ -352,6 +352,22 @@ compares the system prompt (line endings and trailing whitespace aside), the bas
 `num_ctx`, and logs every difference with the command that rebuilds it. It only reports: whether a
 host rebuilds by itself is decided after the change has been compared on the PC.
 
+**The summariser bake follows the code by itself.** When the start-up check finds the summariser
+bake differing from the code, it is made again on that host, the NAS and the node alike. It is
+built from the base model already there (nothing is pulled; the bake is a new manifest over the same
+weights) and then unloaded, so the next call reads it. Before this went automatic, the new
+summariser prompt was compared with the old one on the PC, each three times (old, old again, new),
+on real jobs:
+- **60 films and series:** profiles moved no more than two runs of the same bake do (embedding text
+  0.899 against 0.910; the paired difference is not significant). Themes, moods and keywords
+  overlapped the same or better.
+- **Significance (15 titles) and memory extraction (15 real chats):** the same verdicts or better.
+- **Music (20 artists):** a small, real shift towards the music prompt's own rules (0.897 against
+  0.916), smaller than the run-to-run noise.
+
+No re-enrichment is needed. The curator and the pitcher are only reported: their prompt shapes
+chat, the benchmarks and the curator examples.
+
 Tests: `tests/test_model_check.py`, `tests/test_model_autobuild.py`.
 
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole

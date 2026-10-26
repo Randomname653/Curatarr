@@ -67,6 +67,20 @@ async def fake_build(url, curator, summarizer, base_pitcher=None, num_ctx=None,
 
 saved = (mc.host_plan, mc.missing_on, mc.embedding_identity, sw.build_ollama_models, oh.split, mc.bake_drift)
 mc.bake_drift = lambda plan, post=None: state.get("drift", {}).get(plan["url"], [])
+_real_rebake = ab.rebake_summarizer
+rebaked = []
+
+
+def fake_rebake(plan, drift, post=None, tags=None):
+    """The rebuild on its own is tested below; here: called with each host's drift."""
+    hit = any(d["model"] == "curatarr-summarizer" for d in drift or [])
+    if hit:
+        rebaked.append(plan["url"])
+        state["drift"][plan["url"]] = [d for d in drift if d["model"] != "curatarr-summarizer"]
+    return hit
+
+
+ab.rebake_summarizer = fake_rebake
 mc.host_plan = lambda which="main": MAIN if which == "main" else PC
 mc.missing_on = lambda url, models, get=None: state["missing"].get(url, [])
 mc.embedding_identity = lambda get=None: {"model": "nomic-embed-text-v2-moe", "status": state["ident"],
@@ -118,11 +132,12 @@ try:
     out = run(missing={"http://nas:30068": [], "http://pc:11434": []}, split=True, ident="match",
               drift={"http://nas:30068": [{"model": "curatarr-summarizer", "reasons": ["system prompt"]}],
                      "http://pc:11434": [{"model": "curatarr-curator", "reasons": ["num_ctx 8192 (code: 16384)"]}]})
-    check("a bake that differs from the code is named, per host, and nothing is rebuilt",
-          built == [] and out["drift"]["main"][0]["model"] == "curatarr-summarizer"
-          and any(lv == "WARNING" and "curatarr-summarizer on http://nas:30068 differs from the code: system prompt"
-                  in m and "--host main" in m for lv, m in logs.lines)
-          and any("curatarr-curator on http://pc:11434 differs" in m and "--host pc" in m for _, m in logs.lines))
+    check("a summariser that differs is rebuilt on its host and checked again; nothing else is built",
+          built == [] and rebaked == ["http://nas:30068"] and out["drift"]["main"] == []
+          and not any("curatarr-summarizer on http://nas:30068 differs" in m for _, m in logs.lines))
+    check("a curator that differs is only named, with the command that rebuilds it",
+          any(lv == "WARNING" and "curatarr-curator on http://pc:11434 differs" in m and "--host pc" in m
+              for lv, m in logs.lines))
 
     mc.missing_on = lambda *a, **k: 1 / 0
     out = run(ident="match")
@@ -130,6 +145,38 @@ try:
 finally:
     (mc.host_plan, mc.missing_on, mc.embedding_identity, sw.build_ollama_models, oh.split,
      mc.bake_drift) = saved
+    ab.rebake_summarizer = _real_rebake
+
+# ── the summariser rebuild itself ───────────────────────────────────────────
+from types import SimpleNamespace  # noqa: E402
+
+from src.config import settings as _st  # noqa: E402
+
+_st.SUMMARIZER_MODEL = "curatarr-summarizer"
+calls = []
+
+
+def _post(url, json=None, timeout=None):
+    calls.append((url.rsplit("/", 1)[-1], json))
+    return SimpleNamespace(status_code=state.get("create_status", 200))
+
+
+PLAN = {"url": "http://nas:30068", "summarizer": "granite4.1:8b"}
+DRIFT = [{"model": "curatarr-summarizer", "reasons": ["system prompt"]}]
+ok = ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {"granite4.1:8b": "d1"})
+check("the summariser is made again from its base on that host, with the code's prompt, then unloaded",
+      ok is True and [c[0] for c in calls] == ["create", "generate"]
+      and calls[0][1]["from"] == "granite4.1:8b" and calls[0][1]["system"] == sw.SUMMARIZER_SYSTEM_PROMPT
+      and calls[0][1]["parameters"]["num_ctx"] == 8192 and calls[1][1]["keep_alive"] == 0)
+calls.clear()
+check("a curator or pitcher drift is not rebuilt",
+      ab.rebake_summarizer(PLAN, [{"model": "curatarr-curator", "reasons": ["system prompt"]}],
+                           post=_post, tags=lambda url: {"granite4.1:8b": "d1"}) is False and calls == [])
+check("its base missing on the host: nothing is pulled, nothing created",
+      ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {}) is False and calls == [])
+state["create_status"] = 500
+check("a failed create keeps the old bake and reports False",
+      ab.rebake_summarizer(PLAN, DRIFT, post=_post, tags=lambda url: {"granite4.1:8b": "d1"}) is False)
 
 # ── wiring ──────────────────────────────────────────────────────────────────
 main_src = (ROOT / "src/main.py").read_text(encoding="utf-8")
