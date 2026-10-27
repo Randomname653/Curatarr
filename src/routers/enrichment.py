@@ -120,6 +120,7 @@ async def enrichment_status(
     from sqlalchemy import func as _func
 
     from sqlalchemy import case as _case
+from sqlalchemy import and_
 
     user_id = user.id
 
@@ -155,48 +156,48 @@ async def enrichment_status(
                 for row in stats_query
             }
 
+            # ⚡ Bolt: Fast path - calculate all media type enrichment statistics in a single query
+            # instead of doing 4 iterations * 2 queries per iteration.
+
+            # Combine canonical titles into a single subquery
+            titles_sq = db.query(
+                _case(
+                    ((WatchHistoryEntry.media_type == "movie", WatchHistoryEntry.title)),
+                    else_=WatchHistoryEntry.series_title
+                ).label("canonical_title"),
+                WatchHistoryEntry.media_type.label("media_type")
+            ).filter(
+                WatchHistoryEntry.user_id == user_id,
+                WatchHistoryEntry.media_type.in_(CATEGORIES),
+                _case(
+                    ((WatchHistoryEntry.media_type == "movie", WatchHistoryEntry.title)),
+                    else_=WatchHistoryEntry.series_title
+                ).isnot(None)
+            ).subquery()
+
+            enrichment_stats = db.query(
+                titles_sq.c.media_type,
+                _func.count(_func.distinct(_case(((EnrichmentStatus.enriched == True, EnrichmentStatus.title)), else_=None))),
+                _func.count(_func.distinct(_case(((EnrichmentStatus.vector_ready == True, EnrichmentStatus.title)), else_=None))),
+            ).join(
+                EnrichmentStatus,
+                and_(
+                    EnrichmentStatus.title == titles_sq.c.canonical_title,
+                    EnrichmentStatus.media_category == titles_sq.c.media_type
+                )
+            ).group_by(titles_sq.c.media_type).all()
+
+            enrich_by_cat = {row[0]: {"enriched": row[1], "vector_ready": row[2]} for row in enrichment_stats}
+
             result = {}
             for cat in CATEGORIES:
                 cat_stats = stats_by_cat.get(cat, {"total_raw": 0, "total_unique": 0})
                 total_unique = cat_stats["total_unique"]
                 total_raw = cat_stats["total_raw"]
 
-                # canonical_col: the WatchHistoryEntry column that maps to EnrichmentStatus.title
-                if cat in ("show", "anime", "music"):
-                    # series/artist-level: canonical = series_title (artist name for music)
-                    # Subquery: canonical titles this user has in their history
-                    user_titles_sq = db.query(
-                        _func.distinct(WatchHistoryEntry.series_title)
-                    ).filter(
-                        WatchHistoryEntry.user_id == user_id,
-                        WatchHistoryEntry.media_type == cat,
-                        WatchHistoryEntry.series_title != None,
-                    ).scalar_subquery()
-                else:
-                    # movie: canonical = title
-                    user_titles_sq = db.query(
-                        _func.distinct(WatchHistoryEntry.title)
-                    ).filter(
-                        WatchHistoryEntry.user_id == user_id,
-                        WatchHistoryEntry.media_type == cat,
-                    ).scalar_subquery()
-
-                # Count only titles this user actually has in their watch history
-                enriched = db.query(
-                    _func.count(_func.distinct(EnrichmentStatus.title))
-                ).filter(
-                    EnrichmentStatus.media_category == cat,
-                    EnrichmentStatus.enriched == True,
-                    EnrichmentStatus.title.in_(user_titles_sq),
-                ).scalar() or 0
-
-                vector_ready = db.query(
-                    _func.count(_func.distinct(EnrichmentStatus.title))
-                ).filter(
-                    EnrichmentStatus.media_category == cat,
-                    EnrichmentStatus.vector_ready == True,
-                    EnrichmentStatus.title.in_(user_titles_sq),
-                ).scalar() or 0
+                enrich_cat = enrich_by_cat.get(cat, {"enriched": 0, "vector_ready": 0})
+                enriched = enrich_cat["enriched"]
+                vector_ready = enrich_cat["vector_ready"]
 
                 result[cat] = {
                     "total_in_history": total_raw,
