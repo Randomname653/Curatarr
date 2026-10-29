@@ -421,11 +421,16 @@ Tests: `tests/test_brand.py`.
   tray has its own "Classic icon" switch in its menu (`data/tray.json`). An installed app keeps the
   icon it was installed with, because the manifest is fixed.
 - **One logo in the chat:** the curator's avatar beside each reply is the favicon file, the classic
-  one under Classic. It used to be the old eye drawn as a data URI.
-- **The avatar thinks:** while a reply is on its way, a soft gradient orbits the avatar's mark and
-  its diamond breathes ruby, in place of three dots. A "Thinking…" line shimmers until the
-  server's status lines take over, and they shimmer too. A first cut lit the classic ring's
-  segments one by one; that read as choppy and showed a third logo.
+  one under Classic. It used to be the old eye drawn as a data URI. The mark now sits on its
+  circle's own centre: the C opens to the right, so its drawing box was narrower than the circle
+  and the mark sat 2 % off. Its size is whole pixels (14 px in the 18 px badge).
+- **The avatar thinks:** while a reply is on its way, the avatar's own mark moves, in place of
+  three dots. Its four segments run one after another onto the first, then the stack spins once,
+  fast, and unfolds back into the C (2.8 s a cycle). The diamond twinkles like an AI sparkle: it
+  shrinks while the segments gather, then flares, turns and glows ruby during the spin. A
+  "Thinking…" line shimmers until the server's status lines take over, and they shimmer too. A
+  first cut lit the classic ring's segments in place, one by one; that read as choppy and put a
+  third logo on screen.
 - **Busy pulse:** while a model works, the diamond in the top-bar logo breathes ruby. That covers a
   reply streaming in this tab, or the server reporting a curator call or an enrichment run
   (`model_busy` in `/api/processes/status`, the 30 s poll).
