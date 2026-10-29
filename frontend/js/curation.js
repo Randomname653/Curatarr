@@ -161,18 +161,12 @@ export async function shutdownServer() {
   ov.innerHTML =
     '<div class="sd-ripple"></div><div class="sd-ripple"></div><div class="sd-ripple"></div>' +
     '<div class="stack-center-16">' +
-    '<svg class="sd-logo" width="96" height="96" viewBox="0 0 64 64">' +
-    '<defs><linearGradient id="sdg" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#f7c14a"/><stop offset="1" stop-color="#e5a00d"/></linearGradient></defs>' +
-    '<g stroke="url(#sdg)" stroke-width="9" fill="none">' +
-    '<path d="M 48.9 17.9 A 22 22 0 0 0 18.2 14.9"/>' +
-    '<path d="M 14.9 18.2 A 22 22 0 0 0 14.9 45.8"/>' +
-    '<path d="M 18.2 49.1 A 22 22 0 0 0 48.9 46.1"/></g>' +
-    '<path d="M 40.5 23.5 A 12 12 0 1 0 40.5 40.5" fill="none" stroke="#f0b93a" stroke-width="3.6" stroke-linecap="round"/>' +
-    '<circle cx="32" cy="32" r="5" fill="url(#sdg)"/><circle cx="32" cy="32" r="2" fill="#ffd873"/></svg>' +
     '<h2 class="b">Curatarr is shutting down…</h2>' +
     '<p class="t3 fs-13">You can close this tab. Start the server again to come back.</p></div>';
   document.body.appendChild(ov);
+  const mark = document.getElementById('brand-mark').content.firstElementChild.cloneNode(true);
+  mark.classList.add('sd-logo');
+  ov.querySelector('.stack-center-16').prepend(mark);
 
   // Wind-down: pulse + ripples run at full speed, then decelerate to a
   // standstill over ~20s (the server is long gone — endless pulsing would

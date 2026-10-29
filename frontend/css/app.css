@@ -62,6 +62,11 @@
   --border2: #3a4050;
   --amber: #e5a00d;
   --amber2: #f0b429;
+  /* The logo's own colours (assets/brand): the mark and the wordmark only,
+     never UI state. Ruby is the app icon's diamond. */
+  --brand-amber: #efb02c;
+  --brand-diamond: #ffe3a4;
+  --brand-ruby: #e62c33;
   --amber-dim: rgba(229,160,13,.12);
   --bg-veil: rgba(26,29,35,.93);
   --text: #c8cdd8;
@@ -115,8 +120,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 #tb-search-btn:hover { color: var(--amber); }
 #sb-hamburger { display: none; background: none; border: none; color: var(--text2); padding: 6px; margin-right: 2px; border-radius: var(--radius); cursor: pointer; }
 #sb-hamburger:hover { color: var(--amber); }
-#logo { font-size: 15px; font-weight: 700; color: var(--amber); letter-spacing: .5px; margin-right: 4px; }
-#logo span { color: var(--text2); font-weight: 400; font-size: 11px; margin-left: 4px; }
+#logo { display: flex; align-items: center; margin-right: 4px; }
+#logo .brand-logo { height: 22px; width: auto; display: block; }
+#logo span { color: var(--text2); font-weight: 400; font-size: 11px; margin-left: 6px; }
+.brand-logo .brand-c { fill: var(--brand-amber); }
+.brand-logo .brand-diamond { fill: var(--brand-diamond); }
 .tb-spacer { flex: 1; }
 #topbar-search-form { display: flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; width: 220px; color: var(--text3); transition: border-color .15s, color .15s; }
 #topbar-search-form:focus-within { border-color: var(--amber); color: var(--text2); }
@@ -596,6 +604,7 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
    phase-continuous, CSS duration changes would jump) ── */
 .sd-overlay { position: fixed; inset: 0; z-index: 9999; background: var(--bg);
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.sd-logo { width: 96px; height: 96px; }
 .sd-ripple { position: absolute; left: 50%; top: 50%; width: 170vmax; height: 170vmax;
   border-radius: 50%; border: 2px solid var(--amber); opacity: 0; pointer-events: none;
   transform: translate(-50%,-50%) scale(.04); }
@@ -829,7 +838,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 #auth-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 99; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
 #auth-overlay.hidden { display: none; }
 #onboarding-overlay.hidden { display: none !important; }
-#auth-overlay .logo-big { font-size: 32px; font-weight: 800; color: var(--amber); letter-spacing: 1px; }
+#auth-overlay .logo-big .brand-logo { width: min(300px, 72vw); height: auto; display: block; }
 #auth-overlay p { color: var(--text2); max-width: 360px; text-align: center; line-height: 1.6; font-size: 13px; }
 #pin-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; text-align: center; width: 340px; }
 #pin-box .pin-code { font-size: 36px; font-weight: 800; letter-spacing: 10px; color: var(--amber); margin: 12px 0; font-family: monospace; }
