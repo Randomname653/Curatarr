@@ -93,7 +93,7 @@ check("a streaming reply marks a model at work, and its end clears it (finally)"
       and chat_js.index("} finally {\n    modelWorkEnded();".replace("\n", "\r\n") if "\r\n" in chat_js
                         else "} finally {\n    modelWorkEnded();") > chat_js.index("modelWorkStarted();"))
 check("...and the server's status says so too",
-      "setServerModelBusy(statusR.model_busy);" in (ROOT / "frontend/js/game.js").read_text(encoding="utf-8")
+      "if (!statusR._err) setServerModelBusy(statusR.model_busy);" in (ROOT / "frontend/js/game.js").read_text(encoding="utf-8")
       and '"model_busy": model_busy' in (ROOT / "src/routers/process_monitor.py").read_text(encoding="utf-8"))
 check("the pulse and the ring stand still under reduced motion",
       "body.model-busy #logo .brand-diamond" in css and "@keyframes brand-ring-step" in css

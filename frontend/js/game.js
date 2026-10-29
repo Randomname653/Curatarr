@@ -59,7 +59,6 @@ export function _renderLaneBadge(statusR) {
     indicator.title = `Couldn't check the game / GPU status (${statusR._err}) — this badge may be out of date. Checking again every 30 s.`;
     return;
   }
-  setServerModelBusy(statusR.model_busy);
   const lane = statusR.lane || (statusR.game_running ? 'game' : 'free');
   const badge = LANE_BADGE[lane];
   indicator.classList.toggle('show', !!badge);
@@ -76,6 +75,7 @@ export async function _pollGameProcesses() {
     // Update topbar indicator
     const statusR = await api('/api/processes/status').catch(e => ({_err: _errMsg(e)}));
     _renderLaneBadge(statusR);
+    if (!statusR._err) setServerModelBusy(statusR.model_busy);
 
     // Check for unknown processes — show one toast per unknown exe
     const r = await api('/api/processes/unknown')
