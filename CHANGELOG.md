@@ -396,6 +396,25 @@ two failing titles went from 0 of 3 to 3 of 3, and the two control titles were u
 
 Tests: `tests/test_summarizer_echo_fields.py`.
 
+**A new logo.** Curatarr has a designed logo now: a C with a diamond at its heart. The ring C
+(the "classic") is kept beside it. Every icon is rendered from one set of files in
+`assets/brand/` (SVG plus a 1024 px master each):
+- **Favicon:** the mark, as `/icons/favicon.svg`.
+- **Phone and PWA icons:** the app icon, a dark tile with a ruby diamond. The rounded tile serves
+  as "any". The maskable and iOS icons are full bleed, because the phone rounds them itself, and
+  the mark sits inside the safe circle. A new monochrome icon covers themed icons and badges.
+- **Tray and `.ico`:** the mark (the tray drew the old eye in code).
+- **Sidebar, login, shutdown screen:** the wordmark and mark as inline SVG, coloured by brand
+  tokens (`--brand-amber`, `--brand-diamond`, `--brand-ruby`). Amber stays the UI's only accent.
+- **README header:** the wordmark, with a dark one for GitHub's light mode, plus a social preview
+  image (`docs/brand/social-preview.png`).
+
+`scripts/make_icon.py` renders all of it. The service worker's shell is v2, and the icons
+revalidate like the scripts so the new ones show up. The name, logo and wordmark are not under
+the AGPL-3.0: all rights reserved (README, License).
+
+Tests: `tests/test_brand.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

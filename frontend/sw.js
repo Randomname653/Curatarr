@@ -6,7 +6,7 @@
 // as no-cache, and a release must show up on the next load, not the one
 // after); the cache is the fallback for when the server is down or the phone
 // has no route home. Bump VERSION to drop an old shell on activate.
-const VERSION = 'curatarr-shell-v1';
+const VERSION = 'curatarr-shell-v2';   // v2: the new logo
 const SHELL = [
   '/',
   '/css/app.css',
@@ -15,6 +15,7 @@ const SHELL = [
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/icons/favicon.svg',
   '/offline.html',
 ];
 
