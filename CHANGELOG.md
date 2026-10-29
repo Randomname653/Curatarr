@@ -441,6 +441,22 @@ Under reduced motion the avatar and the text stand still, and the pulse is a ste
 
 Tests: `tests/test_brand.py`, `tests/test_a11y_nav.py`.
 
+**Curatarr's icon and description in the TrueNAS app list.** A custom app showed TrueNAS's generic
+icon and an empty description: the compose file has no place for them. A new script,
+`deploy/truenas/apply_metadata.py`, runs on the NAS as root and fills in the app's metadata file.
+It sets:
+- the icon and the description
+- the home page and the sources
+- five screenshots, keywords and a category
+- a Web UI button and short notes
+
+It keeps every field TrueNAS owns, leaves a `.bak` copy, and is safe to repeat (TrueNAS can rewrite
+the file on an update). `deploy/docker-compose.yml` gains an `x-portals` block, so a fresh install
+has the Web UI button from the start. The steps are in `deploy/truenas/README.md`. This is the
+community workaround; TrueNAS has no official field for it yet.
+
+Tests: `tests/test_truenas_metadata.py` (against a real custom app's metadata file).
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
