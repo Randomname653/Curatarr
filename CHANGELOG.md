@@ -384,6 +384,18 @@ applies. A miss that every source missed still trips the guard.
 
 Tests: `tests/test_node_names.py`.
 
+**The summariser no longer writes the title and year itself.** The METADATA STRUCTURING template
+showed `"title": "..."` and `"year": ...` and let the model fill them in. With no year in the
+source, the model wrote `"year": 19XX`: invalid JSON, so the item fell back to a rule-based
+profile and was retried. One anime failed 29 times this way on the NAS. A title with quotes in it
+("Weird Al" Yankovic) came back unescaped, with the same result. The template now carries the
+source's title, year (`null` when there is none) and type as JSON, and the profile takes title and
+year from the source again, as it already did for the rating. Before, a year the model guessed
+could also win over the source's empty one in the merged profile. On the PC, three runs each: the
+two failing titles went from 0 of 3 to 3 of 3, and the two control titles were unchanged.
+
+Tests: `tests/test_summarizer_echo_fields.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;
