@@ -7,7 +7,7 @@ import { showView } from './nav.js';
 import { _deleteBody, deleteFateLines } from './deletions.js';
 import { applyOrphanRepair } from './libraries.js';
 import { loadUnreadMessages } from './notifications.js';
-import { modelWorkEnded, modelWorkStarted, thinkingRing } from './brand.js';
+import { modelWorkEnded, modelWorkStarted, thinkingIndicator } from './brand.js';
 export function handleKey(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
 
 export async function newChat() {
@@ -546,13 +546,13 @@ export function addMsg(text,role) {
   return div;
 }
 
-// The classic ring (brand.js) as the placeholder while we wait for the first state.token
+// The thinking badge (brand.js) as the placeholder while we wait for the first state.token
 // from the streaming chat endpoint. Same structure as addMsg() so the
 // caller can later replace innerHTML with the real response.
 export function addThinkingMsg() {
   const div = document.createElement('div');
   div.className = 'msg assistant';
-  div.appendChild(thinkingRing());
+  div.appendChild(thinkingIndicator());
   const msgs = document.getElementById('messages');
   const stick = _atBottom(msgs);
   msgs.appendChild(div);

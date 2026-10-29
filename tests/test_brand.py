@@ -80,7 +80,7 @@ check("the classic wordmark and ring are templates, the favicon has a classic tw
 ring = html[html.index('id="brand-ring"'):]
 ring = ring[:ring.index("</template>")]
 check("the ring's four segments are numbered clockwise, once each",
-      all(ring.count(f"brand-ring-{i}\"") == 1 for i in range(1, 5)))
+      all(ring.count(f"brand-ring-{i} brand-seg brand-seg-{i}\"") == 1 for i in range(1, 5)))
 check("Settings -> This device offers Modern / Classic, saved per browser",
       'name="icon-style"' in html and 'data-on-change="setIconStyle"' in html
       and "localStorage.setItem(ICON_KEY, v)" in brand_js and "/icons/favicon-classic.svg" in brand_js)
@@ -95,9 +95,33 @@ check("a streaming reply marks a model at work, and its end clears it (finally)"
 check("...and the server's status says so too",
       "if (!statusR._err) setServerModelBusy(statusR.model_busy);" in (ROOT / "frontend/js/game.js").read_text(encoding="utf-8")
       and '"model_busy": model_busy' in (ROOT / "src/routers/process_monitor.py").read_text(encoding="utf-8"))
-check("the pulse and the ring stand still under reduced motion",
-      "body.model-busy #logo .brand-diamond" in css and "@keyframes brand-ring-step" in css
-      and ".brand-ring-mark .brand-ring, .brand-ring-mark .brand-diamond { opacity: 1; }" in css)
+check("one logo in the chat: the avatar is the favicon file (classic when chosen), no old eye",
+      'background-image: url("/icons/favicon.svg");' in css
+      and 'html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon-classic.svg"); }' in css
+      and "data:image/svg+xml" not in css.split(".msg.assistant::before {")[1][:600]
+      and "classList.toggle('icon-classic'" in brand_js)
+check("the badge itself thinks: the four segments gather onto the first, spin once, unfold",
+      ".msg.assistant:has(> .thinking)::before { display: none; }" in css
+      and all(f"@keyframes brand-seg-{i}" in css for i in range(1, 5))
+      and "transform-origin: 1029px 1000px" in css and "transform-origin: 1000px 990px" in css
+      and "@keyframes brand-twinkle" in css and "thinking-orbit" not in css
+      and "thinkingIndicator()" in chat_js
+      and "iconStyle() === 'classic' ? 'brand-ring' : 'brand-mark'" in brand_js)
+mark_t = html[html.index('<template id="brand-mark">'):]
+mark_t = mark_t[:mark_t.index("</template>")]
+check("...both marks carry four numbered segments and a sparkle group",
+      all(mark_t.count(f"brand-seg-{i}\"") == 1 for i in range(1, 5)) and 'class="brand-sparkle"' in mark_t
+      and all(ring.count(f"brand-seg-{i}\"") == 1 for i in range(1, 5)) and 'class="brand-sparkle"' in ring)
+check("the modern mark is square on its circle's centre (the C opens right, its box does not)",
+      'viewBox="322.6 293.6 1413.0 1413.0"' in svgs["curatarr-mark"] and 'viewBox="322.6 293.6 1413.0 1413.0"' in mark_t)
+check("the avatar's mark has whole-pixel size, so it sits centred in the badge",
+      "background-size: 14px 14px;" in css)
+check("the waiting text shimmers until the server's status lines take over",
+      ".msg.assistant:has(.thinking-status) .thinking-label { display: none; }" in css
+      and "thinking-shimmer 2s linear infinite" in css)
+check("the busy pulse breathes slowly and holds still under reduced motion",
+      "body.model-busy #logo .brand-spark { animation: brand-breathe 3.2s ease-in-out infinite; }" in css
+      and "body.model-busy #logo .brand-diamond, body.model-busy #logo .brand-spark { fill: var(--brand-ruby); }" in css)
 check("the wrap-up carries the mark: the summary card and every story slide",
       "brandMarkHtml('wu-mark')" in (ROOT / "frontend/js/wrapup.js").read_text(encoding="utf-8")
       and "brandMark('wus-mark')" in (ROOT / "frontend/js/wrapup_story.js").read_text(encoding="utf-8"))
