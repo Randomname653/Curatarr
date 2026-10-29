@@ -3293,7 +3293,7 @@ MOOD REFERENCE — pick ONLY 1-3 moods dominant in this artist's work:
 
 Output this exact JSON (no extra text, no markdown fences):
 {{
-  "title": "...",
+  "title": {title_json},
   "media_type": "music",
   "artist_summary": "2-3 sentences outlining their defining sound and identity.",
   "why_listen": "1 sentence — the specific sonic or lyrical quality that defines them.",
@@ -3435,9 +3435,9 @@ MOOD REFERENCE — pick ONLY 1-3 moods that are DOMINANT throughout the whole wo
 
 Output this exact JSON (no extra text, no markdown fences):
 {{
-  "title": "...",
-  "year": ...,
-  "media_type": "...",
+  "title": {title_json},
+  "year": {year_json},
+  "media_type": {media_type_json},
   "plot_summary": "2-3 sentences. What actually happens and what is the core conflict.",
   "why_watch": "1 sentence. The main hook or specific appeal of the show.",
   "embedding_text": "A dense, objective 3-4 sentence paragraph for semantic vector search. CRITICAL RULE: Do NOT write a review, critique, or use marketing filler. Instead, densely pack the plot premise, core character dynamics, specific tropes, visual style, and emotional tone into a cohesive summary.",
@@ -3451,14 +3451,36 @@ Output this exact JSON (no extra text, no markdown fences):
 }}"""
 
 
+def _source_year(raw_metadata: dict) -> Optional[int]:
+    """The source's year as a number, or None when it has none."""
+    try:
+        y = int(str(raw_metadata.get("year") or "").strip()[:4])
+    except ValueError:
+        return None
+    return y if 1870 <= y <= 2100 else None
+
+
+def _source_title(raw_metadata: dict) -> str:
+    return raw_metadata.get("title") or raw_metadata.get("name") or "Unknown"
+
+
 async def summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
     """The summariser's profile, with ``rating`` taken from the SOURCE data
     as a number. The model was asked to echo the rating and wrote back the
     prompt line ("N/A/10 (N/A votes)", "5.3/10") or a content rating, which
-    then sat in the cache as text."""
+    then sat in the cache as text.
+
+    Title and year are the source's too. The template asked the model to
+    write them itself: with no year in the source it wrote ``"year": 19XX``
+    (invalid JSON, 29 failed runs of one anime on the NAS), and a title with
+    quotes in it ("Weird Al" Yankovic) came back unescaped. The template now
+    carries both as JSON, and they are set here again (2026-10-29)."""
     result = await _summarize_with_small_llm(raw_metadata)
     if isinstance(result, dict):
         result["rating"] = rating_number(raw_metadata.get("rating"))
+        result["title"] = _source_title(raw_metadata)
+        if raw_metadata.get("media_type") != "music":
+            result["year"] = _source_year(raw_metadata)
     return result
 
 
@@ -3476,7 +3498,8 @@ async def _summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
         _raw_bio = (raw_metadata.get("bio", "") or "")
         _clean_bio = re.sub(r'\[\d+\]', '', _raw_bio).strip()
         prompt = SUMMARIZE_MUSIC_PROMPT.format(
-            title=raw_metadata.get("title") or raw_metadata.get("name", "Unknown"),
+            title=_source_title(raw_metadata),
+            title_json=_json.dumps(_source_title(raw_metadata), ensure_ascii=False),
             genres=", ".join(raw_metadata.get("genres", [])),
             tags=", ".join(raw_metadata.get("tags", [])[:15]),
             bio=fence_untrusted("bio", _clean_bio, 500),
@@ -3510,6 +3533,9 @@ async def _summarize_with_small_llm(raw_metadata: dict) -> Optional[dict]:
             title=raw_metadata.get("title", "Unknown"),
             year=raw_metadata.get("year", "Unknown"),
             media_type=raw_metadata.get("media_type", "movie"),
+            title_json=_json.dumps(_source_title(raw_metadata), ensure_ascii=False),
+            year_json=_json.dumps(_source_year(raw_metadata)),
+            media_type_json=_json.dumps(raw_metadata.get("media_type", "movie")),
             genres=", ".join(raw_metadata.get("genres", [])),
             keywords=", ".join(_kw_for_prompt),
             # Third-party prose is fenced as DATA (llm_utils.fence_untrusted):
