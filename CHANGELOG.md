@@ -372,6 +372,18 @@ chat, the benchmarks and the curator examples.
 
 Tests: `tests/test_model_check.py`, `tests/test_model_autobuild.py`.
 
+**Music enrichment no longer loops on artists a source knows without data.** The outage guard
+stops a category when half of its last 50 items come back not found, and gives those items their
+attempt back. On the NAS, 1,253 of the 1,288 due music misses had a source that answered: Last.fm
+or MusicBrainz found the artist, but without tags or a bio (mostly Spotify imports). Every
+30-minute tick, music stopped after 50 items as "upstream degraded" and refunded them. The next
+tick tried the same 50 again, and each run ended with a full taste recomputation, about 110 s on
+the GPU with four curator calls: 80 times in two days. A miss where a source answered now counts
+like a credit line. It does not count toward the ratio and its attempt stays, so the normal backoff
+applies. A miss that every source missed still trips the guard.
+
+Tests: `tests/test_node_names.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

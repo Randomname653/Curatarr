@@ -259,6 +259,14 @@ def _looks_like_credit(name: str) -> bool:
     return bool(_CREDIT_SEP.search(s))
 
 
+def _source_answered(raw: Optional[dict]) -> bool:
+    """Whether a miss came with a source that answered "ok": it found the
+    entity, just nothing usable. That is no evidence of an outage."""
+    state = (raw or {}).get("_sources_state") or {}
+    return any(isinstance(st, dict) and st.get("status") == "ok"
+               for k, st in state.items() if not str(k).startswith("_"))
+
+
 def _collect_history_items(user_id: int, categories: list) -> tuple:
     """(items, watch_keys): one pitem per title from the user's watch history,
     plus the lower-cased (series_title or title) of EVERY row for the arr
@@ -3370,14 +3378,20 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     # backoff applies. Before, ~46 of every 50 music items
                     # were such credits, every tick aborted music as
                     # "upstream degraded", refunded them, and tried the same
-                    # 50 again (2026-10-23 night).
+                    # 50 again (2026-10-23 night). The same holds for a miss
+                    # where a source answered with the entity but nothing
+                    # usable (an artist Last.fm knows without tags or bio):
+                    # an API that answers is not down. 1,253 of the 1,288 due
+                    # music misses were such answers (mostly Spotify imports),
+                    # and the loop ran every tick for two days (2026-10-29).
                     credit = pcat == "music" and _looks_like_credit(canonical)
-                    if counted and not credit:
+                    expected = credit or _source_answered(raw)
+                    if counted and not expected:
                         _attempted_keys[pcat].add(pitem["plex_rating_key"])
                     producer_not_found += 1
                     processed_total += 1
                     task_monitor.update(main_task, processed=processed_total, total=total)
-                    _rolling[pcat].append("credit" if credit else "not_found")
+                    _rolling[pcat].append("answered" if expected else "not_found")
 
                     if len(_rolling[pcat]) >= _RATIO_WINDOW:
                         nf = sum(1 for x in _rolling[pcat] if x == "not_found")
