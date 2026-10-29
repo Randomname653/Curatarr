@@ -25,13 +25,14 @@ def _secret(value) -> str:
     return value.get_secret_value() if hasattr(value, "get_secret_value") else (value or "")
 
 
-def get_adapter(settings=None, *, transport=None) -> MediaServerAdapter:
-    """A fresh adapter for the active server. Cheap: adapters hold no
-    connection, each call opens its own client. Raises
+def get_adapter(settings=None, *, transport=None, kind: Optional[str] = None) -> MediaServerAdapter:
+    """A fresh adapter for the active server, or for ``kind`` when the work
+    names its server (a deletion proposal's ``service``). Cheap: adapters
+    hold no connection, each call opens its own client. Raises
     MediaServerNotConfigured when the server lacks its address or key."""
     if settings is None:
         from src.config import settings
-    kind = active_kind(settings)
+    kind = kind or active_kind(settings)
     if kind == "jellyfin":
         url: Optional[str] = str(settings.JELLYFIN_URL) if settings.JELLYFIN_URL else None
         key = _secret(settings.JELLYFIN_API_KEY)

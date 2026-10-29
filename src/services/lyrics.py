@@ -510,6 +510,17 @@ def plex_album_tracks(album_key: str, db_path: Optional[Path] = None) -> list:
         con.close()
 
 
+def track_identities(db_path: Optional[Path] = None) -> list:
+    """(key, artist, title) of every track in the index that is still there:
+    what the Spotify matcher matches plays onto on a Jellyfin install."""
+    con = _connect(db_path)
+    try:
+        return [(r["plex_rating_key"], r["artist"], r["title"]) for r in con.execute(
+            "SELECT plex_rating_key, artist, title FROM track_lyrics WHERE gone=0")]
+    finally:
+        con.close()
+
+
 def mark_artist_gone(artist_key: str, db_path: Optional[Path] = None) -> None:
     """After Plex deleted an artist: out of the index at once, so the next
     proposal run (before the daily walk confirms it) cannot re-propose it."""

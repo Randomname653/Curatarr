@@ -304,6 +304,20 @@ class JellyfinAdapter:
             body = await self._get(c, "/Items", params={"Ids": ",".join(keys), "Fields": _FIELDS})
         return body.get("Items") or []
 
+    async def versions(self, keys: Sequence[str]) -> dict:
+        """``{key: [{"resolution", "size_gb", "file"}]}`` - every version's
+        file, for the redundancy panel. A key Jellyfin does not know is
+        left out."""
+        from src.services.media_server.jellyfin_tech import versions_of
+        ks = [k for k in (normalize_jellyfin_id(x) for x in keys) if k]
+        out = {}
+        for i in range(0, len(ks), 100):
+            for raw in await self._by_ids(ks[i:i + 100]):
+                k = normalize_jellyfin_id(raw.get("Id"))
+                if k:
+                    out[k] = versions_of(raw)
+        return out
+
     async def item(self, key: str) -> Optional[MediaItem]:
         """By ``/Items?Ids=``: it answers with the API key alone, where
         ``/Items/{id}`` wants a user on some 10.9 builds."""

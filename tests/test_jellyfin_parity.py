@@ -28,7 +28,7 @@ _TMP = Path(tempfile.mkdtemp())
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import src.database.connection as conn_mod  # noqa: E402
-from src.database.models import Base, LibraryConfig, MusicTag, PlexRating, User  # noqa: E402
+from src.database.models import Base, LibraryConfig, MusicTag, PlexRating, User, WatchHistoryEntry as WH  # noqa: E402
 Base.metadata.create_all(conn_mod.engine)
 
 from media_server_fixtures import JellyfinWriteServer  # noqa: E402
@@ -57,13 +57,18 @@ HEAT, DARK = "4b1d2f3e5a6c7b8d9e0f1a2b3c4d5e6f", "9a8b7c6d5e4f30211203f4e5d6c7b8
 BJORK, HOMOGENIC = "6d7e8f90a1b2c3d4e5f60718293a4b5c", "7e8f90a1b2c3d4e5f60718293a4b5c6d"
 HUNTER, JOGA = "8f90a1b2c3d4e5f60718293a4b5c6d7e", "90a1b2c3d4e5f60718293a4b5c6d7e8f"
 LIB_MUS = "7e64e319657a9516ec78490da03edccb"
+LIB_MOV, LIB_TV = "f137a2dd21bbc1b99aa5c0f6bf02a805", "a656b907eb3a73532e40e44b968d0225"
 STALE = "ffffffffffffffffffffffffffffffff"
 
 with conn_mod.get_db_session() as db:
     db.add(User(id=1, plex_user_id=JANE, plex_username="jane", is_admin=True))
     db.commit()
-    db.add(LibraryConfig(plex_section_key=LIB_MUS, plex_section_title="Music",
-                         plex_section_type="artist", media_category="music"))
+    db.add_all([LibraryConfig(plex_section_key=LIB_MUS, plex_section_title="Music",
+                              plex_section_type="artist", media_category="music"),
+                LibraryConfig(plex_section_key=LIB_MOV, plex_section_title="Movies",
+                              plex_section_type="movie", media_category="movie"),
+                LibraryConfig(plex_section_key=LIB_TV, plex_section_title="Shows",
+                              plex_section_type="show", media_category="show")])
     db.add_all([PlexRating(user_id=1, plex_item_id=HOMOGENIC, media_type="album", rating=6.0),   # a Plex star
                 PlexRating(user_id=1, plex_item_id=STALE, media_type="track", rating=10.0, source="jellyfin_like")])
     db.commit()
@@ -95,6 +100,45 @@ try:
           jellyfin_music.plex_shaped_track({"Id": HUNTER, "Type": "Audio", "AlbumId": HOMOGENIC,
                                             "AlbumArtists": [{"Id": BJORK, "Name": "Björk"}]})
           ["grandparentRatingKey"] == BJORK)
+    print("\n-- a Plex still named in .env is not this install's server --")
+    settings.PLEX_BASE_URL, settings.PLEX_AUTH_TOKEN = "http://plex.invalid:32400", "plex-token"
+    with conn_mod.get_db_session() as db:
+        db.add(WH(user_id=1, plex_user_id=JANE, plex_item_id="spotify:track:abc", title="Hunter",
+                  series_title="Björk", media_type="music", source="spotify", viewed_at=datetime(2026, 10, 1)))
+        db.commit()
+    from src.services import music_matcher, orphan_repair, plex_players
+    from src.services import plex_sync
+    res = asyncio.run(music_matcher.match_spotify_to_plex(1))
+    with conn_mod.get_db_session() as db:
+        sp = db.query(WH).filter(WH.source == "spotify").one().plex_item_id
+    check("Spotify plays are matched onto the music index's Jellyfin tracks", res.get("matched") == 1 and sp == HUNTER)
+    check("the orphaned-section check and its repair leave Plex alone",
+          asyncio.run(orphan_repair.detect_orphaned_sections()) == []
+          and "error" in asyncio.run(orphan_repair.apply_orphan_mapping([{"section_id": "1", "category": "movie"}])))
+    check("the player backfill does not read Plex's history", plex_players._plex() == (None, None))
+    ra = asyncio.run(plex_sync.reattribute_watch_history())
+    check("re-attribution has nothing to do on Jellyfin", ra.get("skipped") is True and ra["updated"] == 0)
+
+    GONE = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    with conn_mod.get_db_session() as db:
+        db.add_all([WH(user_id=1, plex_user_id=JANE, plex_item_id=HEAT, title="Heat", media_type="movie",
+                       viewed_at=datetime(2026, 10, 2)),
+                    WH(user_id=1, plex_user_id=JANE, plex_item_id=GONE, title="Gone", media_type="movie",
+                       viewed_at=datetime(2026, 10, 3))])
+        db.commit()
+    first = asyncio.run(plex_sync.cleanup_orphan_watch_history())
+    check("orphan cleanup reads Jellyfin and keeps the share guard",
+          first.get("archived") == 0 and first.get("would_archive") == 1 and "Jellyfin really lost" in first.get("error", ""))
+    forced = asyncio.run(plex_sync.cleanup_orphan_watch_history(force=True))
+    with conn_mod.get_db_session() as db:
+        hidden = {r.plex_item_id for r in db.query(WH).execution_options(include_orphaned=True)
+                  .filter(WH.orphaned_at.isnot(None))}
+    check("only the item Jellyfin no longer has is hidden", forced.get("archived") == 1 and hidden == {GONE})
+    SRV_DOWN = JellyfinAdapter("http://jf:8096", "wrong-key", transport=SRV.transport())
+    check("an unreadable Jellyfin hides nothing",
+          "error" in asyncio.run(jellyfin_history.live_item_keys(adapter=SRV_DOWN)))
+    settings.PLEX_BASE_URL, settings.PLEX_AUTH_TOKEN = "", ""
+
     check("only Audio items are tracks", jellyfin_music.plex_shaped_track({"Id": HOMOGENIC, "Type": "MusicAlbum"}) is None)
 
     print("\n-- music deletion candidates without Lidarr --")
@@ -191,6 +235,27 @@ try:
     except Exception:  # noqa: BLE001 - JellyfinError expected
         refused = True
     check("a non-subtitle key is refused before a request", refused and len(SRV.calls) == n)
+
+    print("\n-- redundancy, breakdown, labels, adapter choice --")
+    v = asyncio.run(A.versions([HEAT, STALE])).get(HEAT) or []
+    check("each version's file, resolution and size for the redundancy panel",
+          len(v) == 1 and v[0]["resolution"] == "1080" and v[0]["size_gb"] > 6 and "/" not in v[0]["file"]
+          and v[0]["file"])
+    check("the redundancy report reads them on Jellyfin", "jf.versions(" in inspect.getsource(rec.get_redundancy))
+    from src.routers import library as library_router
+    check("the library breakdown counts Jellyfin's libraries",
+          "adapter.count_items(lib)" in inspect.getsource(library_router.library_breakdown))
+    from src.services import data_custodian
+    labels = {t.job_id: t.label for t in data_custodian._registry()}
+    check("Activity names the server", labels["plex_sync"] == "Jellyfin sync"
+          and labels["lyrics_sync"] == "Lyrics from Jellyfin")
+    from types import SimpleNamespace
+    conf = SimpleNamespace(MEDIA_SERVER_TYPE=None, JELLYFIN_URL="http://jf:8096", JELLYFIN_API_KEY="k",
+                           effective_plex_url="http://plex:32400", effective_plex_token="t")
+    check("a proposal's server picks the adapter, not the active one",
+          type(real_get(conf, kind="jellyfin")).__name__ == "JellyfinAdapter"
+          and type(real_get(conf)).__name__ == "PlexAdapter"
+          and "get_adapter(kind=\"jellyfin\")" in inspect.getsource(rec))
 
     print("\n-- hand-over --")
     check("lyrics, music tags and subtitles hand over on Jellyfin",

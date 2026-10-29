@@ -789,10 +789,12 @@ def _registry() -> list[Task]:
     # the rec-cache refresh, memory extraction) — everything else gets the
     # tick's generic wrapper card so NO maintenance work runs invisibly.
     from src.services import scheduler as sched
+    from src.services.media_server import active_kind
+    srv = "Jellyfin" if active_kind() == "jellyfin" else "Plex"   # labels only; job ids stay
     return [
         Task("db_backup",        "DB backup",            24.0,  sched.job_db_backup,
              reports_own=True),
-        Task("plex_sync",        "Plex sync",            24.0,  _run_plex_sync,
+        Task("plex_sync",        f"{srv} sync",            24.0,  _run_plex_sync,
              reports_own=True),
         # The model half of a sync that brought new plays (taste vectors with
         # the curator's summary, the admin's recs cache). A no-op without the
@@ -881,7 +883,7 @@ def _registry() -> list[Task]:
         Task("music_tags", "Music moods and styles", 72.0, _run_music_tags, takes_task=True),
         # The Wrap-Up's rhythm clock: the device of every play ("phone after
         # midnight"). Plex only, no model.
-        Task("plex_players", "Players of the Plex plays", 24.0, _run_plex_players, takes_task=True),
+        Task("plex_players", f"Players of the {srv} plays", 24.0, _run_plex_players, takes_task=True),
         # The Wrap-Up's taste river: nanogenres of titles, then their names.
         Task("nanogenres", "Nanogenres", 24.0, _run_nanogenres, takes_task=True),
         Task("nanogenre_names", "Nanogenre names", 24.0, _run_nanogenre_names,
@@ -916,7 +918,7 @@ def _registry() -> list[Task]:
         # the wrapper card (N/total + ETA) instead of console-only logs.
         # Lyrics collector: cheap (LAN page listings + one text fetch per new
         # sidecar), no GPU; the profile walker of step 2 reads its cache.
-        Task("lyrics_sync",      "Lyrics from Plex",     24.0,  _run_lyrics_sync,
+        Task("lyrics_sync",      f"Lyrics from {srv}",     24.0,  _run_lyrics_sync,
              takes_task=True),
         Task("lyrics_profile",   "Lyrics profiles",      24.0,  _run_lyrics_profiles,
              needs_llm=True, takes_task=True, llm_role="summarizer"),

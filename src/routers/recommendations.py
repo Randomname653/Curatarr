@@ -821,7 +821,8 @@ async def get_redundancy(_user: User = Depends(require_admin)):
     rep = await run_read(duplicate_report)
     from src.services.media_server import active_kind
     if active_kind() == "jellyfin":
-        # Jellyfin: a deep link per entry; the live per-version file read is Plex's.
+        # Jellyfin: a deep link per entry, and each version's file read live
+        # from MediaSources (one batched request), as the Plex branch does.
         try:
             from src.services.media_server import get_adapter
             jf = get_adapter()
@@ -829,8 +830,14 @@ async def get_redundancy(_user: User = Depends(require_admin)):
                 link = jf.deep_link(str(e.get("plex_rating_key") or ""))
                 if link:
                     e["server_url"] = link
+            intra = rep.get("intra_item") or []
+            files = await jf.versions([str(e.get("plex_rating_key") or "") for e in intra])
+            for e in intra:
+                got = files.get(str(e.get("plex_rating_key") or ""))
+                if got:
+                    e["files"] = got
         except Exception as e:
-            log_topup_failure(logger, "[redundancy] jellyfin links", "entries", e)
+            log_topup_failure(logger, "[redundancy] jellyfin detail", "entries", e)
     else:
         try:
             from src.services.plex_playlists import (_base, _headers, _owner_token,
@@ -2989,11 +2996,12 @@ async def _probe_arr(service: str) -> bool:
         # A proposal rebound from Plex (scripts/rebind_server.py) deletes
         # through Jellyfin; the adapter's ping is its cheapest call.
         try:
-            from src.services.media_server.jellyfin_adapter import JellyfinAdapter
-            if not (settings.JELLYFIN_URL and settings.JELLYFIN_API_KEY):
+            from src.services.media_server import MediaServerNotConfigured, get_adapter
+            try:
+                adapter = get_adapter(kind="jellyfin")
+            except MediaServerNotConfigured:
                 return False
-            await JellyfinAdapter(str(settings.JELLYFIN_URL),
-                                  settings.JELLYFIN_API_KEY.get_secret_value()).ping()
+            await adapter.ping()
             return True
         except Exception as e:
             log_topup_failure(logger, "[deletions] probe", service, e)
@@ -3231,8 +3239,8 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
             if media_id is None:
                 logger.error("[jellyfin] delete refused for %r: malformed item id %r", p.title, p.media_id)
                 return False
-            from src.services.media_server.jellyfin_adapter import JellyfinAdapter
-            jf = JellyfinAdapter(str(settings.JELLYFIN_URL), settings.JELLYFIN_API_KEY.get_secret_value())
+            from src.services.media_server import get_adapter
+            jf = get_adapter(kind="jellyfin")
             if getattr(p, "category", None) == "music":
                 # A music-index artist (no Lidarr): album by album, then the index.
                 gone = await jf.delete_artist(media_id)

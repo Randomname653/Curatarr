@@ -25,11 +25,21 @@ PLEX_TYPE_NUM = {"movie": "1", "show": "4", "anime": "4", "music": "10"}
 TYPE_FROM_PLEX = {"movie": "movie", "episode": "show", "track": "music"}
 
 
+def _plex_is_active() -> bool:
+    """Plex history sections mean nothing on a Jellyfin install, even with a
+    Plex still named in .env (a server switch needs both): its sections are
+    not this install's libraries."""
+    from src.services.media_server import active_kind
+    return active_kind() == "plex"
+
+
 async def detect_orphaned_sections() -> list:
     """
     Fetch Plex history, find librarySectionIDs not in our config.
     Returns list of {section_id, count, plex_types, sample_titles, suggested_category}
     """
+    if not _plex_is_active():
+        return []
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
     if not plex_url or not plex_token:
@@ -103,6 +113,8 @@ async def apply_orphan_mapping(mappings: list) -> dict:
     1. Add LibraryConfig entries for the orphaned sections
     2. Re-fetch history for those sections and insert missing entries
     """
+    if not _plex_is_active():
+        return {"error": "Plex sections only: this install runs on Jellyfin"}
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
     headers = {

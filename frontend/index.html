@@ -793,7 +793,7 @@
                   </div></div>
                 <div class="section-body"><span id="maint-sync-status" class="status"></span></div>
               </section>
-              <section class="section">
+              <section class="section" id="maint-reattribute">
                 <div class="section-head"><h3>Re-attribute history</h3>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="reattributeHistory" data-args='["$el"]'>Run re-attribution</button></div></div>
                 <div class="section-body">
@@ -813,7 +813,7 @@
                 <div class="section-head"><h3>Hide history for removed media</h3>
                   <div class="section-actions"><button class="btn btn-sm" data-action="cleanupOrphans" data-args='["$el"]'>Hide history</button></div></div>
                 <div class="section-body">
-                  <p class="lh-15 fs-12 t3">Hides watch history for titles that are no longer in any Plex library from history, taste and recommendations. The plays are kept for your Wrap-Up, and come back if the title returns to Plex. Spotify history is never hidden. Nothing is hidden if a library can't be read.</p>
+                  <p class="lh-15 fs-12 t3">Hides watch history for titles that are no longer in any library of your media server from history, taste and recommendations. The plays are kept for your Wrap-Up, and come back if the title returns. Spotify history is never hidden. Nothing is hidden if a library can't be read.</p>
                   <div id="maint-cleanup-status" class="status mt-8"></div>
                 </div>
               </section>

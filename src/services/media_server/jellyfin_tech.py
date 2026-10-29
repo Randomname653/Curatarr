@@ -73,6 +73,19 @@ def media_of(raw: dict) -> dict:
     }
 
 
+def versions_of(raw: dict) -> list:
+    """Each version's file, as the redundancy panel lists Plex's Media[]:
+    ``{"resolution", "size_gb", "file"}`` (the file's name, not its path)."""
+    out = []
+    for src in raw.get("MediaSources") or []:
+        video = next((st for st in src.get("MediaStreams") or [] if st.get("Type") == "Video"), {})
+        path = str(src.get("Path") or "")
+        out.append({"resolution": _res_bucket(video.get("Height")),
+                    "size_gb": round(int(src.get("Size") or 0) / 1024 ** 3, 1),
+                    "file": path.replace("\\", "/").rsplit("/", 1)[-1]})
+    return out
+
+
 def _unix(iso) -> Optional[int]:
     from src.services.media_server.jellyfin_adapter import _ts
     dt = _ts(iso)

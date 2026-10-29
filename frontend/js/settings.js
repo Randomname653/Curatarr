@@ -16,6 +16,7 @@ export async function reattributeHistory(btn) {
   try {
     const r = await api('/api/history/admin/re-attribute', 'POST');
     if (r.error) { setStatus(status, r.error, 'err'); return; }
+    if (r.skipped) { setStatus(status, r.reason, 'ok'); return; }
 
     // Build a calmer summary that explains what each bucket actually means.
     const lines = ['Done.'];
@@ -110,6 +111,9 @@ export function openSettingsPane(name, btn) {
   } else if (name === 'users') {
     loadUsers();
   } else if (name === 'maintenance') {
+    // Plex parks plays on the admin until their member signs in; Jellyfin never does.
+    const ra = document.getElementById('maint-reattribute');
+    if (ra) ra.hidden = state.currentUser?.server === 'jellyfin';
     loadNodes();
     loadDepsStatus();
     loadModelUpdates();

@@ -24,8 +24,11 @@ _SAME_PLAY_S = 90
 
 def _plex():
     from src.config import settings
+    from src.services.media_server import active_kind
     url, token = settings.effective_plex_url, settings.effective_plex_token
-    if not url or not token:
+    # A Jellyfin install files each play's device as it records it
+    # (jellyfin_history); a Plex still in .env is not this install's server.
+    if not url or not token or active_kind() != "plex":
         return None, None
     return url, {"Accept": "application/json", "X-Plex-Token": token,
                  "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID}

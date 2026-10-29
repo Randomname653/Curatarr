@@ -1781,6 +1781,13 @@ async def reattribute_watch_history() -> dict:
 
     Idempotent. Safe to run repeatedly.
     """
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        # Jellyfin plays are filed under their own user from the start (the
+        # session's and the poll's UserId): nothing waits on the admin.
+        return {"skipped": True, "updated": 0, "unchanged": 0, "unattributable": 0,
+                "total_examined": 0,
+                "reason": "Jellyfin files every play under its own user - nothing to re-attribute"}
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
     if not plex_url or not plex_token:
@@ -1989,6 +1996,16 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
     like that), or when more than ORPHAN_MAX_SHARE of the examined rows would
     go (``force=True`` lifts only that last guard).
     """
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        # Jellyfin's items, never a Plex still named in .env: compared with
+        # Plex's keys, every Jellyfin play would read as orphaned.
+        from src.services.media_server.jellyfin_history import live_item_keys
+        live = await live_item_keys()
+        if live.get("error"):
+            return {"error": live["error"], "archived": 0}
+        return await _mark_orphans(live["keys"], force, "Jellyfin")
+
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
     if not plex_url or not plex_token:
@@ -2038,7 +2055,13 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
                 "archived": 0}
 
     logger.info("Orphan-cleanup: %d live ratingKeys collected from Plex", len(live_keys))
+    return await _mark_orphans(live_keys, force, "Plex")
 
+
+async def _mark_orphans(live_keys: set, force: bool, server: str) -> dict:
+    """Mark the rows whose server key is not in ``live_keys`` (and unmark
+    the ones back), under the share guard. ``live_keys`` is a COMPLETE read of
+    every configured library; the caller refuses before an incomplete one."""
     def _purge():
         """Scan, decide and mark in one write call: the refusal guard and
         the marking must judge the same rows. Returns (examined, ids,
@@ -2100,7 +2123,7 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
                        len(to_delete_ids), examined)
         return {"error": f"Would hide {len(to_delete_ids)} of {examined} history rows "
                          f"(more than {ORPHAN_MAX_SHARE:.0%}) — refusing; re-run with "
-                         "force=true if Plex really lost that much",
+                         f"force=true if {server} really lost that much",
                 "archived": 0, "would_archive": len(to_delete_ids), "examined": examined}
 
     if to_delete_ids or returned:

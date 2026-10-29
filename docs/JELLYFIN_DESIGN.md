@@ -321,6 +321,18 @@ custodian tasks, pages and the curator read the same tables as on Plex:
   Plex one (no recycle bin, no arr import list, no "Fix match"), and the
   redundancy report links each entry into Jellyfin.
 
+- **A Plex still in `.env` is not this install's server.** A rebind needs
+  both servers configured, and the Plex settings stay afterwards. Every
+  Plex-only job asks which server is active, not only whether Plex is set
+  up: the orphaned-section check and its repair, the player backfill and
+  re-attribution stand down on Jellyfin; the Spotify matcher matches plays
+  onto the music index's tracks; the history orphan cleanup reads
+  Jellyfin's libraries (complete reads only, the same share guard) - read
+  against Plex, every Jellyfin play would have looked orphaned. The library
+  breakdown counts Jellyfin's libraries, the redundancy panel lists each
+  version's file from `MediaSources`, Activity names the server, and a
+  deletion proposal's `service` picks its adapter (`get_adapter(kind=)`).
+
 Remaining differences, by nature of the server rather than open work: no
 Discover watchlist (the playlist of D7 stands in), collections are
 server-wide, and Jellyfin's ratings are thumbs, not stars.

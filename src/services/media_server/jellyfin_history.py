@@ -486,6 +486,56 @@ async def sync_history(*, adapter=None, followup: bool = True) -> dict:
         return {"synced": synced, "merged": merged, "users": per_user}
 
 
+# The item type watch history stores per category (as plex_sync's
+# _HISTORY_TYPE_BY_CATEGORY): episodes for shows, tracks for music.
+_HISTORY_KIND = {"movie": "movie", "show": "episode", "anime": "episode", "music": "track"}
+
+
+async def live_item_keys(adapter=None) -> dict:
+    """``{"keys": set}`` of every item history can point at, from every
+    mapped library, for the orphan cleanup; ``{"error": ...}`` unless EVERY
+    library was read in full and none answered empty (an unmounted share
+    looks exactly like that)."""
+    from src.database.connection import get_db_session
+    from src.database.models import LibraryConfig
+    from src.database.runner import run_read
+    from src.services.media_server import get_adapter
+    from src.services.media_server.base import normalize_jellyfin_id
+
+    def _mapped() -> list:
+        with get_db_session() as db:
+            return [(c.plex_section_key, c.media_category) for c in db.query(LibraryConfig).all()
+                    if c.media_category != "ignore"]
+
+    adapter = adapter or get_adapter()
+    try:
+        libs = {lib.key: lib for lib in await adapter.libraries()}
+    except Exception as e:  # noqa: BLE001 - reported to the caller, which hides nothing
+        return {"error": f"Could not list the Jellyfin libraries: {e}"}
+    keys, empty = set(), []
+    for sec, cat in await run_read(_mapped):
+        kind = _HISTORY_KIND.get(cat or "")
+        lib = libs.get(normalize_jellyfin_id(sec) or "")
+        if not kind or lib is None:
+            return {"error": f"Library {sec} ({cat}) is not a Jellyfin library this server has "
+                             "- refusing to hide history"}
+        try:
+            found = {k async for r in adapter.raw_items(lib, kinds=(kind,))
+                     if (k := normalize_jellyfin_id(r.get("Id")))}
+        except Exception as e:  # noqa: BLE001 - an unread library aborts: its plays would read as orphaned
+            logger.warning("[jellyfin] orphan cleanup: library %s unreadable: %s", lib.title, e)
+            return {"error": f"Could not read library {lib.title}: {e}"}
+        if not found:
+            empty.append(lib.title)
+        keys |= found
+    if empty:
+        return {"error": f"Library {', '.join(empty)} returned no items (unmounted share or "
+                         "Jellyfin still scanning?) - refusing to hide history"}
+    if not keys:
+        return {"error": "No library items read - refusing to hide history"}
+    return {"keys": keys}
+
+
 async def history_sources() -> dict:
     """Which witnesses this install has, for the UI badge (design §4.5)."""
     from src.services.app_state import get_state
