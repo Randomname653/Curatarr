@@ -206,8 +206,20 @@ check("credit lines and stray tags are recognised; single names are not",
 en_src = (ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")
 check("a missed credit keeps its attempt and does not count toward the abort ratio",
       'credit = pcat == "music" and _looks_like_credit(canonical)' in en_src
-      and "if counted and not credit:" in en_src
-      and '_rolling[pcat].append("credit" if credit else "not_found")' in en_src)
+      and "expected = credit or _source_answered(raw)" in en_src
+      and "if counted and not expected:" in en_src
+      and '_rolling[pcat].append("answered" if expected else "not_found")' in en_src)
+
+# ── a source that answered is no outage (2026-10-29: the loop on the NAS) ──
+from src.routers.enrichment import _source_answered  # noqa: E402
+lastfm_knows = {"_not_found": True, "_sources_state": {
+    "lastfm": {"status": "ok"}, "mb": {"status": "miss"}, "_context": {"status": "ok"}}}
+all_missed = {"_not_found": True, "_sources_state": {"lastfm": {"status": "miss"}, "mb": {"status": "miss"}}}
+check("a miss where a source found the entity counts as answered",
+      _source_answered(lastfm_knows) is True)
+check("...a miss every source missed, a legacy None and a context block alone do not",
+      _source_answered(all_missed) is False and _source_answered(None) is False
+      and _source_answered({"_sources_state": {"_context": {"status": "ok"}}}) is False)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
