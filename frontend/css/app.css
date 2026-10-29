@@ -470,22 +470,19 @@ img.lib-img { z-index: 1; }
 .msg.assistant { align-self: flex-start; background: var(--bg3); border: 1px solid var(--border); padding: 10px 14px; border-radius: 12px 12px 12px 3px; position: relative; margin-left: 28px; }
 /* Gives the curator's messages a small identity marker, same circular-badge
    language as the user's own #user-avatar -- pure CSS so it applies
-   uniformly to every .msg.assistant however it was created (static
-   greeting, addMsg, streaming replies, thinking placeholder), no
-   per-call-site changes needed. The mark itself is the exact favicon SVG
-   (see the <link rel="icon"> data-URI up top) reused as a background-image
-   -- same brand asset, not a second one invented for this spot. A
-   background-image data-URI can't reference CSS custom properties, so its
-   colors stay the favicon's own hardcoded amber rather than var(--amber);
-   that's the one accepted exception to the token rule, same as the
-   favicon itself already is. */
+   uniformly to every .msg.assistant however it was created. The mark is
+   the favicon file itself (assets/brand via make_icon.py), the classic one
+   when this device chose it (brand.js sets html.icon-classic). While a reply
+   is on its way the badge is the live .thinking-mark instead. */
 .msg.assistant::before {
   content: ''; position: absolute; left: -28px; top: 4px;
   width: 20px; height: 20px; border-radius: 50%;
   background-color: var(--amber-dim); border: 1px solid var(--amber);
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%23f7c14a'/%3E%3Cstop%20offset='1'%20stop-color='%23e5a00d'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cg%20stroke='url(%23g)'%20stroke-width='9'%20fill='none'%3E%3Cpath%20d='M%2048.9%2017.9%20A%2022%2022%200%200%200%2018.2%2014.9'/%3E%3Cpath%20d='M%2014.9%2018.2%20A%2022%2022%200%200%200%2014.9%2045.8'/%3E%3Cpath%20d='M%2018.2%2049.1%20A%2022%2022%200%200%200%2048.9%2046.1'/%3E%3C/g%3E%3Cpath%20d='M%2040.5%2023.5%20A%2012%2012%200%201%200%2040.5%2040.5'%20fill='none'%20stroke='%23f0b93a'%20stroke-width='3.6'%20stroke-linecap='round'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='5'%20fill='url(%23g)'/%3E%3Ccircle%20cx='32'%20cy='32'%20r='2'%20fill='%23ffd873'/%3E%3C/svg%3E");
+  background-image: url("/icons/favicon.svg");
   background-size: 62%; background-repeat: no-repeat; background-position: center;
 }
+html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon-classic.svg"); }
+.msg.assistant:has(> .thinking)::before { display: none; }
 .msg.assistant p { margin-bottom: 12px; }
 .msg.assistant p:last-child { margin-bottom: 0; }
 /* The accent must not depend on WHICH markdown the model happens to emit:
@@ -498,48 +495,51 @@ img.lib-img { z-index: 1; }
 .msg.assistant li::marker { color: var(--amber); font-weight: 600; }
 .msg.assistant strong { color: var(--amber); font-weight: 700; }
 
-/* ── Chat thinking placeholder: the classic ring (brand.js) ──
-   The four segments light up clockwise, one per pillar of the judge, while
-   the diamond glows ruby. Under reduced motion the ring stands still, lit. */
-.thinking-ring { display: inline-flex; padding: 2px 0; }
-.thinking-ring .brand-ring-mark { width: 28px; height: 28px; display: block; }
-.brand-ring-mark .brand-ring { fill: var(--brand-amber); opacity: .25; animation: brand-ring-step 1.6s infinite ease-in-out; }
-.brand-ring-mark .brand-ring-2 { animation-delay: .4s; }
-.brand-ring-mark .brand-ring-3 { animation-delay: .8s; }
-.brand-ring-mark .brand-ring-4 { animation-delay: 1.2s; }
-.brand-ring-mark .brand-body { fill: var(--brand-diamond); }
-.brand-ring-mark .brand-diamond { fill: var(--brand-ruby); animation: brand-ruby-glow 1.6s infinite ease-in-out; }
-@keyframes brand-ring-step {
-  0%, 45%, 100% { opacity: .25; }
-  10%, 25%      { opacity: 1; }
-}
-@keyframes brand-ruby-glow {
-  0%, 100% { opacity: .55; }
-  50%      { opacity: 1; }
-}
-/* A model at work (brand.js: a streaming reply, or the server's report):
-   the logo's diamond pulses ruby. */
-body.model-busy #logo .brand-diamond,
-body.model-busy #logo .brand-spark { animation: brand-ruby-pulse 2.4s infinite ease-in-out; }
-@keyframes brand-ruby-pulse {
+/* ── Chat thinking placeholder (brand.js) ──
+   The curator's badge itself thinks: a soft gradient orbits the mark while
+   its diamond breathes ruby, and the waiting text shimmers. One logo, the
+   one this device chose, and no stepping. Reduced motion (the global block
+   below) leaves it still. */
+.thinking { display: inline-flex; align-items: center; min-height: 20px; }
+.thinking-mark { position: absolute; left: -28px; top: 4px; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--amber-dim); }
+.thinking-mark::before { content: ''; position: absolute; inset: -1px; border-radius: 50%; padding: 1.5px;
+  background: conic-gradient(from 0deg, transparent 0 15%, var(--brand-amber) 55%, var(--brand-ruby) 85%, transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: thinking-orbit 1.6s linear infinite; }
+.thinking-mark .brand-logo { width: 13px; height: 13px; display: block; position: relative; }
+.thinking-mark .brand-ring { fill: var(--brand-amber); }
+.thinking-mark .brand-diamond, .thinking-mark .brand-spark { animation: brand-breathe 2.4s ease-in-out infinite; }
+.thinking-label, .thinking-status {
+  background: linear-gradient(90deg, var(--text3) 0%, var(--text) 45%, var(--text3) 90%);
+  background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; }
+.thinking-label { font-size: 13px; font-style: italic; animation: thinking-shimmer 2s linear infinite; }
+.msg.assistant:has(.thinking-status) .thinking { display: block; min-height: 0; height: 0; }
+.msg.assistant:has(.thinking-status) .thinking-label { display: none; }
+@keyframes thinking-orbit { to { transform: rotate(360deg); } }
+@keyframes thinking-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@keyframes brand-breathe {
   0%, 100% { fill: var(--brand-diamond); }
   50%      { fill: var(--brand-ruby); }
 }
+/* A model at work (brand.js: a streaming reply, or the server's report):
+   the logo's diamond breathes ruby, slowly. */
+body.model-busy #logo .brand-diamond,
+body.model-busy #logo .brand-spark { animation: brand-breathe 3.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .brand-ring-mark .brand-ring, .brand-ring-mark .brand-diamond { opacity: 1; }
   body.model-busy #logo .brand-diamond, body.model-busy #logo .brand-spark { fill: var(--brand-ruby); }
 }
-/* Pass 14.9: status subnote shown alongside the thinking dots so the user
+/* Pass 14.9: status subnote shown in the thinking bubble so the user
    sees what the backend is doing during the pre-stream phase
    ("Looking up X", "Found in tv", "Loading memories", "Thinking"). */
 .thinking-status {
   font-size: 11px;
-  color: var(--text2);
-  margin-top: 6px;
+  margin-top: 0;
   margin-left: 2px;
   font-style: italic;
   opacity: 0;
-  animation: status-fade-in 0.25s ease-out forwards;
+  animation: status-fade-in 0.25s ease-out forwards, thinking-shimmer 2s linear infinite;
   line-height: 1.3;
 }
 .thinking-status-log {

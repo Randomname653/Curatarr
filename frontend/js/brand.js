@@ -1,6 +1,6 @@
 // ── The brand in the page ─────────────────────────────────────────────────────
 // Which icon this device shows (modern or classic: Settings → Account → This
-// device), the chat's "thinking" ring, and the pulse of the logo's diamond
+// device), the chat's "thinking" badge, and the pulse of the logo's diamond
 // while a model is at work. The pieces are inline SVG from index.html
 // (#logo, the login wordmark, <template> clones), coloured by the --brand-*
 // tokens in app.css.
@@ -25,6 +25,7 @@ export function applyIconStyle() {
   const style = iconStyle();
   const fav = document.querySelector('link[rel="icon"]');
   if (fav) fav.href = FAVICON[style];
+  document.documentElement.classList.toggle('icon-classic', style === 'classic');
   const classic = document.getElementById('brand-logo-classic')?.content.firstElementChild;
   for (const slot of document.querySelectorAll('[data-brand-slot]')) {
     const cur = slot.querySelector('.brand-logo');
@@ -61,15 +62,30 @@ export function brandMarkHtml(cls) {
   return brandMark(cls).outerHTML;
 }
 
-// The classic ring as the chat's placeholder: its four segments light up in
-// turn, one per pillar of the judge, around the diamond.
-export function thinkingRing() {
+// The chat's placeholder: the curator's badge itself thinks (a gradient
+// orbits the mark, its diamond breathes ruby) beside a shimmering "Thinking…"
+// that the server's status lines take over. The mark is the one this device
+// chose, so the page shows one logo.
+export function thinkingIndicator() {
   const el = document.createElement('div');
-  el.className = 'thinking-ring';
+  el.className = 'thinking';
   el.setAttribute('role', 'img');
   el.setAttribute('aria-label', 'Thinking');
-  const ring = document.getElementById('brand-ring')?.content.firstElementChild;
-  if (ring) el.appendChild(ring.cloneNode(true));
+  const badge = el.appendChild(document.createElement('span'));
+  badge.className = 'thinking-mark';
+  const t = document.getElementById(iconStyle() === 'classic' ? 'brand-ring' : 'brand-mark')?.content.firstElementChild;
+  if (t) {
+    const m = t.cloneNode(true);
+    m.setAttribute('class', 'brand-logo');
+    m.setAttribute('aria-hidden', 'true');
+    m.removeAttribute('role');
+    m.removeAttribute('aria-label');
+    badge.appendChild(m);
+  }
+  const label = el.appendChild(document.createElement('span'));
+  label.className = 'thinking-label';
+  label.setAttribute('aria-hidden', 'true');
+  label.textContent = 'Thinking…';
   return el;
 }
 
