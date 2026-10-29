@@ -92,5 +92,7 @@ async def handle(payload: dict, *, adapter=None, now: Optional[datetime] = None)
                 device=str(payload.get("DeviceName") or "")[:64] or None,
                 client=str(payload.get("ClientName") or "")[:64] or None)
     res = await record_plays([play], adapter)
-    logger.info("[jellyfin] webhook %s for %s: %s", kind, item_key, res)
+    # The counts only: nothing the adapter (which holds the API key) handed over.
+    logger.info("[jellyfin] webhook %s for %s: %d new, %d merged, %d skipped", kind, item_key,
+                int(res.get("inserted", 0)), int(res.get("merged", 0)), int(res.get("skipped", 0)))
     return res
