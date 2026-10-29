@@ -455,6 +455,10 @@ the file on an update). `deploy/docker-compose.yml` gains an `x-portals` block, 
 has the Web UI button from the start. The steps are in `deploy/truenas/README.md`. This is the
 community workaround; TrueNAS has no official field for it yet.
 
+The icon is the mark cut out, with the app icon's ruby diamond (`icon-transparent-512.png`, new
+in `make_icon.py`): the dark app tile looked like a square box among the other apps' icons. The
+script also sets the title back to "Curatarr" (TrueNAS rewrites it to "Custom App").
+
 Tests: `tests/test_truenas_metadata.py` (against a real custom app's metadata file).
 
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole

@@ -82,12 +82,16 @@ with tempfile.TemporaryDirectory() as tmp:
     new = yaml.safe_load(f.read_text(encoding="utf-8"))
     m = new["metadata"]
     check("the icon, description, home and sources are set",
-          m["icon"].endswith("/frontend/icons/icon-512.png") and "Plex" in m["description"]
+          m["icon"].endswith("/frontend/icons/icon-transparent-512.png") and "Plex" in m["description"]
           and m["home"] == am.REPO and am.REPO in m["sources"])
     check("...the screenshots point at files that exist in the repo",
           len(m["screenshots"]) == 5 and all(
               (ROOT / s.split("/main/", 1)[1]).is_file() for s in m["screenshots"]))
     check("...the icon too", (ROOT / m["icon"].split("/main/", 1)[1]).is_file())
+    from PIL import Image
+    ic = Image.open(ROOT / m["icon"].split("/main/", 1)[1]).convert("RGBA")
+    check("...cut out like the other apps' icons (transparent corners), with the ruby diamond",
+          ic.getpixel((3, 3))[3] == 0 and ic.getpixel((ic.width // 2, ic.height // 2))[:3] == (230, 44, 51))
     check("a Web UI button on the default port, and notes",
           new["portals"] == {"Web UI": "http://0.0.0.0:30800/"} and "setup wizard" in new["notes"])
     check("TrueNAS's own fields stay exactly as they were",

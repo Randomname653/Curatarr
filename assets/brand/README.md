@@ -25,4 +25,5 @@ Colours: amber `#EFB02C`, light diamond `#FFE3A4`, ruby `#E62C33`, tile
 `#1F242B`.
 
 For a dashboard (Homarr, Homepage and the like) that asks for an icon URL:
-`https://raw.githubusercontent.com/Randomname653/Curatarr/main/frontend/icons/icon-512.png`
+`https://raw.githubusercontent.com/Randomname653/Curatarr/main/frontend/icons/icon-transparent-512.png`
+(cut out; `icon-512.png` is the dark tile)

@@ -42,7 +42,9 @@ RAW = "https://raw.githubusercontent.com/Randomname653/Curatarr/main"
 IX_APPS = Path("/mnt/.ix-apps")
 
 METADATA = {
-    "icon": f"{RAW}/frontend/icons/icon-512.png",
+    # TrueNAS shows "Custom App" here once it has rewritten the file.
+    "title": "Curatarr",
+    "icon": f"{RAW}/frontend/icons/icon-transparent-512.png",
     "description": ("A self-hosted AI curator for Plex and the *arr stack. It learns what the "
                     "household actually watches, recommends what is worth adding and makes a "
                     "reasoned case for what to delete, with every prompt running on your own "

@@ -6,8 +6,8 @@ compose file has no place for an icon, and TrueNAS reads a portal from it
 only at the first install. The app's metadata file holds all of it, and
 `apply_metadata.py` fills it in:
 
-- the icon: Curatarr's app icon from this repository
-  (`frontend/icons/icon-512.png`)
+- the icon: Curatarr's mark, cut out, with the app icon's ruby diamond
+  (`frontend/icons/icon-transparent-512.png`), like the other apps' icons
 - the description, the home page and the sources (this repository and the
   container image)
 - the screenshots (`docs/screenshots/desktop/`), keywords and category
