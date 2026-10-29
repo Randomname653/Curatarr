@@ -102,6 +102,13 @@ published. Two ways to install it, the data volume stays as it is either way:
 TrueNAS's own "update available" badge is unreliable for custom YAML apps,
 so neither way depends on it.
 
+## Icon, description and Web UI button
+
+A custom app shows TrueNAS's generic icon and no description.
+`deploy/truenas/apply_metadata.py` fills in the app's metadata (icon,
+description, links, screenshots, a Web UI button, notes). The steps are in
+`deploy/truenas/README.md`.
+
 ## Rolling back
 
 Stop the container. On the PC, remove `PC_AGENT_ONLY` (or set it to false)

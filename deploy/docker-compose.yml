@@ -27,3 +27,14 @@ services:
     # The image runs as 568:568 (TrueNAS "apps"); set user: to another uid if
     # the dataset belongs to someone else.
     stop_grace_period: 30s
+
+# TrueNAS only: a "Web UI" button on the app's page. TrueNAS reads it when the
+# app is created (not on a later edit); other hosts ignore x- keys. Keep the
+# port in step with the ports: line above. The icon and the description
+# cannot go here: deploy/truenas/README.md adds them.
+x-portals:
+  - name: Web UI
+    scheme: http
+    host: 0.0.0.0
+    port: 30800
+    path: /
