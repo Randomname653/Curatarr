@@ -92,8 +92,8 @@ async def handle(payload: dict, *, adapter=None, now: Optional[datetime] = None)
                 device=str(payload.get("DeviceName") or "")[:64] or None,
                 client=str(payload.get("ClientName") or "")[:64] or None)
     res = await record_plays([play], adapter)
-    # The counts go back to the plugin's delivery log (the return value), not
-    # into ours: CodeQL reads the play's *_key fields as secrets and flags
-    # anything derived from them in a log line.
-    logger.info("[jellyfin] webhook %s for %s recorded", kind, item_id)
+    # The event only: CodeQL taints everything read from the payload (the
+    # request also carries the shared-secret header) and flags it in a log
+    # line. The counts reach the plugin's delivery log as the return value.
+    logger.info("[jellyfin] webhook %s recorded", kind)
     return res
