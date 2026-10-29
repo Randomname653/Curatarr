@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
 import { startTaskStream, stopTaskStream } from './activity.js';
+import { brandMark } from './brand.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
   if (!el) return;
@@ -164,9 +165,7 @@ export async function shutdownServer() {
     '<h2 class="b">Curatarr is shutting down…</h2>' +
     '<p class="t3 fs-13">You can close this tab. Start the server again to come back.</p></div>';
   document.body.appendChild(ov);
-  const mark = document.getElementById('brand-mark').content.firstElementChild.cloneNode(true);
-  mark.classList.add('sd-logo');
-  ov.querySelector('.stack-center-16').prepend(mark);
+  ov.querySelector('.stack-center-16').prepend(brandMark('sd-logo'));
 
   // Wind-down: pulse + ripples run at full speed, then decelerate to a
   // standstill over ~20s (the server is long gone — endless pulsing would

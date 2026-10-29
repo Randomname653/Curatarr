@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import json
 import logging
 import os
 import socket
@@ -37,7 +38,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from src.paths import ROOT, LOG_DIR
+from src.paths import DATA_DIR, LOG_DIR, ROOT
 
 logger = logging.getLogger("curatarr.tray")
 
@@ -49,13 +50,35 @@ _CREATE_NO_WINDOW = 0x08000000
 
 # ── brand icon ────────────────────────────────────────────────────────────────
 
+_TRAY_PREFS = DATA_DIR / "tray.json"
+
+
+def _classic_icon(_item=None) -> bool:
+    """The tray's own icon choice (its menu), apart from the browser's."""
+    try:
+        return json.loads(_TRAY_PREFS.read_text(encoding="utf-8")).get("icon") == "classic"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _toggle_classic_icon(icon, _item):
+    classic = not _classic_icon()
+    try:
+        _TRAY_PREFS.parent.mkdir(parents=True, exist_ok=True)
+        _TRAY_PREFS.write_text(json.dumps({"icon": "classic" if classic else "modern"}), encoding="utf-8")
+    except OSError as e:
+        logger.warning("Tray icon choice not saved: %s", e)
+    icon.icon = _brand_icon(64)
+
+
 def _brand_icon(size: int = 64):
-    """The Curatarr mark (assets/brand/curatarr-mark.png, rendered from the
-    designer's file) as a PIL image. A missing file falls back to a flat
-    amber disc, so the tray still starts."""
+    """The Curatarr mark (assets/brand/curatarr-mark.png, or the classic one
+    when the tray menu says so) as a PIL image. A missing file falls back to
+    a flat amber disc, so the tray still starts."""
     from PIL import Image, ImageDraw
 
-    src = ROOT / "assets" / "brand" / "curatarr-mark.png"
+    src = ROOT / "assets" / "brand" / ("curatarr-mark-classic.png" if _classic_icon()
+                                       else "curatarr-mark.png")
     try:
         return Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS)
     except OSError:
@@ -431,6 +454,7 @@ def _agent_only(settings, mutex) -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Start with Windows", _toggle_autostart,
                              checked=_autostart_enabled),
+            pystray.MenuItem("Classic icon", _toggle_classic_icon, checked=_classic_icon),
             *_update_items(_restart_after_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit agent", lambda: _stop_for_good()),
@@ -540,6 +564,7 @@ def main() -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Start with Windows", _toggle_autostart,
                              checked=_autostart_enabled),
+            pystray.MenuItem("Classic icon", _toggle_classic_icon, checked=_classic_icon),
             *_update_items(_restart_after_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart",

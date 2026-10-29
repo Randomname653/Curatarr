@@ -63,10 +63,12 @@
   --amber: #e5a00d;
   --amber2: #f0b429;
   /* The logo's own colours (assets/brand): the mark and the wordmark only,
-     never UI state. Ruby is the app icon's diamond. */
+     never UI state. Ruby is the app icon's diamond, and the logo's while a
+     model works; spark is the classic mark's white diamond. */
   --brand-amber: #efb02c;
   --brand-diamond: #ffe3a4;
   --brand-ruby: #e62c33;
+  --brand-spark: #ffffff;
   --amber-dim: rgba(229,160,13,.12);
   --bg-veil: rgba(26,29,35,.93);
   --text: #c8cdd8;
@@ -125,6 +127,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 #logo span { color: var(--text2); font-weight: 400; font-size: 11px; margin-left: 6px; }
 .brand-logo .brand-c { fill: var(--brand-amber); }
 .brand-logo .brand-diamond { fill: var(--brand-diamond); }
+.brand-logo .brand-body { fill: var(--brand-diamond); }
+.brand-logo .brand-spark { fill: var(--brand-spark); }
 .tb-spacer { flex: 1; }
 #topbar-search-form { display: flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; width: 220px; color: var(--text3); transition: border-color .15s, color .15s; }
 #topbar-search-form:focus-within { border-color: var(--amber); color: var(--text2); }
@@ -494,20 +498,36 @@ img.lib-img { z-index: 1; }
 .msg.assistant li::marker { color: var(--amber); font-weight: 600; }
 .msg.assistant strong { color: var(--amber); font-weight: 700; }
 
-/* ── Chat thinking placeholder ── */
-.thinking-dots { display: inline-flex; gap: 5px; align-items: center; padding: 2px 0; }
-.thinking-dots span {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--amber);
-  opacity: 0.5;
-  animation: thinking-pulse 1.2s infinite ease-in-out both;
+/* ── Chat thinking placeholder: the classic ring (brand.js) ──
+   The four segments light up clockwise, one per pillar of the judge, while
+   the diamond glows ruby. Under reduced motion the ring stands still, lit. */
+.thinking-ring { display: inline-flex; padding: 2px 0; }
+.thinking-ring .brand-ring-mark { width: 28px; height: 28px; display: block; }
+.brand-ring-mark .brand-ring { fill: var(--brand-amber); opacity: .25; animation: brand-ring-step 1.6s infinite ease-in-out; }
+.brand-ring-mark .brand-ring-2 { animation-delay: .4s; }
+.brand-ring-mark .brand-ring-3 { animation-delay: .8s; }
+.brand-ring-mark .brand-ring-4 { animation-delay: 1.2s; }
+.brand-ring-mark .brand-body { fill: var(--brand-diamond); }
+.brand-ring-mark .brand-diamond { fill: var(--brand-ruby); animation: brand-ruby-glow 1.6s infinite ease-in-out; }
+@keyframes brand-ring-step {
+  0%, 45%, 100% { opacity: .25; }
+  10%, 25%      { opacity: 1; }
 }
-.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
-.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
-.thinking-dots span:nth-child(3) { animation-delay: 0s; }
-@keyframes thinking-pulse {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.35; }
-  40%           { transform: scale(1.0); opacity: 1; }
+@keyframes brand-ruby-glow {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1; }
+}
+/* A model at work (brand.js: a streaming reply, or the server's report):
+   the logo's diamond pulses ruby. */
+body.model-busy #logo .brand-diamond,
+body.model-busy #logo .brand-spark { animation: brand-ruby-pulse 2.4s infinite ease-in-out; }
+@keyframes brand-ruby-pulse {
+  0%, 100% { fill: var(--brand-diamond); }
+  50%      { fill: var(--brand-ruby); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-ring-mark .brand-ring, .brand-ring-mark .brand-diamond { opacity: 1; }
+  body.model-busy #logo .brand-diamond, body.model-busy #logo .brand-spark { fill: var(--brand-ruby); }
 }
 /* Pass 14.9: status subnote shown alongside the thinking dots so the user
    sees what the backend is doing during the pre-stream phase
@@ -1482,6 +1502,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   color-mix(in srgb, var(--poster-tint) 26%, transparent), transparent 72%); }
 .wu-hero-art .poster-img, .wu-hero-art .poster-ph { border-radius: var(--radius-poster); box-shadow: var(--shadow-2); }
 .wu-eyebrow { font-size: var(--fs-xs); letter-spacing: .14em; text-transform: uppercase; color: var(--amber); }
+.wu-eyebrow .wu-mark { width: 1.4em; height: 1.4em; vertical-align: -.35em; margin-right: .45em; }
 .wu-arch { font-size: clamp(30px, 5.4vw, 56px); line-height: 1.02; font-weight: 800; letter-spacing: -.02em; margin: 8px 0 10px; }
 .wu-sub { font-size: var(--fs-lg); color: var(--text2); max-width: var(--measure); margin: 0; }
 .wu-share-line { font-style: italic; color: var(--text2); margin: 10px 0 0; }
@@ -1627,6 +1648,9 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .wus-close { position: absolute; top: max(6px, env(safe-area-inset-top, 0px)); right: 10px; z-index: 4;
   width: 40px; height: 40px; border: 0; background: transparent; color: var(--text2); font-size: 26px; cursor: pointer; }
 .wus-close:hover { color: var(--amber); }
+/* The watermark: a screenshot of a slide says where it came from. */
+.wus-mark { position: absolute; left: 14px; bottom: max(14px, env(safe-area-inset-bottom, 0px)); z-index: 3;
+  width: 28px; height: 28px; opacity: .7; pointer-events: none; }
 .wus-zone { position: absolute; top: 48px; bottom: 0; z-index: 1; border: 0; background: transparent; cursor: pointer; }
 .wus-prev { left: 0; width: 30%; }
 .wus-next { right: 0; width: 70%; }

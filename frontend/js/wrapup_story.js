@@ -9,6 +9,7 @@
 //
 // Charts are SVG with attributes and classes only (style-src is 'self').
 import { _posterImg, act, countTo, esc, haptic, loc } from './ui.js';
+import { brandMark } from './brand.js';
 
 // How long a slide stays: long enough to read it. A fixed 7 s cut the
 // curator's longer slides off mid-sentence (2026-10-25). About three words a
@@ -367,6 +368,8 @@ export function playStory(data) {
     st.downAt = Date.now(); _hold(true);
   });
   el.addEventListener('pointerup', () => _hold(false));
+  // The watermark: a screenshot of a slide says where it came from.
+  el.appendChild(brandMark('wus-mark'));
   document.body.appendChild(el);
   document.addEventListener('keydown', _key);
   st.el = el;
