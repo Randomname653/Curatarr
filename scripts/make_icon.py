@@ -5,8 +5,8 @@ the repo root after a brand file changes:
 
 The masters (1024 px PNG beside each SVG) come from the designer's files.
 Written here:
-- frontend/icons/: favicon.svg, icon-192/512 (rounded tile, purpose "any"),
-  icon-maskable-512 and apple-touch-icon (full bleed: Android masks and iOS
+- frontend/icons/: favicon.svg and favicon-classic.svg, icon-192/512
+  (rounded tile, purpose "any"), icon-maskable-512 and apple-touch-icon (full bleed: Android masks and iOS
   rounds them itself; the mark sits inside the 80 % safe circle),
   icon-monochrome-512 (the mark's shape only, for themed icons and badges);
 - assets/curatarr.ico (the autostart shortcut; the tray reads the mark PNG);
@@ -70,6 +70,7 @@ def main() -> None:
     _size(app, 180).convert("RGB").save(ICONS / "apple-touch-icon.png", optimize=True)
     _monochrome(512).save(ICONS / "icon-monochrome-512.png", optimize=True)
     shutil.copyfile(BRAND / "curatarr-mark.svg", ICONS / "favicon.svg")
+    shutil.copyfile(BRAND / "curatarr-mark-classic.svg", ICONS / "favicon-classic.svg")
     _master("curatarr-mark").save(ROOT / "assets" / "curatarr.ico",
                                   sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
     _social().convert("RGB").save(DOCS / "social-preview.png", optimize=True)

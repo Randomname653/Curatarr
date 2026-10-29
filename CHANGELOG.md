@@ -415,6 +415,23 @@ the AGPL-3.0: all rights reserved (README, License).
 
 Tests: `tests/test_brand.py`.
 
+**The logo at work: classic icon, thinking ring, busy pulse, a watermark.**
+- **Classic, per device:** Settings → Account → This device → App icon: Modern / Classic switches
+  the tab's icon and the top-bar and login logos (`favicon-classic.svg`, the classic wordmark). The
+  tray has its own "Classic icon" switch in its menu (`data/tray.json`). An installed app keeps the
+  icon it was installed with, because the manifest is fixed.
+- **Thinking ring:** while a reply is on its way, the chat shows the classic ring instead of three
+  dots. Its four segments light up clockwise, one per pillar of the judge, around a ruby diamond.
+- **Busy pulse:** while a model works, the diamond in the top-bar logo pulses ruby. That covers a
+  reply streaming in this tab, or the server reporting a curator call or an enrichment run
+  (`model_busy` in `/api/processes/status`, the 30 s poll).
+- **Watermark:** the wrap-up's summary card and every story slide carry the mark, so a screenshot
+  says where it came from.
+
+Under reduced motion the ring stands lit and the pulse is a steady ruby.
+
+Tests: `tests/test_brand.py`, `tests/test_a11y_nav.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

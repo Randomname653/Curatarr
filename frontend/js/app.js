@@ -30,9 +30,11 @@ import { showUpdateInfo } from './version.js';
 import { loadNodes, saveNodeName, updateNode } from './nodes.js';
 import { clearNetflixFiles, handleNetflixDrop, onNetflixFile, openNetflixPicker, runNetflixImport } from './netflix_import.js';
 import { answerGameQuestion } from './game.js';
+import { applyIconStyle, setIconStyle } from './brand.js';
 
 export function init() {
 initMobile();
+applyIconStyle();
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
@@ -182,6 +184,7 @@ const actions = {
   openModelUpdates,
   saveNodeName,
   setHapticLevel,
+  setIconStyle,
   startModelCompare,
   rerunModelCompare,
   decideModelUpdate,

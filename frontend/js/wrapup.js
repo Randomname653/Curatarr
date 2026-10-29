@@ -9,6 +9,7 @@ import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
 import { EL, _errHtml, _errMsg, _posterImg, act, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
 import { playStory } from './wrapup_story.js';
+import { brandMarkHtml } from './brand.js';
 
 const WU_KEY = 'curatarr_wrapup';
 const SEEN_KEY = 'curatarr_wrapup_seen';
@@ -462,7 +463,7 @@ function _snapshot(f, s) {
     f.eras ? [f.eras.viewing_age_year, 'viewing age'] : [f.curatarr?.graveyard?.gb_freed, 'GB freed']]
     .filter(([v]) => v != null);
   return layouts + `<section class="card wu-snap" aria-label="Shareable summary">
-    <div class="wu-eyebrow">Curatarr · ${esc(f.period?.label || '')}</div>
+    <div class="wu-eyebrow">${brandMarkHtml('wu-mark')}Curatarr · ${esc(f.period?.label || '')}</div>
     <h2 class="wu-arch">${esc(_archetype(f, s))}</h2>
     <p class="wu-sub">${esc(s?.share_line && s.share_line !== s.archetype_title ? s.share_line : (s?.archetype_subhead || ''))}</p>
     <div class="wu-snap-stats">${stats.map(([v, l]) => `<div><div class="wu-num-static">${_s(v)}</div><div class="wu-meta">${esc(l)}</div></div>`).join('')}</div>

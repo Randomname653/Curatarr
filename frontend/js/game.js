@@ -2,6 +2,7 @@
 import { _errMsg, toast } from './ui.js';
 import { api } from './api.js';
 import { loadUnreadMessages } from './notifications.js';
+import { setServerModelBusy } from './brand.js';
 const _shownProcesses = new Set();   // names already shown in a toast this session
 let   _processPollTimer = null;
 
@@ -58,6 +59,7 @@ export function _renderLaneBadge(statusR) {
     indicator.title = `Couldn't check the game / GPU status (${statusR._err}) — this badge may be out of date. Checking again every 30 s.`;
     return;
   }
+  setServerModelBusy(statusR.model_busy);
   const lane = statusR.lane || (statusR.game_running ? 'game' : 'free');
   const badge = LANE_BADGE[lane];
   indicator.classList.toggle('show', !!badge);
