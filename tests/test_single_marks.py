@@ -118,6 +118,8 @@ sql_ms = db.query(func.sum(wf.played_ms_sql(W))).filter(W.plex_item_id == "half"
 el_ms = db.query(func.sum(wf.played_ms_sql(W))).filter(W.series_title == "Elfen Lied").scalar()
 check("...in the SQL twin too", sql_ms == 600_000 and el_ms == 2 * 1_440_000)
 db.close()
+check("stored wrap-ups are rebuilt on the repaired history (a new facts generation)",
+      wf.FACTS_VERSION >= 12)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -60,7 +60,9 @@ _ELIGIBLE_HOURS = 3
 # 4: the skip rate from Spotify's skips (music_skips), none without them.
 # 5: court record, GB in vs out, time-to-watch, auteurs (services/wrapup_sections).
 # 6: hours per day for the story mode's heatmap.
-FACTS_VERSION = 11
+# 12: episodes marked as played one at a time are no viewings, a started-then-marked
+#     play counts its own minutes (plex_sync.mark_unwitnessed, schema generation 3).
+FACTS_VERSION = 12
 
 
 @dataclass(frozen=True)

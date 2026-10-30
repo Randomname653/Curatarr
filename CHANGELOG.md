@@ -504,6 +504,8 @@ read as a six-episode binge.
   different items of one title, a minute or less apart, neither with a play event (no player).
   On the owner's data that is 57 rows, all in such runs. An evening's two episodes, plays with a
   player and one item played twice stay viewings.
+- **Stored wrap-ups:** `FACTS_VERSION` 12 rebuilds their facts on the repaired history the next
+  time each is opened. A story whose facts changed is marked stale.
 
 Tests: `tests/test_single_marks.py`; `tests/test_netflix_import.py` counts the third query that
 leaves Netflix rows alone.
