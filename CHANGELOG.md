@@ -508,6 +508,22 @@ read as a six-episode binge.
 Tests: `tests/test_single_marks.py`; `tests/test_netflix_import.py` counts the third query that
 leaves Netflix rows alone.
 
+**The bell says when this server's Ollama stops answering.** The NAS's Ollama app went down on
+2026-10-29 at 19:10 and stayed down for 21 hours. Embeddings, the summariser, lyrics and memory
+extraction failed, each only in a log line of its own, while chat kept working on the PC. A memory
+extraction error finally surfaced it.
+- **The probe:** a job asks the main host's `/api/version` every 30 s. Three misses in a row, so
+  a model that is loading is no outage, mark the host down from the first miss. The log says so
+  once, and again when it answers (`[hosts]`).
+- **The bell:** admins get a danger item. It gives the time it stopped, what waits (embeddings,
+  the summariser, search), where chat still runs, and that a restart of the Ollama app is all it
+  takes. It counts in the bell badge although it has no button.
+
+The work that failed meanwhile resumes by itself. Memory extraction only moves its cursor after a
+run that succeeded, and the custodian's catch-up retries.
+
+Tests: `tests/test_host_watch.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

@@ -124,6 +124,16 @@ def _gaming() -> bool:
     return game_active()
 
 
+async def job_ollama_watch():
+    """Probe this server's Ollama (host_watch): the bell says when it stops
+    answering, the log when it goes and comes back."""
+    from src.services import host_watch
+    try:
+        await asyncio.to_thread(host_watch.check)
+    except Exception as e:  # noqa: BLE001 - a watcher never takes the scheduler down
+        logger.warning("[hosts] Ollama probe failed: %s", e)
+
+
 async def job_game_watcher():
     """Pass 75: server-side game-mode enforcement — frontend-independent.
 
@@ -325,6 +335,16 @@ def start_scheduler():
         id="game_watcher",
         name="Game-mode VRAM watcher",
         replace_existing=True,
+        misfire_grace_time=30,
+    )
+    scheduler.add_job(
+        job_ollama_watch,
+        IntervalTrigger(seconds=30),
+        id="ollama_watch",
+        name="This server's Ollama answering?",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
         misfire_grace_time=30,
     )
     from src.services import pc_host

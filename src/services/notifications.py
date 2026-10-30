@@ -12,7 +12,8 @@ An item: ``{"id", "kind", "severity": "info"|"warn"|"danger", "title",
 SYS_ACTIONS) — the server never sends a function name to call; ``arg`` is
 the one value that handler gets (data, escaped like any other).
 
-``needs_action`` counts the items that wait for a decision; that number is
+``needs_action`` counts the items that wait for a decision, and the danger
+items that wait for a hand elsewhere (no button); that number is
 the bell badge's share and the Settings bubble in the sidebar.
 """
 from __future__ import annotations
@@ -156,9 +157,33 @@ def forget_pc_update() -> None:
     _pc_update_hidden["until"] = time.time() + 120
 
 
+def _ollama_down_items() -> list[dict]:
+    """This server's Ollama stopped answering (host_watch, a probe every
+    30 s). Nothing to click: it is restarted where it runs, and the waiting
+    work resumes by itself."""
+    from datetime import datetime
+    from src.services import host_watch
+    from src.services.ollama_hosts import split
+    since = host_watch.down_since()
+    if since is None:
+        return []
+    mins = max(1, int((datetime.now() - since).total_seconds() // 60))
+    took = f"{mins} min" if mins < 120 else f"{mins // 60} h"
+    chat = ""
+    if split():
+        from src.services.pc_host import node_name
+        chat = f" Chat runs on {node_name()} while it is on."
+    return [{"id": f"ollama-down:{since:%Y%m%d%H%M}", "kind": "ollama_down", "severity": "danger",
+             "title": "This server's Ollama is not answering",
+             "text": (f"Since {since:%H:%M} ({took}). Embeddings, the summariser (enrichment, lyrics, "
+                      f"memories) and search wait.{chat} Restart the Ollama app on this server; "
+                      f"the waiting work resumes by itself."),
+             "action": None}]
+
+
 # (provider, admin_only) — append new kinds here.
 PROVIDERS = [(_model_update_items, True), (_game_question_items, True),
-             (_pc_update_items, True)]
+             (_pc_update_items, True), (_ollama_down_items, True)]
 
 
 def system_notifications(user) -> dict:
@@ -171,7 +196,8 @@ def system_notifications(user) -> dict:
         except Exception as e:   # one broken source must not empty the bell
             logger.warning("[notifications] %s failed: %s", provider.__name__, e)
     return {"items": items,
-            "needs_action": sum(1 for i in items if i.get("action")),
+            # a danger item has no button but must not hide behind a quiet bell
+            "needs_action": sum(1 for i in items if i.get("action") or i.get("severity") == "danger"),
             # The sidebar's Settings bubble: decisions that live in Settings
             # (a game question or the PC's update is answered in the bell).
             "settings_action": sum(1 for i in items
