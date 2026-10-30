@@ -171,7 +171,7 @@ def test_the_gate_scopes_day_named_openers_to_their_day():
         # names a day that is NOT today — hallucinated, must be dropped
         {"text": f"A {wrong.capitalize()} classic: defend your comfort rewatch.",
          "form": "challenge", "daypart": "any", "fact": "rewatch pattern"},
-        {"text": "Two stalled shows and a full watchlist. Pick a lane.",
+        {"text": "Two shows half-way and a full watchlist. Pick a lane.",
          "form": "observation", "daypart": "any", "fact": "stalled_series"},
     ]
     _FakeClient.payload = _json.dumps(batch)
@@ -315,3 +315,66 @@ def test_streamed_status_lines_carry_no_emoji():
         if "pre_stream_status.append" in window and emoji.search(line):
             offenders.append(line.strip()[:80])
     assert not offenders, offenders
+
+
+# ── pauses: the user's own pace is not news (2026-10-29) ─────────────────
+
+def _play(title, when, ep=1):
+    return {"title": title, "series_title": title, "media_type": "anime", "season": 1,
+            "episode": ep, "viewed_at": when, "completed": True}
+
+
+def test_a_pause_at_the_users_own_pace_is_called_normal():
+    now = dt.datetime(2026, 10, 29, 3)
+    # one episode a fortnight, the latest a week ago, others watched since
+    video = [_play("Tanya", now - dt.timedelta(days=d), ep=i) for i, d in enumerate((7, 21, 35), 1)]
+    video.append(_play("Shimoneta", now - dt.timedelta(days=1)))
+    assert cs._pause(video, "Tanya", now).startswith("normal for this user: usually every 14 days")
+
+
+def test_nothing_watched_since_is_a_break_from_everything():
+    now = dt.datetime(2026, 11, 5, 20)
+    video = [_play("Shimoneta", now - dt.timedelta(days=9), ep=2),
+             _play("Shimoneta", now - dt.timedelta(days=9, minutes=25), ep=1)]
+    assert cs._pause(video, "Shimoneta", now).startswith("nothing at all watched since")
+
+
+def test_only_a_real_stall_is_longer_than_usual():
+    now = dt.datetime(2026, 10, 29, 3)
+    video = [_play("Mushoku", now - dt.timedelta(days=70, hours=h), ep=h) for h in range(1, 6)]
+    video += [_play("Mushoku", now - dt.timedelta(days=72, hours=h), ep=10 + h) for h in range(1, 6)]
+    video.append(_play("Killing Bites", now - dt.timedelta(days=6)))
+    p = cs._pause(video, "Mushoku", now)
+    assert p.startswith("longer than usual: 70 days") and "other titles watched since" in p
+
+
+def test_pace_talk_is_dropped_unless_its_title_really_stalled():
+    facts = [{"kind": "last_watched", "title": "SHIMONETA: A Boring World", "pause": "normal: 1 day"},
+             {"kind": "active_series", "title": "Saga of Tanya the Evil",
+              "pause": "normal for this user: usually every 25 days"},
+             {"kind": "stalled_series", "title": "Mushoku Tensei: Jobless Reincarnation",
+              "pause": "longer than usual: 70 days, usually every 1 days, other titles watched since"}]
+    # lines the real curator wrote on the owner's data
+    assert not cs._pace_ok("Two episodes of Shimoneta and you're already pausing. Is the premise "
+                           "too abrasive?", "SHIMONETA: A Boring World", facts)
+    assert not cs._pace_ok("Your pace with Tanya the Evil is methodical, almost cautious.", None, facts)
+    assert not cs._pace_ok("Returning to Tanya this Thursday evening. Is the momentum gone?", None, facts)
+    assert cs._pace_ok("Defend the 70-day hiatus on Mushoku Tensei. Did the bloat win?", None, facts)
+    assert cs._pace_ok("Two episodes of Shimoneta in a day. Are you enjoying the satire?", None, facts)
+
+
+def test_the_filter_runs_on_every_candidate_and_the_prompt_names_the_pause():
+    src = _src("services/chat_starters.py")
+    assert "if not _pace_ok(text, " in src
+    assert '"pause": _pause(video, ' in src and src.count('"pause": _pause(') == 3
+    assert "is news only where the fact's \"pause\" says longer than usual" in cs._PROMPT
+
+
+def test_a_started_episode_is_not_zero_episodes():
+    from src.services.viewing_sessions import rhythm
+    now = dt.datetime(2026, 10, 29, 3)
+    play = {"title": "Tanya", "series_title": "Tanya", "media_type": "anime", "season": 2,
+            "episode": 2, "viewed_at": now - dt.timedelta(days=6), "completed": False,
+            "duration_ms": 1_440_000, "view_offset_ms": 60_000}
+    r = rhythm([play], now)
+    assert "0 episodes" not in r["phrase"] and "not finished yet" in r["phrase"]
