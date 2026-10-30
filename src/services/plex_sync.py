@@ -633,6 +633,13 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # a walk cut short would turn finished views into partial ones.
     partial_rewatches = (_mark_partial_rewatches(all_entries, history_by_rating_key)
                          if capture["complete"] else 0)
+    # On an incremental sync the history covers the listing's window; on a
+    # first full one an item can be older than what the history kept.
+    single_marks = (mark_unwitnessed(all_entries, history_by_rating_key)
+                    if capture["complete"] and last_sync_ts else 0)
+    if single_marks:
+        logger.info("Plex sync: %d item(s) marked as played one at a time (no play event), "
+                    "not viewings", single_marks)
     if owner_extra or partial_rewatches:
         logger.info("Plex sync: %d play(s) of the owner from the history the listing "
                     "does not carry%s, %d rewatch(es) in progress",
@@ -785,6 +792,21 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
 
                 if entry.get("_marked") and near.get((user.id, rating_key)):
                     # Marked as played again: the viewing it stands for is stored.
+                    # Started, then marked: that unfinished row is the viewing.
+                    # It is finished now and keeps its own evening and the
+                    # minutes really watched; only "finished" comes from the mark.
+                    _open = db.query(WatchHistoryEntry).filter(
+                        WatchHistoryEntry.user_id == user.id,
+                        WatchHistoryEntry.plex_item_id == rating_key,
+                        WatchHistoryEntry.completed == False,  # noqa: E712
+                        func.coalesce(WatchHistoryEntry.source, "") != "netflix",
+                        WatchHistoryEntry.viewed_at <= viewed_at,
+                        WatchHistoryEntry.viewed_at >= viewed_at - timedelta(days=RESUME_WINDOW_DAYS),
+                    ).order_by(WatchHistoryEntry.viewed_at.desc()).first()
+                    if _open is not None:
+                        _open.completed = True
+                        resumed += 1
+                        continue
                     skipped += 1
                     continue
 
@@ -1336,6 +1358,29 @@ def _mark_partial_rewatches(entries: list, history_by_rk: dict) -> int:
         if any(abs(v - int(ts)) <= _SAME_PLAY_S for v, _ in history_by_rk.get(rk, ())):
             continue
         e["_in_progress"] = True
+        n += 1
+    return n
+
+
+def mark_unwitnessed(entries: list, history_by_rk: dict) -> int:
+    """A finished video item whose lastViewedAt matches no play event in the
+    history was marked as played in Plex, not watched to the end: a viewing
+    writes an event, a mark does not. Marks made one after another land
+    seconds apart and slip past mark_bulk_marked's one-second rule (2026-10-30:
+    53 such plays on the owner's server, runs of them read as binges). They
+    are flagged ``_marked`` like a bulk mark. Only meaningful when the history
+    walk covered the window (the caller checks)."""
+    n = 0
+    for e in entries:
+        if (e.get("_marked") or e.get("_in_progress") or e.get("_history_extra")
+                or e.get("_category") not in ("movie", "show", "anime")):
+            continue
+        rk, ts = str(e.get("ratingKey") or ""), e.get("lastViewedAt")
+        if not rk or not ts:
+            continue
+        if any(abs(v - int(ts)) <= _SAME_PLAY_S for v, _ in history_by_rk.get(rk, ())):
+            continue
+        e["_marked"] = True
         n += 1
     return n
 
