@@ -486,6 +486,44 @@ Starters already in the pool expire on their own within 48 hours.
 
 Tests: `tests/test_chat_starters.py`.
 
+**Episodes marked as played one at a time are no viewings.** Plex's "mark as played" writes no
+history event. The sync caught a mark only when three or more items shared one second. Marking
+episodes one after another lands them seconds apart: 53 plays in 20 runs on the owner's server. In
+one run, Goblin Slayer E8, E5, E7, E1, E3 and E4 came within 30 s. High School DxD E3–E8, 5 s apart,
+read as a six-episode binge.
+- **The sync:** a finished video item whose last-viewed time matches no play event in the
+  history is a mark, flagged like a bulk mark: seen, not a viewing. This runs only on an
+  incremental sync whose history walk covered the window. A first full sync can list items older
+  than the history keeps.
+- **Started, then marked:** the unfinished row of that viewing (within 30 days) is finished now.
+  It keeps its own evening and the minutes really watched. Before, it moved to the moment of the
+  mark and counted in full.
+- **Played time:** a finished row whose resume point is short of the episode's length counts
+  that point. A finished viewing's resume point is its length, so nothing else changes.
+- **What was stored:** a one-shot migration (schema generation 3) marks two finished plays of
+  different items of one title, a minute or less apart, neither with a play event (no player).
+  On the owner's data that is 57 rows, all in such runs. An evening's two episodes, plays with a
+  player and one item played twice stay viewings.
+
+Tests: `tests/test_single_marks.py`; `tests/test_netflix_import.py` counts the third query that
+leaves Netflix rows alone.
+
+**The bell says when this server's Ollama stops answering.** The NAS's Ollama app went down on
+2026-10-29 at 19:10 and stayed down for 21 hours. Embeddings, the summariser, lyrics and memory
+extraction failed, each only in a log line of its own, while chat kept working on the PC. A memory
+extraction error finally surfaced it.
+- **The probe:** a job asks the main host's `/api/version` every 30 s. Three misses in a row, so
+  a model that is loading is no outage, mark the host down from the first miss. The log says so
+  once, and again when it answers (`[hosts]`).
+- **The bell:** admins get a danger item. It gives the time it stopped, what waits (embeddings,
+  the summariser, search), where chat still runs, and that a restart of the Ollama app is all it
+  takes. It counts in the bell badge although it has no button.
+
+The work that failed meanwhile resumes by itself. Memory extraction only moves its cursor after a
+run that succeeded, and the custodian's catch-up retries.
+
+Tests: `tests/test_host_watch.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

@@ -118,7 +118,10 @@ def played_ms(row: dict) -> tuple:
         return int(row["listened_ms"]), False
     if row.get("completed"):
         if row.get("duration_ms"):
-            return int(row["duration_ms"]), False
+            # A row finished by a mark after a partial viewing keeps its real
+            # minutes (plex_sync); a finished viewing's offset is its length.
+            off = row.get("view_offset_ms")
+            return int(min(off, row["duration_ms"]) if off else row["duration_ms"]), False
         return int(_EST_MIN.get(row.get("media_type"), _EST_DEFAULT_MIN) * 60_000), True
     return int(row.get("view_offset_ms") or 0), False
 
@@ -138,6 +141,8 @@ def played_ms_sql(W):
     return case(
         (W.source == "spotify", func.coalesce(W.view_offset_ms, 0)),
         (and_(W.source == "netflix", W.listened_ms.isnot(None)), W.listened_ms),
+        (and_(W.completed == True, W.view_offset_ms > 0,              # noqa: E712
+              W.view_offset_ms < W.duration_ms), W.view_offset_ms),
         (W.completed == True, func.coalesce(W.duration_ms, est)),   # noqa: E712
         else_=func.coalesce(W.view_offset_ms, 0))
 
