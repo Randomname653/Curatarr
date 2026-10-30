@@ -49,7 +49,7 @@ def music_listening_stats(user_id: int, artist: str,
     with get_db_session() as db:
         base = db.query(W).filter(W.user_id == user_id,
                                   W.media_type == "music", or_(*conds))
-        # ⚡ Bolt: Combine aggregate queries into one to avoid redundant DB reads
+        # one read for the three aggregates (an aggregate always returns a row)
         plays, tracks, last = base.with_entities(
             func.count(W.id),
             func.count(func.distinct(W.title)),
