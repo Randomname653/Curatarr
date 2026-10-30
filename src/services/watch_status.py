@@ -49,11 +49,14 @@ def music_listening_stats(user_id: int, artist: str,
     with get_db_session() as db:
         base = db.query(W).filter(W.user_id == user_id,
                                   W.media_type == "music", or_(*conds))
-        plays = base.with_entities(func.count(W.id)).scalar()
+        # ⚡ Bolt: Combine aggregate queries into one to avoid redundant DB reads
+        plays, tracks, last = base.with_entities(
+            func.count(W.id),
+            func.count(func.distinct(W.title)),
+            func.max(W.viewed_at)
+        ).one()
         if not plays:
             return None
-        tracks = base.with_entities(func.count(func.distinct(W.title))).scalar()
-        last = base.with_entities(func.max(W.viewed_at)).scalar()
         top = (db.query(W.title, func.count(W.id).label("n"))
                .filter(W.user_id == user_id, W.media_type == "music", or_(*conds))
                .group_by(W.title).order_by(func.count(W.id).desc())
