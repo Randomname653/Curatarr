@@ -455,7 +455,36 @@ the file on an update). `deploy/docker-compose.yml` gains an `x-portals` block, 
 has the Web UI button from the start. The steps are in `deploy/truenas/README.md`. This is the
 community workaround; TrueNAS has no official field for it yet.
 
+The icon is the mark cut out, with the app icon's ruby diamond (`icon-transparent-512.png`, new
+in `make_icon.py`): the dark app tile looked like a square box among the other apps' icons. The
+script also sets the title back to "Curatarr" (TrueNAS rewrites it to "Custom App").
+
 Tests: `tests/test_truenas_metadata.py` (against a real custom app's metadata file).
+
+**Chat openers no longer scold the user's own pace.** The starters told the owner off for pauses
+that were simply how he watches. Examples: "you haven't touched Tanya the Evil in a week" for a
+series he watches once a fortnight, and "only on episode four and already losing interest" for an
+episode from the night before. The facts handed to the curator said "N days ago" and nothing to
+compare it with. Now:
+- **A `pause` in each title fact:** last watched, active and stalled each carry one. It is
+  measured against the user's own rhythm for that title (the median gap between its sittings
+  over the past year) and against whether anything else was watched since. It reads one of:
+  - normal for this user, usually every N days
+  - nothing at all watched since, so a break from everything rather than from this title
+  - longer than usual, with other titles watched since
+- **Enforced in code:** the prompt asks to leave the user's own pace alone. A replay with the real
+  curator on the owner's data showed that the curator's pointed voice still found gaps to poke
+  at ("already pausing", "glacial"). So, like the starters' other rules, it is enforced in code. An
+  opener that talks of pauses, pace or giving up stays only when it is about a title whose pause
+  is longer than usual. In the replay, every such line about the owner's normal-paced titles was
+  dropped. The lines about a series really left for 70 days remained.
+- **A started episode is no longer "0 episodes":** the viewing rhythm called an episode started but
+  not finished "0 episodes on Thursday evening", which read as untouched. It now says "an episode
+  started on Thursday evening, not finished yet".
+
+Starters already in the pool expire on their own within 48 hours.
+
+Tests: `tests/test_chat_starters.py`.
 
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:

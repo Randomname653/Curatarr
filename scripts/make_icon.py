@@ -8,7 +8,9 @@ Written here:
 - frontend/icons/: favicon.svg and favicon-classic.svg, icon-192/512
   (rounded tile, purpose "any"), icon-maskable-512 and apple-touch-icon (full bleed: Android masks and iOS
   rounds them itself; the mark sits inside the 80 % safe circle),
-  icon-monochrome-512 (the mark's shape only, for themed icons and badges);
+  icon-monochrome-512 (the mark's shape only, for themed icons and badges),
+  icon-transparent-512 (the mark with the app icon's ruby diamond on no
+  background: app lists and dashboards that draw their own, TrueNAS's);
 - assets/curatarr.ico (the autostart shortcut; the tray reads the mark PNG);
 - docs/brand/social-preview.png (GitHub's social preview, 1280x640).
 """
@@ -51,6 +53,25 @@ def _monochrome(px: int) -> Image.Image:
     return tile
 
 
+def _transparent(px: int) -> Image.Image:
+    """The mark, cut out, with the ruby diamond of the app icon: the light
+    diamond pixels (#FFE3A4, edges blended into transparency only, the gaps
+    keep it apart from the amber) take the ruby, alpha untouched."""
+    mark = _master("curatarr-mark")
+    out = Image.new("RGBA", mark.size)
+    ruby = (230, 44, 51)
+    src = mark.load()
+    dst = out.load()
+    for y in range(mark.height):
+        for x in range(mark.width):
+            r, g, b, a = src[x, y]
+            dst[x, y] = (*ruby, a) if a and b > 120 else (r, g, b, a)
+    inner = round(px * 0.92)
+    tile = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    tile.alpha_composite(_size(out, inner), ((px - inner) // 2, (px - inner) // 2))
+    return tile
+
+
 def _social() -> Image.Image:
     logo = Image.open(BRAND / "curatarr-logo.png").convert("RGBA")
     w = 860
@@ -69,6 +90,7 @@ def main() -> None:
     _size(app, 512).save(ICONS / "icon-maskable-512.png", optimize=True)
     _size(app, 180).convert("RGB").save(ICONS / "apple-touch-icon.png", optimize=True)
     _monochrome(512).save(ICONS / "icon-monochrome-512.png", optimize=True)
+    _transparent(512).save(ICONS / "icon-transparent-512.png", optimize=True)
     shutil.copyfile(BRAND / "curatarr-mark.svg", ICONS / "favicon.svg")
     shutil.copyfile(BRAND / "curatarr-mark-classic.svg", ICONS / "favicon-classic.svg")
     _master("curatarr-mark").save(ROOT / "assets" / "curatarr.ico",

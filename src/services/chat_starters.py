@@ -53,7 +53,7 @@ from src.database.connection import get_db_session
 from src.database.runner import run_read, run_write
 from src.database.models import ChatStarter, WatchHistoryEntry
 from src.services.llm_utils import strip_think_tags, curator_options, CURATOR_KEEP_ALIVE
-from src.services.viewing_sessions import rhythm as _viewing_rhythm
+from src.services.viewing_sessions import rhythm as _viewing_rhythm, sittings as _sittings
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -105,6 +105,34 @@ def current_daypart(now: Optional[datetime] = None) -> str:
 
 # ── facts: deterministic, cheap, per user ──────────────────────────────────
 
+def _pause(video: list[dict], title: str, now: datetime) -> str:
+    """How the gap since ``title``'s last play compares with the user's own
+    pace, in words the model may repeat. Only "longer than usual" is news.
+
+    The openers scolded the owner for pauses that were his normal pace (a
+    series he watches one episode a fortnight, "untouched for a week") or
+    no pause from the title at all (nothing else watched since: a break from
+    everything). The facts gave only "N days ago" (2026-10-29)."""
+    mine = [x for x in video if (x["series_title"] or x["title"]) == title]
+    last = max((x["viewed_at"] for x in mine if x["viewed_at"]), default=None)
+    if last is None:
+        return ""
+    since = (now - last).days
+    starts = [s["start"] for s in _sittings(mine, now, window_days=365)]
+    gaps = sorted((b - a).total_seconds() / 86400 for a, b in zip(starts, starts[1:]))
+    usual = gaps[len(gaps) // 2] if gaps else None
+    if since <= max(7, 2 * (usual or 0)):
+        return (f"normal for this user: usually every {max(1, round(usual))} days"
+                if usual else f"normal: {since} day{'s' if since != 1 else ''}")
+    if not any(x["viewed_at"] and x["viewed_at"] > last
+               and (x["series_title"] or x["title"]) != title for x in video):
+        return (f"nothing at all watched since ({since} days): a break from everything, "
+                "not from this title")
+    return (f"longer than usual: {since} days"
+            + (f", usually every {max(1, round(usual))} days" if usual else "")
+            + ", other titles watched since")
+
+
 def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
     """Concrete hooks from the user's own watch log. No LLM, one query.
 
@@ -152,6 +180,7 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                         else None),
             "days_ago": days,
             "completed": r["completed"],
+            "pause": _pause(video, r["series_title"] or r["title"], now),
         })
 
     # Per-series aggregates over the recent window: momentum and abandonment.
@@ -182,13 +211,15 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                       "media_type": v["media_type"],
                       "episodes_7d": r["episodes"], "sittings_7d": r["sittings"],
                       "max_in_one_sitting": r["max_in_one_sitting"],
-                      "binge": r["binge"], "rhythm": r["phrase"]})
+                      "binge": r["binge"], "rhythm": r["phrase"],
+                      "pause": _pause(video, k, now)})
     if stalled:
         k, v = max(stalled, key=lambda kv: kv[1]["plays"])
         facts.append({"kind": "stalled_series", "title": k,
                       "media_type": v["media_type"],
                       "days_since": (now - v["last"]).days,
-                      "plays_before_stall": v["plays"]})
+                      "plays_before_stall": v["plays"],
+                      "pause": _pause(video, k, now)})
 
     if music:
         artists: dict[str, int] = {}
@@ -223,6 +254,36 @@ def _extract_json_array(text: str) -> list[dict]:
     return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
 
 
+# Talk of pace, pauses or giving up. The facts now say when a gap is the
+# user's own rhythm, and the prompt says to leave those alone, yet the
+# curator's pointed voice still read "two episodes, last night" as "already
+# paused" and a series watched once a fortnight as "glacial" (PC replay on
+# the owner's data, 2026-10-29). So, like the other rules here, in code: such
+# an opener stays only when it is about a title whose pause really is
+# longer than usual.
+_PACE_RE = re.compile(
+    r"\b(paus\w*|stall\w*|stagnat\w*|abandon\w*|drift\w*|glacial|crawl\w*|erratic|"
+    r"flatlin\w*|hiatus|dead for|losing interest|lost interest|lose interest|half-finished|"
+    r"(have|has)n'?t touched|barely touch\w*|skipp\w*|slow(ed|ing)? down|"
+    r"pac(e|ing)|rhythm|momentum|lost steam|gave up|give up|giving up)\b", re.IGNORECASE)
+
+
+def _pace_ok(text: str, anchor: Optional[str], facts: list[dict]) -> bool:
+    """False for an opener that talks pace or pauses about a title whose
+    fact does not say "longer than usual"."""
+    if not _PACE_RE.search(text or ""):
+        return True
+    low = (text or "").lower()
+    for f in facts:
+        title = f.get("title")
+        if not title or not str(f.get("pause", "")).startswith("longer than usual"):
+            continue
+        short = title.split(":")[0].strip().lower()
+        if anchor == title or (short and short in low):
+            return True
+    return False
+
+
 def _opening(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]", "", text.lower()).split()[:3])
 
@@ -254,6 +315,7 @@ Rules:
   says so ("binge": true) or it was not one. An episode or two an evening is a
   routine; repeat the rhythm the fact gives, never inflate it.
 - Name today's weekday only when it genuinely matters — such openers are shown today only.
+- A gap, a slowdown or lost interest is news only where the fact's "pause" says longer than usual; otherwise it is the user's own pace, so leave it out. No habit ("your usual Thursday session") the facts do not state.
 
 Return ONLY the JSON array."""
 
@@ -341,6 +403,8 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             continue                          # unanchored = generic = dropped
         if _opening(text) in seen_openings:
             continue                          # the model repeats openings
+        if not _pace_ok(text, (c.get("anchor_title") or "").strip() or None, facts):
+            continue                          # a pause that is the user's own pace
         if daypart not in ("morning", "day", "evening", "night", "any"):
             daypart = "any"
         day = _named_day(text)
