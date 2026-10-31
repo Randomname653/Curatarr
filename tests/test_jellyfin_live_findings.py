@@ -68,6 +68,33 @@ asyncio.run(ad.search("Akira", "movie"))
 check("...and no libraries named means the whole server", calls and "ParentId" not in calls[0][1])
 
 
+# ── a collection's members are listed in a user's view only ────────────────
+OLD, KEEP, NEW = "a" * 32, "b" * 32, "c" * 32
+CID = "d" * 32
+sent = []
+
+
+def coll_handler(req: httpx.Request) -> httpx.Response:
+    p, q = req.url.path, dict(req.url.params)
+    sent.append((req.method, p, q))
+    if p == "/Users":
+        return httpx.Response(200, json=[{"Id": "e" * 32, "Name": "admin", "Policy": {"IsAdministrator": True}}])
+    if p == "/Items" and q.get("IncludeItemTypes") == "BoxSet":
+        return httpx.Response(200, json={"Items": [{"Id": CID, "Name": "Curatarr · Shelf"}]})
+    if p == "/Items" and q.get("ParentId") == CID:
+        members = [{"Id": OLD}, {"Id": KEEP}] if q.get("userId") else []   # Jellyfin's behaviour
+        return httpx.Response(200, json={"Items": members})
+    return httpx.Response(204)
+
+
+cad = JellyfinAdapter("http://jf:8096/", "key", transport=httpx.MockTransport(coll_handler))
+asyncio.run(cad.upsert_collection(None, "Curatarr · Shelf", [KEEP, NEW]))
+dels = [q for m, p, q in sent if m == "DELETE" and p == f"/Collections/{CID}/Items"]
+adds = [q for m, p, q in sent if m == "POST" and p == f"/Collections/{CID}/Items"]
+check("editing a shelf drops the title that left it and adds the new one (members read as a user)",
+      dels == [{"ids": OLD}] and adds == [{"ids": NEW}])
+
+
 class FakeAdapter:
     def __init__(self, next_ep):
         self.next_ep, self.upserts = next_ep, []

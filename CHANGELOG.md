@@ -80,6 +80,10 @@ Tried live against the owner's Plex and a test Jellyfin on the same anime librar
     which Jellyfin drops silently, and Curatarr said ok. Now it says there is no episode yet;
   - plays of a title first seen after the switch stayed on the Jellyfin id through `--undo`. The
     id memory knows both ids, and the undo uses it now.
+  - a shelf collection's members were read without a user, and Jellyfin lists them only in a
+    user's view, so they always read empty and nothing ever left a shelf. Members are now read as
+    an administrator: a title that leaves a shelf leaves the collection (live: one in, one out,
+    same collection id).
 
 Tests: `tests/test_media_server_keys.py`, `tests/test_jellyfin_live_findings.py`, `tests/test_rebind.py`.
 

@@ -601,8 +601,15 @@ class JellyfinAdapter:
                                         params={"Name": title, "Ids": ",".join(keys)})
                 return normalize_jellyfin_id((body or {}).get("Id")) or ""
             cid = found[0]["key"]
+            # A collection's members are listed only in a user's view:
+            # without userId Jellyfin answers an empty list, so nothing was
+            # ever dropped and a shelf kept every title it once held
+            # (2026-10-31, the test Jellyfin). Any administrator sees all.
+            users = await self.users()
+            viewer = next((u for u in users if u.is_admin), users[0] if users else None)
+            params = {"ParentId": cid, **({"userId": viewer.key} if viewer else {})}
             have = {normalize_jellyfin_id(i.get("Id"))
-                    for i in (await self._get(c, "/Items", params={"ParentId": cid})).get("Items") or []}
+                    for i in (await self._get(c, "/Items", params=params)).get("Items") or []}
             drop, add = [k for k in have if k and k not in set(keys)], [k for k in keys if k not in have]
             if drop:
                 await self._send(c, "DELETE", f"/Collections/{cid}/Items",
