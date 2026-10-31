@@ -176,6 +176,9 @@ async def fake_enrich(name):
     return answers[name]
 
 me.enrich_artist = fake_enrich
+check("an upstream outage backs off doubling, capped at a minute",
+      [me._outage_backoff(n) for n in (1, 2, 3, 10)] == [2, 4, 8, 60])
+me._outage_backoff = lambda n: 0.01    # the length is pinned above; do not wait it out
 
 with fake_db_session() as db:
     for i, name in enumerate(("Down Band", "Real Band", "Nobody"), start=1):

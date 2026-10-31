@@ -120,6 +120,12 @@ _HEARTBEAT_S = 60
 _MAX_OUTAGES = 10
 
 
+def _outage_backoff(outages: int) -> float:
+    """Seconds to wait after ``outages`` upstream outages in a row: doubling,
+    capped at a minute."""
+    return min(60, 2 ** outages)
+
+
 # ── logging ──────────────────────────────────────────────────────────────────
 
 
@@ -557,7 +563,7 @@ async def worker(
                                  "the upstreams look down; stopping.", outages)
                     break
                 try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=min(60, 2 ** outages))
+                    await asyncio.wait_for(stop_event.wait(), timeout=_outage_backoff(outages))
                     break
                 except asyncio.TimeoutError:
                     pass

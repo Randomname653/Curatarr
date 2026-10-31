@@ -83,6 +83,9 @@ BACKGROUND = 1      # everything else
 # How often a queued caller on a split install re-checks where its work is
 # routed (the PC's agent reports every 5 s).
 REROUTE_CHECK_S = 5.0
+# How long a background curator call that was preempted (or found an
+# interactive turn waiting) stays back behind that turn before re-queueing.
+PREEMPT_BACKOFF_S = 5.0
 
 
 class _PriorityGate:
@@ -888,7 +891,7 @@ async def background_curator_call(owner: str, call, *, exclusive_model: str = No
             # the request was registered as preemptible. Hand the slot over
             # now instead of making it wait out a whole generation.
             curator_done(priority=BACKGROUND, lane=ln)
-            quiet_s = max(quiet_s, 5.0)
+            quiet_s = max(quiet_s, PREEMPT_BACKOFF_S)
             continue
         task = asyncio.ensure_future(call())
         ln.preemptible[task] = owner
@@ -904,7 +907,7 @@ async def background_curator_call(owner: str, call, *, exclusive_model: str = No
         if task in _preempted:
             _preempted.discard(task)
             # Back off behind the turn that preempted us, not just the gate.
-            quiet_s = max(quiet_s, 5.0)
+            quiet_s = max(quiet_s, PREEMPT_BACKOFF_S)
             continue
         return task.result()
     raise Preempted(owner)

@@ -105,6 +105,10 @@ check("a waiter cancelled in the queue leaves the slot free",
 
 # ── 2. preemption ───────────────────────────────────────────────────────────
 print("preemption")
+# The back-off behind a preempting turn is 5 s in the app; what the checks
+# below pin is that it happens, not its length (each case used to wait it out).
+check("a preempted call backs off 5 s behind the turn", lp.PREEMPT_BACKOFF_S == 5.0)
+lp.PREEMPT_BACKOFF_S = 0.2
 
 
 async def _preempt():
