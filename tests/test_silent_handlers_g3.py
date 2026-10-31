@@ -173,21 +173,19 @@ finally:
 
 # ── 3. an unreadable opt-out list keeps nudges off ──────────────────────────
 
-_get_state = app_state.get_state
-try:
-    app_state.get_state = lambda key: '["night_owl"]'
-    check("a readable opt-out list is honoured as stored",
-          pm.get_disabled_triggers(7) == {"night_owl"})
-    app_state.get_state = lambda key: None
-    check("no stored list means every trigger is on", pm.get_disabled_triggers(7) == set())
-    app_state.get_state = lambda key: '["night_owl", '
-    check("a corrupt opt-out list disables every trigger, never none",
-          pm.get_disabled_triggers(7) == pm.TRIGGER_TYPE_NAMES)
-    app_state.get_state = lambda key: '{"night_owl": true}'
-    check("...and so does a list of the wrong shape",
-          pm.get_disabled_triggers(7) == pm.TRIGGER_TYPE_NAMES)
-finally:
-    app_state.get_state = _get_state
+from _checks import real_state  # noqa: E402
+state, key = real_state(), "notif_disabled:user_id=7"   # the real app_state table
+state[key] = '["night_owl"]'
+check("a readable opt-out list is honoured as stored",
+      pm.get_disabled_triggers(7) == {"night_owl"})
+state.pop(key)
+check("no stored list means every trigger is on", pm.get_disabled_triggers(7) == set())
+state[key] = '["night_owl", '
+check("a corrupt opt-out list disables every trigger, never none",
+      pm.get_disabled_triggers(7) == pm.TRIGGER_TYPE_NAMES)
+state[key] = '{"night_owl": true}'
+check("...and so does a list of the wrong shape",
+      pm.get_disabled_triggers(7) == pm.TRIGGER_TYPE_NAMES)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

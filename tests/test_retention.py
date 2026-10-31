@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn_mod
 import src.services.retention as ret
 from src.database.models import (AppState, Base, ChatStarter, ConversationMessage,
@@ -176,7 +177,8 @@ for path in (cache_file, lyrics_file):
 _orig = settings.DATABASE_URL, settings.ENRICHMENT_CACHE
 settings.DATABASE_URL = "sqlite:///" + os.path.join(tmp, "absent.db")
 settings.ENRICHMENT_CACHE = cache_file
-app_state.get_state = lambda k: None
+from _checks import real_state  # noqa: E402
+real_state().clear()            # the real app_state table, empty
 vacuumed = []
 _real_vac = sched._vacuum_sqlite_file
 sched._vacuum_sqlite_file = lambda p: (vacuumed.append(p), _real_vac(p))

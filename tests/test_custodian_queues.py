@@ -56,9 +56,8 @@ check("every 'after' names a task in the other queue",
       all(dep in by_id and q[dep] != q[t.job_id] for t in real for dep in t.after))
 
 # ── fakes for the scenarios ─────────────────────────────────────────────────
-state: dict = {}
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v)
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 recorded: list = []
 sched._record_job_run = lambda job_id: recorded.append(job_id)
 sched._job_overdue = lambda job_id, cadence_h: True

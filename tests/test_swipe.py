@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.swipe as sw  # noqa: E402
@@ -45,10 +46,9 @@ def fake_session():
         db.close()
 
 
-state: dict = {}
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 conn.get_db_session = fake_session
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v)
 
 with fake_session() as db:
     db.add(User(id=1, plex_user_id="1", plex_username="owner", is_admin=True, is_active=True))

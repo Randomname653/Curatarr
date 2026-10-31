@@ -38,7 +38,7 @@ from src.database.runner import run_write  # noqa: E402
 from src.services import app_state  # noqa: E402
 
 PASS = FAIL = 0
-HOLD_S = 1.5
+HOLD_S = 0.8          # long enough to tell a stall (>0.48 s) from a tick (<0.2 s)
 
 
 def check(name, cond):

@@ -23,6 +23,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 from src.config import settings  # noqa: E402
 from src.services import embed_service as es  # noqa: E402
 from src.services import model_check as mc  # noqa: E402
@@ -123,11 +124,11 @@ finally:
 
 # ── record_digest keeps the profile, flips nothing ──────────────────────────
 import src.services.app_state as app_state  # noqa: E402
-store = {es.PROFILE_KEY: json.dumps({"model": EMB, "collection": "media_knowledge_v2",
-                                     "prefixes": True, "num_ctx": 512, "schema": 2})}
+from _checks import real_state  # noqa: E402
+store = real_state()                    # the real app_state table, not a dict
+store[es.PROFILE_KEY] = json.dumps({"model": EMB, "collection": "media_knowledge_v2",
+                                    "prefixes": True, "num_ctx": 512, "schema": 2})
 saved_state = (app_state.get_state, app_state.set_state)
-app_state.get_state = lambda k: store.get(k)
-app_state.set_state = lambda k, v: store.__setitem__(k, v)
 es._profile_cache["value"] = None
 try:
     es.record_digest("ff9c2f10ef5e")

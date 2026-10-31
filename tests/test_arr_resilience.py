@@ -45,23 +45,33 @@ hits = {"slow": 0, "stall": 0, "throttled": 0}
 
 
 async def slow_stream(request):
-    """Answers for 2.4 s in total, but never goes quiet for more than 0.4 s —
-    a big listing that is slow yet alive."""
+    """Answers for 1.2 s in total, but never goes quiet for more than 0.2 s —
+    a big listing that is slow yet alive (2.4x the 0.5 s read budget, every
+    gap well inside it)."""
     hits["slow"] += 1
     resp = web.StreamResponse(headers={"Content-Type": "application/json"})
     await resp.prepare(request)
     await resp.write(b"[")
     for i in range(6):
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.2)
         await resp.write((b"," if i else b"") + b'{"id": %d}' % i)
     await resp.write(b"]")
     await resp.write_eof()
     return resp
 
 
+RELEASE: dict = {}
+
+
 async def stall(request):
+    """Silent until the test is done with it (released before the server
+    shuts down, which otherwise waits the handler out)."""
     hits["stall"] += 1
-    await asyncio.sleep(5)
+    RELEASE.setdefault("ev", asyncio.Event())
+    try:
+        await asyncio.wait_for(RELEASE["ev"].wait(), 5)
+    except asyncio.TimeoutError:
+        pass
     return web.json_response([])
 
 
@@ -87,9 +97,9 @@ async def main():
     try:
         print("\n-- read budget, not a total budget --")
         async with ac.RadarrClient(base, "k") as c:
-            r = await c.request("GET", "/slow", timeout=1.0, max_timeout_retries=0)
-        check("a 2.4 s listing that keeps streaming survives a 1 s read budget "
-              "(total=1 s used to kill it)", isinstance(r, list) and len(r) == 6)
+            r = await c.request("GET", "/slow", timeout=0.5, max_timeout_retries=0)
+        check("a 1.2 s listing that keeps streaming survives a 0.5 s read budget "
+              "(a total budget used to kill it)", isinstance(r, list) and len(r) == 6)
 
         t0 = time.monotonic()
         try:
@@ -116,6 +126,8 @@ async def main():
         check("retried after the dated Retry-After instead of crashing",
               r == {"ok": True} and hits["throttled"] == 2 and slept and slept[0] <= 1.5)
     finally:
+        if "ev" in RELEASE:
+            RELEASE["ev"].set()
         await runner.cleanup()
 
 asyncio.run(main())

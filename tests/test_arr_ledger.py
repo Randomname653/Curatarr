@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.arr_ledger as al  # noqa: E402
 import src.services.library_ledger as ll  # noqa: E402
@@ -51,10 +52,9 @@ def fake_db_session():
         db.close()
 
 
-state: dict = {}
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 al.get_db_session = ll.get_db_session = fake_db_session
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v) or True
 
 GB = 1024 ** 3
 al._PAGE = 2          # the real page is 1000 records

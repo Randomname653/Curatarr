@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.cache.metadata_cache as mcache
 import src.database.connection as conn_mod
 import src.services.media_enricher as me
@@ -236,8 +237,9 @@ check("no drift: tiny library", not vr.is_drift(10, 10))
 # ── 6. boot check clears the stamp only on drift ─────────────────────────────
 import src.services.app_state as app_state  # noqa: E402
 
-state = {"job_last_run:vector_reconcile": "2026-10-19T00:00:00"}
-app_state.set_state = lambda k, v: state.__setitem__(k, v)
+from _checks import real_state  # noqa: E402
+state = real_state()                    # the real app_state table, not a dict
+state["job_last_run:vector_reconcile"] = "2026-10-19T00:00:00"
 
 
 class _CountOnly:

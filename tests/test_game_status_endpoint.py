@@ -14,11 +14,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.routers.process_monitor as pmr  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.process_monitor as pm  # noqa: E402
 
-from _checks import check  # noqa: E402
+from _checks import check, real_state  # noqa: E402
 
 
 # The handler sits behind ttl_response; call the undecorated function.
@@ -28,8 +29,9 @@ _real = (app_state.get_state, pm.is_game_running)
 
 
 def _status(flag):
-    state = {"game_active": flag, "llm_lane": "free", "llm_lane_reason": ""}
-    app_state.get_state = lambda k: state.get(k)
+    state = real_state()                    # the real app_state table, not a dict
+    state.clear()
+    state.update({"game_active": flag, "llm_lane": "free", "llm_lane_reason": ""})
     probes.clear()
     return handler(_user=None)
 

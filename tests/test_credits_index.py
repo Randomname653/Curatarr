@@ -131,6 +131,10 @@ def fake_session():
     db = Session()
     try:
         yield db
+        db.commit()          # the contract of get_db_session: commit on a clean exit
+    except BaseException:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -142,13 +146,13 @@ ci.persist([ci.merge([ci.extract("anime", {"tmdb_id": 30991, "title": "Cowboy Be
 first = ci.persist(list(works.values()))
 with fake_session() as db:
     heat = ci.credits_of(db, "movie", "tmdb", 949)
-    bebop_rows = db.query(MediaWork).filter_by(category="anime").all()
+    bebop_rows = [(w.id_source, w.work_id) for w in db.query(MediaWork).filter_by(category="anime")]
 check("the index answers who made it, by role and in billing order",
       heat["people"]["director"] == ["Michael Mann"]
       and heat["people"]["cast"][:2] == ["Al Pacino", "Robert De Niro"]
       and heat["companies"]["production"] == ["Regency Enterprises", "Forward Pass"])
 check("a title filed earlier under its other id is folded into one entry",
-      first["folded"] == 1 and [(w.id_source, w.work_id) for w in bebop_rows] == [("anilist", "1")])
+      first["folded"] == 1 and bebop_rows == [("anilist", "1")])
 again = ci.persist(list(works.values()))
 check("an unchanged walk writes nothing", again == {"new": 0, "updated": 0, "unchanged": 2, "folded": 0})
 w = dict(works[("movie", "tmdb", "949")])

@@ -207,12 +207,11 @@ def test_lastfm_transient():
 
 def test_subtitle_quota_is_transient():
     from src.services import subtitle_signals as ss
-    state = {}
+    from _checks import real_state  # noqa: E402
+    state = real_state()          # the real app_state table, not a dict
     saved = (ss._os_conf, app_state.get_state, app_state.set_state, httpx.AsyncClient)
     real_client = httpx.AsyncClient
     ss._os_conf = lambda: ("key", "", "", 0)
-    app_state.get_state = lambda k: state.get(k)
-    app_state.set_state = lambda k, v: state.__setitem__(k, v)
     status = {"code": 406}
     httpx.AsyncClient = lambda **kw: real_client(transport=httpx.MockTransport(
         lambda req: httpx.Response(status["code"], json={"message": "x"})))

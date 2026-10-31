@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn_mod
 import src.services.app_state as app_state
 import src.services.data_custodian as dc
@@ -35,10 +36,8 @@ from _checks import check  # noqa: E402
 
 
 # app_state in a dict — no real DB touched
-state: dict = {}
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v)
-# The state locks too: job_arr_pre_enrich takes "enrichment_running" before
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 # anything else now, and the real acquire is a compare-and-set on the DB
 # (CI has none: "no such table: app_state").
 _held: set = set()

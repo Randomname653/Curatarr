@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.routers.library as lib
 import src.routers.recommendations as recs
 import src.services.app_state as app_state
@@ -21,8 +22,8 @@ from _checks import check  # noqa: E402
 
 # ── fakes ────────────────────────────────────────────────────────────────────
 
-_state = {}
-app_state.set_state = lambda k, v: _state.__setitem__(k, v)
+from _checks import real_state  # noqa: E402
+_state = real_state()                   # the real app_state table, not a dict
 
 PAGES = [
     {"artists": [

@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 import httpx  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 from src.config import settings  # noqa: E402
 
@@ -228,10 +229,10 @@ def test_disk_room_fails_closed():
 
 
 def test_corrupt_state_is_kept_aside():
-    kv = {mu.STATE_KEY: '{"curator": {"test_started": "x"'}
+    from _checks import real_state
+    kv = real_state()                   # the real app_state table, not a dict
+    kv[mu.STATE_KEY] = '{"curator": {"test_started": "x"'
     saved = app_state.get_state, app_state.set_state
-    app_state.get_state = lambda k: kv.get(k)
-    app_state.set_state = lambda k, v: kv.__setitem__(k, v) or True
     try:
         with captured("src.services.model_updates") as recs:
             st = mu.load_state()

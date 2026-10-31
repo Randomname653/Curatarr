@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.proactive_messages as pm  # noqa: E402
 
@@ -20,7 +21,7 @@ import src.services.proactive_messages as pm  # noqa: E402
 # (series_progress variant — keeps apostrophes, unlike library_memory's).
 normalize_title = pm.normalize_title
 
-from _checks import check  # noqa: E402
+from _checks import check, real_state  # noqa: E402
 
 
 QUEUE = [
@@ -29,8 +30,8 @@ QUEUE = [
     {"rec_id": 9, "title": "Kill la Kill", "category": "anime",
      "watched_at": "2026-08-11T21:00:00"},
 ]
-_state = {"rec_watch_hits:user_id=1": json.dumps(QUEUE)}
-app_state.get_state = lambda key, default=None: _state.get(key, default)
+_state = real_state()                       # the real app_state table, not a dict
+_state["rec_watch_hits:user_id=1"] = json.dumps(QUEUE)
 
 # ── detector ─────────────────────────────────────────────────────────────────
 
