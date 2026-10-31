@@ -10,7 +10,9 @@ word, while Curatarr said ok.
     python tests/test_jellyfin_live_findings.py
 """
 import asyncio
+import os
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +20,14 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+# Its own database: the watchlist reads the library mapping, and CI has no
+# data/curatarr.db to fall back on.
+_TMP = Path(tempfile.mkdtemp())
+os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
+
+import src.database.connection as conn_mod  # noqa: E402
+from src.database.models import Base  # noqa: E402
+Base.metadata.create_all(conn_mod.engine)
 
 from src.services.media_server import jellyfin_writes as jw  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
