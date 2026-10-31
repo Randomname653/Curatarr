@@ -12,15 +12,16 @@ from contextlib import contextmanager
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from src.database.models import Base, MusicWish  # noqa: E402
 import src.database.connection as _conn  # noqa: E402
 from src.services import lyrics as ly  # noqa: E402
 
-_engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+from _checks import memory_engine, with_users  # noqa: E402
+_engine = memory_engine()
 Base.metadata.create_all(_engine)
+with_users(_engine, 1)          # the owner the first wishes belong to
 _Session = sessionmaker(bind=_engine)
 
 

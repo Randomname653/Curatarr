@@ -17,9 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.services.wrapup_insights as wi  # noqa: E402
 import src.services.wrapup_sections as sec  # noqa: E402
@@ -107,8 +105,10 @@ check("the new sections are facts with their titles as references",
       and "Most-watched director: Michael Mann" in sheet)
 
 # ── the sections, on a database ──────────────────────────────────────────────
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 Session = sessionmaker(bind=engine, autoflush=False)
 
 

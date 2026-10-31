@@ -24,9 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import src.services.plex_sync as ps
 import src.services.taste_engine as te
@@ -37,8 +35,8 @@ from _checks import check  # noqa: E402
 
 
 # ── throwaway DB ─────────────────────────────────────────────────────────────
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 # Bind the app's own session factory too: app_state and the other modules
 # that import get_db_session directly would otherwise reach the live

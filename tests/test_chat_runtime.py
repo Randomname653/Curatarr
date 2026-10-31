@@ -21,6 +21,7 @@ from fastapi import HTTPException                        # noqa: E402
 from sqlalchemy import create_engine                     # noqa: E402
 from sqlalchemy.orm import sessionmaker                  # noqa: E402
 
+from _checks import memory_engine, with_users  # noqa: E402
 import src.services.llm_priority as lp                   # noqa: E402
 from src.database.models import (                        # noqa: E402
     Base, ConversationMessage, DeletionProposal, ProactiveMessage)
@@ -40,9 +41,9 @@ def _db():
     # StaticPool: one in-memory DB for every thread, since services now run
     # their session work on run_read / run_write workers.
     from sqlalchemy.pool import StaticPool
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
+    with_users(engine, 1, 2, _UID)
     session = sessionmaker(bind=engine)()
 
     @contextmanager
@@ -488,9 +489,9 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
     import src.services.episodic_memory as em
     from src.services import rate_limit as rl
 
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
+    with_users(engine, 1, 2, _UID)
     Session = sessionmaker(bind=engine)
     events = []
 

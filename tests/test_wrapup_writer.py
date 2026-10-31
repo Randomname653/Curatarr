@@ -19,9 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.services.llm_errors as le  # noqa: E402
 import src.services.llm_priority as lp  # noqa: E402
@@ -264,8 +262,10 @@ brief, system = calls[1]["messages"][1]["content"], calls[1]["messages"][0]["con
 check("the writer gets the user's words to quote back, and writes in their language",
       "YOUR WORDS" in brief and "my sister's film" in brief and "in German" in system)
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1, 2)
 Session = sessionmaker(bind=engine)
 
 

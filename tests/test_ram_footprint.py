@@ -28,15 +28,14 @@ from _checks import check  # noqa: E402
 from src.config import settings  # noqa: E402
 settings.CHROMADB_PATH = tempfile.mkdtemp(prefix="curatarr-ram-")
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, WatchHistoryEntry  # noqa: E402
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1, 2)
 Session = sessionmaker(bind=engine)
 
 

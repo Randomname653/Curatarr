@@ -12,14 +12,14 @@ from contextlib import contextmanager
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from src.database.models import Base, EnrichmentStatus  # noqa: E402
 import src.database.connection as _conn  # noqa: E402
 from src.services import lyrics as ly  # noqa: E402
 
-_engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+_engine = memory_engine()
 Base.metadata.create_all(_engine)
 _Session = sessionmaker(bind=_engine)
 

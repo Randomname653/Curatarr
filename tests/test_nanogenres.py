@@ -21,9 +21,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, Nanogenre, TitleNanogenre, User, WatchHistoryEntry as W  # noqa: E402
 import src.services.nanogenres as ng  # noqa: E402
@@ -105,7 +103,8 @@ check("a cluster keeps its central titles, commonest phrases and genres",
       and teen["top_genres"][:2] == ["comedy", "romance"])
 
 # ── stored, and kept current ────────────────────────────────────────────────
-engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 S = sessionmaker(bind=engine)
 

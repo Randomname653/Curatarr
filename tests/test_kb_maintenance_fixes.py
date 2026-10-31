@@ -89,16 +89,15 @@ check("...and is counted as without real lyrics, not as a failed profile",
       "no_lyrics += 1" in src and "without real lyrics" in src)
 
 # ── the anime card ───────────────────────────────────────────────────────────
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn  # noqa: E402
 from src.database.models import ArrEnrichmentStatus as AES, Base, MediaMatchOverride as MO  # noqa: E402
 import src.cache.metadata_cache as mc  # noqa: E402
 from src.services import anime_mapping as am  # noqa: E402
 
-engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 S = sessionmaker(bind=engine)
 

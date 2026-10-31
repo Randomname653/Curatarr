@@ -18,10 +18,10 @@ import types
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from _checks import memory_engine, with_users  # noqa: E402
 import src.routers.recommendations as recs  # noqa: E402
 from src.database.models import Base, DeletionProposal  # noqa: E402
 
@@ -34,9 +34,9 @@ _LIVE = types.SimpleNamespace(
 
 def _db():
     # StaticPool: approve_deletion opens its own sessions on worker threads
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
+    with_users(engine, 1)
     db = sessionmaker(bind=engine)()
     for i, (svc, status) in enumerate((("lidarr", "pending"), ("lidarr", "limbo"),
                                        ("lidarr", "deleted"), ("radarr", "pending"),

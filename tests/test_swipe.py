@@ -18,9 +18,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
@@ -31,7 +29,8 @@ from src.database.models import Base, EncryptedTasteVector, SwipeRating, User, W
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
@@ -53,6 +52,7 @@ app_state.set_state = lambda k, v: state.__setitem__(k, v)
 
 with fake_session() as db:
     db.add(User(id=1, plex_user_id="1", plex_username="owner", is_admin=True, is_active=True))
+    db.flush()                  # foreign keys are enforced: the users first
     db.add(EncryptedTasteVector(user_id=1, media_category="show", salt="",
                                 encrypted_blob=json.dumps({"embedding": [1.0, 0.0],
                                                            "cluster_centroids": [],
@@ -193,7 +193,7 @@ async def _fake_rebuild(uid, cats, skip_summaries=False):
 
 
 async def _run_write(fn, *a, **kw):
-    return fn(*a, **kw)
+    return await asyncio.to_thread(fn, *a, **kw)    # off the loop, like the real writer
 
 rs.run_write = _run_write
 te.compute_all_taste_vectors = _fake_rebuild

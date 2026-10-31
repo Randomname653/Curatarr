@@ -19,9 +19,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.services.recommendations_engine as eng  # noqa: E402
 from src.database.models import Base, EncryptedTasteVector, User  # noqa: E402
@@ -43,7 +41,8 @@ none = eng.deletion_score_factors(mismatch=1.0, taste_src="embedding", size_pts=
 check("...and stays silent without household taste", not any(x["key"] == "household_taste" for x in none))
 
 # ── the members' profiles ────────────────────────────────────────────────────
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
@@ -72,6 +71,7 @@ with fake_session() as db:
              User(id=4, plex_user_id="4", plex_username="old", is_admin=False, is_active=True),
              User(id=5, plex_user_id="5", plex_username="flat", is_admin=False, is_active=True)]
     db.add_all(users)
+    db.flush()                  # foreign keys are enforced: the users first
     db.add_all([
         EncryptedTasteVector(user_id=1, media_category="show", salt="", encrypted_blob=blob(B)),
         EncryptedTasteVector(user_id=2, media_category="show", salt="", encrypted_blob=blob(A, items=5)),

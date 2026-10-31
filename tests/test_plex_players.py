@@ -17,9 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, WatchHistoryEntry as W  # noqa: E402
 import src.services.plex_players as pp  # noqa: E402
@@ -48,8 +46,10 @@ orphan = (ROOT / "src/services/orphan_repair.py").read_text(encoding="utf-8")
 check("...and so does the import of history plays", "player=_player[0], platform=_player[1]," in orphan)
 
 # ── the plays already stored ────────────────────────────────────────────────
-engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 S = sessionmaker(bind=engine)
 
 

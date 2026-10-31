@@ -18,9 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine, text  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
@@ -48,7 +47,8 @@ check("...is not news for the watched-a-recommendation follow-up",
 check("...and a history play never borrows the mark from the listing", "_marked" in ps._LISTING_ONLY_KEYS)
 
 # ── the migration repairs what was stored ───────────────────────────────────
-eng = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+eng = memory_engine()
 conn_mod.engine = eng
 Base.metadata.create_all(bind=eng)
 with eng.begin() as c:

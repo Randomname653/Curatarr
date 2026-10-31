@@ -141,9 +141,7 @@ import asyncio  # noqa: E402
 from contextlib import contextmanager  # noqa: E402
 
 import numpy as np  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.cache.metadata_cache as mc_mod  # noqa: E402
 import src.services.embed_service as es  # noqa: E402
@@ -151,9 +149,10 @@ import src.services.taste_engine as te  # noqa: E402
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 from src.database.models import Base, EnrichmentStatus, WatchHistoryEntry  # noqa: E402
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 # Bind the app's own session factory too: app_state and the other modules
 # that import get_db_session directly would otherwise reach the live
 # data/curatarr.db (they only passed while that file happened to exist).

@@ -16,9 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine, func, text  # noqa: E402
+from sqlalchemy import func, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
@@ -57,7 +56,8 @@ check("a mark after a started viewing finishes that row and keeps its time and m
       and "RESUME_WINDOW_DAYS" in mark_branch)
 
 # ── the migration repairs what was stored ───────────────────────────────────
-eng = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+eng = memory_engine()
 conn_mod.engine = eng
 Base.metadata.create_all(bind=eng)
 with eng.begin() as c:

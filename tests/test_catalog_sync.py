@@ -134,7 +134,6 @@ check("no SoulSync -> clean skip (task never stays due)",
 
 # ── freshness guard integration in _delete_one_and_log ───────────────────────
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.database.models import Base, DeletionProposal
@@ -144,9 +143,10 @@ from sqlalchemy.pool import StaticPool
 
 # StaticPool + recs' sessions on it: the delete path opens its own sessions
 # on the DB worker threads
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 db = sessionmaker(bind=engine)()
 db.add(DeletionProposal(id=1, user_id=1, title="Stale Band", service="lidarr",
                         media_id="77", reason="r", confidence=0.8,

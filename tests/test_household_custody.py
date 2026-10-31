@@ -27,13 +27,12 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 PASS = FAIL = 0
 
 
+from _checks import memory_engine  # noqa: E402
 def check(name, cond, info=None):
     global PASS, FAIL
     if cond:
@@ -53,8 +52,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fresh_db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
     make = sessionmaker(bind=engine)
 

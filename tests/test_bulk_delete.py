@@ -14,7 +14,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -29,9 +28,10 @@ from _checks import check  # noqa: E402
 
 # StaticPool: one in-memory DB for every session, on every thread (the
 # delete path opens its own sessions on the DB worker threads)
-engine = create_engine("sqlite://",
-                       connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 Session = sessionmaker(bind=engine)
 _shared = Session()   # seeds and reads back
 

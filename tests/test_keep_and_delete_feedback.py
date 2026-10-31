@@ -20,7 +20,6 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import src.routers.recommendations as recs
@@ -32,8 +31,10 @@ from tests.frontend_files import everything
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 db = sessionmaker(bind=engine)()
 recs._latest_curator_stance_for_proposal = lambda db, uid, pid, fallback_pitch=None: ("pitch", "CONFIRMED")
 USER = SimpleNamespace(id=1, is_admin=True)

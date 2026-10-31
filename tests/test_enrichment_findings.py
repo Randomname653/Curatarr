@@ -14,6 +14,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
+from _checks import memory_engine, with_users  # noqa: E402
 from src.services import enrichment_state as es
 
 
@@ -22,9 +23,9 @@ def _mem_session():
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
     from src.database.models import Base
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
+    with_users(engine, 1)              # findings are resolved_by a real user
     S = sessionmaker(bind=engine)
 
     @contextmanager
@@ -199,7 +200,7 @@ def test_record_finding_twice_in_one_session_does_not_duplicate():
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
     from src.database.models import Base, EnrichmentFinding
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
     S = sessionmaker(bind=engine, autoflush=False)
     db = S()

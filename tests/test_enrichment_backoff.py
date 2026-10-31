@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+from _checks import memory_engine  # noqa: E402
 from src.services import enrichment_state as es
 
 
@@ -37,8 +38,7 @@ def test_due_clause_matches_python():
     from sqlalchemy.pool import StaticPool
     from src.database.models import Base, EnrichmentStatus
 
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
     S = sessionmaker(bind=engine)
     now = datetime(2026, 9, 6, 12, 0, 0)

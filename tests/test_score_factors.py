@@ -18,9 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import src.database.connection as conn_mod
 import src.routers.recommendations as recs
@@ -96,8 +95,10 @@ check("both proposal builders (pillar + legacy) attach the breakdown",
       and src.count('"score_factors": _with_guard(_score_factors(cand), cand, verdict),') == 1)
 
 # ── through the database ─────────────────────────────────────────────────────
-db = sessionmaker(bind=create_engine("sqlite://"))()
+from _checks import memory_engine, with_users  # noqa: E402
+db = sessionmaker(bind=memory_engine())()
 Base.metadata.create_all(db.get_bind())
+with_users(db.get_bind(), 1)
 db.add(DeletionProposal(id=1, user_id=1, title="A", service="radarr", media_id="1",
                         score_factors=recs._dump_score_factors(sf)))
 db.add(DeletionProposal(id=2, user_id=1, title="B", service="radarr", media_id="2"))
@@ -113,7 +114,7 @@ check("the manual analysis stores it", 'score_factors=_dump_score_factors(p.get(
       (ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8"))
 
 # ── existing databases gain the column ───────────────────────────────────────
-mem = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+mem = memory_engine()
 conn_mod.engine = mem
 with mem.begin() as c:
     c.execute(text("CREATE TABLE deletion_proposals (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)"))
