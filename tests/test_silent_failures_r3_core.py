@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 
 from fastapi import HTTPException  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 
 PASS = FAIL = 0
@@ -46,10 +47,9 @@ def check(name, cond):
 
 def test_walker_attempts_send_failures_back():
     from src.services import enrichment_state as es
-    state = {}
+    from _checks import real_state  # noqa: E402
+    state = real_state()          # the real app_state table, not a dict
     saved = (app_state.get_state, app_state.set_state)
-    app_state.get_state = lambda k: state.get(k)
-    app_state.set_state = lambda k, v: state.__setitem__(k, v)
     try:
         es.save_walker_attempts("w", {"a": "2026-10-15T10:00:00", "gone": "x"}, keep={"a", "b"})
         got = es.load_walker_attempts("w")

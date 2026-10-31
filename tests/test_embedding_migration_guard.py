@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 from src.config import settings
 
 # A throwaway store: this suite deletes and creates collections.
@@ -97,10 +98,9 @@ check("…and the v2 corpus was not touched",
 
 # ── rollback restores the PREVIOUS profile, not the default ──────────────────
 
-state: dict = {}
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 flips: list = []
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v)
 es.set_profile = lambda p: flips.append(p)
 
 es._profile_cache["value"] = dict(em.V2_PROFILE)

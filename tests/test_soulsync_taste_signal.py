@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.soulsync_client as ss  # noqa: E402
 import src.services.taste_engine as te  # noqa: E402
@@ -51,15 +52,23 @@ def test_a_followed_artist_without_a_play_is_current():
     assert abs(w - te.FOLLOW_FACTOR) < 1e-12, w
 
 
+from _checks import real_state  # noqa: E402
+
+
 def _with_state(fn, state):
+    """Run ``fn`` with ``state`` loaded into the REAL app_state table; the
+    table's contents are copied back into ``state`` for the checks."""
     real = (app_state.get_state, app_state.set_state, ss.watchlist_artists, ss.liked_song_artists)
-    app_state.get_state = lambda k: state.get(k)
-    app_state.set_state = lambda k, v: state.__setitem__(k, v)
+    table = real_state()
+    table.clear()
+    table.update(state)
     settings_real = (settings.SOULSYNC_URL, settings.SOULSYNC_API_KEY)
     settings.SOULSYNC_URL, settings.SOULSYNC_API_KEY = "http://soulsync.test", "sk_test"
     try:
         return fn()
     finally:
+        state.clear()
+        state.update(dict(table.items()))
         (app_state.get_state, app_state.set_state, ss.watchlist_artists,
          ss.liked_song_artists) = real
         settings.SOULSYNC_URL, settings.SOULSYNC_API_KEY = settings_real

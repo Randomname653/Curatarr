@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state
 import src.services.scheduler as sched
 import update_db
@@ -62,7 +63,8 @@ for i in range(7):
     (bdir / f"curatarr_2026010{i}_000000.db").write_bytes(b"x" * 10)
 
 settings.DATABASE_URL = "sqlite:///" + str(live)
-app_state.get_state = lambda k: None
+from _checks import real_state  # noqa: E402
+real_state().clear()            # the real app_state table, empty
 _real_free = sched._free_bytes
 
 free = {"bytes": 0}

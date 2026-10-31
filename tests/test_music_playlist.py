@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as dbc
 import src.services.app_state as app_state
 import src.services.plex_playlists as pp
@@ -27,9 +28,8 @@ from _checks import check  # noqa: E402
 
 # ── neighbours: union minus favourites, cap, cache ───────────────────────────
 
-_state = {}
-app_state.get_state = lambda key, default=None: _state.get(key, default)
-app_state.set_state = lambda key, value: _state.__setitem__(key, value)
+from _checks import real_state  # noqa: E402
+_state = real_state()          # the real app_state table, not a dict
 
 calls = []
 

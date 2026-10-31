@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.household_compare as hc  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.wrapup_store as store  # noqa: E402
@@ -49,9 +50,8 @@ def fake_db_session():
 
 
 hc.get_db_session = fake_db_session
-state: dict = {}
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v) or True
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 
 with fake_db_session() as db:
     for i, name in enumerate(("me", "anna", "ben", "cleo", "dan"), 1):

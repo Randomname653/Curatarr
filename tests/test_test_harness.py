@@ -100,4 +100,36 @@ with contextlib.redirect_stdout(io.StringIO()):
     probe.table("t", [("ok", 2, 4), ("bad", 3, 7), ("boom", None, 0)], lambda x: x * 2)
 check("check.table: one pass, two failures, no crash", (probe.passed, probe.failed) == (1, 2))
 
+# ── 6. real_state: the real app_state table behind a dict's face ───────────
+from _checks import real_state  # noqa: E402
+from src.services import app_state as _as  # noqa: E402
+st = real_state()
+st.clear()
+st["harness:a"] = "1"
+check("real_state: a write lands in the real table", _as.get_state("harness:a") == "1")
+_as.set_state("harness:b", "2")
+check("real_state: the app's own writes are visible", st.get("harness:b") == "2" and "harness:b" in st)
+check("real_state: keys, items and len read the table",
+      set(st.keys()) == {"harness:a", "harness:b"} and len(st) == 2 and dict(st.items())["harness:a"] == "1")
+check("real_state: a missing key is a KeyError / the default",
+      st.get("nope", "d") == "d" and "nope" not in st)
+check("real_state: pop and del remove the row", st.pop("harness:a") == "1" and _as.get_state("harness:a") is None)
+st.update({"harness:c": "3"})
+st.clear()
+check("real_state: clear empties the table", len(st) == 0 and _as.get_state("harness:b") is None)
+
+import asyncio  # noqa: E402
+from src.database import loop_guard  # noqa: E402
+loop_guard.reset()
+
+
+async def _bookkeeping():
+    st["harness:loop"] = "x"            # a suite's fake snapshotting state on the loop
+    return st.get("harness:loop"), dict(st.items())
+
+got, snap = asyncio.run(_bookkeeping())
+check("real_state on the event loop works and stays off the loop guard",
+      got == "x" and snap == {"harness:loop": "x"}
+      and not [s for s in loop_guard.snapshot()["sites"] if "tests/" in s["site"] or s.get("coroutine")])
+
 check.done()

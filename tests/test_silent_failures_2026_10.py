@@ -40,6 +40,7 @@ import httpx  # noqa: E402
 from sqlalchemy.exc import OperationalError  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.bg_tasks as bg_tasks  # noqa: E402
@@ -55,6 +56,9 @@ from src.database.models import Base, ConversationMessage, DeletionProposal, Pro
 from src.services.endpoint_policy import validate_service_url  # noqa: E402
 
 PASS = FAIL = 0
+
+
+from _checks import real_state  # noqa: E402
 
 
 def check(name, cond):
@@ -138,7 +142,7 @@ def test_thread_anchor_reads_inside_session():
                                 thread_id=f"deletion_proposal:{dp_id}"),
         ])
 
-    prompts, feedback, state = [], [], {}
+    prompts, feedback, state = [], [], real_state()   # the real app_state table
 
     async def _fake_run(user_id, prompt, media_category=None, quiet_s=0.0):
         prompts.append(prompt)
@@ -155,8 +159,6 @@ def test_thread_anchor_reads_inside_session():
              app_state.get_state, app_state.set_state, bg_tasks.track_task)
     em._run_memory_extraction = _fake_run
     em.analyze_recommendation_feedback = _fake_feedback
-    app_state.get_state = lambda k: state.get(k)
-    app_state.set_state = lambda k, v: state.__setitem__(k, v)
     bg_tasks.track_task = _fake_track
     try:
         asyncio.run(em.extract_memories_from_thread(7, f"proactive_message:{pm_id}"))

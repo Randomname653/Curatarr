@@ -21,7 +21,8 @@ from fastapi import HTTPException                        # noqa: E402
 from sqlalchemy import create_engine                     # noqa: E402
 from sqlalchemy.orm import sessionmaker                  # noqa: E402
 
-from _checks import memory_engine, with_users  # noqa: E402
+from _checks import memory_engine, real_state, with_users  # noqa: E402
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.llm_priority as lp                   # noqa: E402
 from src.database.models import (                        # noqa: E402
     Base, ConversationMessage, DeletionProposal, ProactiveMessage)
@@ -309,8 +310,7 @@ def _run_extract(thread_id, rows, user_id=1):
              app_state.set_state, settings.PRINCIPLES_ENABLED)
     em.get_db_session = fake
     em._run_memory_extraction = fake_run
-    app_state.get_state = lambda k: None
-    app_state.set_state = lambda k, v: None
+    real_state().clear()                    # the real app_state table, empty
     settings.PRINCIPLES_ENABLED = False
     try:
         asyncio.run(em.extract_memories_from_thread(user_id, thread_id))

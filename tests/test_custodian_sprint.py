@@ -20,13 +20,13 @@ from datetime import datetime, timedelta
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.data_custodian as dc  # noqa: E402
 import src.services.scheduler as sched  # noqa: E402
 
-state: dict = {}
-app_state.get_state = lambda k: state.get(k)
-app_state.set_state = lambda k, v: state.__setitem__(k, v)
+from _checks import real_state  # noqa: E402
+state = real_state()          # the real app_state table, not a dict
 app_state.force_set_state = lambda k, v, timeout_s=120: state.__setitem__(k, v) or True
 
 real_keep_awake = dc._keep_awake

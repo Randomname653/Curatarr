@@ -110,3 +110,128 @@ def with_users(engine, *ids):
                             is_admin=uid == 1))
         db.commit()
     return engine
+
+
+def _off_loop(fn, *args):
+    """Run a suite's own bookkeeping read/write off the event-loop thread.
+    A fake coroutine that snapshots ``state`` must not show up in the loop
+    guard as the app's statement (the guard attributes it to the src
+    coroutine that called the fake); the app's own app_state calls never
+    come through here, so the guard still sees every one of those."""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return fn(*args)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(fn, *args).result()
+
+
+class RealState(dict):
+    """The real app_state table, read and written like the dict the suites
+    used to fake it with: ``state["k"]``, ``state.get("k")``, ``k in
+    state``, ``state.clear()``. Every access goes through app_state's own
+    get_state / set_state, so the string-only values, the upsert and the
+    session factory the app uses are what the suite exercises — a dict
+    stored whatever it was given and could not tell.
+
+    Subclasses dict only so ``isinstance(state, dict)`` and ``**state`` in
+    old suites keep working; the dict storage itself is never used."""
+
+    def __init__(self):
+        super().__init__()
+        from src.database import connection
+        from src.database.models import AppState
+        with connection.SessionLocal() as s:
+            AppState.__table__.create(s.get_bind(), checkfirst=True)
+
+    @staticmethod
+    def _rows():
+        def _read():
+            from src.database.connection import SessionLocal
+            from src.database.models import AppState
+            with SessionLocal() as s:
+                return dict(s.query(AppState.key, AppState.value).all())
+        return _off_loop(_read)
+
+    def __getitem__(self, key):
+        from src.services.app_state import get_state
+        v = _off_loop(get_state, key)
+        if v is None:
+            raise KeyError(key)
+        return v
+
+    def get(self, key, default=None):
+        from src.services.app_state import get_state
+        v = _off_loop(get_state, key)
+        return default if v is None else v
+
+    def __setitem__(self, key, value):
+        from src.services.app_state import set_state
+        _off_loop(set_state, key, value)
+
+    def __delitem__(self, key):
+        def _delete():
+            from src.database.connection import SessionLocal
+            from src.database.models import AppState
+            with SessionLocal() as s:
+                n = s.query(AppState).filter(AppState.key == key).delete()
+                s.commit()
+                return n
+        if not _off_loop(_delete):
+            raise KeyError(key)
+
+    def pop(self, key, *default):
+        try:
+            v = self[key]
+        except KeyError:
+            if default:
+                return default[0]
+            raise
+        del self[key]
+        return v
+
+    def __contains__(self, key):
+        return self.get(key) is not None
+
+    def __iter__(self):
+        return iter(self._rows())
+
+    def __len__(self):
+        return len(self._rows())
+
+    def keys(self):
+        return self._rows().keys()
+
+    def items(self):
+        return self._rows().items()
+
+    def values(self):
+        return self._rows().values()
+
+    def clear(self):
+        def _clear():
+            from src.database.connection import SessionLocal
+            from src.database.models import AppState
+            with SessionLocal() as s:
+                s.query(AppState).delete()
+                s.commit()
+        _off_loop(_clear)
+
+    def update(self, other=(), **kw):
+        for k, v in dict(other, **kw).items():
+            self[k] = v
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def __repr__(self):
+        return f"RealState({self._rows()!r})"
+
+
+def real_state() -> RealState:
+    """The real app_state table as a dict-like view (see RealState)."""
+    return RealState()
