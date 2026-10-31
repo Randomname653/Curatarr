@@ -126,7 +126,9 @@ APP_MAP_BLOCK = (
     "libraries' maps each Plex library to a category, 'Arr apps' holds the "
     "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify and "
     "Netflix history imports (a member's Netflix viewing counts like their "
-    "Plex viewing), 'Maintenance' has sync and repair actions and 'Compute "
+    "Plex viewing), 'Media server' connects Jellyfin and moves the install "
+    "from Plex to Jellyfin or back with all history and curation kept, "
+    "'Maintenance' has sync and repair actions and 'Compute "
     "nodes': this server and the node that lends its card, with what each "
     "card is doing right now, which the owner can rename and update there).\n"
 )
@@ -210,6 +212,7 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Activity",
     "Plex libraries",
     "Arr apps",
+    "Media server",
     "Users",
     "Maintenance",
     "Settings",

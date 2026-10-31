@@ -1,0 +1,8 @@
+{
+ "ServerName": "nas",
+ "Version": "10.10.3",
+ "ProductName": "Jellyfin Server",
+ "Id": "d4e3c2b1a0f9e8d7c6b5a4938271605f",
+ "OperatingSystem": "Linux",
+ "StartupWizardCompleted": true
+}

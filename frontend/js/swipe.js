@@ -22,6 +22,7 @@
 import { api } from './api.js';
 import { _errHtml, _errMsg, act, activeDialog, emptyHtml, esc, proxyImg, toast } from './ui.js';
 import { haptic } from './mobile.js';
+import { serverLabel } from './state.js';
 
 const CATS = [['movie', 'Movies'], ['show', 'TV Shows'], ['anime', 'Anime']];
 const REACT = {
@@ -260,7 +261,7 @@ async function _fill() {
     _add(r.cards);
     if (!_queue.length) {
       _deckMsg(r.reason === 'no_taste'
-        ? emptyHtml('No taste profile for this category yet. Watch a few titles in Plex first, then come back.')
+        ? emptyHtml(`No taste profile for this category yet. Watch a few titles in ${serverLabel()} first, then come back.`)
         : _doneHtml());
       return;
     }

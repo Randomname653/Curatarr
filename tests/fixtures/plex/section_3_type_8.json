@@ -1,0 +1,24 @@
+{
+ "MediaContainer": {
+  "size": 1,
+  "Metadata": [
+   {
+    "ratingKey": "3001",
+    "type": "artist",
+    "title": "Björk",
+    "librarySectionID": 3,
+    "addedAt": 1700002000,
+    "Guid": [
+     {
+      "id": "mbid://87c5dedd-371d-4a53-9f7f-80522fb7f3cb"
+     }
+    ],
+    "Genre": [
+     {
+      "tag": "Electronic"
+     }
+    ]
+   }
+  ]
+ }
+}

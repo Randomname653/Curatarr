@@ -52,16 +52,8 @@ def _guess_category(section: dict) -> str:
 
 # ── DISCOVER ─────────────────────────────────────────────────────────────────
 
-@router.get("/discover")
-@ttl_response(30, shared=True)   # the Plex server's own sections
-async def discover_libraries(user: User = Depends(require_admin)):
-    """
-    Fetch all Plex library sections with stats: item count, size, scan time, paths.
-
-    Admin-only: the section filesystem paths and the household-wide play
-    counts are the admin's, and only the admin's library mapping (settings
-    pane, first-run onboarding) reads this.
-    """
+async def _plex_sections() -> tuple[list, list]:
+    """The Plex server's sections and their item counts."""
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
 
@@ -103,6 +95,51 @@ async def discover_libraries(user: User = Depends(require_admin)):
             *[_fetch_section_count(client, s.get("key", "")) for s in sections],
             return_exceptions=True,
         )
+    return sections, counts
+
+
+async def _jellyfin_sections() -> tuple[list, list]:
+    """The Jellyfin server's libraries in the shape the Plex sections have
+    (key / title / type / Location), so the mapping below reads both. Item
+    counts are the top-level titles: films, series, album artists."""
+    from src.services.media_server import MediaServerNotConfigured, get_adapter
+    try:
+        adapter = get_adapter()
+        libs = await adapter.libraries()
+    except MediaServerNotConfigured:
+        raise HTTPException(status_code=503, detail="Jellyfin not configured")
+    except Exception as e:  # noqa: BLE001 - the admin sees a 502, the log keeps the cause
+        logger.warning("[libraries] Jellyfin libraries not read: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer")
+    plex_type = {"movie": "movie", "show": "show", "music": "artist"}
+    sections = [{"key": lib.key, "title": lib.title, "type": plex_type[lib.kind],
+                 "Location": [{"path": r} for r in lib.roots]} for lib in libs]
+    counts = []
+    for lib in libs:
+        try:
+            counts.append(await adapter.count_items(lib))
+        except Exception as e:  # noqa: BLE001 - a count is decoration; the mapping works without it
+            logger.warning("[libraries] Jellyfin count for %s not read: %s", lib.title, e)
+            counts.append(0)
+    return sections, counts
+
+
+
+@router.get("/discover")
+@ttl_response(30, shared=True)   # the Plex server's own sections
+async def discover_libraries(user: User = Depends(require_admin)):
+    """
+    Fetch all Plex library sections with stats: item count, size, scan time, paths.
+
+    Admin-only: the section filesystem paths and the household-wide play
+    counts are the admin's, and only the admin's library mapping (settings
+    pane, first-run onboarding) reads this.
+    """
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        sections, counts = await _jellyfin_sections()
+    else:
+        sections, counts = await _plex_sections()
 
     # DB counts per media category (WatchHistoryEntry has no section_id column)
     from src.database.connection import get_db_session

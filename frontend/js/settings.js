@@ -1,14 +1,15 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, openModal, setStatus, toast, trackDirty } from './ui.js';
 import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
 import { loadUsers } from './admin.js';
 import { loadLibraryConfig } from './libraries.js';
 import { showView } from './nav.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { loadNodes } from './nodes.js';
+import { loadMediaServer } from './media_switch.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, 'Re-attributing…');
@@ -16,6 +17,7 @@ export async function reattributeHistory(btn) {
   try {
     const r = await api('/api/history/admin/re-attribute', 'POST');
     if (r.error) { setStatus(status, r.error, 'err'); return; }
+    if (r.skipped) { setStatus(status, r.reason, 'ok'); return; }
 
     // Build a calmer summary that explains what each bucket actually means.
     const lines = ['Done.'];
@@ -62,13 +64,13 @@ export async function cleanupOrphans(btn) {
       const again = await confirmDialog({
         title: `Hide ${r.would_archive} of ${r.examined} history entries?`,
         confirmLabel: 'Hide anyway',
-        body: '<p>That is more than a fifth of all history. This usually means a library was not fully readable, not that the media is gone.</p><p class="t3 fs-12 mt-8">Only continue if you really removed that much from Plex.</p>',
+        body: `<p>That is more than a fifth of all history. This usually means a library was not fully readable, not that the media is gone.</p><p class="t3 fs-12 mt-8">Only continue if you really removed that much from ${serverLabel()}.</p>`,
       });
       if (!again.ok) { setStatus(status, r.error + ' (hidden: 0)', 'err'); return; }
       r = await api('/api/history/admin/cleanup-orphans?force=true', 'POST');
     }
     if (r.error) { setStatus(status, r.error + ' (hidden: 0)', 'err'); return; }
-    const back = r.returned ? `, ${r.returned} back in Plex` : '';
+    const back = r.returned ? `, ${r.returned} back in ${serverLabel()}` : '';
     setStatus(status, `Done — hid ${r.archived} of ${r.examined} entries checked${back}`, 'ok');
     toast(`Hid ${r.archived} history entries for removed media`, 'success');
     if (r.archived > 0 || r.returned > 0) setTimeout(loadHistoryStatus, 800);
@@ -107,9 +109,14 @@ export function openSettingsPane(name, btn) {
     loadLibrarySettings();
   } else if (name === 'integrations') {
     loadIntegrations();
+  } else if (name === 'media-server') {
+    loadMediaServer();
   } else if (name === 'users') {
     loadUsers();
   } else if (name === 'maintenance') {
+    // Plex parks plays on the admin until their member signs in; Jellyfin never does.
+    const ra = document.getElementById('maint-reattribute');
+    if (ra) ra.hidden = state.currentUser?.server === 'jellyfin';
     loadNodes();
     loadDepsStatus();
     loadModelUpdates();
@@ -164,6 +171,11 @@ const INTEGRATION_CARDS = [
   {key: 'plex', title: 'Plex', test: 'plex', fields: [
     {id: 'plex_url', label: 'Server URL', placeholder: 'http://192.168.1.100:32400'},
     {id: 'plex_token', label: 'Auth state.token', secret: true, required: true},
+  ]},
+  {key: 'jellyfin', title: 'Jellyfin', test: 'jellyfin',
+   hint: 'Used when this install runs on Jellyfin (MEDIA_SERVER_TYPE=jellyfin).', fields: [
+    {id: 'jellyfin_url', label: 'Server URL', placeholder: 'http://192.168.1.100:8096'},
+    {id: 'jellyfin_api_key', label: 'API key', secret: true},
   ]},
   {key: 'models', title: 'Ollama & models', test: 'ollama', fields: [
     {id: 'ollama_endpoint', label: 'Ollama endpoint', placeholder: 'http://localhost:11434'},
@@ -246,7 +258,9 @@ export function renderIntegrationCard(card, cfg) {
   const testBtn = card.test
     ? `<button type="button" class="btn btn-secondary btn-sm" ${act('testIntegration', card.key, EL)}>Test connection</button>` : '';
   const rebuild = card.key === 'models'
-    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>` : '';
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>`
+    : card.key === 'jellyfin' && state.currentUser?.server === 'jellyfin'
+      ? `<button type="button" class="btn btn-secondary btn-sm" ${act('showJellyfinWebhook')}>Webhook setup</button>` : '';
   el.innerHTML = `
     <div class="section-head"><h3>${esc(card.title)}</h3>${card.hint ? `<span class="section-hint">${esc(card.hint)}</span>` : ''}</div>
     <div class="section-body">
@@ -308,6 +322,30 @@ export async function clearIntegrationSecret(fieldId, cardKey, btn) {
   } catch (e) { setStatus(msg, _errMsg(e), 'err'); btnDone(btn); }
 }
 
+// The Webhook plugin's destination (history tier B, design §4.2): what to
+// paste into Jellyfin. Opening it creates the shared secret.
+export async function showJellyfinWebhook(rotate = false) {
+  let w;
+  try {
+    if (rotate) await api('/api/jellyfin/webhook/rotate', 'POST');
+    w = await api('/api/jellyfin/webhook/setup');
+  } catch (e) { toast(`Webhook setup not available — ${_errMsg(e)}`, 'danger'); return; }
+  const url = `${location.origin}${w.path}`;
+  openModal({title: 'Jellyfin Webhook plugin', size: 'wide', body: `
+    <p class="fs-13 t2 mb-12">Optional: plays arrive the moment they end, with their exact time. Without it Curatarr reads the live sessions and the played state, which works too.</p>
+    <ol class="fs-13 t2 lh-15 mb-12">
+      <li>Jellyfin Dashboard → Plugins → Catalog: install <strong>Webhook</strong>, restart Jellyfin.</li>
+      <li>Plugins → Webhook → <strong>Add Generic Destination</strong>.</li>
+      <li>Webhook URL: <code>${esc(url)}</code></li>
+      <li>Notification types: <strong>${w.events.map(esc).join(', ')}</strong>; tick "Send All Properties" off.</li>
+      <li>Add request header <code>${esc(w.header)}</code> with this value: <code>${esc(w.secret)}</code></li>
+      <li>Template:</li>
+    </ol>
+    <pre class="webhook-template mono">${esc(w.template)}</pre>`,
+    foot: `<button type="button" class="btn btn-secondary" ${act('showJellyfinWebhook', true)}>New secret</button>
+           <button type="button" class="btn btn-primary" ${act('closeModal')}>Done</button>`});
+}
+
 export async function testIntegration(cardKey, btn) {
   const msg = document.getElementById(`int-msg-${cardKey}`);
   const val = id => document.getElementById(`int-${id}`)?.value?.trim() || '';
@@ -315,6 +353,7 @@ export async function testIntegration(cardKey, btn) {
   // without re-typing a key that is already saved.
   let body;
   if (cardKey === 'plex') body = {service: 'plex', url: val('plex_url'), token: val('plex_token')};
+  else if (cardKey === 'jellyfin') body = {service: 'jellyfin', url: val('jellyfin_url'), api_key: val('jellyfin_api_key')};
   else if (cardKey === 'models') body = {service: 'ollama', url: val('ollama_endpoint')};
   else if (cardKey === 'metadata') body = {service: 'tmdb', api_key: val('tmdb_api_key')};
   else if (cardKey === 'music') body = val('spotify_client_id') || val('spotify_client_secret')

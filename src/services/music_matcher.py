@@ -83,6 +83,18 @@ def _index_tracks(resp, sec_key, plex_index: dict) -> None:
             }
 
 
+def _index_identities(rows: list) -> dict:
+    """The same index from the music index's (key, artist, title) rows - the
+    Jellyfin install's tracks (services/lyrics.py, filled by the daily walk
+    from Jellyfin). Worker thread, like _index_tracks."""
+    out: dict = {}
+    for key, artist, title in rows:
+        k = (_normalize(artist or ""), _normalize(title or ""))
+        if k[0] and k[1]:
+            out.setdefault(k, {"rating_key": str(key), "genres": []})
+    return out
+
+
 def _stop_requested() -> bool:
     """Return True when the GUI/API has requested a pipeline stop. An
     unreadable flag counts as a stop: reading it as "keep going" ignored the
@@ -146,8 +158,13 @@ async def match_spotify_to_plex(user_id: int) -> dict:
     """
     plex_url   = settings.effective_plex_url
     plex_token = settings.effective_plex_token
+    from src.services.media_server import active_kind
+    # On Jellyfin the tracks come from the music index, never from a Plex
+    # still named in .env (a rebind needs both): its keys are not this
+    # install's.
+    on_jellyfin = active_kind() == "jellyfin"
 
-    if not plex_url or not plex_token:
+    if not on_jellyfin and (not plex_url or not plex_token):
         return {"error": "Plex not configured"}
 
     from src.services.app_state import get_state, set_state
@@ -189,46 +206,53 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                     "match phase up to date", since_id)
         return {"matched": 0, "unmatched": 0, "skipped": 0, "up_to_date": True}
 
-    if not music_sections:
-        logger.warning("[music_matcher] No music library sections configured")
-        return {"matched": 0, "unmatched": 0, "skipped": 0,
-                "warning": "No music library configured"}
+    if on_jellyfin:
+        from src.services.lyrics import track_identities
+        rows = await asyncio.to_thread(track_identities)
+        plex_index = await asyncio.to_thread(_index_identities, rows)
+    else:
+        if not music_sections:
+            logger.warning("[music_matcher] No music library sections configured")
+            return {"matched": 0, "unmatched": 0, "skipped": 0,
+                    "warning": "No music library configured"}
 
-    headers = {
-        "Accept": "application/json",
-        "X-Plex-Token": plex_token,
-        "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
-    }
+        headers = {
+            "Accept": "application/json",
+            "X-Plex-Token": plex_token,
+            "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID,
+        }
 
-    # ── 2. Build Plex track index ─────────────────────────────────────────────
-    # Key: (norm_artist, norm_title) → {"rating_key": str, "genres": list[str]}
-    plex_index: dict[tuple, dict] = {}
+        # ── 2. Build Plex track index ─────────────────────────────────────────────
+        # Key: (norm_artist, norm_title) → {"rating_key": str, "genres": list[str]}
+        plex_index: dict[tuple, dict] = {}
 
-    async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
-        for sec_key in music_sections:
-            if await run_read(_stop_requested):
-                break
-            try:
-                resp = await client.get(
-                    f"{plex_url}/library/sections/{sec_key}/all",
-                    headers=headers,
-                    params={"type": "10"},   # type 10 = track
-                )
-                if resp.status_code != 200:
-                    logger.warning("[music_matcher] Section %s returned HTTP %s",
-                                   sec_key, resp.status_code)
-                    continue
+        async with httpx.AsyncClient(verify=tls_context(), timeout=120) as client:
+            for sec_key in music_sections:
+                if await run_read(_stop_requested):
+                    break
+                try:
+                    resp = await client.get(
+                        f"{plex_url}/library/sections/{sec_key}/all",
+                        headers=headers,
+                        params={"type": "10"},   # type 10 = track
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("[music_matcher] Section %s returned HTTP %s",
+                                       sec_key, resp.status_code)
+                        continue
 
-                await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
-            except Exception as exc:
-                logger.error("[music_matcher] Failed to fetch section %s: %s", sec_key, exc)
+                    await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
+                except Exception as exc:
+                    logger.error("[music_matcher] Failed to fetch section %s: %s", sec_key, exc)
 
     if not plex_index:
-        logger.warning("[music_matcher] No tracks found in Plex music libraries")
+        server = "Jellyfin" if on_jellyfin else "Plex"
+        logger.warning("[music_matcher] No tracks found in %s music libraries", server)
         return {"matched": 0, "unmatched": 0, "skipped": 0,
-                "warning": "No tracks found in Plex"}
+                "warning": f"No tracks found in {server}"}
 
-    logger.info("[music_matcher] Plex index: %d unique (artist, title) pairs", len(plex_index))
+    logger.info("[music_matcher] %s index: %d unique (artist, title) pairs",
+                "Jellyfin" if on_jellyfin else "Plex", len(plex_index))
 
     # ── 3. Match Spotify plays ────────────────────────────────────────────────
     # Read the work list in one short session, match in memory, and commit

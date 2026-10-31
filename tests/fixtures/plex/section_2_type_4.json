@@ -1,0 +1,87 @@
+{
+ "MediaContainer": {
+  "size": 3,
+  "Metadata": [
+   {
+    "ratingKey": "2003",
+    "type": "episode",
+    "title": "Secrets",
+    "index": 1,
+    "parentIndex": 1,
+    "parentRatingKey": "2002",
+    "grandparentRatingKey": "2001",
+    "parentTitle": "Season 1",
+    "grandparentTitle": "Dark",
+    "librarySectionID": 2,
+    "addedAt": 1700001000,
+    "duration": 3000000,
+    "Media": [
+     {
+      "Part": [
+       {
+        "file": "/data/media/tv/Dark/Season 01/Dark - S01E01.mkv",
+        "size": 1500000000
+       }
+      ]
+     }
+    ],
+    "Guid": [
+     {
+      "id": "tvdb://6216512"
+     },
+     {
+      "id": "imdb://tt5788792"
+     }
+    ]
+   },
+   {
+    "ratingKey": "2004",
+    "type": "episode",
+    "title": "Lies",
+    "index": 2,
+    "parentIndex": 1,
+    "parentRatingKey": "2002",
+    "grandparentRatingKey": "2001",
+    "parentTitle": "Season 1",
+    "grandparentTitle": "Dark",
+    "librarySectionID": 2,
+    "addedAt": 1700001000,
+    "duration": 3000000,
+    "Media": [
+     {
+      "Part": [
+       {
+        "file": "/data/media/tv/Dark/Season 01/Dark - S01E02E03.mkv",
+        "size": 3000000000
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "ratingKey": "2005",
+    "type": "episode",
+    "title": "Past and Present",
+    "index": 3,
+    "parentIndex": 1,
+    "parentRatingKey": "2002",
+    "grandparentRatingKey": "2001",
+    "parentTitle": "Season 1",
+    "grandparentTitle": "Dark",
+    "librarySectionID": 2,
+    "addedAt": 1700001000,
+    "duration": 3000000,
+    "Media": [
+     {
+      "Part": [
+       {
+        "file": "/data/media/tv/Dark/Season 01/Dark - S01E02E03.mkv",
+        "size": 3000000000
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "MediaContainer": {
+  "size": 1,
+  "Metadata": [
+   {
+    "ratingKey": "2002",
+    "type": "season",
+    "title": "Season 1",
+    "index": 1,
+    "parentRatingKey": "2001",
+    "parentTitle": "Dark",
+    "librarySectionID": 2,
+    "addedAt": 1700001000
+   }
+  ]
+ }
+}

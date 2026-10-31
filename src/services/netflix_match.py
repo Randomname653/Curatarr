@@ -23,6 +23,8 @@ import re
 import unicodedata
 from typing import Callable, Optional
 
+from src.services.media_server.base import key_namespace
+
 logger = logging.getLogger(__name__)
 
 _LANGS = ("en-US", "de-DE")
@@ -41,7 +43,7 @@ def catalog(db) -> dict:
     plex_keys = {}
     for t, k in db.query(W.title, W.plex_item_id).filter(
             W.media_type == "movie", W.source.is_(None)).distinct():
-        if t and k and str(k).isdigit():
+        if t and k and key_namespace(str(k)) == "server":
             plex_keys.setdefault(norm(t), k)
     for s, arr_id, c, t, tmdb, tvdb in db.query(AES.service, AES.arr_id, AES.category, AES.title,
                                                 AES.tmdb_id, AES.tvdb_id).filter(

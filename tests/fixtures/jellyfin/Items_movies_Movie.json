@@ -1,0 +1,129 @@
+{
+ "Items": [
+  {
+   "Name": "Heat",
+   "ServerId": "d4e3c2b1a0f9e8d7c6b5a4938271605f",
+   "Id": "4b1d2f3e5a6c7b8d9e0f1a2b3c4d5e6f",
+   "Type": "Movie",
+   "IsFolder": false,
+   "ProductionYear": 1995,
+   "RunTimeTicks": 102000000000,
+   "DateCreated": "2023-11-14T22:13:20.0000000Z",
+   "Genres": [
+    "Crime",
+    "Thriller"
+   ],
+   "ProviderIds": {
+    "Tmdb": "949",
+    "Imdb": "tt0113277",
+    "TmdbCollection": "1234"
+   },
+   "Path": "/media/movies/Heat (1995)/Heat (1995).mkv",
+   "ParentId": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+   "MediaSources": [
+    {
+     "Protocol": "File",
+     "Id": "x",
+     "Path": "/media/movies/Heat (1995)/Heat (1995).mkv",
+     "Type": "Default",
+     "Container": "mkv",
+     "Size": 7340032000,
+     "MediaStreams": [
+      {
+       "Type": "Video",
+       "Codec": "hevc",
+       "Height": 1080,
+       "Width": 1920,
+       "Index": 0
+      },
+      {
+       "Type": "Audio",
+       "Codec": "eac3",
+       "Language": "eng",
+       "Channels": 6,
+       "Index": 1
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "subrip",
+       "Language": "ger",
+       "IsExternal": true,
+       "Index": 2
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "subrip",
+       "Language": "eng",
+       "IsExternal": false,
+       "IsHearingImpaired": true,
+       "Title": "English SDH",
+       "Index": 3
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "subrip",
+       "Language": "eng",
+       "IsExternal": false,
+       "IsForced": true,
+       "Title": "Forced",
+       "Index": 4
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "PGS",
+       "Language": "fre",
+       "IsExternal": false,
+       "Index": 5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "Name": "Home Movie",
+   "Id": "5c2e3f4a6b7d8c9e0f1a2b3c4d5e6f70",
+   "Type": "Movie",
+   "ProductionYear": 2003,
+   "DateCreated": "2023-11-14T22:21:40.0000000Z",
+   "Genres": [],
+   "ProviderIds": {},
+   "Path": "/media/movies/Home Movie (2003)/home.mp4",
+   "ParentId": "f137a2dd21bbc1b99aa5c0f6bf02a805",
+   "MediaSources": [
+    {
+     "Protocol": "File",
+     "Id": "x",
+     "Path": "/media/movies/Home Movie (2003)/home.mp4",
+     "Type": "Default",
+     "Container": "mp4",
+     "Size": 123456,
+     "MediaStreams": [
+      {
+       "Type": "Video",
+       "Codec": "hevc",
+       "Height": 1080,
+       "Width": 1920,
+       "Index": 0
+      },
+      {
+       "Type": "Audio",
+       "Codec": "eac3",
+       "Language": "eng",
+       "Channels": 6,
+       "Index": 1
+      },
+      {
+       "Type": "Subtitle",
+       "Codec": "subrip",
+       "Language": "ger",
+       "IsExternal": true,
+       "Index": 2
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "TotalRecordCount": 2,
+ "StartIndex": 0
+}

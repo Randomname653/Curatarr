@@ -178,6 +178,9 @@ def library_status(_user: User = Depends(get_current_user)):
             # the Plex music index instead.
             from src.services.music_source import music_service
             out[svc]["music_source"] = music_service()
+            # 'plex' names the media server's music index; which server it is:
+            from src.services.media_server import active_kind
+            out[svc]["media_server"] = active_kind()
     return out
 
 
@@ -1894,7 +1897,27 @@ async def library_breakdown(
     plex_scanned_at: dict[str, str | None] = {}
     plex_url   = settings.effective_plex_url
     plex_token = settings.effective_plex_token
-    if plex_url and plex_token and library_rows:
+    from src.services.media_server import active_kind
+    on_jellyfin = active_kind() == "jellyfin"
+    if on_jellyfin and library_rows:
+        # The same counts from Jellyfin (top-level titles, as the library
+        # mapping shows them); never from a Plex still named in .env.
+        from src.services.media_server import get_adapter
+        from src.services.media_server.base import normalize_jellyfin_id
+        try:
+            adapter = get_adapter()
+            libs = {lib.key: lib for lib in await adapter.libraries()}
+            for row in library_rows:
+                lib = libs.get(normalize_jellyfin_id(row["key"]) or "")
+                if lib is not None:
+                    try:
+                        plex_section_counts[row["key"]] = await adapter.count_items(lib)
+                    except Exception as e:  # noqa: BLE001 - a count is decoration; logged
+                        logger.warning("[breakdown] Jellyfin count for %s failed: %s", lib.title, e)
+                        plex_section_counts[row["key"]] = 0
+        except Exception as e:
+            logger.warning("[breakdown] Jellyfin libraries not read: %s", e)
+    elif plex_url and plex_token and library_rows:
         headers = {
             "Accept": "application/json",
             "X-Plex-Token": plex_token,

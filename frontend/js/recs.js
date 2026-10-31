@@ -2,7 +2,7 @@
 // Moved state.currentRecsCategory to state
 // Moved state._recsPollTimer to state
 // Moved state._recsPollKillswitch to state
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
@@ -85,7 +85,7 @@ export async function onAddRecToArr(btn) {
       if (!lid.configured && lid.music_source === 'plex') {
         const w = await api('/api/library/wish', 'POST', {title, source: 'rec'});
         btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
-        toast(w.in_library ? `"${title}" is already in your Plex music` : `"${title}" is on the wanted list`, w.in_library ? 'info' : 'success');
+        toast(w.in_library ? `"${title}" is already in your ${serverLabel()} music` : `"${title}" is on the wanted list`, w.in_library ? 'info' : 'success');
         return;
       }
     }
@@ -133,7 +133,7 @@ export async function onWishRec(btn) {
   try {
     const w = await api('/api/library/wish', 'POST', {title, source: 'rec'});
     btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
-    toast(w.in_library ? `"${title}" is already in the Plex music`
+    toast(w.in_library ? `"${title}" is already in the ${serverLabel()} music`
                        : `"${title}" is on the household's wanted list`, w.in_library ? 'info' : 'success');
   } catch (e) {
     let detail = e.message || 'failed';

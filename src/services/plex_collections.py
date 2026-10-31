@@ -97,6 +97,10 @@ async def push_collections(designs: list[dict]) -> dict:
     Cleans ALL sections passed in *plus* any sections named in the previous
     push snapshot, so an emptied category doesn't strand orphans. Snapshot
     lands in app_state "curatarr_collections"."""
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server import jellyfin_writes
+        return await jellyfin_writes.push_collections(designs)
     from src.database.runner import run_read, run_write
     from src.services.app_state import get_state, set_state
 

@@ -110,7 +110,12 @@ async def add_to_watchlist(user_id: int, title: str,
 
     Returns ``{"ok": True, "matched": <discover title/year>}`` or
     ``{"ok": False, "error": ...}`` — callers log, they don't retry.
+    On Jellyfin the title goes onto the user's "Curatarr Watchlist" playlist.
     """
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server import jellyfin_writes
+        return await jellyfin_writes.add_to_watchlist(user_id, title, year=year, media_type=media_type)
     try:
         from src.database.connection import get_db_session
         from src.database.models import User

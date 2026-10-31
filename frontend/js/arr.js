@@ -10,7 +10,7 @@
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
 import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast } from './ui.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { showView, tabToHash } from './nav.js';
 const ARR_TABS = {
   sonarr: [
@@ -68,9 +68,9 @@ export async function loadArrPage(svc, tab) {
     // the header says what the page runs on
     const h = document.querySelector('#arr-lidarr-view .view-header');
     const sub = h && h.querySelector('h1 span'), lead = h && h.querySelector('p');
-    if (sub) sub.textContent = viaPlex ? 'via Plex' : 'via Lidarr';
+    if (sub) sub.textContent = viaPlex ? `via ${serverLabel()}` : 'via Lidarr';
     if (lead) lead.textContent = viaPlex
-      ? 'Browse and curate your Plex music; wanted artists become wishes you fulfil in SoulSync.'
+      ? `Browse and curate your ${serverLabel()} music; wanted artists become wishes you fulfil in SoulSync.`
       : 'Browse, add, and curate your Lidarr library.';
   }
   _arrTabsEff[svc] = viaPlex
@@ -195,7 +195,7 @@ export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
     : ci.source === 'cache'
     ? `<span class="badge muted badge-sm" title="Served from the 15-min server cache (${ageStr})">cached ${ageStr}</span>`
     : ci.source === 'plex-index'
-    ? '<span class="badge info badge-sm" title="Artists, albums and sizes from the Plex music index — Lidarr is not configured">Plex index</span>'
+    ? `<span class="badge info badge-sm" title="Artists, albums and sizes from the ${serverLabel()} music index — Lidarr is not configured">${serverLabel()} index</span>`
     : ci.source === 'stale'
     ? `<span class="badge amber badge-sm" title="${esc(svc)} unreachable: ${esc(ci.stale_error || 'connection failed')} — showing cache from ${ageStr}">stale ${ageStr}</span>`
     : '';
@@ -578,7 +578,7 @@ export function renderBacklogCard(svc, a, idx) {
   const viaPlex = _arrMusicSource === 'plex';
   if (a.in_library || a.in_lidarr) {
     addBtn = viaPlex
-      ? '<span class="badge success badge-sm" title="Already in your Plex music library">in library</span>'
+      ? `<span class="badge success badge-sm" title="Already in your ${serverLabel()} music library">in library</span>`
       : '<span class="badge success badge-sm" title="Already in your Lidarr library">in Lidarr</span>';
   } else if (viaPlex) {
     addBtn = `<button type="button" class="btn btn-primary btn-sm" ${act('wishArtist', svc, idx, EL)}>Wish</button>`;
@@ -670,7 +670,7 @@ export async function renderWanted(svc) {
   const body = rows.length ? rows.map(w => `
     <div class="panel-item">
       <div class="panel-item-head">
-        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? '<span class="badge success badge-sm" title="Plex has the artist now">in library</span>' : ''}${w.deleted ? DELETED_BADGE : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
+        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? `<span class="badge success badge-sm" title="${serverLabel()} has the artist now">in library</span>` : ''}${w.deleted ? DELETED_BADGE : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
         <div class="panel-actions">${w.can_remove ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>${w.own ? 'Take back' : 'Remove'}</button>` : ''}</div>
       </div>
       <div class="panel-item-meta">wished by ${w.own ? 'you' : esc(w.wished_by || 'someone')} ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>
@@ -679,7 +679,7 @@ export async function renderWanted(svc) {
   contentEl.innerHTML = `<section class="section">
     <div class="section-head">
       <h3>Wanted <span class="badge muted badge-sm">${rows.length}</span></h3>
-      <span class="section-hint">Artists anyone in the household asked for while no arr is configured. The owner fulfils them in SoulSync; the badge turns green once Plex has them.</span>
+      <span class="section-hint">Artists anyone in the household asked for while no arr is configured. The owner fulfils them in SoulSync; the badge turns green once ${serverLabel()} has them.</span>
       <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderWanted', svc)}>Refresh</button></div>
     </div>
     <div class="section-body">${body}</div></section>`;

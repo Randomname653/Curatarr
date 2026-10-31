@@ -346,6 +346,10 @@ async def push_user_playlists(user) -> dict:
     """Refresh one user's Curatarr-Recommended playlists from their cached
     LIBRARY-lane recommendations. Returns {"pushed": [cat…], "skipped": str?}.
     Raises on transient Plex errors so the custodian task stays due."""
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server import jellyfin_writes
+        return await jellyfin_writes.push_user_playlists(user)
     if not user.plex_token:
         logger.info("[playlists] %s: no stored Plex token — playlist appears "
                     "after their next login; skipped.", user.plex_username)
@@ -518,6 +522,10 @@ async def push_user_music_playlist(user) -> dict:
     so a set-delta reconcile would compare tracks against albums and
     remove/re-add everything anyway — identity preservation buys nothing
     here."""
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server import jellyfin_writes
+        return await jellyfin_writes.push_user_music_playlist(user)
     if not user.plex_token:
         logger.info("[playlists] %s: no stored Plex token — music playlist "
                     "appears after their next login; skipped.", user.plex_username)
@@ -611,6 +619,10 @@ async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: lis
     """Create (or replace) the user's wrap-up playlist(s). ``videos``:
     [{title, media_type}], ``tracks``: [{track, artist}]. Returns
     {"pushed": [{title, items}], "missing": [title…]} or {"skipped": reason}."""
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server import jellyfin_writes
+        return await jellyfin_writes.push_wrapup_playlist(user, label, videos, tracks)
     if not user.plex_token:
         return {"skipped": "no_token"}
     if not await get_machine_identifier():

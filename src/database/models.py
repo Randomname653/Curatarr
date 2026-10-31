@@ -157,7 +157,7 @@ class LibraryConfig(Base):
     __tablename__ = "library_config"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    plex_section_key = Column(String(16), nullable=False, unique=True)
+    plex_section_key = Column(String(64), nullable=False, unique=True)
     plex_section_title = Column(String(256), nullable=False)
     plex_section_type = Column(String(32), nullable=False)   # artist/show/movie
     media_category = Column(String(32), nullable=False)      # music/anime/show/movie
@@ -621,6 +621,9 @@ class PlexRating(Base):
     # Always lowercase-comparable; we store as-typed and use func.lower at
     # query time for case-insensitive matches against Lidarr artistName.
     artist_name   = Column(String(512), nullable=True, index=True)
+    # NULL = a Plex star rating; "jellyfin_like" = a Jellyfin like (10),
+    # favourite (10) or dislike (2) (media_server/jellyfin_history.sync_ratings).
+    source        = Column(String(16), nullable=True)
 
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -780,7 +783,7 @@ class MediaIdentity(Base):
     __tablename__ = "media_identities"
 
     id              = Column(Integer, primary_key=True, autoincrement=True)
-    plex_rating_key = Column(String(50), unique=True, nullable=False, index=True)
+    plex_rating_key = Column(String(64), unique=True, nullable=False, index=True)
     media_type      = Column(String(20), nullable=False)   # movie/show/anime/music
     title           = Column(String(500), nullable=False)
     year            = Column(Integer, nullable=True)
@@ -1195,9 +1198,9 @@ class MusicTag(Base):
     __tablename__ = "music_tags"
 
     id          = Column(Integer, primary_key=True, autoincrement=True)
-    section_key = Column(String(32), nullable=False)
+    section_key = Column(String(64), nullable=False)
     level       = Column(String(8), nullable=False)      # artist | album | track
-    item_key    = Column(String(32), nullable=False)     # the Plex ratingKey
+    item_key    = Column(String(64), nullable=False)     # the server item key
     kind        = Column(String(8), nullable=False)      # mood | style
     tag         = Column(String(128), nullable=False)
     seen_at     = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -1275,3 +1278,50 @@ class TitleNanogenre(Base):
     assigned_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (Index("idx_title_nanogenre_title", "title", "domain"),)
+
+
+class ServerIdMap(Base):
+    """The id memory a rebind runs on (services/media_server/id_map,
+    docs/JELLYFIN_DESIGN.md §8.2): every title, user and library under a
+    server-independent ``canonical_key`` ("tmdb:949", "tvdb:334824/s01e02",
+    "file:<relative path>|<size>#s01e02", "user:3"), with the id each server
+    knows it by. The active server's column is refreshed by every library
+    walk; a rebind fills the other one and never deletes a row.
+
+    The server-id columns are indexed, not unique: Jellyfin files a double
+    episode as one item that Plex lists as two, so one Jellyfin id can stand
+    for two canonical keys."""
+    __tablename__ = "server_id_map"
+
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type      = Column(String(16), nullable=False)   # movie series season episode artist album track library user
+    canonical_key    = Column(String(512), nullable=False)
+    plex_id          = Column(String(64), nullable=True)
+    jellyfin_id      = Column(String(64), nullable=True)
+    match_method     = Column(String(16), nullable=False)   # external_id | file | name | server | user_flag | manual
+    last_verified_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "canonical_key", name="uq_server_id_map_key"),
+        Index("idx_server_id_map_plex", "entity_type", "plex_id"),
+        Index("idx_server_id_map_jellyfin", "entity_type", "jellyfin_id"),
+    )
+
+
+class ServerPlayState(Base):
+    """What a media server said about one user's item at the last poll
+    (history tier C, services/media_server/jellyfin_history): play count and
+    last-played date. Jellyfin keeps only the CURRENT state of an item, so a
+    new play is the difference between two polls. One row per user and item."""
+    __tablename__ = "server_play_state"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    user_id        = Column(Integer, ForeignKey("users.id"), nullable=False)
+    item_key       = Column(String(64), nullable=False)
+    play_count     = Column(Integer, nullable=False, default=0)
+    last_played_at = Column(DateTime, nullable=True)
+    seen_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "item_key", name="uq_server_play_state"),
+    )

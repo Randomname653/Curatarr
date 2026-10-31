@@ -819,44 +819,64 @@ async def get_redundancy(_user: User = Depends(require_admin)):
 
     from src.services.size_norms import duplicate_report
     rep = await run_read(duplicate_report)
-    try:
-        from src.services.plex_playlists import (_base, _headers, _owner_token,
-                                                 get_machine_identifier)
-        mid = await get_machine_identifier()
-        if mid:
-            rep["plex_web_base"] = (f"https://app.plex.tv/desktop/#!/server/{mid}"
-                                    "/details?key=")
-        tok = _owner_token()
-        if tok:
-            async def _attach_files(entry: dict):
-                key = entry.get("plex_rating_key")
-                if not key:
-                    return
-                try:
-                    async with httpx.AsyncClient(verify=tls_context(), timeout=10) as c:
-                        r = await c.get(f"{_base()}/library/metadata/{key}",
-                                        headers=_headers(tok))
-                    meta = ((r.json().get("MediaContainer") or {}).get("Metadata")
-                            or [{}])[0]
-                    files = []
-                    for m in meta.get("Media") or []:
-                        part = (m.get("Part") or [{}])[0]
-                        files.append({
-                            "resolution": m.get("videoResolution"),
-                            "size_gb": round((part.get("size") or 0) / 1024 ** 3, 1),
-                            "file": _os.path.basename(part.get("file") or ""),
-                        })
-                    if files:
-                        entry["files"] = files
-                except Exception as e:
-                    # Series keys carry no Media[] (handled above) — the panel
-                    # degrades; an outage stays at DEBUG, a bug warns.
-                    log_topup_failure(logger, "[redundancy] plex files", key, e)
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        # Jellyfin: a deep link per entry, and each version's file read live
+        # from MediaSources (one batched request), as the Plex branch does.
+        try:
+            from src.services.media_server import get_adapter
+            jf = get_adapter()
+            for e in (rep.get("intra_item") or []) + (rep.get("cross_item") or []):
+                link = jf.deep_link(str(e.get("plex_rating_key") or ""))
+                if link:
+                    e["server_url"] = link
+            intra = rep.get("intra_item") or []
+            files = await jf.versions([str(e.get("plex_rating_key") or "") for e in intra])
+            for e in intra:
+                got = files.get(str(e.get("plex_rating_key") or ""))
+                if got:
+                    e["files"] = got
+        except Exception as e:
+            log_topup_failure(logger, "[redundancy] jellyfin detail", "entries", e)
+    else:
+        try:
+            from src.services.plex_playlists import (_base, _headers, _owner_token,
+                                                     get_machine_identifier)
+            mid = await get_machine_identifier()
+            if mid:
+                rep["plex_web_base"] = (f"https://app.plex.tv/desktop/#!/server/{mid}"
+                                        "/details?key=")
+            tok = _owner_token()
+            if tok:
+                async def _attach_files(entry: dict):
+                    key = entry.get("plex_rating_key")
+                    if not key:
+                        return
+                    try:
+                        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as c:
+                            r = await c.get(f"{_base()}/library/metadata/{key}",
+                                            headers=_headers(tok))
+                        meta = ((r.json().get("MediaContainer") or {}).get("Metadata")
+                                or [{}])[0]
+                        files = []
+                        for m in meta.get("Media") or []:
+                            part = (m.get("Part") or [{}])[0]
+                            files.append({
+                                "resolution": m.get("videoResolution"),
+                                "size_gb": round((part.get("size") or 0) / 1024 ** 3, 1),
+                                "file": _os.path.basename(part.get("file") or ""),
+                            })
+                        if files:
+                            entry["files"] = files
+                    except Exception as e:
+                        # Series keys carry no Media[] (handled above) — the panel
+                        # degrades; an outage stays at DEBUG, a bug warns.
+                        log_topup_failure(logger, "[redundancy] plex files", key, e)
 
-            await _aio.gather(*[_attach_files(e)
-                                for e in rep.get("intra_item") or []])
-    except Exception as e:
-        log_topup_failure(logger, "[redundancy] plex detail", "intra_item", e)
+                await _aio.gather(*[_attach_files(e)
+                                    for e in rep.get("intra_item") or []])
+        except Exception as e:
+            log_topup_failure(logger, "[redundancy] plex detail", "intra_item", e)
 
     # Second jump-off: the arr detail page. The cached candidate pool
     # already carries each item's ready-made arr_url — matched per
@@ -1438,6 +1458,8 @@ def _service_configured(service: str) -> bool:
     for good."""
     if service == "plex":
         return bool(settings.effective_plex_url and settings.effective_plex_token)
+    if service == "jellyfin":
+        return bool(settings.JELLYFIN_URL and settings.JELLYFIN_API_KEY)
     url, key = {"radarr": (settings.RADARR_URL, settings.RADARR_API_KEY),
                 "sonarr": (settings.SONARR_URL, settings.SONARR_API_KEY),
                 "lidarr": (settings.LIDARR_URL, settings.LIDARR_API_KEY)}.get(service, (None, None))
@@ -1666,7 +1688,7 @@ async def deletion_delete_target(
     so it can say "moved to the Recycle Bin" or "deleted permanently"
     instead of claiming "cannot be undone" unconditionally. Read-only.
 
-    Only the four services a proposal can carry, each once: the list comes
+    Only the services a proposal can carry, each once: the list comes
     from the query string, and every name costs an arr round trip. A music
     service also says whether the delete bans the artist in SoulSync
     (deletion_returns.ban_deleted_artist), which the dialog then mentions."""
@@ -1675,13 +1697,13 @@ async def deletion_delete_target(
               if s in _DELETE_SERVICES]
     results = await asyncio.gather(*[_arr_recycle_bin(s) for s in wanted])
     targets = dict(zip(wanted, results))
-    for s in ("plex", "lidarr"):
+    for s in ("plex", "jellyfin", "lidarr"):
         if s in targets:
             targets[s]["soulsync_ban"] = soulsync_client._configured()
     return {"targets": targets}
 
 
-_DELETE_SERVICES = ("radarr", "sonarr", "lidarr", "plex")
+_DELETE_SERVICES = ("radarr", "sonarr", "lidarr", "plex", "jellyfin")
 
 
 async def _arr_recycle_bin(service: str, client=None) -> dict:
@@ -1693,7 +1715,7 @@ async def _arr_recycle_bin(service: str, client=None) -> dict:
     (0 = until emptied by hand). None means unknown — not configured or not
     answering — and the dialog says so rather than guessing. A Plex delete
     has no recycle bin: Plex removes the files directly."""
-    if service == "plex":
+    if service in ("plex", "jellyfin"):
         return {"recycle_bin": False, "cleanup_days": None}
     conf = {
         "radarr": (settings.RADARR_URL, settings.RADARR_API_KEY, settings.effective_radarr_url, "v3"),
@@ -2630,22 +2652,36 @@ async def _plex_music_candidates() -> list:
         return []
     if not arts:
         return []
-    mid = None
-    try:
-        from src.services.plex_playlists import get_machine_identifier
-        mid = await get_machine_identifier()
-    except Exception as e:
-        log_topup_failure(logger, "[plex] machine id", "music candidates", e)
+    from src.services.media_server import active_kind
+    service = active_kind()     # the index holds the active server's artists
+    mid, jf = None, None
+    if service == "jellyfin":
+        # The index was filled from Jellyfin (media_server/jellyfin_music):
+        # the same candidates, deleted and linked through Jellyfin.
+        from src.services.media_server import get_adapter
+        try:
+            jf = get_adapter()
+        except Exception as e:
+            log_topup_failure(logger, "[jellyfin] adapter", "music candidates", e)
+    else:
+        try:
+            from src.services.plex_playlists import get_machine_identifier
+            mid = await get_machine_identifier()
+        except Exception as e:
+            log_topup_failure(logger, "[plex] machine id", "music candidates", e)
     base = str(settings.effective_plex_url).rstrip("/")
     items = []
     for a in arts:
         key = str(a["artist_key"])
-        link = (f"{base}/web/index.html#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
-                if mid else f"{base}/web/index.html")
+        if jf is not None:
+            link = jf.deep_link(key)
+        else:
+            link = (f"{base}/web/index.html#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
+                    if mid else f"{base}/web/index.html")
         items.append({
             "title": a.get("name") or "", "year": None, "genres": "",
             "size_mb": (a.get("size_bytes") or 0) / (1024 * 1024),
-            "service": "plex", "arr_id": key, "plex_rating_key": key, "arr_url": link,
+            "service": service, "arr_id": key, "plex_rating_key": key, "arr_url": link,
             "category": "music", "musicbrainz_id": a.get("mbid"), "monitored": True,
             "album_count": a.get("albums") or 0, "track_count": a.get("tracks") or 0,
         })
@@ -2956,6 +2992,20 @@ async def _probe_arr(service: str) -> bool:
     Hits the /system/status endpoint (read-only, fast) with a tight timeout.
     Returns True only when the service responds with HTTP 200.
     """
+    if service == "jellyfin":
+        # A proposal rebound from Plex (scripts/rebind_server.py) deletes
+        # through Jellyfin; the adapter's ping is its cheapest call.
+        try:
+            from src.services.media_server import MediaServerNotConfigured, get_adapter
+            try:
+                adapter = get_adapter(kind="jellyfin")
+            except MediaServerNotConfigured:
+                return False
+            await adapter.ping()
+            return True
+        except Exception as e:
+            log_topup_failure(logger, "[deletions] probe", service, e)
+            return False
     if service == "plex":
         # Plex-music proposals (Lidarr not configured) — without this branch
         # every one of them went straight to limbo and _plex_delete_artist
@@ -2995,15 +3045,22 @@ async def _probe_arr(service: str) -> bool:
         return False
 
 
-# Arr ids and Plex rating keys are positive integers. Anything else - "" from
+# Arr ids are positive integers; a media server's keys have that server's own
+# shape (Plex: the same integers, Jellyfin: 32 hex). Anything else - "" from
 # a proposal built without an arr_id, "None", a path fragment - must never
 # reach a DELETE URL: "" turns /movie/{id} into the collection path, and httpx
 # collapses "../" segments into a different endpoint (2026-10-10 audit).
 _MEDIA_ID = re.compile(r"[1-9][0-9]{0,9}")
+_SERVER_SERVICES = ("plex", "jellyfin")
 
 
-def _require_media_id(value) -> Optional[str]:
-    """The id as a canonical string, or None when it is not one."""
+def _require_media_id(value, service: Optional[str] = None) -> Optional[str]:
+    """The id as a canonical string, or None when it is not one. A proposal
+    of a media server (``service`` plex / jellyfin) is checked against that
+    server's key shape, every other id against the arr shape."""
+    if service in _SERVER_SERVICES:
+        from src.services.media_server.base import require_server_key
+        return require_server_key(service, value)
     s = str(value if value is not None else "").strip()
     return s if _MEDIA_ID.fullmatch(s) else None
 
@@ -3021,7 +3078,7 @@ async def _plex_delete_artist(key: str, client=None,
     if not base or not token:
         logger.error("[plex] delete: Plex not configured")
         return False
-    checked = _require_media_id(key)
+    checked = _require_media_id(key, "plex")
     if checked is None:
         logger.error("[plex] delete refused: malformed rating key %r", key)
         return False
@@ -3177,6 +3234,28 @@ async def _execute_arr_delete(p: DeletionProposal) -> Optional[bool]:
             return _check(r, p.service)
         if p.service == "plex":
             return await _plex_delete_artist(str(p.media_id), gone_ok=retry)
+        if p.service == "jellyfin":
+            media_id = _require_media_id(p.media_id, "jellyfin")
+            if media_id is None:
+                logger.error("[jellyfin] delete refused for %r: malformed item id %r", p.title, p.media_id)
+                return False
+            from src.services.media_server import get_adapter
+            jf = get_adapter(kind="jellyfin")
+            if getattr(p, "category", None) == "music":
+                # A music-index artist (no Lidarr): album by album, then the index.
+                gone = await jf.delete_artist(media_id)
+                if gone:
+                    try:
+                        from src.services.lyrics import mark_artist_gone
+                        await asyncio.to_thread(mark_artist_gone, media_id)
+                    except Exception as e:
+                        logger.warning("[jellyfin] artist %s gone, index update failed: %s", media_id, e)
+            else:
+                gone = await jf.delete_item(media_id)
+            if not gone:
+                logger.error("[jellyfin] %r is still there after the delete - is media "
+                             "deletion allowed for the API key's user?", p.title)
+            return gone
     except Exception as e:
         logger.error("[arr] delete failed: %s", e)
     return False

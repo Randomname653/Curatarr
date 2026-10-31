@@ -512,6 +512,21 @@ class ChromaDBWrapper:
             logger.warning("[chroma] facets_delete_by_parent(%s) failed: %s", parent_id, e)
             return False
 
+    def facets_rekey(self, pairs) -> int:
+        """Rename facet parents ``old -> new`` (a server switch re-keys the
+        titles, services/media_server/rebind). A parent the new name already
+        has is left as it is. Returns the facet rows moved."""
+        moved = 0
+        with self._fmap_lock:
+            con = self._facet_map()
+            for old, new in pairs:
+                moved += con.execute("UPDATE OR IGNORE facet_map SET parent = ? WHERE parent = ?",
+                                     (str(new), str(old))).rowcount
+                con.execute("UPDATE OR IGNORE facet_migrated SET parent = ? WHERE parent = ?",
+                            (str(new), str(old)))
+            con.commit()
+        return moved
+
     def facets_count(self) -> int:
         """Facet rows (title x phrase), as the per-title index counted points."""
         try:

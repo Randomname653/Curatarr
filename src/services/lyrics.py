@@ -510,6 +510,17 @@ def plex_album_tracks(album_key: str, db_path: Optional[Path] = None) -> list:
         con.close()
 
 
+def track_identities(db_path: Optional[Path] = None) -> list:
+    """(key, artist, title) of every track in the index that is still there:
+    what the Spotify matcher matches plays onto on a Jellyfin install."""
+    con = _connect(db_path)
+    try:
+        return [(r["plex_rating_key"], r["artist"], r["title"]) for r in con.execute(
+            "SELECT plex_rating_key, artist, title FROM track_lyrics WHERE gone=0")]
+    finally:
+        con.close()
+
+
 def mark_artist_gone(artist_key: str, db_path: Optional[Path] = None) -> None:
     """After Plex deleted an artist: out of the index at once, so the next
     proposal run (before the daily walk confirms it) cannot re-propose it."""
@@ -1075,8 +1086,13 @@ async def _discover_music_sections(client, base: str, headers: dict) -> list:
 async def run_lyrics_sync(task=None) -> bool:
     """Collect from the Plex music sections — the mapped ones, else every
     artist-type section Plex has. True = the walk finished (or there is
-    nothing to walk); False = the fetch budget ran out."""
+    nothing to walk); False = the fetch budget ran out. On a Jellyfin
+    install the same index is filled from Jellyfin (media_server/jellyfin_music)."""
     import httpx
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        from src.services.media_server.jellyfin_music import run_music_index
+        return await run_music_index(task)
 
     base, token = settings.effective_plex_url, settings.effective_plex_token
     if not base or not token:

@@ -1,8 +1,8 @@
-import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdate, evaluateModelUpdate, loadDepsStatus, loadIntegrations, loadModelUpdates, loadNotificationPreferences, openModelUpdates, openSettingsPane, reattributeHistory, rebuildModels, rerunModelCompare, saveIntegrations, showSettingsAccount, startModelCompare, testIntegration } from './settings.js';
+import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdate, evaluateModelUpdate, loadDepsStatus, loadIntegrations, loadModelUpdates, loadNotificationPreferences, openModelUpdates, openSettingsPane, reattributeHistory, rebuildModels, rerunModelCompare, saveIntegrations, showJellyfinWebhook, showSettingsAccount, startModelCompare, testIntegration } from './settings.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, openLibraryItem, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { buildOnboardingModels, detectGpu, hideOnboarding, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
+import { buildOnboardingModels, detectGpu, hideOnboarding, jellyfinConnectAgain, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, setupServerKind, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
 import { cancelTask, loadTaskHistory, reloadPage } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
@@ -10,6 +10,8 @@ import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate,
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
+import { jellyfinConnectStart, jellyfinPasswordConnect, jellyfinPick, jellyfinShowPassword } from './jellyfin_connect.js';
+import { loadMediaServer, mediaServerCheck, mediaServerForget, mediaServerReconnect, mediaServerSwitch, mediaServerUndo } from './media_switch.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzoneOver, dropzoneLeave, openSpotifyPicker, onSpotifyFile } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
@@ -22,7 +24,7 @@ import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
-import { copyPlexCode, setUser, showApp, startPlexLogin } from './auth.js';
+import { copyPlexCode, jellyfinPasswordLogin, prepareLogin, setUser, showApp, startJellyfinQuickConnect, startPlexLogin } from './auth.js';
 import { SESSION_ENDED_KEY, api } from './api.js';
 import { state } from './state.js';
 import { initMobile, installApp, setHapticLevel, toggleTopbarSearch } from './mobile.js';
@@ -78,6 +80,7 @@ window.onload = async () => {
       }
     }
   }
+  await prepareLogin();
   document.getElementById('auth-overlay').classList.remove('hidden');
   // api.sessionEnded() reloads into this screen; say why, once.
   let ended = null;
@@ -163,6 +166,7 @@ const actions = {
   clearNetflixFiles,
   hideOnError,
   posterLoaded,
+  jellyfinPasswordLogin,
   jumpLatest,
   hideOnboarding,
   installApp,
@@ -293,7 +297,20 @@ const actions = {
   setPrinciple,
   setRecLane,
   setupNav,
+  setupServerKind,
+  jellyfinConnectAgain,
+  jellyfinConnectStart,
+  jellyfinPasswordConnect,
+  jellyfinPick,
+  jellyfinShowPassword,
+  loadMediaServer,
+  mediaServerCheck,
+  mediaServerForget,
+  mediaServerReconnect,
+  mediaServerSwitch,
+  mediaServerUndo,
   showKbTab,
+  showJellyfinWebhook,
   showLibrariesForce,
   showSettingsAccount,
   showTasteTab,
@@ -306,6 +323,7 @@ const actions = {
   startEnrichNew,
   startMusicPipeline,
   startOnboardingSync,
+  startJellyfinQuickConnect,
   startPlexLogin,
   startSprint,
   stopBackfill,

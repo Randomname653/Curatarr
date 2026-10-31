@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 import jwt
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
@@ -284,8 +285,13 @@ async def _bootstrap_user_data(user_id: int) -> None:
     after the login response returns.
     """
     try:
-        from src.services.plex_sync import import_plex_history_for_user
-        res = await import_plex_history_for_user(user_id)
+        from src.services.media_server import active_kind
+        if active_kind() == "jellyfin":
+            from src.services.media_server.jellyfin_history import import_history_for_user
+            res = await import_history_for_user(user_id)
+        else:
+            from src.services.plex_sync import import_plex_history_for_user
+            res = await import_plex_history_for_user(user_id)
         logger.info("[auto-onboard] history import for user %s: %s", user_id, res)
     except Exception as e:
         logger.warning("[auto-onboard] history import failed for user %s: %s", user_id, e)
@@ -369,6 +375,7 @@ def _plex_forward_url(request: Request) -> str:
 @router.post("/plex/pin")
 async def request_plex_pin(request: Request):
     """Step 1 – Request a fresh PIN from Plex."""
+    _require_active_server("plex")
     _enforce_pin_create_rate_limit((request.client.host if request.client else "") or "?")
     client_id = settings.PLEX_CLIENT_ID
     async with httpx.AsyncClient(verify=tls_context()) as client:
@@ -570,10 +577,225 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# JELLYFIN SIGN-IN (docs/JELLYFIN_DESIGN.md §3, phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
+# One Jellyfin server per install, so a sign-in against it proves membership:
+# no outside accounts exist. The FIRST account must be a Jellyfin
+# administrator (the counterpart of "the Plex server owner"). Quick Connect is
+# preferred - no password passes through Curatarr - and its secret never
+# leaves this server: the browser holds an opaque login id plus a nonce, like
+# the Plex PIN binding above.
+
+def _require_active_server(kind: str) -> None:
+    """404 for the sign-in routes of the server this install does not run:
+    a plex.tv account must not create users on a Jellyfin install, nor the
+    reverse."""
+    from src.services.media_server import active_kind
+    if active_kind() != kind:
+        raise HTTPException(status_code=404, detail=f"This Curatarr signs in with {active_kind().title()}")
+
+
+def _jellyfin_auth(device_id: Optional[str] = None):
+    from src.services.media_server.jellyfin_auth import JellyfinAuth
+    _require_active_server("jellyfin")
+    if not settings.JELLYFIN_URL:
+        raise HTTPException(status_code=503, detail="Jellyfin is not configured - finish setup first")
+    return JellyfinAuth(str(settings.JELLYFIN_URL), device_id=device_id)
+
+
+QC_LOGIN_TTL_S = 10 * 60             # Jellyfin drops a pending Quick Connect request itself
+_MAX_QC_LOGINS = 1000
+_qc_logins: dict[str, tuple[str, str, str, float]] = {}   # login id -> (nonce, secret, device id, created)
+_qc_enabled_cache: list = [None, 0.0]                     # [answer, when]
+JELLYFIN_PW_FAILS_PER_IP = 10
+JELLYFIN_PW_FAILS_GLOBAL = 100
+JELLYFIN_PW_FAIL_WINDOW_S = 15 * 60
+_JF_PW_LOCKED = "Too many wrong passwords - wait 15 minutes, or use Quick Connect"
+
+
+def _bind_qc(secret: str, device_id: str) -> tuple[str, str]:
+    now = time.time()
+    for stale in [k for k, v in _qc_logins.items() if now - v[3] >= QC_LOGIN_TTL_S]:
+        _qc_logins.pop(stale, None)
+    if len(_qc_logins) >= _MAX_QC_LOGINS:
+        for k, _ in sorted(_qc_logins.items(), key=lambda kv: kv[1][3])[:_MAX_QC_LOGINS // 2]:
+            _qc_logins.pop(k, None)
+    login_id, nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(24)
+    _qc_logins[login_id] = (nonce, secret, device_id, now)
+    return login_id, nonce
+
+
+def _check_qc(login_id: str, nonce: str) -> tuple[str, str]:
+    """``(secret, device id)`` of a pending Quick Connect sign-in, or 403
+    when the caller is not the browser that started it."""
+    entry = _qc_logins.get(login_id or "")
+    if (entry is None or time.time() - entry[3] >= QC_LOGIN_TTL_S
+            or not hmac.compare_digest((nonce or "").encode(), entry[0].encode())):
+        raise HTTPException(status_code=403,
+                            detail="Unknown or expired sign-in - start Quick Connect again")
+    return entry[1], entry[2]
+
+
+async def _quick_connect_enabled() -> Optional[bool]:
+    """Cached for a minute: the login screen asks on every load."""
+    if _qc_enabled_cache[0] is not None and time.time() - _qc_enabled_cache[1] < 60:
+        return _qc_enabled_cache[0]
+    from src.services.media_server.jellyfin_auth import JellyfinAuthError
+    try:
+        answer = await _jellyfin_auth().quick_connect_enabled()
+    except (JellyfinAuthError, HTTPException) as e:
+        logger.warning("[auth] Jellyfin Quick Connect state not read: %s", e)
+        return None
+    _qc_enabled_cache[:] = [answer, time.time()]
+    return answer
+
+
+async def _finish_jellyfin_login(who, background_tasks: BackgroundTasks) -> dict:
+    """A verified Jellyfin account becomes a Curatarr session. The account's
+    Jellyfin id is the login key (``users.plex_user_id`` holds the active
+    server's user id, design §7.2); no user token is stored."""
+    def _info(user):
+        return user.id, user.is_admin, user.token_version or 0, user.plex_username
+
+    def _jellyfin_login_existing():
+        with get_db_session() as db:
+            user = db.query(User).filter(User.plex_user_id == who.user_key).first()
+            if not user:
+                return None, db.query(User.id).first() is None
+            if not user.is_active:
+                raise HTTPException(status_code=403, detail="Account deactivated")
+            user.last_login = datetime.now(timezone.utc)
+            info = _info(user)
+            db.commit()
+            return info, False
+
+    def _jellyfin_create_user(first_ever):
+        with get_db_session() as db:
+            # Admin decided in the inserting transaction, as for Plex.
+            user = User(plex_user_id=who.user_key, plex_username=who.name,
+                        is_admin=bool(first_ever) and _no_admin_exists(db), is_active=True,
+                        created_at=datetime.now(timezone.utc))
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            return _info(user)
+
+    info, first_ever = await run_write(_jellyfin_login_existing)
+    if info is None:
+        if first_ever and not who.is_admin:
+            raise HTTPException(status_code=403, detail="Only a Jellyfin administrator can "
+                                                        "create the first (admin) account")
+        info = await run_write(_jellyfin_create_user, first_ever)
+        logger.info("New user: %s (admin=%s, Jellyfin)", who.name, info[1])
+        if not info[1]:
+            background_tasks.add_task(_bootstrap_user_data, info[0])
+    user_id, is_admin, token_version, username = info
+    from src.database.runner import run_read
+    from src.services.user_language import user_locale
+    return {"status": "ok", "token": _create_jwt(user_id, is_admin, token_version),
+            "user": {"id": user_id, "username": username, "is_admin": is_admin,
+                     "locale": await run_read(user_locale, user_id)}}
+
+
+@router.get("/server")
+async def auth_server():
+    """Which media server signs people in - the login screen asks before it
+    draws its buttons. Nothing secret: the kind, and for Jellyfin whether
+    Quick Connect is on (None when the server did not say)."""
+    from src.services.media_server import active_kind
+    kind = active_kind()
+    out = {"kind": kind}
+    if kind == "jellyfin":
+        out["quick_connect"] = await _quick_connect_enabled()
+    return out
+
+
+@router.post("/jellyfin/quickconnect")
+async def jellyfin_quick_connect(request: Request):
+    """Step 1 - a Quick Connect code for the user to approve in their
+    Jellyfin app (Settings -> Quick Connect)."""
+    from src.services.media_server.jellyfin_auth import JellyfinAuthError, JellyfinAuthRefused
+    _enforce_pin_create_rate_limit((request.client.host if request.client else "") or "?")
+    auth = _jellyfin_auth()
+    try:
+        secret, code = await auth.initiate()
+    except JellyfinAuthRefused:
+        raise HTTPException(status_code=409, detail="Quick Connect is off on this Jellyfin server - "
+                                                    "sign in with your password, or ask the admin to "
+                                                    "turn it on (Dashboard -> General)")
+    except JellyfinAuthError as e:
+        logger.warning("[auth] Jellyfin Quick Connect not started: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer - try again in a minute")
+    login_id, nonce = _bind_qc(secret, auth.device_id)
+    return {"login_id": login_id, "code": code, "nonce": nonce,
+            "expires_in": QC_LOGIN_TTL_S}
+
+
+@router.get("/jellyfin/quickconnect/{login_id}")
+async def jellyfin_quick_connect_poll(login_id: str, request: Request,
+                                      background_tasks: BackgroundTasks):
+    """Step 2 - poll until the code is approved; returns the session. The
+    ``X-Jellyfin-Login-Nonce`` header proves this is the browser that asked."""
+    from src.services import rate_limit
+    from src.services.media_server.jellyfin_auth import JellyfinAuthError, JellyfinAuthRefused
+    rate_limit.enforce("jellyfin-poll-ip", (request.client.host if request.client else "") or "?",
+                       MAX_POLLS_PER_IP_PER_MINUTE, 60, detail="Too many requests")
+    secret, device_id = _check_qc(login_id, request.headers.get("X-Jellyfin-Login-Nonce", ""))
+    auth = _jellyfin_auth(device_id)
+    try:
+        if not await auth.approved(secret):
+            return {"status": "pending"}
+        who = await auth.finish_quick_connect(secret)
+    except JellyfinAuthRefused:
+        _qc_logins.pop(login_id, None)
+        raise HTTPException(status_code=403, detail="Jellyfin refused this code - start Quick Connect again")
+    except JellyfinAuthError as e:
+        logger.warning("[auth] Jellyfin Quick Connect poll failed: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer")
+    _qc_logins.pop(login_id, None)          # one code, one session
+    return await _finish_jellyfin_login(who, background_tasks)
+
+
+class JellyfinPasswordLogin(BaseModel):
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(default="", max_length=1024)   # Jellyfin allows an empty password
+
+
+@router.post("/jellyfin/login")
+async def jellyfin_password_login(body: JellyfinPasswordLogin, request: Request,
+                                  background_tasks: BackgroundTasks):
+    """Name and password, checked by the Jellyfin server itself. Wrong ones
+    are budgeted per client and across clients, like the setup code."""
+    from src.services import rate_limit
+    from src.services.media_server.jellyfin_auth import JellyfinAuthError, JellyfinAuthRefused
+    client = (request.client.host if request.client else "") or "?"
+    if (rate_limit.remaining("jellyfin-pw-fail", client, JELLYFIN_PW_FAILS_PER_IP,
+                             JELLYFIN_PW_FAIL_WINDOW_S) <= 0
+            or rate_limit.remaining("jellyfin-pw-fail", "*", JELLYFIN_PW_FAILS_GLOBAL,
+                                    JELLYFIN_PW_FAIL_WINDOW_S) <= 0):
+        raise HTTPException(status_code=429, detail=_JF_PW_LOCKED,
+                            headers={"Retry-After": str(JELLYFIN_PW_FAIL_WINDOW_S)})
+    try:
+        who = await _jellyfin_auth().password(body.username.strip(), body.password)
+    except JellyfinAuthRefused:
+        rate_limit.enforce("jellyfin-pw-fail", client, JELLYFIN_PW_FAILS_PER_IP,
+                           JELLYFIN_PW_FAIL_WINDOW_S, detail=_JF_PW_LOCKED)
+        rate_limit.enforce("jellyfin-pw-fail", "*", JELLYFIN_PW_FAILS_GLOBAL,
+                           JELLYFIN_PW_FAIL_WINDOW_S, detail=_JF_PW_LOCKED)
+        raise HTTPException(status_code=401, detail="Wrong name or password")
+    except JellyfinAuthError as e:
+        logger.warning("[auth] Jellyfin password sign-in failed: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer - try again in a minute")
+    return await _finish_jellyfin_login(who, background_tasks)
+
+
 @router.get("/status")
 def auth_status(user: User = Depends(get_current_user)):
+    from src.services.media_server import active_kind
     from src.services.user_language import user_locale
     return {
+        "server": active_kind(),
         "authenticated": True,
         "user_id": user.id,
         "username": user.plex_username,

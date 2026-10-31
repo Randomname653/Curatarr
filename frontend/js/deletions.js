@@ -12,6 +12,10 @@ import { api } from './api.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { tabToHash } from './nav.js';
 
+// Proposals deleted through the media server itself (music without Lidarr,
+// or rebound from Plex): no arr entity to re-match, no import list.
+const _MEDIA_SERVERS = new Set(['plex', 'jellyfin']);
+
 // Disk space in the unit a person would say: 820 MB, 4.2 GB, 37 GB, 1.3 TB.
 function _fmtSize(gb) {
   gb = Number(gb);
@@ -156,7 +160,7 @@ export function _renderDeletionProposals(proposals) {
                 <button type="button" class="btn btn-danger btn-sm ml-8" ${act('approveDelete', p.id, EL)}>${limbo?'Retry delete':'Delete'}</button>
                 ${menuHtml([
                   {label: 'Challenge verdict', action: act('onReevaluateDeletion', EL), attrs: ctx, title: 'Open a discussion and ask the curator to look deeper: the creators, what the work subverts, why it might matter'},
-                  p.media_id && p.service && p.service !== 'plex' ? {label: 'Fix match', action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
+                  p.media_id && p.service && !_MEDIA_SERVERS.has(p.service) ? {label: 'Fix match', action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
                   p.arr_url ? {label: `Open in ${p.service}`, href: p.arr_url} : null,
                 ])}
               </div>
@@ -576,7 +580,7 @@ export function _deleteBody(what, lines = [], titles = null) {
 // click on a cold cache waits for it (5 s server-side timeout at most).
 const _FATE_TTL_MS = 5 * 60 * 1000;
 const _fate = {};   // service -> {at, recycle_bin, cleanup_days}
-const _SVC = {radarr: 'Radarr', sonarr: 'Sonarr', lidarr: 'Lidarr', plex: 'Plex'};
+const _SVC = {radarr: 'Radarr', sonarr: 'Sonarr', lidarr: 'Lidarr', plex: 'Plex', jellyfin: 'Jellyfin'};
 export async function prefetchDeleteTargets(services) {
   const need = [...new Set(services.filter(Boolean))].filter(s => !(_fate[s] && Date.now() - _fate[s].at < _FATE_TTL_MS));
   if (!need.length) return;
@@ -596,7 +600,7 @@ export async function deleteFateLines(services, plural = false) {
                           : `${name} moves the files to its Recycle Bin, where they stay until you empty it.`;
   });
   if (!svcs.length) lines.push("The files are deleted. Check your Arr app's Recycle Bin setting to know whether they can be restored.");
-  if (svcs.some(s => s !== 'plex')) lines.push(plural
+  if (svcs.some(s => !_MEDIA_SERVERS.has(s))) lines.push(plural
     ? "They are also excluded from the Arr apps' import lists, so a list won't add them back."
     : "It is also excluded from the Arr app's import lists, so a list won't add it back.");
   // Music: the delete also bans the artist in SoulSync, whose playlist sync

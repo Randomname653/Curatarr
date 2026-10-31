@@ -25,3 +25,8 @@ export const state = {
   libraryCfg: [],
   _modal: null,
 };
+
+// The signed-in install's media server, for labels (auth.py /status "server").
+export function serverLabel() {
+  return state.currentUser?.server === 'jellyfin' ? 'Jellyfin' : 'Plex';
+}

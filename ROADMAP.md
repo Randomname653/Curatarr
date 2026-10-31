@@ -71,6 +71,15 @@ app. What the first days of that setup still have to show:
 - **German locale** as a global UI/curator language setting.
 - **Movie-night ballot** — household nomination/vote/watch flow
   (SoulSync-inspired), a project of its own.
+- **Jellyfin support** — one install talks to Plex *or* Jellyfin (10.9+),
+  behind one media-server seam, and can switch between them both ways
+  without losing history (`rebind-server`, with a permanent id memory).
+  Per-play history works without plugins (live session polling); the
+  Webhook and Playback Reporting plugins add precision and backfill.
+  Phases 1–6 (seam, adapters, id memory, sign-in, play history, writes,
+  the rebind tool, parity: music index, moods, likes, subtitles) are built;
+  live-server checks remain. Design and build order in
+  [docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md).
 - **Tautulli importer** — full historical watch attribution for setups
   that have it.
 - **Deeper music enrichment** — give the curator the same depth of

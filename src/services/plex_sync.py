@@ -46,6 +46,7 @@ from src.services.llm_utils import (
 )
 from src.services.http_client import tls_context
 from src.services.library_ledger import note_arrival, persist_ledger
+from src.services.media_server.base import key_namespace
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -646,6 +647,10 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     len(owner_extra), " (history backfill)" if owner_backfill else "",
                     partial_rewatches)
     all_entries.extend(owner_extra)
+    switch_marks = drop_switch_marks(all_entries, await run_read(get_state, "switch_plex_marks"))
+    if switch_marks:
+        logger.info("Plex sync: %d played mark(s) the move back from Jellyfin set, not viewings",
+                    switch_marks)
     players = await fetch_players(plex_url, headers)
     play_devices = capture.get("devices") or {}
 
@@ -1362,6 +1367,24 @@ def _mark_partial_rewatches(entries: list, history_by_rk: dict) -> int:
     return n
 
 
+def drop_switch_marks(entries: list, raw: Optional[str]) -> int:
+    """Remove the played marks the media server switch set on the way back
+    from Jellyfin (rebind._sync_to_plex): each one moves the item's
+    lastViewedAt to the moment of the switch, which read as a new viewing
+    next to the Jellyfin play the switch carried over. ``raw`` is the
+    switch's note: its keys and when it marked them."""
+    try:
+        note = json.loads(raw) if raw else None
+        keys, lo, hi = set(note["keys"]), float(note["from"]) - 60, float(note["to"]) + 60
+    except (ValueError, TypeError, KeyError):
+        return 0
+    keep = [e for e in entries if not (str(e.get("ratingKey") or "") in keys
+                                       and lo <= float(e.get("lastViewedAt") or 0) <= hi)]
+    n = len(entries) - len(keep)
+    entries[:] = keep
+    return n
+
+
 def mark_unwitnessed(entries: list, history_by_rk: dict) -> int:
     """A finished video item whose lastViewedAt matches no play event in the
     history was marked as played in Plex, not watched to the end: a viewing
@@ -1825,6 +1848,13 @@ async def reattribute_watch_history() -> dict:
 
     Idempotent. Safe to run repeatedly.
     """
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        # Jellyfin plays are filed under their own user from the start (the
+        # session's and the poll's UserId): nothing waits on the admin.
+        return {"skipped": True, "updated": 0, "unchanged": 0, "unattributable": 0,
+                "total_examined": 0,
+                "reason": "Jellyfin files every play under its own user - nothing to re-attribute"}
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
     if not plex_url or not plex_token:
@@ -2033,6 +2063,16 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
     like that), or when more than ORPHAN_MAX_SHARE of the examined rows would
     go (``force=True`` lifts only that last guard).
     """
+    from src.services.media_server import active_kind
+    if active_kind() == "jellyfin":
+        # Jellyfin's items, never a Plex still named in .env: compared with
+        # Plex's keys, every Jellyfin play would read as orphaned.
+        from src.services.media_server.jellyfin_history import live_item_keys
+        live = await live_item_keys()
+        if live.get("error"):
+            return {"error": live["error"], "archived": 0}
+        return await _mark_orphans(live["keys"], force, "Jellyfin")
+
     plex_url = settings.effective_plex_url
     plex_token = settings.effective_plex_token
     if not plex_url or not plex_token:
@@ -2082,7 +2122,13 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
                 "archived": 0}
 
     logger.info("Orphan-cleanup: %d live ratingKeys collected from Plex", len(live_keys))
+    return await _mark_orphans(live_keys, force, "Plex")
 
+
+async def _mark_orphans(live_keys: set, force: bool, server: str) -> dict:
+    """Mark the rows whose server key is not in ``live_keys`` (and unmark
+    the ones back), under the share guard. ``live_keys`` is a COMPLETE read of
+    every configured library; the caller refuses before an incomplete one."""
     def _purge():
         """Scan, decide and mark in one write call: the refusal guard and
         the marking must judge the same rows. Returns (examined, ids,
@@ -2112,8 +2158,9 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
                     continue
                 if rk in live_keys:
                     continue
-                # Only consider numeric ratingKeys (skip oddball custom IDs)
-                if not rk.isdigit():
+                # Only server keys: Spotify / Netflix placeholders and *arr
+                # forms are not library items (a GUID is, on Jellyfin).
+                if key_namespace(rk) != "server":
                     continue
                 to_delete_ids.append(row.id)
 
@@ -2143,7 +2190,7 @@ async def cleanup_orphan_watch_history(force: bool = False) -> dict:
                        len(to_delete_ids), examined)
         return {"error": f"Would hide {len(to_delete_ids)} of {examined} history rows "
                          f"(more than {ORPHAN_MAX_SHARE:.0%}) — refusing; re-run with "
-                         "force=true if Plex really lost that much",
+                         f"force=true if {server} really lost that much",
                 "archived": 0, "would_archive": len(to_delete_ids), "examined": examined}
 
     if to_delete_ids or returned:
@@ -2770,6 +2817,8 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
     task_monitor.start(_task)
     agg: dict = {}
     scanned, incomplete = set(), set()   # categories safe to prune vs. never
+    from src.services.media_server.plex_adapter import to_media_item
+    id_items: list = []                  # the same walk, for the id memory (server_id_map)
 
     async with httpx.AsyncClient(verify=tls_context(), timeout=90) as client:
         for sec_key, (category, sec_title) in lib_configs.items():
@@ -2785,6 +2834,9 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                 incomplete.add(category)   # partial or empty: this category is not pruned
             task_monitor.log(_task, f"{sec_title}: {len(items)} parts")
             for it in items:
+                mi = to_media_item(it, str(sec_key))
+                if mi is not None:
+                    id_items.append(mi)
                 if category == "movie":
                     ck = str(it.get("ratingKey"))
                     title = it.get("title")
@@ -2824,6 +2876,9 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
             # Shows: merge series ids/title from the show items (type 2).
             if category in ("show", "anime"):
                 for sh in await _fetch_section_all(client, plex_url, headers, sec_key, "2"):
+                    mi = to_media_item(sh, str(sec_key))
+                    if mi is not None:
+                        id_items.append(mi)
                     rk = str(sh.get("ratingKey"))
                     if rk in agg:
                         gids = _parse_guids(sh)
@@ -2832,6 +2887,16 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                         agg[rk]["title"] = agg[rk]["title"] or sh.get("title")
 
     written = await run_write(_persist_tech_profiles, agg)
+    try:
+        # The same walk, filed in the id memory a server switch runs on
+        # (docs/JELLYFIN_DESIGN.md §8.2). Additive: it never deletes a row.
+        from src.services.media_server import active_kind, id_map
+        if active_kind() == "plex":
+            ids = await id_map.record_walk("plex", id_items)
+            task_monitor.log(_task, f"id memory: {ids['added']} new, {ids['updated']} changed, "
+                                    f"{ids['verified']} confirmed")
+    except Exception as e:  # noqa: BLE001 - the profiles stand without it; the next walk files the ids
+        logger.warning("[id-map] server ids not filed this walk (%s)", e)
     arr_cov = None
     try:
         # The arrs' own record first (services/arr_ledger): what they imported

@@ -5,7 +5,7 @@
   <img src="assets/brand/curatarr-logo-dark.svg" alt="Curatarr" width="360">
 </picture>
 
-**A self-hosted AI curator for Plex and the \*arr stack.**
+**A self-hosted AI curator for Plex or Jellyfin and the \*arr stack.**
 
 Curatarr learns what you actually watch, recommends what's worth adding,
 and makes a reasoned case for what to delete — with every prompt running
@@ -262,12 +262,12 @@ container image does not include it.
 | **Python** | 3.12 or newer |
 | **[Git](https://git-scm.com)** | to clone the repository and to update it |
 | **Docker** | only for the container route, which needs neither Python nor Git |
-| **Plex Media Server** | you sign in as the server owner during setup |
+| **Plex Media Server** or **Jellyfin 10.9+** | one per install; on Plex you sign in as the server owner, on Jellyfin as an administrator (Quick Connect or password) |
 | **[Ollama][link-ollama]** | installed and running before the first start |
 | **GPU** | 24 GB VRAM for the default curator model. Smaller card? Pick a smaller curator model ([how](docs/USAGE.md#changing-the-models)); verdicts get softer |
 | **Disk** | room for the models: the default curator alone is about 19 GB |
 | **Radarr / Sonarr / Lidarr** | optional — each one unlocks deletion proposals and adds for its category |
-| **Plex music index** | nothing to set up — without Lidarr, music runs on your Plex library |
+| **Music index** | nothing to set up — without Lidarr, music runs on your Plex or Jellyfin library |
 | **TMDB API key** | recommended — the primary movie/show metadata source |
 | **OMDb / Last.fm / Spotify keys** | optional — extra ratings, awards and music genres |
 
@@ -379,6 +379,15 @@ and [the NAS move](docs/NAS_MOVE.md).
 3. When the wizard finishes, the first Plex sync starts. Enrichment
    queues itself after it; follow it in **Activity** in the sidebar.
 
+On **Jellyfin**, pick it in the wizard's media-server step and enter the server
+URL and an API key (Dashboard → API Keys). Members sign in with Quick
+Connect or their Jellyfin password; the first account must be a Jellyfin
+administrator. Play history needs no plugin; the Webhook and Playback
+Reporting plugins make it more exact and add the history from before
+Curatarr. An install that already runs on Plex moves to Jellyfin, or back,
+with `scripts/rebind_server.py`, keeping its history
+([docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md) §8).
+
 Curatarr is useful right away and gets better as enrichment catches up
 with your library, which takes hours to days.
 [The first few days](docs/USAGE.md#the-first-few-days) explains what to
@@ -437,6 +446,7 @@ These are the options most people change:
 | Env var | What it does |
 |---|---|
 | `PLEX_URL`, `PLEX_TOKEN` | Plex server and admin token |
+| `MEDIA_SERVER_TYPE`, `JELLYFIN_URL`, `JELLYFIN_API_KEY` | `jellyfin` to run on Jellyfin instead of Plex (unset = Plex), its address and API key |
 | `OLLAMA_ENDPOINT` | Default `http://localhost:11434` |
 | `BASE_CURATOR_MODEL` | Model baked into the `curatarr-curator` tag |
 | `BASE_SUMMARIZER_MODEL` | Model baked into the `curatarr-summarizer` tag |

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" size="1">
+  <User id="87654321" title="Sam" username="Sam" email="sam@example.org" home="1" restricted="0">
+    <Server id="1" serverId="1" machineIdentifier="6f1d0c2e9b3a4f5d8e7c1b2a3d4e5f60" name="nas" numLibraries="3"/>
+  </User>
+</MediaContainer>

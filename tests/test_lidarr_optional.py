@@ -92,7 +92,7 @@ def test_the_readers_and_the_docs_know_the_index():
     assert "**Lidarr is optional.**" in (_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     usage = (_ROOT / "docs/USAGE.md").read_text(encoding="utf-8")
     assert "| Music without Lidarr |" in usage and "| Wanted artists (no Lidarr) |" in usage
-    assert "| **Plex music index** |" in (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "| **Music index** |" in (_ROOT / "README.md").read_text(encoding="utf-8")
     assert "Without Lidarr,\n  music deletions go through Plex" in (_ROOT / "SECURITY.md").read_text(encoding="utf-8")
 
 

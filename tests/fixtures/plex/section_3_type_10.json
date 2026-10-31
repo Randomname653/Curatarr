@@ -1,0 +1,60 @@
+{
+ "MediaContainer": {
+  "size": 2,
+  "Metadata": [
+   {
+    "ratingKey": "3003",
+    "type": "track",
+    "title": "Hunter",
+    "index": 1,
+    "parentIndex": 1,
+    "parentRatingKey": "3002",
+    "grandparentRatingKey": "3001",
+    "parentTitle": "Homogenic",
+    "grandparentTitle": "Björk",
+    "librarySectionID": 3,
+    "addedAt": 1700002000,
+    "duration": 305000,
+    "Media": [
+     {
+      "Part": [
+       {
+        "file": "/data/media/music/Björk/Homogenic/01 - Hunter.flac",
+        "size": 30000001
+       }
+      ]
+     }
+    ],
+    "Guid": [
+     {
+      "id": "mbid://e8e0b8e3-4c1b-4f3c-9d2a-1b2c3d4e5f60"
+     }
+    ]
+   },
+   {
+    "ratingKey": "3004",
+    "type": "track",
+    "title": "Jóga",
+    "index": 2,
+    "parentIndex": 1,
+    "parentRatingKey": "3002",
+    "grandparentRatingKey": "3001",
+    "parentTitle": "Homogenic",
+    "grandparentTitle": "Björk",
+    "librarySectionID": 3,
+    "addedAt": 1700002000,
+    "duration": 305000,
+    "Media": [
+     {
+      "Part": [
+       {
+        "file": "/data/media/music/Björk/Homogenic/02 - Jóga.flac",
+        "size": 30000002
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

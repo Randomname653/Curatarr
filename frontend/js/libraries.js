@@ -10,7 +10,7 @@ import { searchLibrary } from './recs.js';
 // cache still refreshes in the background so the NEXT full visit starts
 // from fresh data; saveLibraries() invalidates explicitly on success since
 // this view doesn't otherwise self-reload after a save.
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { EL, SVG_CHECK, SVG_WARN, _errHtml, _errMsg, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 // Plex unreachable is not "no libraries": the saved mapping is shown read-only
@@ -63,7 +63,7 @@ export function _renderLibraryConfig([cfg, disc]) {
         </div>
         ${paths ? `<div class="fs-11 t3 mono mt-4">${paths}</div>` : ''}
         <div class="gap-16 panel-item-meta row mt-8">
-          <span title="Items in Plex">${s.plex_item_count.toLocaleString(loc())} items in Plex</span>
+          <span title="Items in ${serverLabel()}">${s.plex_item_count.toLocaleString(loc())} items in ${serverLabel()}</span>
           <span title="Playback events in Curatarr DB">${s.db_entry_count.toLocaleString(loc())} plays tracked</span>
           <span title="Enriched with metadata">${s.enriched_count.toLocaleString(loc())} enriched</span>
           <span>last scan <span class="t2" title="${escAttr(fmtDate(s.scanned_at))}">${s.scanned_at ? _fmtRel(s.scanned_at) : '—'}</span> · last update <span class="t2" title="${escAttr(fmtDate(s.updated_at))}">${s.updated_at ? _fmtRel(s.updated_at) : '—'}</span></span>

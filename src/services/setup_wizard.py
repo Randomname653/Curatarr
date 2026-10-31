@@ -236,6 +236,28 @@ async def test_plex(url: str, token: str) -> dict:
         return _test_failed("Plex", e)
 
 
+async def test_jellyfin(url: str, api_key: str) -> dict:
+    """The Jellyfin server answers /System/Info with this API key (it needs
+    an admin key: the same call the adapter's ping makes)."""
+    if (refused := await _refused_target("Jellyfin", url)):
+        return refused
+    from src.services.media_server.jellyfin_adapter import JellyfinAdapter, JellyfinError
+    try:
+        info = await JellyfinAdapter(url, api_key).ping()
+    except JellyfinError as e:
+        if "HTTP 401" in str(e) or "HTTP 403" in str(e):
+            return {"ok": False, "error": "Jellyfin refused this API key (Dashboard → API Keys)"}
+        if "HTTP" in str(e):
+            return {"ok": False, "error": str(e).split(": ", 1)[-1]}
+        return _test_failed("Jellyfin", e)
+    except Exception as e:  # noqa: BLE001 - reported as a failed test, detail in the log
+        return _test_failed("Jellyfin", e)
+    major_minor = tuple(int(p) for p in (info.version.split(".") + ["0", "0"])[:2] if p.isdigit())
+    if len(major_minor) == 2 and major_minor < (10, 9):
+        return {"ok": False, "error": f"Jellyfin {info.version} is too old - Curatarr needs 10.9 or newer"}
+    return {"ok": True, "server_name": info.name or "Jellyfin", "version": info.version}
+
+
 async def test_ollama(endpoint: str) -> dict:
     if (refused := await _refused_target("Ollama", endpoint)):
         return refused
@@ -363,7 +385,7 @@ def _restrict_env_acl(path) -> None:
 # Keys whose values must never travel back to a browser. The integrations
 # panel shows "set / not set" for these and a replace-field, nothing more.
 SECRET_KEYS = frozenset({
-    "plex_token", "jwt_secret", "radarr_api_key", "sonarr_api_key",
+    "plex_token", "jellyfin_api_key", "jwt_secret", "radarr_api_key", "sonarr_api_key",
     "lidarr_api_key", "tmdb_api_key", "omdb_api_key", "lastfm_api_key",
     "spotify_client_secret", "soulsync_api_key", "listenbrainz_token",
     "opensubtitles_api_key", "opensubtitles_password", "mal_client_id",
@@ -384,6 +406,9 @@ def current_env_config() -> dict:
     return {
         "plex_url":              s.effective_plex_url,
         "plex_token":            s.effective_plex_token,
+        "media_server_type":     getattr(s, "MEDIA_SERVER_TYPE", None) or "",
+        "jellyfin_url":          str(getattr(s, "JELLYFIN_URL", None) or "").rstrip("/"),
+        "jellyfin_api_key":      _plain(getattr(s, "JELLYFIN_API_KEY", None)),
         "ollama_endpoint":       s.effective_ollama,
         "base_curator_model":    s.BASE_CURATOR_MODEL,
         "base_summarizer_model": s.BASE_SUMMARIZER_MODEL,
@@ -509,6 +534,13 @@ def write_env(config: dict) -> None:
         f"PLEX_CLIENT_ID={plex_client_id}",
         f"PLEX_URL={config.get('plex_url', '')}",
         f"PLEX_TOKEN={_plain(config.get('plex_token', ''))}",
+        "",
+        "# Media server: plex (blank) or jellyfin (docs/JELLYFIN_DESIGN.md)",
+        # getattr on the live settings: write_env runs against stub settings
+        # in tests, and a stub from before Jellyfin support has none of these.
+        f"MEDIA_SERVER_TYPE={config.get('media_server_type', getattr(_live_settings(), 'MEDIA_SERVER_TYPE', None) or '')}",
+        f"JELLYFIN_URL={config.get('jellyfin_url', getattr(_live_settings(), 'JELLYFIN_URL', None) or '')}",
+        f"JELLYFIN_API_KEY={_plain(config.get('jellyfin_api_key', getattr(_live_settings(), 'JELLYFIN_API_KEY', None)))}",
         "",
         "# Ollama",
         f"OLLAMA_ENDPOINT={config.get('ollama_endpoint', 'http://localhost:11434')}",
@@ -1038,6 +1070,32 @@ SETUP_FIELDS = [
         "required": True,
         "help": "Find it at plex.tv → Account → Plex Media Server → your server → (i) → XML.",
         "category": "plex",
+        "secret": True,
+    },
+    {
+        "id": "media_server_type",
+        "label": "Media server",
+        "placeholder": "plex",
+        "required": False,
+        "help": "plex or jellyfin. One media server per install.",
+        "category": "media_server",
+    },
+    {
+        "id": "jellyfin_url",
+        "label": "Jellyfin Server URL",
+        "placeholder": "http://192.168.1.100:8096",
+        "required": False,
+        "help": "The local address of your Jellyfin server (10.9 or newer).",
+        "test": "jellyfin",
+        "category": "jellyfin",
+    },
+    {
+        "id": "jellyfin_api_key",
+        "label": "Jellyfin API Key",
+        "placeholder": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "required": False,
+        "help": "Dashboard → API Keys → +. Curatarr reads the library and every member's plays with it.",
+        "category": "jellyfin",
         "secret": True,
     },
     {

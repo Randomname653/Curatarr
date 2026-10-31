@@ -33,6 +33,98 @@ follow them:
 - **Deployment**: a container image for a NAS, the gaming PC as a named
   compute node that lends its GPU, per-machine model bakes, and an update
   check with "Update available" under the sidebar.
+- **Jellyfin**: one install runs on Plex *or* Jellyfin 10.9+, behind one
+  media-server seam, and moves between them both ways without losing
+  anything (Settings -> Media server, or `scripts/rebind_server.py`).
+
+**Jellyfin support (docs/JELLYFIN_DESIGN.md).** `MEDIA_SERVER_TYPE=jellyfin`
+runs the install on Jellyfin instead of Plex. Sign-in through Quick Connect
+or the Jellyfin password, only for the server's own users, the first one an
+administrator; the wizard picks the server, tests it (refusing anything
+older than 10.9) and maps its libraries. Play history comes in four tiers,
+none of which needs a plugin to start: live session polling (a play counts
+from 80 %), a delta poll of each user's played state, and, when installed,
+the Webhook plugin and a Playback Reporting backfill, merged into one play
+per viewing. Writes match Plex's: "Curatarr Recommended" playlists per
+member and collections, edited in place; the watchlist is a "Curatarr
+Watchlist" playlist; mark played; deletes with a re-read. Parity: the music
+index with lyrics, music deletion candidates without Lidarr, moods and
+styles from Genres and Tags, likes and favourites as ratings, subtitle
+signals from Jellyfin's own tracks, deep links. `scripts/rebind_server.py
+--to jellyfin|plex` re-keys history, enrichment, vectors, verdicts and open
+proposals onto the other server's ids: a dry run first, `--write` with a
+backup and a manifest, `--undo`, and a permanent id memory
+(`server_id_map`) so a move back finds every title again.
+
+Tried live against the owner's Plex and a test Jellyfin on the same anime library (2,188 series,
+39,703 episodes, Jellyfin mid-scan with the TheTVDB plugin), and fixed:
+- **Ghost items:** Jellyfin lists the episodes and seasons its metadata knows but no file holds as
+  "missing" items, 58,135 episodes beside 39,427 real ones. They carried the TVDB ids, so matches
+  went onto them. The library walk, the children of a series and the title search leave them out.
+- **Every key, the strongest shared one wins:** one key per title could not meet across servers.
+  Plex keyed episodes by their TVDB id, Jellyfin (no ids or numbers yet) by file, and a TMDb-only
+  Jellyfin keys series by TMDb. Each title now files all its keys (id, series chain, file), the
+  rebind takes the strongest both sides share, and conflicts count one identity per title.
+  Matched: series 99.8 %, episodes 0.4 % -> 99.6 %. The dry run on a copy of the owner's
+  database re-keyed 156 of 156 anime watch-history rows.
+- **Timeout:** a page of 500 items took up to 104 s while the server scanned; 120 s instead of 30.
+- **The full round trip, in a sandbox copy:** `--write` re-keyed 156 of 156 anime plays, 2,178 tech
+  profiles and the owner's account. Quick Connect signed him in. The first poll stored the episode
+  he had watched (as a mark), and the live sessions caught the next one at 24:07 of 24:12 from
+  Firefox; the poll after it merged it instead of doubling it. The watchlist took the next unwatched
+  episode, mark-played moved it on, and `--undo` put every row back exactly. Fixed on the way:
+  - a library left on its Plex key by the rebind (the owner's Movies, not on the test server) was
+    searched with that key: HTTP 400, the watchlist said so and the playlist push broke off. Now it
+    is not in the library;
+  - a series whose episodes Jellyfin had not attached yet went onto the watchlist as the series id,
+    which Jellyfin drops silently, and Curatarr said ok. Now it says there is no episode yet;
+  - plays of a title first seen after the switch stayed on the Jellyfin id through `--undo`. The
+    id memory knows both ids, and the undo uses it now.
+  - a shelf collection's members were read without a user, and Jellyfin lists them only in a
+    user's view, so they always read empty and nothing ever left a shelf. Members are now read as
+    an administrator: a title that leaves a shelf leaves the collection (live: one in, one out,
+    same collection id).
+
+**No scripts: setup and the move, both on the web page.**
+- **Setup finds and connects Jellyfin.** The wizard no longer asks for a pasted API key. It looks
+  for the server and an admin approves a Quick Connect code (or types the admin password once).
+  Curatarr then makes its own API key, "Curatarr", reuses it on a reconnect, and closes the admin's
+  session. The key stays on the server under a ticket and never reaches the browser.
+  The discovery broadcast went unanswered from the TrueNAS app (bridge network). So the host the
+  page came from, the container's gateway and the configured hosts are asked too, on 8096 and
+  30013, each through the endpoint policy.
+- **Settings -> Media server** connects the other server and moves the install, Plex to Jellyfin
+  and back. A check runs first: both libraries are walked and the report is shown, with a dropdown
+  for each user or library without a match. The move then runs inside the live server:
+  - the custodian is paused, the session poller stopped, and the Plex and Jellyfin sync locks held;
+  - the database is backed up, every key re-keyed, the setting flipped and reloaded in place;
+  - the first sync on the new server runs, with progress in Activity;
+  - it refuses while an enrichment, the music pipeline or a deletion run holds its lock;
+  - undo stays as an emergency exit.
+- **No gap on the way back.** The move to Plex carries the Jellyfin period's plays like every
+  other row. "Mark what was watched as played" then marks each finished Jellyfin-period play on
+  Plex with its member's own token, so Plex's "unwatched" agrees. The next Plex sync knows those
+  marks and does not count them as viewings. Towards Jellyfin, the first poll after a move skips
+  items Curatarr already holds a finished play of. Before, the marks the move set came back as
+  twin "marked" rows.
+- **Marks seen late are no plays either.** A Jellyfin still scanning listed only 4 of 133 fresh
+  marks as played; the rest would have come in later as new plays. Each move notes the keys it
+  marked and when, and every history tier on both servers leaves exactly those out.
+- The move reuses the check's library walks for an hour, so it takes seconds instead of another
+  full walk. If plex.tv refuses the server token (HTTP 401, seen live), the way back matches
+  users by the id memory alone and the page says so. The settings write runs off the event loop
+  (`write_env` runs icacls on Windows).
+- **Live, in a sandbox copy against the owner's Plex and the test Jellyfin, all from the page:**
+  - Plex -> Jellyfin: 2,332 titles moved, 133 plays marked played on Jellyfin, first sync, no
+    twin rows.
+  - An episode watched on Jellyfin came in as a live-session play.
+  - Jellyfin -> Plex in 26 s: 2,336 titles, 0 unmatched, 0 collisions, every anime row back on
+    a Plex key. The episode came along as its one row and was marked played on Plex
+    (viewCount 1). The next Plex sync left that mark out ("1 played mark(s) the move back from
+    Jellyfin set, not viewings").
+
+Tests: `tests/test_media_server_keys.py`, `tests/test_jellyfin_live_findings.py`, `tests/test_rebind.py`,
+`tests/test_jellyfin_connect.py`, `tests/test_media_switch.py`.
 
 **Wrap-Up: every household member's own period in review (the Curation Report folded in).**
 A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year

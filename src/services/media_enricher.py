@@ -29,6 +29,7 @@ from src.services.ollama_hosts import ollama_for
 from src.services.pc_guard import ollama_client
 from src.cache.metadata_cache import MetadataCache, write_fields
 from src.database.runner import run_read, run_write
+from src.services.media_server.base import key_namespace
 from src.services.enrichment_state import (
     TRANSIENT, CONTEXT_KEY as _CONTEXT_KEY, RESOLVING_SOURCE as _RESOLVING_SOURCE,
     parse_rejected_ids as _parse_rejected, resolve_match_basis as _resolve_match_basis,
@@ -1219,9 +1220,10 @@ async def topup_significance(
         return False  # already done, or nothing cached to attach to (rare after the R6 enrich)
     # The cache id is the LIBRARY's name for the work — for anime usually
     # the English one Wikipedia files the article under, while ``title`` is
-    # the enriched (often romanised) one. A numeric id is an id, not a name.
+    # the enriched (often romanised) one. An id - numeric, a server key, an
+    # *arr or placeholder form - is not a name.
     aka = ()
-    if cache_id and not str(cache_id).isdigit():
+    if cache_id and not str(cache_id).isdigit() and key_namespace(str(cache_id)) == "unknown":
         aka = (str(cache_id),)
     # The raw entries themselves know the IMDb id (96% of the library
     # since the *arr harvest) — the strongest article resolver there is.
