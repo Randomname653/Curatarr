@@ -23,17 +23,7 @@ import src.services.recommendations_engine as eng
 import src.services.soulsync_client as ss
 from src.database.models import Base, CachedRecommendation, LibraryConfig
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── neighbours: union minus favourites, cap, cache ───────────────────────────
@@ -196,5 +186,4 @@ check("soulsync stays read-only (no request endpoint)",
       "/api/v1/request" not in eng_src
       and "/api/v1/request" not in (root / "src/services/plex_playlists.py").read_text(encoding="utf-8"))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

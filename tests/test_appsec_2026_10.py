@@ -37,17 +37,7 @@ import src.services.setup_wizard as sw  # noqa: E402
 from src.services.endpoint_policy import (  # noqa: E402
     NEW_ADDRESS_NEEDS_KEY, same_origin, secret_for_target, validate_service_url)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 _RealClient = httpx.AsyncClient
@@ -420,5 +410,4 @@ finally:
     ip._CACHE_DIR, ip._host_resolves_public = _real_ip
 
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

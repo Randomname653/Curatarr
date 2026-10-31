@@ -20,17 +20,7 @@ spec = importlib.util.spec_from_file_location("apply_metadata", ROOT / "deploy/t
 am = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(am)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # The owner's file as TrueNAS wrote it after "Install via YAML".
@@ -130,5 +120,4 @@ guide = (ROOT / "deploy/truenas/README.md").read_text(encoding="utf-8")
 check("the guide reads the script before running it, and dry-runs first",
       guide.index("less apply_metadata.py") < guide.index("--dry-run") < guide.index("sudo python3 apply_metadata.py  "))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

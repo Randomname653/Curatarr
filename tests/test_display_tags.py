@@ -19,21 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 from src.cache.metadata_cache import MetadataCache  # noqa: E402
 from src.services import display_tags as dt  # noqa: E402
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 def labels(tags, kind):
@@ -130,5 +118,4 @@ check("the theme chip style uses tokens only", ".badge.theme {" in css
       and "var(--text3)" in css.split(".badge.theme {")[1].split("}")[0]
       and "#" not in css.split(".badge.theme {")[1].split("}")[0])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

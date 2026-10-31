@@ -24,17 +24,7 @@ from sqlalchemy import create_engine
 import src.database.connection as conn_mod
 from src.services import app_state
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -64,5 +54,4 @@ check("no stray database was created under the working directory",
       not any(elsewhere.rglob("*.db")))
 
 conn_mod.engine.dispose()
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

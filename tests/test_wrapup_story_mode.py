@@ -23,17 +23,7 @@ WRAPUP = (ROOT / "frontend/js/wrapup.js").read_text(encoding="utf-8")
 APP = (ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
 CSS = (ROOT / "frontend/css/app.css").read_text(encoding="utf-8")
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 DATA = {
@@ -150,5 +140,4 @@ check("reduced motion: no slide animation and no auto-advance",
 src = (ROOT / "src/services/wrapup_facts.py").read_text(encoding="utf-8")
 check("the facts carry the hours of every active day for the heatmap", '"by_day_h":' in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

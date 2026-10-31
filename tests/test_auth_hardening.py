@@ -39,17 +39,7 @@ import src.routers.users as users
 from src.database.models import Base, User
 from src.services import rate_limit
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def status_of(fn, *a, **kw):
@@ -237,5 +227,4 @@ check("frontend: the poll sends the nonce back as a header, not in the URL",
       "{'X-Plex-Pin-Nonce': data.nonce}" in frontend and "?nonce=" not in frontend)
 
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

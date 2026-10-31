@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn_mod  # noqa: E402
 from src.database import loop_guard  # noqa: E402
 from src.database.models import (  # noqa: E402
@@ -40,18 +40,6 @@ from src.database.models import (  # noqa: E402
     ProactiveMessage, ProtectedMedia,
 )
 from src.services import app_state  # noqa: E402
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -328,5 +316,4 @@ check("...and records the return on the deleted proposal",
       out and "Came Back" in out["new"] and info.get("kind") == "returned"
       and info.get("media_id") == "501")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

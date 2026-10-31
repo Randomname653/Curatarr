@@ -22,17 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 from src.services import archive_backfill as ab       # noqa: E402
@@ -145,5 +135,4 @@ _src = (Path(__file__).resolve().parents[1]
 for key in ab.SOURCES:
     check(f"{key} is dispatched", f'"{key}"' in _src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

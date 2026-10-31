@@ -31,17 +31,7 @@ import src.services.plex_sync as ps
 import src.services.scheduler as sched
 from src.config import settings
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # app_state in a dict — no real DB touched
@@ -259,5 +249,4 @@ finally:
     import shutil
     shutil.rmtree(tmp, ignore_errors=True)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

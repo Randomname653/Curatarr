@@ -42,17 +42,7 @@ from src.database.models import (ArrEnrichmentStatus, Base, EnrichmentFinding,  
                                  EnrichmentStatus, User, WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -278,5 +268,4 @@ finally:
     auth.httpx.AsyncClient, settings.PLEX_LOGIN_REQUIRE_MEMBERSHIP = real_client, real_member
     auth._pin_bindings.clear()
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

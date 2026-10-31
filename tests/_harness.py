@@ -16,7 +16,6 @@
   ``check.table`` (the stdlib stand-in for ``@pytest.mark.parametrize``).
 * ``wait_until`` — poll a condition instead of sleeping a guessed 50 ms.
 """
-import asyncio
 import os
 import sys
 import tempfile
@@ -44,39 +43,7 @@ else:
     os.environ["CURATARR_ENV_FILE"] = str(TMP / ".env")
 os.environ.setdefault("JWT_SECRET", "test-only-secret-never-shipped-32-bytes-min-per-rfc7518")
 
-
-class _Checks:
-    """``check(name, cond, detail="")``; ``check.done()`` prints the summary
-    run_all reads and exits non-zero on any failure."""
-
-    def __init__(self):
-        self.passed = self.failed = 0
-
-    def __call__(self, name, cond, detail=""):
-        ok = bool(cond)
-        if ok:
-            self.passed += 1
-            print(f"  PASS  {name}")
-        else:
-            self.failed += 1
-            print(f"  FAIL  {name}" + (f" — {detail}" if detail else ""))
-        return ok
-
-    def table(self, name, rows, fn):
-        """rows = [(label, *args, expected), ...]: one check per row."""
-        for label, *args, want in rows:
-            try:
-                got = fn(*args)
-            except Exception as e:  # noqa: BLE001 - reported as the row's failure
-                got = f"raised {type(e).__name__}: {e}"
-            self(f"{name}: {label}", got == want, f"got {got!r}, want {want!r}")
-
-    def done(self):
-        print(f"\n{self.passed} passed, {self.failed} failed")
-        sys.exit(1 if self.failed else 0)
-
-
-check = _Checks()
+from _checks import _Checks, check, wait_until  # noqa: E402,F401  (re-exported)
 
 
 def app_db():
@@ -85,13 +52,3 @@ def app_db():
     from src.database import connection
     connection.init_db()
     return connection
-
-
-async def wait_until(pred, timeout=5.0, what="condition"):
-    """Return as soon as ``pred()`` is true; fail loudly after ``timeout``."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not pred():
-        if loop.time() > deadline:
-            raise AssertionError(f"timed out after {timeout}s waiting for {what}")
-        await asyncio.sleep(0.002)

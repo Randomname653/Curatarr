@@ -19,17 +19,7 @@ from src.config import settings  # noqa: E402
 from src.services import llm_utils as lu  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 KEYS = ("OLLAMA_USE_MMAP", "PC_OLLAMA_USE_MMAP", "OLLAMA_PC_ENDPOINT", "ENRICH_ON_PC")
@@ -93,5 +83,4 @@ check("model updates measure on the server with the server's options, never the 
       src["src/services/model_updates.py"].count("host=_main()") == 2
       and "**main_host().runner" in src["src/services/model_update_eval.py"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

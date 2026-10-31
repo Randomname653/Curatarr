@@ -21,17 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # The vector store lives in a temp dir (never data/chromadb).
@@ -315,5 +305,4 @@ check("the custodian runs it weekly; the compaction is gone",
       'Task("facet_phrases"' in src and "facet_compact" not in src
       and "FACET_COMPACT" not in (ROOT / "src/config.py").read_text(encoding="utf-8"))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

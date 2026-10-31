@@ -49,17 +49,7 @@ with conn_mod.get_db_session() as _db:
     _db.add(User(id=1, plex_user_id="p1", plex_username="owner", is_admin=True))
     _db.commit()
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class _Cap(logging.Handler):
@@ -448,5 +438,4 @@ check("game poll: failures warn instead of vanishing",
       "catch(_) {}" not in poll and ".catch(() => null)" not in poll
       and poll.count("console.warn") == 2)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

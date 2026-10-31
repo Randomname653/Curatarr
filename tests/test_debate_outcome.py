@@ -29,17 +29,7 @@ import src.services.episodic_memory as em  # noqa: E402
 from src.database.models import (Base, ConversationMessage, CuratorResolutionLog,  # noqa: E402
                                  DeletionProposal)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -329,5 +319,4 @@ check("the custodian runs it on the summarizer", job is not None and job.llm_rol
 src = (Path(__file__).resolve().parents[1] / "src/routers/stats.py").read_text(encoding="utf-8")
 check("the label sample is owner-only", '"/debate-labels"' in src and "require_admin" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

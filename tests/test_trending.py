@@ -10,17 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.recommendations_engine import _trending_fresh, _trending_line
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 now = datetime(2026, 8, 13, 12, 0)
@@ -60,5 +50,4 @@ check("cache key + TTL present",
 check("no soulsync request endpoint anywhere in the engine",
       "/api/v1/request" not in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -31,17 +31,7 @@ from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.services.wrapup_facts import FACTS_VERSION  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -165,5 +155,4 @@ console.log(JSON.stringify({with: radar(f, all), without: radar(f), partial: rad
 else:
     print("  SKIP  node not installed: radar rendering not checked")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

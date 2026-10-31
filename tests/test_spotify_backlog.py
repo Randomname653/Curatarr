@@ -16,17 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 from src.routers.library import _top_tracks_by_artist
@@ -89,5 +79,4 @@ check("a custom page size is honoured",
       len(_top_tracks_by_artist(
           [Row("A", f"t{i}", i) for i in range(10)], per_artist=5)["A"]) == 5)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

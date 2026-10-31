@@ -11,17 +11,7 @@ from tests.frontend_files import everything as _frontend_everything  # index.htm
 
 from src.services.curation_stats import _month_range, aggregate_resolutions
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 now = datetime(2026, 8, 13)
@@ -77,5 +67,4 @@ check("no yearly-review button left", "writeYearlyReview" not in html)
 check("no chart library referenced",
       "chart.js" not in html.lower() and "echarts" not in html.lower())
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

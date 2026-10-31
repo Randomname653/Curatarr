@@ -45,17 +45,7 @@ import src.routers.recommendations as recs_router  # noqa: E402
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _by_key(sf):
@@ -251,5 +241,4 @@ else:
           in _fn(recs_js, "_recWhy"))
 
 shutil.rmtree(_TMP, ignore_errors=True)
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

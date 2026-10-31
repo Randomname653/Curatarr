@@ -22,17 +22,7 @@ import src.services.curator_principles as cp  # noqa: E402
 import src.services.llm_priority as llm_priority  # noqa: E402
 import src.services.subtitle_signals as subs  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── 1. OpenSubtitles: an unrecorded charge pauses the service ───────────────
@@ -111,5 +101,4 @@ finally:
     cp.httpx.AsyncClient = _orig_cp_client
 
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

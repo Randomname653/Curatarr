@@ -38,17 +38,7 @@ from src.config import settings  # noqa: E402
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class _Grab(logging.Handler):
@@ -264,5 +254,4 @@ finally:
 check("an unreadable persisted ban backs off (was: 0 = call Spotify)", wait > 0)
 check("...and no stored ban is still no backoff", spc._persisted_backoff_remaining() == 0.0)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -21,17 +21,7 @@ import src.services.scheduler as sched
 import update_db
 from src.config import settings
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp(prefix="curatarr_bak_"))
@@ -114,5 +104,4 @@ check("making way for today's snapshot is enough when it frees the room",
 sched._free_bytes = _real_free
 check("the real free-space probe answers", sched._free_bytes(str(tmp)) > 0)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

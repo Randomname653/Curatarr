@@ -34,17 +34,7 @@ from src.database.models import LibraryConfig, User, WatchHistoryEntry  # noqa: 
 from src.services import music_matcher as mm  # noqa: E402
 from src.services.app_state import get_state, set_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 check("test DB is the temp file, not the real one",
@@ -177,5 +167,4 @@ check("source: no flush-then-yield inside match_spotify_to_plex",
       "db.flush()" not in (ROOT / "src/services/music_matcher.py").read_text(encoding="utf-8")
       .split("async def match_spotify_to_plex", 1)[1].split("\nasync def ", 1)[0])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

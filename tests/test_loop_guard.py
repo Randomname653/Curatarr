@@ -28,17 +28,7 @@ from src.database.models import Base  # noqa: E402
 from src.database.runner import run_read, run_write  # noqa: E402
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -188,5 +178,4 @@ import run_all  # noqa: E402
 check("run_all fails on a src/ coroutine site, not on a test's own or the probe",
       list(run_all.loop_guard_sites(str(dump))) == ["src/services/a.py:1 (job)"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

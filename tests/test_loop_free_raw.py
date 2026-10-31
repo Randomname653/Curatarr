@@ -43,17 +43,7 @@ from src.database.models import Base  # noqa: E402
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _sites(fragment: str) -> list:
@@ -251,5 +241,4 @@ check(f"a cache write from a coroutine waits out another process's lock off the 
       f"(max loop gap {gap * 1000:.0f} ms) and lands",
       gap < 0.2 and got and got["response"] == {"ok": 1})
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

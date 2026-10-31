@@ -26,17 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── no console windows ───────────────────────────────────────────────────────
@@ -195,5 +185,4 @@ check("second boot with the block in place: no write at all", writes == []
       and stignore.read_text(encoding="utf-8") == text)
 check("idempotent: one block, never two", text.count("BEGIN Curatarr auto-ignore") == 1)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

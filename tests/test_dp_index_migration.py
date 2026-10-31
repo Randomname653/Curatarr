@@ -20,17 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 import src.database.connection as conn_mod
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 WANT = {"idx_dp_user_status", "idx_dp_latest_activity"}
@@ -117,5 +107,4 @@ check("init_db runs the repair after the migration",
       (Path(__file__).resolve().parents[1] / "src/database/connection.py")
       .read_text(encoding="utf-8").split("def init_db", 1)[1])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

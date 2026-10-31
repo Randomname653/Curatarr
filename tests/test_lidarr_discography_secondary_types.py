@@ -13,17 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 import src.services.lidarr_discography as ld
@@ -91,5 +81,4 @@ line = _summary([_album("Album", 2.0, ["Live"], files=0, monitored=True)])
 check("a fileless ghost contributes no derivative GB",
       line is not None and "derivative" not in line and "NO files" in line)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

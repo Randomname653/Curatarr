@@ -12,17 +12,7 @@ from src.services.collection_designer import (MAX_ITEMS, MIN_ITEMS,
 from src.services.library_memory import normalize_title
 from src.services.plex_collections import COLLECTION_PREFIX
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 POOL = [{"title": f"Movie {i}", "plex_rating_key": str(1000 + i)} for i in range(20)]
@@ -90,5 +80,4 @@ cd = (root / "src/services/collection_designer.py").read_text(encoding="utf-8")
 check("designer prompt carries seasonal context",
       "seasonal_context()" in cd)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

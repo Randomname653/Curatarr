@@ -21,17 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.services import compute_cards as cc, llm_priority as lp  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the lane ────────────────────────────────────────────────────────────────
@@ -160,5 +150,4 @@ console.log(JSON.stringify({
 else:
     print("  (node not installed - checked statically)")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

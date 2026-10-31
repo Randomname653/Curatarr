@@ -48,17 +48,7 @@ from src.services.taste_engine import (_clean_unit_rows,  # noqa: E402
                                        _corpus_calibration,
                                        weighted_mean_embedding)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 NAN, INF = float("nan"), float("inf")
@@ -317,5 +307,4 @@ check("a genuinely new title survives", "Fresh Pick" in titles)
 check("partition labels the bucket",
       lm.partition([{"title": "Gone Girl"}], {}, {}, lm.removed_index(1, "movie"))["removed"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

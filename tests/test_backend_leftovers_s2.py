@@ -41,17 +41,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from src.services import app_state, state_lease  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class _Capture(logging.Handler):
@@ -257,5 +247,4 @@ check("no comment promises a PIN-keyed embedding store",
       "when PIN available" not in _te)
 
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

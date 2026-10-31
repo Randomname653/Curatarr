@@ -23,17 +23,7 @@ from sqlalchemy.pool import StaticPool
 import src.database.connection as conn_mod
 from src.database.models import Base, DeletionProposal
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 MODEL_COLS = {c.name for c in DeletionProposal.__table__.columns}
@@ -128,5 +118,4 @@ with eng.connect() as c:
 check("failed rebuild leaves the original table and rows", rows == [(3, "x")]
       and "AUTOINCREMENT" not in ddl(eng).upper())
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -13,23 +13,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.cache.metadata_cache as mc
 import src.services.album_dossier as ad
 import src.services.discogs_offline as do
 import src.services.soulsync_client as sc
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 # ── _norm_genres: every shape SoulSync has been seen to emit ─────────────────
@@ -148,5 +136,4 @@ check("raw-string tags/genres are DROPPED, never joined character-wise",
       d2 is not None and "tags:" not in d2 and "genres:" not in d2
       and "style: Punk" in d2 and '[, "' not in d2)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

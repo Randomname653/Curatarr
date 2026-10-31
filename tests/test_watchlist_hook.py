@@ -17,17 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the Discover matcher: unambiguous or nothing ───────────────────────────
@@ -115,5 +105,4 @@ check("the bloat probe exists and answers False on unknown data",
       "def is_bloated_by_title" in _sn
       and 'return False' in _sn.split("def is_bloated_by_title")[1][:900])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

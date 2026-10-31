@@ -36,17 +36,7 @@ from sqlalchemy.exc import IntegrityError  # noqa: E402
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 Base.metadata.create_all(conn_mod.engine)
@@ -141,5 +131,4 @@ init = src[src.index("def init_db():"):]
 check("init_db repairs before any migration copies a table",
       init.index("_repair_foreign_keys()") < init.index("_migrate_deletion_proposals_autoincrement()"))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

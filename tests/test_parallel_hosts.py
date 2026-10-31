@@ -25,17 +25,7 @@ sys.path.insert(0, str(ROOT))
 from src.services import llm_priority as lp  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 NAS = oh.OllamaHost(url="http://nas:30068", profile="small", num_ctx=16384)
@@ -239,5 +229,4 @@ check("the chat turn releases the lane it holds", "curator_done(lane=_chat_lane)
       and "check_curator_vram_health(curator_model, url=_chat_lane.url)" in chat)
 check("model updates queue on the host they measure", mu.count("url=endpoint") >= 7)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

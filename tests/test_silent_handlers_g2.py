@@ -18,17 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 import src.services.embedding_migration as em  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class _Capture(logging.Handler):
@@ -106,5 +96,4 @@ finally:
 check("a pair failing after it was counted is counted once",
       tried == 8 and hits == 7)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

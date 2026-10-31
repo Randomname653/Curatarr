@@ -28,17 +28,7 @@ import src.vector_store.chromadb_wrapper as cw
 from src.config import settings
 from src.database.models import Base, EnrichmentStatus, ProactiveMessage, User
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -341,5 +331,4 @@ check("registered as a background wrapper task fed with its card",
 main_src = (Path(__file__).resolve().parents[1] / "src/main.py").read_text(encoding="utf-8")
 check("startup runs the drift check", "boot_drift_check()" in main_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

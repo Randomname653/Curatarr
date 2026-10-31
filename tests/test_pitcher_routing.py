@@ -22,17 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import src.services.llm_priority as lp
 from src.config import settings
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── stubs ────────────────────────────────────────────────────────────────────
@@ -225,5 +215,4 @@ check("build_models gates the pitcher on PITCHER_MODEL, not the base",
 st = (root / "tests/pillar_json_stresstest.py").read_text(encoding="utf-8")
 check("stresstest gate includes the pitcher bake", '"curatarr-pitcher"' in st)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

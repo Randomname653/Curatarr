@@ -20,17 +20,7 @@ sys.path.insert(0, str(ROOT))
 from src.services import build_info as bi  # noqa: E402
 from src.services import update_check as uc  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 A = "a" * 40
@@ -246,5 +236,4 @@ check("...wired: the action is registered and setUser loads the version",
       and "loadVersion();" in (ROOT / "frontend/js/auth.js").read_text(encoding="utf-8")
       and "/api/system/version" in js)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -16,17 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.paths import env_file  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── where the .env lives ────────────────────────────────────────────────────
@@ -100,5 +90,4 @@ scripts = run_blocks(wf)
 check("no workflow expression is interpolated into a shell script (they go through env:)",
       scripts and not any("${{" in s for s in scripts))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

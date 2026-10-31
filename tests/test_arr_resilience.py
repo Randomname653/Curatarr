@@ -28,17 +28,7 @@ from aiohttp import web
 import src.services.arr_client as ac
 import src.services.lidarr_discography as ld
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── Retry-After ──────────────────────────────────────────────────────────────
@@ -214,5 +204,4 @@ check("both blocking fetches run in a worker thread",
 check("library artists come from the cached Lidarr list first",
       "cached_lidarr_artists()" in d)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

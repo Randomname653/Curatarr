@@ -30,17 +30,7 @@ from src.services import anime_offline as ao  # noqa: E402
 from src.services import archive_backfill as ab  # noqa: E402
 from src.services import wikidata as wd  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 TMP = Path(tempfile.mkdtemp(prefix="curatarr-attention-"))
@@ -179,5 +169,4 @@ row = en._serialize_item({"plex_rating_key": "lidarr:1", "service": "lidarr", "a
 check("a never-processed row is explained as never processed, not as 'a full profile was written'",
       row["reason"] == ES.STATE_DEFINITIONS["never_processed"]["explainer"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

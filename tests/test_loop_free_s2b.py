@@ -44,17 +44,7 @@ from src.database.models import Base, LibraryConfig, SeriesEdition, User, WatchH
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _on_loop_thread() -> bool:
@@ -338,5 +328,4 @@ check("the answers are unchanged (no index / empty index / an artist / Lidarr)",
       (none_absent, none_empty, plex, lidarr) == (None, None, "plex", "lidarr"))
 check("a missing index file is not created by the probe", created is False)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

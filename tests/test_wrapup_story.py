@@ -17,17 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import src.services.wrapup_story as st  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 FACTS = {
@@ -252,5 +242,4 @@ check("titles Plex does not have are reported", out["missing"] == ["Nope"])
 no_tok = asyncio.run(pp.push_wrapup_playlist(type("U", (), {"plex_token": None})(), "x", [], []))
 check("no stored token → skipped, nothing written", no_tok == {"skipped": "no_token"})
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

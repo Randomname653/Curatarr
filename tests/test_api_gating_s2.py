@@ -38,17 +38,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from src.routers.auth import get_current_user  # noqa: E402
 from src.services import rate_limit as _rl  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def status_of(fn, *a, **kw):
@@ -333,5 +323,4 @@ check("the no-anchor answer costs no budget",
       status_of(chat.correct_chat_anchor, chat.CorrectAnchorRequest(), user=MEMBER) == 200)
 mc_mod.MetadataCache = _real_cache
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

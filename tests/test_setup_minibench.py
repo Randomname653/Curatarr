@@ -15,17 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services import setup_minibench as mb  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 ok_warm = {"ok": True, "verdict": "ok", "cpu_percent": 0}
@@ -99,5 +89,4 @@ check("the wizard runs the mini-bench after the bake and renders it",
 check("the wizard no longer shows agreement with the production model as a quality",
       "agree" not in js.split("export function renderHardwarePackage")[1].split("export function")[0])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

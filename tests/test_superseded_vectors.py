@@ -24,17 +24,7 @@ from sqlalchemy.pool import StaticPool
 import src.services.episodic_memory as em
 from src.database.models import Base, CuratorPrinciple, EpisodicMemory
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -118,5 +108,4 @@ check("the weekly memory decay runs the strip",
       "strip_superseded_vectors" in sched_src[sched_src.index("async def job_memory_decay"):
                                               sched_src.index("async def job_orphan_check")])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

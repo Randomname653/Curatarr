@@ -19,17 +19,7 @@ import src.cache.metadata_cache as mcache
 import src.services.embed_service as es
 import src.services.semantic_search as ss
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 @contextmanager
@@ -102,5 +92,4 @@ finally:
 check("default cap fits several full searches (40 hits x _TAG_CAP + constraints)",
       old_cap >= 4 * (40 * ss._TAG_CAP + 10))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -20,17 +20,7 @@ import src.services.proactive_messages as pm  # noqa: E402
 # (series_progress variant — keeps apostrophes, unlike library_memory's).
 normalize_title = pm.normalize_title
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 QUEUE = [
@@ -97,5 +87,4 @@ check("1-day type cooldown (recently_fired) suppresses it", res is None)
 check("TRIGGER_TYPES lists recommendation_followup first (settings UI)",
       pm.TRIGGER_TYPES[0]["type"] == "recommendation_followup")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -19,17 +19,7 @@ import src.services.media_enricher as me  # noqa: E402
 import src.services.recommendations_engine as eng  # noqa: E402
 from src.services.rating_value import count_number, prompt_rating, rating_number  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the parser, on the values the live cache holds ───────────────────────────
@@ -76,5 +66,4 @@ check("summariser: the model's echo is replaced by the source's number", a["rati
 check("summariser: a content rating is no score", b["rating"] is None)
 check("summariser: no source rating, no rating", c["rating"] is None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

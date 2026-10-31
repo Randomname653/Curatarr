@@ -24,17 +24,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from src.database.models import Base, ConversationMessage as M, User  # noqa: E402
 import src.services.user_language as ul  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
@@ -97,5 +87,4 @@ if node:
                        capture_output=True, text=True)
     check("de-DE writes 1.055, en-US 1,055 (the case seen live)", r.stdout.strip() == "1.055|1,055")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

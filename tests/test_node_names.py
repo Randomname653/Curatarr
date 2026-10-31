@@ -29,17 +29,7 @@ from src.services import notifications as nt  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 from src.services import pc_host  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 store = {}
@@ -221,5 +211,4 @@ check("...a miss every source missed, a legacy None and a context block alone do
       _source_answered(all_missed) is False and _source_answered(None) is False
       and _source_answered({"_sources_state": {"_context": {"status": "ok"}}}) is False)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -29,17 +29,7 @@ from src.database.runner import run_write, shutdown_writer  # noqa: E402
 from src.services import bg_tasks  # noqa: E402
 from src.services import scheduler as sched  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── drain(): cancels both trackers' tasks and lets their finally run ────────
@@ -125,5 +115,4 @@ pos = [body.find(s) for s in order]
 check("teardown: stop scheduler → drain → clear flags → release DB → Syncthing",
       all(p >= 0 for p in pos) and pos == sorted(pos))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

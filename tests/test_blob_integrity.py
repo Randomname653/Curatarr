@@ -15,17 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from src.database.models import Base, EncryptedTasteVector
 from src.services.taste_vectors import cas_update_blob
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── CAS semantics against a real (in-memory) SQLite ──────────────────────────
@@ -88,5 +78,4 @@ check("pillars reader gated too", 'blob.get("version") == 1' in pl)
 models = (root / "src/database/models.py").read_text(encoding="utf-8")
 check("misnamed taste columns documented", "COLUMN NAMES LIE" in models)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

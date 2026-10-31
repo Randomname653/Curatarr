@@ -16,17 +16,7 @@ import src.services.app_state as app_state  # noqa: E402
 import src.services.media_enricher as me  # noqa: E402
 from src.config import settings  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 state: dict = {}
@@ -98,5 +88,4 @@ try:
 finally:
     me.httpx.AsyncClient, settings.OMDB_API_KEY, settings.OMDB_DAILY_LIMIT = real_client, real_key, real_limit
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

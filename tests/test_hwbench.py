@@ -21,17 +21,7 @@ from tests.benchmarks.hwbench.run import tightest_tier  # noqa: E402
 from tests.benchmarks.hwbench.server import ServerConfig  # noqa: E402
 from tests.benchmarks.hwbench.snapshot_items import select_subset  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp(prefix="hwbench-test-"))
@@ -459,5 +449,4 @@ check("remote setup: quality dropped, default server only, no simulated tiers",
 _gpu.set_remote([])
 _run.REMOTE_HOST = ""
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

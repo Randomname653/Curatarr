@@ -25,17 +25,7 @@ from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.services import plex_sync as ps  # noqa: E402
 from src.services import wrapup_facts as wf  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the sync: a finished item with no play event is a mark ─────────────────
@@ -121,5 +111,4 @@ db.close()
 check("stored wrap-ups are rebuilt on the repaired history (a new facts generation)",
       wf.FACTS_VERSION >= 12)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

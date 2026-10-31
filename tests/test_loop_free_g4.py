@@ -40,17 +40,7 @@ from src.database.models import (Base, CuratorResolutionLog, DeletionProposal,  
                                  User, WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -299,5 +289,4 @@ out = asyncio.run(_on_loop(sn.ensure_studio_note("Madhouse", cache=c2)))
 check("studio note: the cache hit is served, no cache call on the loop thread",
       out == "Known for X." and c2.threads and loop_threads[0] not in c2.threads)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

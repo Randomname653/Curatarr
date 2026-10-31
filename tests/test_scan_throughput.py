@@ -38,17 +38,7 @@ from src.database.models import EpisodicMemory, User, WatchHistoryEntry  # noqa:
 
 conn_mod.init_db()
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 with conn_mod.get_db_session() as db:
@@ -229,5 +219,4 @@ check("tasks built ahead are cancelled and reaped before the gate is released",
       loop.index("_t.cancel()") < loop.index("curator_done(lane=_run_lane)\n        _msg(")
       and "return_exceptions=True" in loop)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

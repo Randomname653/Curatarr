@@ -25,17 +25,7 @@ sys.path.insert(0, str(ROOT))
 import src.services.process_monitor as pm  # noqa: E402
 from src.config import settings  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── 1. probes ───────────────────────────────────────────────────────────────
@@ -104,5 +94,4 @@ check("the lifespan builds the context before serving",
       "tls_context()" in main_src[main_src.index("async def lifespan"):
                                   main_src.index("loop_guard.serving(True)")])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

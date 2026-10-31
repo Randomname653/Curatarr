@@ -19,17 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── lyrics: the request carries the schema ──────────────────────────────────
@@ -157,5 +147,4 @@ kb = (ROOT / "frontend/js/kb.js").read_text(encoding="utf-8")
 check("the card no longer shows the mapping file's empty AniList column",
       "AniList pending" not in kb and "library anime with an AniList id" in kb)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

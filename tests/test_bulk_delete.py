@@ -22,17 +22,7 @@ import src.routers.recommendations as recs
 import src.services.episodic_memory as em
 from src.database.models import Base, CuratorResolutionLog, DeletionProposal
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── throwaway DB + patched boundaries ────────────────────────────────────────
@@ -163,5 +153,4 @@ for frag in ["del-cb", "del-bulk-btn", "del-select-all",
              "confirmDialog(", "updateDelBulkCount", "bulkDelete()"]:
     check(f"frontend has {frag}", frag in html)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -26,17 +26,7 @@ import src.services.curator_principles as cp  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.database.models import Base, CuratorPrinciple  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -190,5 +180,4 @@ with _session() as db:
 check("activating from the panel adopts the rule", out["new_status"] == "active")
 check("…and supersedes the rule it contradicts", get(panel_base).status == "superseded")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -36,17 +36,7 @@ from src.database.models import (Base, DeletionProposal, EpisodicMemory,  # noqa
                                  User, WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -293,5 +283,4 @@ check("served off the loop with the same shape",
       sites == [] and isinstance(out, dict) and set(out) == {"items", "needs_action", "settings_action"}
       and any(i["kind"] == "model_update" for i in out["items"]))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

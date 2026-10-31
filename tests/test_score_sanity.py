@@ -15,17 +15,7 @@ from src.services.recommendations_engine import (_cosine_anchors,
                                                  _cosine_to_mismatch)
 from src.services.taste_engine import _corpus_calibration
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── mismatch mapping still sane ──────────────────────────────────────────────
@@ -90,5 +80,4 @@ check("startup asserts hnsw:space == cosine (loud failure)",
 check("embeddings_for_domain exists for the anchor computation",
       "def embeddings_for_domain" in cw_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -29,17 +29,7 @@ from src.config import settings
 from src.database.models import Base, DeletionProposal, ProtectedMedia
 from tests.frontend_files import everything
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
@@ -216,5 +206,4 @@ fate_all = ui.split("export async function deleteFateLines")[1].split("\n}\n")[0
 check("the music delete dialog mentions the SoulSync ban",
       "blocked in SoulSync" in fate_all and "soulsync_ban" in fate_all)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

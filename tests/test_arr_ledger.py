@@ -30,17 +30,7 @@ import src.services.arr_ledger as al  # noqa: E402
 import src.services.library_ledger as ll  # noqa: E402
 from src.database.models import Base, LibraryEvent, LibraryItem  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -289,5 +279,4 @@ check("the tech walk reads what the arrs recorded first, then writes the ledger 
       "await arr_ledger.run_arr_ledger(since_only=True)" in src
       and src.index("run_arr_ledger(since_only=True)") < src.index("persist_ledger, agg, scanned - incomplete, None, arr_cov"))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -33,17 +33,7 @@ import src.database.connection as conn  # noqa: E402
 import src.services.episodic_memory as em  # noqa: E402
 from src.database.models import Base, EpisodicMemory  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -238,5 +228,4 @@ check("a real embedding match above the floor still counts", real in {c["id"] fo
 check("the floor sits above the measured noise (p99 0.335) and below real matches (0.35+)",
       0.335 < em.CONSIDERATION_EMBED_FLOOR < 0.35)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

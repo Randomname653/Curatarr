@@ -29,17 +29,7 @@ from src.database.models import (Base, JudgeVerdict, ProtectedMedia,  # noqa: E4
                                  ProtectionHistory, User, WatchHistoryEntry as W)
 
 ROOT = Path(__file__).resolve().parents[1]
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -186,5 +176,4 @@ for path, n in (("src/services/wrapup_facts.py", 3), ("src/services/taste_snapsh
     check(f"{path} reads the hidden plays ({n})",
           (ROOT / path).read_text(encoding="utf-8").count("orphaned.include(db)") == n)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

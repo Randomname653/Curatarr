@@ -31,17 +31,7 @@ import src.services.wrapup_writer as ww  # noqa: E402
 from src.database.models import Base, ConversationMessage, DeletionProposal  # noqa: E402
 from src.services.wrapup_story import render_fact_sheet  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── style: fixed, never fatal ───────────────────────────────────────────────
@@ -324,5 +314,4 @@ check("the generation task writes through the writer, with the user's voice",
       "await write(facts, sheet, idx, cards, quotes=quotes, lang=lang)" in st_src
       and "quotes_allowed(user_id)" in st_src and "def write_story" not in st_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

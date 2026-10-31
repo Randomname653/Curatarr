@@ -41,17 +41,7 @@ from src.database.models import (Base, CuratorPrinciple, LibraryConfig,  # noqa:
                                  WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -413,5 +403,4 @@ finally:
 check("wikidata: a settled title is left alone, its lookup off the loop thread",
       out is False and wcache.threads and loop_threads[0] not in wcache.threads)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

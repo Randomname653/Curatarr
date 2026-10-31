@@ -12,17 +12,7 @@ from tests.frontend_files import everything as _frontend_everything  # index.htm
 import src.services.semantic_search as ss
 from src.services.semantic_search import format_rag_context
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── format parity with the historical chat injection ─────────────────────────
@@ -445,5 +435,4 @@ sim_none, tag_none = ss._best_constraint_match("zzzquux", False, ["Alpha"], set(
 check("no evidence and no vectors -> zero, nothing cited",
       sim_none == 0.0 and tag_none is None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

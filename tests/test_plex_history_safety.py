@@ -27,17 +27,7 @@ from sqlalchemy.pool import StaticPool
 import src.services.plex_sync as ps
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -249,5 +239,4 @@ block = src[i:src.index("if resp.status_code != 200:", i)]
 check("sync: an unconfirmed 404 holds the watermark (failed_sections)",
       "_section_confirmed_gone" in block and "failed_sections.append(sec_title)" in block)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -26,17 +26,7 @@ sys.path.insert(0, str(ROOT))
 import src.services.cf_access as cfa  # noqa: E402
 from src.middleware import CloudflareAccessMiddleware  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── a throwaway key ─────────────────────────────────────────────────────────
@@ -224,5 +214,4 @@ link = re.search(r'<link rel="manifest"[^>]*>', index)
 check("the manifest is fetched with the Access cookie (crossorigin=use-credentials)",
       link and 'crossorigin="use-credentials"' in link.group(0))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

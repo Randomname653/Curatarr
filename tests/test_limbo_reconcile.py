@@ -32,17 +32,7 @@ from src.config import settings
 from src.database.models import (Base, CuratorResolutionLog, DeletionProposal,
                                  ProactiveMessage)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -191,5 +181,4 @@ check("the claim is recorded right after the conditional 'deleting' UPDATE",
 check("_commit_outcome releases the claim even when its writes fail",
       "finally:\n        _DELETE_CLAIMS.pop(p.id, None)" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()
