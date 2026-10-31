@@ -27,7 +27,14 @@ from src.services.media_server.base import (
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 30.0
+# A page of 500 items with their media sources took up to 104 s while the
+# owner's server scanned a 40,000-episode library (2026-10-31); 30 s broke
+# the walk off. Small calls answer in well under a second either way.
+_TIMEOUT = 120.0
+# Jellyfin files the episodes and seasons its metadata knows but no file
+# holds as "missing" (virtual) items: with TheTVDB, 58,135 episodes beside
+# the 39,427 real ones on the owner's anime library. Not the library.
+_NOT_MISSING = {"IsMissing": "false"}
 _PAGE = 500
 _FIELDS = "ProviderIds,Genres,Tags,DateCreated,MediaSources,Path,ParentId"
 _TICKS_PER_MS = 10_000
@@ -279,7 +286,7 @@ class JellyfinAdapter:
             elif kind in _ITEM_TYPE:
                 pages = self._pages("/Items", {"ParentId": library.key, "Recursive": "true",
                                                "IncludeItemTypes": _ITEM_TYPE[kind],
-                                               "Fields": _FIELDS})
+                                               **_NOT_MISSING, "Fields": _FIELDS})
             else:
                 continue
             async for raw in pages:
@@ -332,7 +339,7 @@ class JellyfinAdapter:
         if not k:
             return []
         async with self._client() as c:
-            body = await self._get(c, "/Items", params={"ParentId": k, "Fields": _FIELDS})
+            body = await self._get(c, "/Items", params={"ParentId": k, **_NOT_MISSING, "Fields": _FIELDS})
         return [it for it in (to_media_item(m) for m in body.get("Items") or []) if it]
 
     async def key_exists(self, key: str) -> bool:
@@ -470,7 +477,7 @@ class JellyfinAdapter:
         else:
             path = "/Items"
             params = {"SearchTerm": title, "Recursive": "true", "IncludeItemTypes": _ITEM_TYPE[kind],
-                      "Fields": "ProviderIds,Path"}
+                      **_NOT_MISSING, "Fields": "ProviderIds,Path"}
         hits = []
         async with self._client() as c:
             for lib in (library_keys or [None]):

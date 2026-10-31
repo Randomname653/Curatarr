@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Iterable, Optional
 
 from src.services.media_server.base import (
-    Library, MediaItem, ServerKind, _norm_name, canonical_key,
+    Library, MediaItem, ServerKind, _norm_name, canonical_keys,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,15 @@ logger = logging.getLogger(__name__)
 # its parent's canonical key.
 _ORDER = {"movie": 0, "series": 0, "artist": 0, "album": 1, "season": 1, "episode": 2, "track": 2}
 _KEY_LEN = 512
+
+
+def key_rank(key: str) -> int:
+    """How strong a match on ``key`` is: an external id first, then a key
+    chained to one (a series' id plus season and episode number), a file or
+    a name last."""
+    if key.startswith(("file:", "name:")):
+        return 2
+    return 1 if "/" in key else 0
 
 
 def match_method(key: str) -> str:
@@ -47,27 +56,33 @@ def match_method(key: str) -> str:
     return "external_id"
 
 
-def item_rows(items: Iterable[MediaItem], roots_by_library: dict) -> list[tuple]:
-    """``(entity_type, canonical_key, server_key)`` for every item that has a
-    canonical key. Seasons the walk did not list come from their episodes
-    (``parent_key`` + ``season_number``), so a walk of episodes alone still
-    files every season. A double episode files one row per episode number."""
+def item_rows(items: Iterable[MediaItem], roots_by_library: dict, *,
+              aliases: bool = True) -> list[tuple]:
+    """``(entity_type, canonical_key, server_key)`` for every key of every
+    item that has one (``canonical_keys``: the strongest first, then the
+    other ids, the series chain, the file). ``aliases=False`` gives each
+    item's strongest key only: one identity per item, which is what a
+    conflict is counted against. Seasons the walk did not list come from
+    their episodes (``parent_key`` + ``season_number``), so a walk of
+    episodes alone still files every season. A double episode files its
+    keys once per episode number."""
     items = sorted(items, key=lambda i: _ORDER.get(i.kind, 3))
-    canon: dict = {}                     # server key -> canonical key
+    canon: dict = {}                     # server key -> its keys, strongest first
     rows, seasons = [], set()
 
-    def key_of(it: MediaItem, parent: Optional[str], roots: tuple) -> Optional[str]:
-        k = canonical_key(it, parent_canonical=parent, roots=roots)
-        return None if (k and k.startswith("file:") and not roots) else k
+    def keys_of(it: MediaItem, parents: list, roots: tuple) -> list:
+        ks = [k for k in canonical_keys(it, parent_keys=parents, roots=roots)
+              if not (k.startswith("file:") and not roots)]
+        return ks if aliases else ks[:1]
 
     for it in items:
         roots = tuple(roots_by_library.get(it.library_key or "", ()))
         # An episode chains to its series; everything else to its parent.
-        parent = canon.get((it.grandparent_key if it.kind == "episode" else it.parent_key) or "")
-        key = key_of(it, parent, roots)
-        if key:
-            canon.setdefault(it.key, key)
-            rows.append((it.kind, key, it.key))
+        parents = canon.get((it.grandparent_key if it.kind == "episode" else it.parent_key) or "", [])
+        keys = keys_of(it, parents, roots)
+        if keys:
+            canon.setdefault(it.key, keys)
+            rows += [(it.kind, k, it.key) for k in keys]
             if it.kind == "season":
                 seasons.add(it.key)
         if it.kind == "episode" and it.episode_number_end and it.episode_number is not None:
@@ -77,15 +92,15 @@ def item_rows(items: Iterable[MediaItem], roots_by_library: dict) -> list[tuple]
                 extra = dataclasses.replace(
                     it, episode_number=n, episode_number_end=None,
                     external_ids=dataclasses.replace(it.external_ids, tvdb_episode_id=None))
-                k = key_of(extra, parent, roots)
-                if k:
-                    rows.append(("episode", k, it.key))
+                rows += [("episode", k, it.key) for k in keys_of(extra, parents, roots)]
         if (it.kind == "episode" and it.parent_key and it.parent_key not in seasons
-                and parent and it.season_number is not None):
+                and parents and it.season_number is not None):
             seasons.add(it.parent_key)
-            season_key = f"{parent}/s{it.season_number:02d}"
-            canon[it.parent_key] = season_key
-            rows.append(("season", season_key, it.parent_key))
+            season_keys = [f"{p}/s{it.season_number:02d}" for p in parents]
+            if not aliases:
+                season_keys = season_keys[:1]
+            canon[it.parent_key] = season_keys
+            rows += [("season", k, it.parent_key) for k in season_keys]
     return rows
 
 

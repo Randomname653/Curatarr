@@ -135,10 +135,10 @@ for name, a in ADAPTERS.items():
 print("\n-- the rebind's question: same library, same canonical keys --")
 
 
-def keys(name):
+def keys(name, aliases=False):
     libs, items = WALK[name]
     roots = {lib.key: lib.roots for lib in libs}
-    return {(t, k) for t, k, _ in id_map.item_rows(items, roots)}
+    return {(t, k) for t, k, _ in id_map.item_rows(items, roots, aliases=aliases)}
 
 
 pk, jk = keys("plex"), keys("jellyfin")
@@ -147,7 +147,7 @@ check(f"both servers file the library under the same canonical keys (only plex: 
 check("the id-less film matches by its file below the library root, across mount points",
       ("movie", "file:home movie (2003)/home.mp4|123456") in pk & jk)
 jl, ji = WALK["jellyfin"]
-jrows = id_map.item_rows(ji, {lib.key: lib.roots for lib in jl})
+jrows = id_map.item_rows(ji, {lib.key: lib.roots for lib in jl}, aliases=False)
 double = [k for t, k, sid in jrows if t == "episode" and sid == "3b4c5d6e7f8091a20b1c2d3e4f506172"]
 check("Jellyfin's one double-episode item stands for both of Plex's episodes",
       sorted(double) == ["tvdb:334824/s01e02", "tvdb:334824/s01e03"])

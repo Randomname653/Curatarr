@@ -324,6 +324,57 @@ def canonical_key(item: MediaItem, *, parent_canonical: Optional[str] = None,
     return None
 
 
+def canonical_keys(item: MediaItem, *, parent_keys: Sequence[str] = (),
+                   roots: Sequence[str] = ()) -> list[str]:
+    """Every key ``item`` may be matched on, strongest first; the first is
+    ``canonical_key``'s. One server can lack the id the other files a title
+    by: a Jellyfin without the TheTVDB plugin keys its series ``tmdb-tv``,
+    and episodes whose metadata Jellyfin has not fetched yet carry no ids at
+    all, while Plex keys them ``tvdb-ep`` (2026-10-31, the owner's anime
+    library: 39,430 Plex episodes by TVDB id, the Jellyfin ones by file
+    only). A rebind matches on the strongest key both sides share.
+    ``parent_keys`` are the parent's keys (the series' for an episode)."""
+    x = item.external_ids
+    first_file = item.files[0] if item.files else None
+    file_key = f"file:{first_file.stem_key(roots)}" if first_file else None
+    parents = [p for p in parent_keys if p]
+    out: list[str] = []
+
+    def add(k: Optional[str]) -> None:
+        if k and k not in out:
+            out.append(k)
+
+    add(canonical_key(item, parent_canonical=parents[0] if parents else None, roots=roots))
+    if item.kind == "movie":
+        add(f"tmdb:{x.tmdb_id}" if x.tmdb_id else None)
+        add(f"imdb:{x.imdb_id}" if x.imdb_id else None)
+        add(file_key)
+    elif item.kind == "series":
+        add(f"tvdb:{x.tvdb_id}" if x.tvdb_id else None)
+        add(f"tmdb-tv:{x.tmdb_id}" if x.tmdb_id else None)
+        add(f"imdb:{x.imdb_id}" if x.imdb_id else None)
+    elif item.kind == "season" and item.season_number is not None:
+        for p in parents:
+            add(f"{p}/s{item.season_number:02d}")
+    elif item.kind == "episode":
+        add(f"tvdb-ep:{x.tvdb_episode_id}" if x.tvdb_episode_id else None)
+        numbered = item.season_number is not None and item.episode_number is not None
+        if numbered:
+            se = f"s{item.season_number:02d}e{item.episode_number:02d}"
+            for p in parents:
+                add(f"{p}/{se}")
+            add(f"{file_key}#{se}" if file_key else None)
+        # The bare file last: a server that has found the file but not yet
+        # placed it (no series, no numbers: Jellyfin mid-scan) still meets it.
+        # A double episode's two Plex items share it; the conflict count
+        # (one identity per number) lets them onto the one Jellyfin item.
+        add(file_key)
+    elif item.kind in ("album", "track"):
+        for p in parents[1:]:
+            add(canonical_key(item, parent_canonical=p, roots=roots))
+    return out
+
+
 # ── the protocol ─────────────────────────────────────────────────────────────
 
 @runtime_checkable

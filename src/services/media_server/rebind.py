@@ -42,7 +42,7 @@ from sqlalchemy import text
 from src.services.media_server.base import (
     ServerKind, ServerUser, _norm_name, is_jellyfin_key, is_plex_key,
 )
-from src.services.media_server.id_map import item_rows, library_rows, match_method
+from src.services.media_server.id_map import item_rows, key_rank, library_rows, match_method
 
 logger = logging.getLogger(__name__)
 
@@ -217,11 +217,12 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
     t_libs, t_items = await _walk(target_adapter)
     t_roots = {lib.key: lib.roots for lib in t_libs}
     plan.target_rows = item_rows(t_items, t_roots) + library_rows(t_libs)
-    tgt_by_ck, cks_per_tid = {}, Counter()
+    tgt_by_ck = {}
     for etype, ck, tid in plan.target_rows:
-        if (etype, ck) not in tgt_by_ck:
-            tgt_by_ck[(etype, ck)] = tid
-            cks_per_tid[tid] += 1
+        tgt_by_ck.setdefault((etype, ck), tid)
+    # How many source items one target item may stand for: its identities
+    # (a double episode has two), not its aliases.
+    cks_per_tid = Counter(tid for _e, _ck, tid in item_rows(t_items, t_roots, aliases=False))
 
     # The source side: the id memory, plus the source's own walk if it answers.
     src_cks = defaultdict(set)
@@ -241,7 +242,9 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
     # Items.
     claimed = defaultdict(list)
     for key in sorted(keys):
-        hits = sorted((ck, tgt_by_ck[(e, ck)]) for e, ck in src_cks.get(key, ()) if (e, ck) in tgt_by_ck)
+        # The strongest key both sides share: an id before a chain before a file.
+        hits = sorted(((ck, tgt_by_ck[(e, ck)]) for e, ck in src_cks.get(key, ()) if (e, ck) in tgt_by_ck),
+                      key=lambda h: (key_rank(h[0]), h[0]))
         if hits:
             plan.items[key] = hits[0][1]
             plan.methods[match_method(hits[0][0])] += 1
