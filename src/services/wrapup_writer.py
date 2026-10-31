@@ -184,20 +184,131 @@ def _norm(n: str) -> str:
     return n.split(".")[0] if re.fullmatch(r"\d+\.0+", n) else n
 
 
+# Spelled-out numbers are numbers: "ninety hours" is checked exactly like
+# "90 hours". Writers spell numbers out often, and a check that reads only
+# digits lets an invented "ninety" through.
+_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate(
+    "twenty thirty forty fifty sixty seventy eighty ninety".split(), start=2)}
+_SCALES = {"hundred": 100, "thousand": 1000, "million": 1_000_000, "billion": 1_000_000_000}
+_MULT = {"twice": 2, "thrice": 3, "double": 2, "doubled": 2, "triple": 3, "tripled": 3,
+         "quadruple": 4, "quadrupled": 4}
+_U = "|".join(sorted(_UNITS, key=len, reverse=True))
+_U9 = "|".join(w for w, i in _UNITS.items() if 1 <= i <= 9)
+_D = "|".join(_TENS)
+_B100 = rf"(?:(?:{_D})(?:[-\s]+(?:{_U9}))?|{_U})"
+_B1000 = rf"(?:(?:{_B100}|an?)\s+hundred(?:\s+(?:and\s+)?{_B100})?|{_B100})"
+_B1E6 = rf"(?:(?:{_B1000}|an?)\s+thousand(?:,?\s+(?:and\s+)?{_B1000})?|{_B1000})"
+_BIG = rf"(?:(?:{_B1000}|an?)\s+(?:million|billion)(?:,?\s+(?:and\s+)?{_B1E6})?|{_B1E6})"
+_WORDNUM = re.compile(
+    rf"\b(?:half\s+a\s+dozen|(?:{_B100}|an?)\s+dozen|{_BIG}(?:\s+and\s+a\s+half)?)\b"
+    rf"|\b(?:{'|'.join(_MULT)})\b|\b(?:{_BIG})-?fold\b", re.I)
+
+
+def _word_value(phrase: str) -> float:
+    words = [w for w in re.split(r"[\s,-]+", phrase.lower()) if w and w != "and"]
+    if words[:3] == ["half", "a", "dozen"]:
+        return 6
+    if words[-1] in _MULT:
+        return _MULT[words[-1]]
+    if words[-1].endswith("fold"):
+        words[-1] = words[-1][:-4]
+    half = words[-2:] == ["a", "half"]
+    if half:
+        words = words[:-2]
+    total = cur = 0
+    for w in words:
+        if w in _UNITS or w in _TENS:
+            cur += _UNITS.get(w, _TENS.get(w, 0))
+        elif w in ("a", "an"):
+            cur = cur or 1
+        elif w == "hundred":
+            cur = (cur or 1) * 100
+        elif w == "dozen":
+            cur = (cur or 1) * 12
+        elif w in _SCALES:
+            total += (cur or 1) * _SCALES[w]
+            cur = 0
+    return total + cur + (0.5 if half else 0)
+
+
+def spell_out_to_digits(text: str) -> str:
+    """"ninety-five hours" → "95 hours", "a hundred" → "100", "a dozen" →
+    "12", "two and a half days" → "2.5 days", "twice" → "2"."""
+    def rep(m):
+        v = _word_value(m.group(0))
+        return str(int(v)) if v == int(v) else str(v)
+    return _WORDNUM.sub(rep, text or "")
+
+
 def numerals(text: str) -> set:
-    return {_norm(n) for n in _NUM.findall(text or "")}
+    return {_norm(n) for n in _NUM.findall(spell_out_to_digits(text))}
+
+
+# A vague quantifier claims a bound, not a value: "over a hundred hours"
+# needs a cited value above 100, "dozens of" one of at least 24. The bound is
+# checked against the card's own values, never against a number that merely
+# appears on it (a share of 100% does not make "over a hundred hours" true).
+_OVER = re.compile(r"\b(?:just\s+)?(?:over|more\s+than|above|upwards\s+of|in\s+excess\s+of|north\s+of)"
+                   r"\s+(\d+(?:[.,]\d+)*)", re.I)
+_PLURAL = re.compile(r"\b(dozens|hundreds|thousands|millions)\s+(?:and\s+\w+\s+)?of\b", re.I)
+_PLURAL_MIN = {"dozens": 24, "hundreds": 200, "thousands": 2000, "millions": 2_000_000}
+
+
+def _claims(text: str) -> tuple:
+    """(exact numerals, [(bound, strict, phrase)]) of a sentence, number
+    words read as numbers."""
+    t = spell_out_to_digits(text)
+    bounds = []
+
+    def over(m):
+        bounds.append((float(_norm(m.group(1))), True, m.group(0)))
+        return " "
+    t = _OVER.sub(over, t)
+
+    def plural(m):
+        bounds.append((_PLURAL_MIN[m.group(1).lower()], False, m.group(0)))
+        return " "
+    t = _PLURAL.sub(plural, t)
+    return numerals(t), bounds
+
+
+def _values(numbers: set) -> list:
+    out = []
+    for n in numbers:
+        try:
+            out.append(float(n))
+        except ValueError:
+            pass
+    return out
+
+
+def _strip_titles(text: str, titles) -> str:
+    """A number inside a cited title is the title's ("Blade Runner 2049",
+    "Seven"): out of the sentence before its numbers are read. Case-sensitive,
+    so the film Seven goes and "seven hours" stays."""
+    for t in sorted({t for t in titles if t}, key=len, reverse=True):
+        text = re.sub(rf"(?<!\w){re.escape(t)}(?!\w)" if t[-1].isalnum() else re.escape(t), " ", text)
+    return text
 
 
 def evidence(cards: list, picks: dict) -> dict:
-    """{id: {"numbers": set, "titles": set}} for every card and pick."""
+    """{id: {"numbers": set, "titles": set, "names": set}} for every card and
+    pick. ``numbers`` are the card's own (claim, values, approved
+    renderings) — not its titles' digits, which ``names`` (the titles as
+    written) take out of a sentence instead."""
     out = {}
     for c in cards:
-        blob = " ".join([c["claim"], *[str(v) for v in c["values"].values()],
-                         *[r for v in c["say"].values() for r in v], *c["refs"]])
-        out[c["id"]] = {"numbers": numerals(blob), "titles": {r.lower() for r in c["refs"]}}
+        blob = " ".join([_strip_titles(c["claim"], c["refs"]), *[str(v) for v in c["values"].values()],
+                         *[r for v in c["say"].values() for r in v]])
+        out[c["id"]] = {"numbers": numerals(blob), "titles": {r.lower() for r in c["refs"]},
+                        "names": set(c["refs"])}
     for uid, p in picks.items():
-        blob = " ".join(str(x) for x in (p.get("title"), p.get("year"), p.get("reason")) if x)
-        out[uid] = {"numbers": numerals(blob), "titles": {(p.get("title") or "").lower()}}
+        title = p.get("title") or ""
+        blob = " ".join(str(x) for x in (p.get("year"), _strip_titles(p.get("reason") or "", [title])) if x)
+        out[uid] = {"numbers": numerals(blob), "titles": {title.lower()}, "names": {title}}
     return out
 
 
@@ -231,9 +342,16 @@ def check_section(text: str, headline: str, own: list, ev: dict, known_titles: l
         return ["the section is empty"]
     if len(text) > _TEXT_MAX:
         faults.append(f"too long ({len(text)} characters, at most {_TEXT_MAX})")
-    allowed_own = set().union(*(ev[i]["numbers"] for i in own if i in ev)) | _small()
-    for n in numerals(headline) - allowed_own:
+    own_ev = [ev[i] for i in own if i in ev]
+    allowed_own = set().union(*(e["numbers"] for e in own_ev)) | _small()
+    own_names = set().union(*(e.get("names", ()) for e in own_ev))
+    own_values = _values(set().union(*(e["numbers"] for e in own_ev)))
+    exact, bounds = _claims(_strip_titles(headline, own_names))
+    for n in exact - allowed_own:
         faults.append(f"the headline's number {n} is not on the card")
+    for b, strict, phrase in bounds:
+        if not any(v > b if strict else v >= b for v in own_values):
+            faults.append(f"the headline's \"{phrase}\" is more than the card has")
     for sent, cites in _sentences(text):
         cites = cites or [i for i in own if i in ev]
         if not cites:
@@ -245,8 +363,15 @@ def check_section(text: str, headline: str, own: list, ev: dict, known_titles: l
             continue
         bare = _CITE.sub("", sent)
         allowed = set().union(*(ev[c]["numbers"] for c in cites)) | _small()
-        for n in numerals(bare) - allowed:
+        names = set().union(*(ev[c].get("names", ()) for c in cites)) | own_names
+        exact, bounds = _claims(_strip_titles(bare, names))
+        for n in exact - allowed:
             faults.append(f"the number {n} is not on {', '.join(cites)}: \"{bare.strip()[:80]}\"")
+        for b, strict, phrase in bounds:
+            if not any(v > b if strict else v >= b
+                       for v in _values(set().union(*(ev[c]["numbers"] for c in cites)))):
+                faults.append(f"\"{phrase.strip()}\" is more than {', '.join(cites)} has: "
+                              f"\"{bare.strip()[:80]}\"")
         titles = set().union(*(ev[c]["titles"] for c in cites)) | set().union(
             *(ev[i]["titles"] for i in own if i in ev))
         low = bare.lower()
