@@ -37,20 +37,27 @@ files, so a browser refresh picks up changes in `frontend/`.
 No pytest — every suite is a plain script, run with the venv's Python:
 
 ```bash
-python tests/run_all.py          # the whole battery (CI runs exactly this)
+python tests/run_all.py          # the whole battery, one suite per CPU (CI runs exactly this)
+python tests/run_all.py --serial # one at a time (-j4 / CURATARR_TEST_JOBS=4 to choose)
 python tests/test_<name>.py      # one suite
 ```
 
-Stop the app before running the full battery: several suites open the
-vector store, which admits one process at a time, so they all fail together
-while it is running. The runner says so rather than printing the same
-traceback eight times.
+No suite touches your `data/` or `.env`: the runner gives each suite its own
+temp database, vector store and caches, and fails the run if one still
+writes to `data/` (`--serial` names it). So the battery runs while the app
+is running.
 
 Policy: new functionality ships with tests for it, and a bug fix ships
 with the test that would have caught it. New tests follow the stdlib
-pattern (`check(name, cond)` counter, printed summary, non-zero exit on
-failure — see `tests/test_stale_guard.py` as a template). Regressions
-caught live become fixtures.
+pattern — `from _harness import app_db, check` as the first import (temp
+stores; `app_db()` is the app's own migrated database), `check(name, cond)`
+/ `check.table(...)`, `check.done()` at the end — see
+`tests/test_vector_reconcile_live.py`. Prefer calling the code over grepping
+its source: `tests/test_source_grep_ratchet.py` only lets the number of
+source-text checks go down. In-memory databases come from
+`_checks.memory_engine()` (foreign keys on, loop guard installed), never a
+bare `create_engine("sqlite://")`. Wait for a condition with `wait_until`,
+not a guessed sleep. Regressions caught live become fixtures.
 
 ## Dependencies
 
