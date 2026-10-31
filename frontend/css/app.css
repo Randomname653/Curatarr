@@ -529,14 +529,17 @@ html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon
 .thinking-mark .brand-logo { width: 100%; height: 100%; display: block; overflow: visible; }
 .thinking-mark .brand-ring { fill: var(--brand-amber); }
 /* Easing lives in the keyframes, per phase; linear here is a placeholder.
-   The turn is the rotate property, the step out is transform: rotate is
-   applied after transform, so each arc steps out along its own radius
-   whatever angle the C has reached. --ux/--uy: the arc's outward unit
-   vector (its angular midpoint); --lag: the wave runs clockwise from the
-   C's front arc (seg-2, at the opening) through 1, 4, 3. */
-.thinking-mark .brand-seg { transform-box: view-box; transform-origin: 1029.04px 1000px;
-  animation: brand-turn var(--think-cycle) linear infinite,
-             brand-step var(--think-cycle) linear calc(var(--think-cycle) * var(--lag)) infinite; }
+   The turn runs on the arcs' group (.brand-arcs), the step out on each
+   arc: inside the turning group each arc steps out along its own radius
+   whatever angle the C has reached. Two elements, not rotate + transform
+   on one: some engines (the Claude app's webview) drop the rotate while
+   a transform animation plays on the same element. --ux/--uy: the arc's
+   outward unit vector (its angular midpoint); --lag: the wave runs
+   clockwise from the C's front arc (seg-2, at the opening) through 1, 4, 3. */
+.thinking-mark .brand-arcs { transform-box: view-box; transform-origin: 1029.04px 1000px;
+  animation: brand-turn var(--think-cycle) linear infinite; }
+.thinking-mark .brand-arcs .brand-seg {
+  animation: brand-step var(--think-cycle) linear calc(var(--think-cycle) * var(--lag)) infinite; }
 .thinking-mark .brand-seg-2 { --ux: .737;  --uy: -.676; --lag: .06; }
 .thinking-mark .brand-seg-1 { --ux: -.300; --uy: -.954; --lag: .18; }
 .thinking-mark .brand-seg-4 { --ux: -.972; --uy: .236;  --lag: .30; }
@@ -553,7 +556,7 @@ html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon
               animation-timing-function: cubic-bezier(.45, 0, .55, 1); }
   30%, 100% { transform: none; }
 }
-.thinking-mark .brand-ring.brand-seg { transform-origin: 1000px 989.62px; }
+.thinking-mark .brand-ring.brand-seg { transform-box: view-box; transform-origin: 1000px 989.62px; }
 .thinking-mark .brand-ring.brand-seg-1 { animation: brand-fold-1 var(--think-cycle) linear infinite; }
 .thinking-mark .brand-ring.brand-seg-2 { animation: brand-fold-2 var(--think-cycle) linear infinite; --fold: -90deg; }
 .thinking-mark .brand-ring.brand-seg-3 { animation: brand-fold-3 var(--think-cycle) linear infinite; --fold: -180deg; }
