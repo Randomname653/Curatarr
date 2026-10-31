@@ -90,25 +90,43 @@ check("one logo in the chat: the avatar is the favicon file (classic when chosen
       and 'html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon-classic.svg"); }' in css
       and "data:image/svg+xml" not in css.split(".msg.assistant::before {")[1][:600]
       and "classList.toggle('icon-classic'" in brand_js)
-check("the badge itself thinks: the four segments gather onto the first, spin once, unfold",
+check("the badge itself thinks: the C turns while its arcs breathe out, the ring folds and spins",
       ".msg.assistant:has(> .thinking)::before { display: none; }" in css
-      and all(f"@keyframes brand-seg-{i}" in css for i in range(1, 5))
-      and "transform-origin: 1029px 1000px" in css and "transform-origin: 1000px 990px" in css
+      and "@keyframes brand-turn" in css and "@keyframes brand-step" in css
+      and all(f"@keyframes brand-fold-{i}" in css for i in range(1, 5))
+      and "transform-origin: 1029.04px 1000px" in css and "transform-origin: 1000px 989.62px" in css
       and "@keyframes brand-twinkle" in css and "thinking-orbit" not in css
       and "thinkingIndicator()" in chat_js
       and "iconStyle() === 'classic' ? 'brand-ring' : 'brand-mark'" in brand_js)
+# The Claude app's webview dropped a rotate animation while a transform
+# animation ran on the same element: the turn lives on the arcs' group,
+# the step on each arc. And paint containment clipped the stepped arcs.
+_arcs = css[css.index(".thinking-mark .brand-arcs {"):]
+_arcs = _arcs[:_arcs.index("}")]
+_step = css[css.index(".thinking-mark .brand-arcs .brand-seg {"):]
+_step = _step[:_step.index("}")]
+_mark = css[css.index(".thinking-mark { position: absolute;"):]
+_mark = _mark[:_mark.index("}")]
+check("...turn and step run on different elements, and nothing clips the arcs",
+      "brand-turn" in _arcs and "brand-step" not in _arcs
+      and "brand-step" in _step and "brand-turn" not in _step
+      and "paint" not in _mark)
 mark_t = html[html.index('<template id="brand-mark">'):]
 mark_t = mark_t[:mark_t.index("</template>")]
 check("...both marks carry four numbered segments and a sparkle group",
       all(mark_t.count(f"brand-seg-{i}\"") == 1 for i in range(1, 5)) and 'class="brand-sparkle"' in mark_t
-      and all(ring.count(f"brand-seg-{i}\"") == 1 for i in range(1, 5)) and 'class="brand-sparkle"' in ring)
+      and all(ring.count(f"brand-seg-{i}\"") == 1 for i in range(1, 5)) and 'class="brand-sparkle"' in ring
+      and mark_t.count('<g class="brand-arcs">') == 1
+      and all(f"brand-seg-{i}\"" in mark_t[mark_t.index('<g class="brand-arcs">'):mark_t.index('<g class="brand-sparkle">')]
+              for i in range(1, 5)))
 check("the modern mark is square on its circle's centre (the C opens right, its box does not)",
       'viewBox="322.6 293.6 1413.0 1413.0"' in svgs["curatarr-mark"] and 'viewBox="322.6 293.6 1413.0 1413.0"' in mark_t)
 check("the avatar's mark has whole-pixel size, so it sits centred in the badge",
       "background-size: 14px 14px;" in css)
 check("the waiting text shimmers until the server's status lines take over",
       ".msg.assistant:has(.thinking-status) .thinking-label { display: none; }" in css
-      and "thinking-shimmer 2s linear infinite" in css)
+      and "thinking-shimmer var(--think-cycle) linear infinite" in css
+      and "brand-turn var(--think-cycle)" in css)
 check("the busy pulse breathes slowly and holds still under reduced motion",
       "body.model-busy #logo .brand-spark { animation: brand-breathe 3.2s ease-in-out infinite; }" in css
       and "body.model-busy #logo .brand-diamond, body.model-busy #logo .brand-spark { fill: var(--brand-ruby); }" in css)
