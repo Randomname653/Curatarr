@@ -136,6 +136,157 @@ def test_the_anchor_refetch_targets_the_active_thread():
     assert "thread_id: activeThreadId()" in fn and "thread_id: 'general'" not in fn
 
 
+# ── the stream watchdog, run for real ───────────────────────────────────────
+# The real sendMessage (with the real limits and abort helpers) on a virtual
+# clock: a fake fetch whose body yields scripted frames at virtual times, a
+# minimal DOM, and timers that only fire when the test advances the clock.
+
+_RIG = r"""
+const T = [];                                   // virtual timers: {at, fn, id}
+let NOW = 0, NEXT_ID = 1;
+globalThis.setTimeout = (fn, ms) => { const id = NEXT_ID++; T.push({at: NOW + (ms || 0), fn, id}); return id; };
+globalThis.clearTimeout = id => { const i = T.findIndex(t => t.id === id); if (i >= 0) T.splice(i, 1); };
+const flush = () => new Promise(r => setImmediate(r));
+async function advance(ms) {                    // fire due timers in time order
+  const end = NOW + ms;
+  for (;;) {
+    await flush(); await flush();
+    T.sort((a, b) => a.at - b.at);
+    if (!T.length || T[0].at > end) break;
+    const t = T.shift(); NOW = t.at; t.fn();
+  }
+  NOW = end; await flush(); await flush();
+}
+function el(id) {
+  return {id, textContent: '', innerHTML: '', value: '', disabled: false, style: {},
+          isConnected: true, parentElement: null, previousElementSibling: null, siblings: [],
+          classList: {contains: () => false, add() {}, remove() {}},
+          setAttribute(k, v) { this[k] = v; }, focus() {}, remove() {},
+          before(x) { this.siblings.push(x); }, after(x) { this.siblings.push(x); }};
+}
+const DOM = {'chat-input': el('chat-input'), 'send-btn': el('send-btn'), messages: el('messages')};
+globalThis.document = {getElementById: id => DOM[id] || null, createElement: tag => el(tag)};
+globalThis.requestAnimationFrame = fn => setTimeout(fn, 16);
+globalThis.cancelAnimationFrame = id => clearTimeout(id);
+globalThis.localStorage = globalThis.sessionStorage = {getItem: () => ''};
+const state = {token: 't', pendingDiscussContext: null};
+const BUBBLE = el('bubble');
+const haptic = () => {}, addMsg = () => {}, _follow = () => {}, _atBottom = () => true,
+      toast = () => {}, loadUnreadMessages = () => {}, renderMarkdown = s => s,
+      addThinkingMsg = () => BUBBLE, _threadIdForContext = () => 'general';
+let WORK = 0;
+const modelWorkStarted = () => WORK++, modelWorkEnded = () => WORK--;
+const _statusTicker = () => ({push() {}, stop() {}});
+
+// The fake server: SCRIPT = {headersAt, frames: [[t, text], ...], endAt}
+let SCRIPT = null, FETCHED = null;
+globalThis.fetch = (url, opts) => new Promise((resolve, reject) => {
+  FETCHED = {url, opts};
+  const sig = opts.signal;
+  const abortErr = () => Object.assign(new Error('aborted'), {name: 'AbortError'});
+  sig.addEventListener('abort', () => reject(abortErr()));
+  setTimeout(() => {
+    const queue = SCRIPT.frames.map(([t, text]) => ({t, text}));
+    let waiting = null;
+    const enc = new TextEncoder();
+    for (const f of queue) setTimeout(() => {
+      f.ready = true; if (waiting) { const w = waiting; waiting = null; w(); }
+    }, f.t);
+    if (SCRIPT.endAt != null) setTimeout(() => { SCRIPT.ended = true; if (waiting) { const w = waiting; waiting = null; w(); } }, SCRIPT.endAt);
+    resolve({ok: true, body: {getReader: () => ({
+      read: () => new Promise((res, rej) => {
+        sig.addEventListener('abort', () => rej(abortErr()));
+        const take = () => {
+          const f = queue.find(q => q.ready && !q.taken);
+          if (f) { f.taken = true; return res({done: false, value: enc.encode(f.text)}); }
+          if (SCRIPT.ended) return res({done: true});
+          waiting = take;
+        };
+        take();
+      })})}});
+  }, SCRIPT.headersAt);
+});
+"""
+
+
+def _watchdog(script: dict, steps: list) -> list | None:
+    """Run the real sendMessage against ``script``; after each advance in
+    ``steps`` (virtual ms) record what a user would see."""
+    chat = _read("chat.js")
+    consts = "\n".join(re.findall(r"^const STREAM_(?:IDLE|HEADERS)_MS = [\d_]+;$", chat, re.M))
+    assert consts.count("const") == 2, "the stream limits moved"
+    body = "\n".join([consts, "let _stream = null;", _function(chat, "abortActiveStream"),
+                      _function(chat, "_busyStreaming"), _function(chat, "sendMessage")])
+    drive = f"""
+SCRIPT = {json.dumps(script)};
+DOM['chat-input'].value = 'hello';
+(async () => {{
+  const out = [];
+  const turn = sendMessage();
+  for (const ms of {json.dumps(steps)}) {{
+    await advance(ms);
+    out.push({{t: NOW, streaming: !!_stream, composer: !DOM['chat-input'].disabled,
+              text: BUBBLE.textContent || BUBBLE.innerHTML,
+              note: BUBBLE.siblings.map(s => s.textContent).join(' | '), work: WORK}});
+  }}
+  await advance(1); await turn;
+  process.stdout.write(JSON.stringify(out));
+}})();
+"""
+    out = _node(_RIG + body + drive)
+    return None if out is None else json.loads(out)
+
+
+_TOKEN = 'data: {"token": "%s"}\n'
+_DONE = 'data: {"done": true}\n'
+
+
+def test_a_stream_that_goes_quiet_after_the_headers_is_dropped_at_45_s():
+    got = _watchdog({"headersAt": 100, "frames": []}, [100 + 44_000, 2_000])
+    if got is None:
+        return
+    at_44, at_46 = got
+    assert at_44["streaming"] and not at_44["composer"], at_44
+    assert not at_46["streaming"] and at_46["composer"], "a dead stream must free the composer"
+    assert "went quiet" in at_46["text"], at_46
+    assert at_46["work"] == 0, "the model-work indicator must end with the turn"
+
+
+def test_keepalives_hold_a_slow_turn_open_until_its_reply():
+    # The server's 15 s keepalives for two minutes (queue, cold load, think),
+    # then the reply: 2 min > 45 s, yet the watchdog never fires.
+    frames = [[100 + 15_000 * i, ": keepalive\n\n"] for i in range(1, 9)]
+    # The reply's first token shares its chunk with a keepalive: the comment
+    # line must be skipped, not end the parse of the chunk.
+    frames += [[121_000, ": keepalive\n\n" + _TOKEN % "Hello"], [121_100, _DONE]]
+    got = _watchdog({"headersAt": 100, "frames": frames, "endAt": 121_200}, [120_000, 2_000])
+    if got is None:
+        return
+    mid, end = got
+    assert mid["streaming"] and "went quiet" not in mid["text"], mid
+    assert not end["streaming"] and end["text"] == "Hello" and end["note"] == "", end
+
+
+def test_the_header_phase_gets_its_own_wider_limit():
+    # No headers yet (the server is still building context): 45 s is not
+    # enough to give up, 300 s is.
+    got = _watchdog({"headersAt": 10_000_000, "frames": []}, [200_000, 101_000])
+    if got is None:
+        return
+    at_200, at_301 = got
+    assert at_200["streaming"], "the header phase must outlast the 45 s idle limit"
+    assert not at_301["streaming"] and "went quiet" in at_301["text"], at_301
+
+
+def test_a_partial_reply_survives_the_drop_with_a_note_beside_it():
+    got = _watchdog({"headersAt": 100, "frames": [[200, _TOKEN % "Half a "]]}, [1_000, 46_000])
+    if got is None:
+        return
+    _, dropped = got
+    assert dropped["text"] == "Half a ", "the partial reply must stay on screen"
+    assert "went quiet" in dropped["note"] and "not saved" in dropped["note"], dropped
+
+
 # ── the thread pane ─────────────────────────────────────────────────────────
 
 def test_every_way_into_a_thread_is_guarded_and_loads_its_history():
