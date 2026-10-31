@@ -36,6 +36,7 @@ from src.database.models import (Base, DeletionProposal, EpisodicMemory,  # noqa
                                  User, WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
+from _checks import loop_guarded  # noqa: E402
 from _checks import check  # noqa: E402
 
 
@@ -59,18 +60,8 @@ with conn_mod.get_db_session() as _db:
 
 def guarded(coro_fn, *a, **kw):
     """(result or the exception, sites in my files) of one run in raise mode."""
-    loop_guard.reset()
-    os.environ["CURATARR_LOOP_GUARD"] = "raise"
-    try:
-        try:
-            out = asyncio.run(coro_fn(*a, **kw))
-        except Exception as e:  # noqa: BLE001 - the check reports it
-            out = e
-    finally:
-        os.environ.pop("CURATARR_LOOP_GUARD", None)
-    sites = [s["site"] for s in loop_guard.snapshot()["sites"]
-             if s["site"].startswith(MINE)]
-    return out, sites
+    res, err, sites = loop_guarded(coro_fn, *a, mine=MINE, **kw)
+    return (err if err is not None else res), sites
 
 
 # ── 1. job_arr_sync: lock + proposal write off the loop ─────────────────────

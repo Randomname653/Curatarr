@@ -41,6 +41,7 @@ from src.database.models import (Base, CuratorPrinciple, LibraryConfig,  # noqa:
                                  WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
+from _checks import loop_guarded  # noqa: E402
 from _checks import check  # noqa: E402
 
 
@@ -65,22 +66,9 @@ MINE = ("music_matcher.py", "proactive_messages.py", "curator_principles.py",
         "music_catalog_sync.py", "lyrics.py", "archive_backfill.py", "wikidata.py")
 
 
-def _my_sites():
-    return [s["site"] for s in loop_guard.snapshot()["sites"]
-            if any(f in s["site"] for f in MINE)]
-
-
 def run_guarded(coro_fn):
-    """Run one coroutine in raise mode. Returns (result, error, my_sites)."""
-    loop_guard.reset()
-    os.environ["CURATARR_LOOP_GUARD"] = "raise"
-    try:
-        try:
-            return asyncio.run(coro_fn()), None, _my_sites()
-        except Exception as e:  # noqa: BLE001 - reported by the check
-            return None, e, _my_sites()
-    finally:
-        os.environ.pop("CURATARR_LOOP_GUARD", None)
+    """Run one coroutine with the guard raising: (result, error, my sites)."""
+    return loop_guarded(coro_fn, mine=MINE)
 
 
 def ok(err, sites):

@@ -42,6 +42,7 @@ from src.database.models import (ArrEnrichmentStatus, Base, EnrichmentFinding,  
                                  EnrichmentStatus, User, WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
+from _checks import loop_guarded  # noqa: E402
 from _checks import check  # noqa: E402
 
 
@@ -64,18 +65,8 @@ MINE = ("src/routers/enrichment.py", "src/routers/auth.py", "src/routers/history
 
 
 def run_guarded(coro_fn):
-    """Run one coroutine with the guard raising; returns (result, error, my_sites)."""
-    loop_guard.reset()
-    os.environ["CURATARR_LOOP_GUARD"] = "raise"
-    res = err = None
-    try:
-        res = asyncio.run(coro_fn())
-    except Exception as e:  # noqa: BLE001 - reported through the checks below
-        err = e
-    finally:
-        os.environ.pop("CURATARR_LOOP_GUARD", None)
-    sites = [s["site"] for s in loop_guard.snapshot()["sites"] if s["site"].startswith(MINE)]
-    return res, err, sites
+    """Run one coroutine with the guard raising: (result, error, my sites)."""
+    return loop_guarded(coro_fn, mine=MINE)
 
 
 def _clean(err):
