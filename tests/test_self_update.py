@@ -184,7 +184,10 @@ try:
     code, _ = post("/update", token=None)
     check("/update without the token: 401, nothing applied", code == 401 and applied == [])
     code, body = post("/update")
-    time.sleep(1.3)
+    # The restart runs on a thread after the answer: wait for it, not 1.3 s.
+    _deadline = time.monotonic() + 10
+    while not restarted and time.monotonic() < _deadline:
+        time.sleep(0.01)
     check("/update with the token: fast-forwarded, answered, then the restart",
           code == 200 and body["updated"] and applied == [1] and len(restarted) == 1)
     check("...and the cached state is dropped (the restarted agent re-checks)", ck._last is None)
