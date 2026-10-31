@@ -17,9 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.services.wrapup_facts as wf  # noqa: E402
@@ -29,7 +27,8 @@ from src.database.models import (Base, CachedRecommendation, CuratorResolutionLo
                                  WatchHistoryEntry)
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
@@ -65,6 +64,7 @@ MIN = 60_000
 with fake_session() as db:
     db.add_all([User(id=1, plex_user_id="1", plex_username="owner", is_admin=True),
                 User(id=2, plex_user_id="2", plex_username="guest")])
+    db.flush()                  # foreign keys are enforced: the users first
 
     def play(title, mt, at, dur_min=None, off_min=None, done=True, series=None,
              season=None, ep=None, source=None):

@@ -25,10 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import httpx  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from _checks import memory_engine, with_users  # noqa: E402
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 from src.config import settings  # noqa: E402
@@ -112,9 +111,9 @@ def broken_db():
 
 @contextmanager
 def memory_db():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                           poolclass=StaticPool)
+    engine = memory_engine()
     Base.metadata.create_all(engine)
+    with_users(engine, 1)           # the owner the cached rows belong to
     Session = sessionmaker(bind=engine)
 
     @contextmanager
@@ -748,7 +747,7 @@ def test_spotify_bad_timestamp_skipped_and_counted():
     (tmp / "Streaming_History_Audio_2024.json").write_text(json.dumps(rows), encoding="utf-8")
     with memory_db() as session:
         with session() as db:
-            db.add(User(id=1, plex_user_id="p1", plex_username="don"))
+            db.merge(User(id=1, plex_user_id="p1", plex_username="don"))
         stats = si.run_import(1, tmp)
     check("spotify: an unparseable timestamp is skipped and counted, not faked as now",
           stats.get("imported") == 1 and stats.get("bad_timestamp") == 1)

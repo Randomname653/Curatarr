@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
+from _checks import memory_engine  # noqa: E402
 import src.database.connection as conn_mod
 
 from _checks import check  # noqa: E402
@@ -37,8 +37,7 @@ COLS = """
 
 
 def fresh_engine():
-    eng = create_engine("sqlite://", poolclass=StaticPool,
-                        connect_args={"check_same_thread": False})
+    eng = memory_engine()
     conn_mod.engine = eng
     return eng
 

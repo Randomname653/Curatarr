@@ -20,9 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.services.household_compare as hc  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
@@ -34,8 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine, expire_on_commit=False)
 

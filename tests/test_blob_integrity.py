@@ -9,7 +9,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.database.models import Base, EncryptedTasteVector
@@ -20,8 +19,10 @@ from _checks import check  # noqa: E402
 
 # ── CAS semantics against a real (in-memory) SQLite ──────────────────────────
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 db = sessionmaker(bind=engine)()
 
 db.add(EncryptedTasteVector(user_id=1, media_category="movie",

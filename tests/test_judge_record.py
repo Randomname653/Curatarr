@@ -17,9 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, func, select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.orm import aliased, sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.routers.recommendations as recs  # noqa: E402
 import src.services.judge_record as jr  # noqa: E402
@@ -32,8 +31,8 @@ ROOT = Path(__file__).resolve().parents[1]
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine, expire_on_commit=False)
 

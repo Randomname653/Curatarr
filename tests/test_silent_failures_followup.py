@@ -37,9 +37,7 @@ sys.path.insert(0, str(ROOT))
 import httpx  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
@@ -61,9 +59,10 @@ def check(name, cond):
         print(f"  FAIL  {name}")
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1, 2)
 Session = sessionmaker(bind=engine)
 
 
@@ -418,8 +417,10 @@ def test_appsec_leftovers():
 def test_reattribution_off_the_loop():
     import src.services.plex_sync as ps
     with _session() as db:
-        db.add_all([User(id=1, plex_user_id="p1", plex_username="owner", is_admin=True),
-                    User(id=2, plex_user_id="p2", plex_username="partner")])
+        for u in (User(id=1, plex_user_id="p1", plex_username="owner", is_admin=True),
+                  User(id=2, plex_user_id="p2", plex_username="partner")):
+            db.merge(u)                 # the module's users, with these Plex ids
+        db.flush()
         t = datetime(2026, 9, 1, 20, 0, 0)
         db.add_all([
             WatchHistoryEntry(user_id=1, plex_user_id="1", plex_item_id="100", title="A",

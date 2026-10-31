@@ -145,16 +145,14 @@ check("a TRANSIENT fallback is never cached", r is TRANSIENT
 
 # ── the script's worker ─────────────────────────────────────────────────────
 print("\n-- scripts/music_enricher.py worker --")
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import music_enricher as me
 from src.database.models import Base, EnrichmentStatus
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine, autoflush=False)
 

@@ -25,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -39,9 +38,10 @@ from src.database.models import (
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 Session = sessionmaker(bind=engine)
 
 
@@ -105,10 +105,13 @@ pid = seed("Guard Keep Band", service="lidarr", category="music")
 
 
 async def guard_then_keep(p):
-    # the owner clicks Keep (another request / session) while we wait
-    with fake_db_session() as s:
-        s.query(DeletionProposal).filter_by(id=p.id).update({"status": "rejected"})
-        s.commit()
+    # the owner clicks Keep (another request / session) while we wait —
+    # another request is another thread, not a statement on this loop
+    def _keep():
+        with fake_db_session() as s:
+            s.query(DeletionProposal).filter_by(id=p.id).update({"status": "rejected"})
+            s.commit()
+    await asyncio.to_thread(_keep)
     return None
 
 
@@ -123,10 +126,12 @@ pid = seed("Guard Protect Band", service="lidarr", category="music")
 async def guard_then_protect(p):
     # a chat "keep X" writes ProtectedMedia while we wait (it used to only
     # reject status=="pending"; here the row is still pending in the DB)
-    with fake_db_session() as s:
-        s.add(ProtectedMedia(user_id=1, identifier="Guard Protect Band",
-                             title="Guard Protect Band", source="discussion"))
-        s.commit()
+    def _protect():
+        with fake_db_session() as s:
+            s.add(ProtectedMedia(user_id=1, identifier="Guard Protect Band",
+                                 title="Guard Protect Band", source="discussion"))
+            s.commit()
+    await asyncio.to_thread(_protect)
     return None
 
 

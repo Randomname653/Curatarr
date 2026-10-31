@@ -29,9 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import numpy as np  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn  # noqa: E402
 import src.services.episodic_memory as epm  # noqa: E402
@@ -104,9 +102,10 @@ check("weighted mean skips a vector from another dimension", emb == [1.0, 0.0])
 
 # ── end to end: generate_deletion_proposals on an in-memory DB ───────────────
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 Session = sessionmaker(bind=engine)
 
 

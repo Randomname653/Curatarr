@@ -25,9 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn  # noqa: E402
 import src.services.episodic_memory as em  # noqa: E402
@@ -36,9 +34,10 @@ from src.database.models import Base, EpisodicMemory  # noqa: E402
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1, 100)
 Session = sessionmaker(bind=engine)
 
 
@@ -83,7 +82,9 @@ def row(mid):
 
 
 def next_user():
+    """A fresh household member per scenario (a real row: foreign keys are on)."""
     _uid[0] += 1
+    with_users(engine, _uid[0])
     return _uid[0]
 
 

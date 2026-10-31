@@ -16,10 +16,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
+from _checks import memory_engine  # noqa: E402
 import src.database.connection as conn_mod
 from src.database.models import Base, DeletionProposal
 
@@ -30,8 +30,7 @@ MODEL_COLS = {c.name for c in DeletionProposal.__table__.columns}
 
 
 def fresh_engine():
-    eng = create_engine("sqlite://", poolclass=StaticPool,
-                        connect_args={"check_same_thread": False})
+    eng = memory_engine()
     conn_mod.engine = eng
     return eng
 

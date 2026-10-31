@@ -16,9 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import src.cache.metadata_cache as mcache
 import src.database.connection as conn_mod
@@ -31,8 +29,8 @@ from src.database.models import Base, EnrichmentStatus, ProactiveMessage, User
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 

@@ -24,7 +24,6 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from fastapi import BackgroundTasks, HTTPException
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.config import settings
@@ -53,7 +52,8 @@ def status_of(fn, *a, **kw):
         return e.status_code
 
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 db = sessionmaker(bind=engine)()
 

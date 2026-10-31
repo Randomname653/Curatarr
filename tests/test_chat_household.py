@@ -16,9 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.routers.chat import _household_use_block  # noqa: E402
@@ -26,7 +24,8 @@ from src.routers.chat import _household_use_block  # noqa: E402
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 db = sessionmaker(bind=engine)()
 db.add(User(id=1, plex_user_id="1", plex_username="Jane Doe", is_admin=True))

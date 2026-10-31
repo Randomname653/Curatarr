@@ -17,9 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from src.database.models import Base, ConversationMessage as M, User  # noqa: E402
 import src.services.user_language as ul  # noqa: E402
@@ -27,7 +25,8 @@ import src.services.user_language as ul  # noqa: E402
 from _checks import check  # noqa: E402
 
 
-engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
 S = sessionmaker(bind=engine)
 
@@ -46,6 +45,7 @@ db = S()
 db.add(User(id=1, plex_user_id="1", plex_username="anna", is_admin=True))
 db.add(User(id=2, plex_user_id="2", plex_username="ben"))
 db.add(User(id=3, plex_user_id="3", plex_username="cleo"))
+db.flush()                      # foreign keys are enforced: the users first
 for text in ("is that a classic movie that everybody has seen?", "give me the raw metadata", "sounds valid"):
     db.add(M(user_id=1, role="user", content=text, thread_id="t1"))
 for text in ("ist das nicht ein Klassiker, den man gesehen haben muss?", "das ist mir zu langweilig",

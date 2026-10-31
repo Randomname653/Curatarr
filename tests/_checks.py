@@ -75,3 +75,38 @@ def loop_guarded(coro_fn, *args, mine=(), **kwargs):
     sites = [s["site"] for s in loop_guard.snapshot()["sites"]
              if any(m in s["site"] for m in mine)]
     return res, err, sites
+
+
+def memory_engine():
+    """An in-memory SQLite engine that behaves like the app's: one shared
+    connection (StaticPool — without it every thread got its own empty
+    database), the app's pragmas (foreign_keys=ON among them) and the loop
+    guard, which a bare ``create_engine("sqlite://")`` all skipped."""
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.pool import StaticPool
+    from src.database import connection, loop_guard
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+
+    @event.listens_for(eng, "connect")
+    def _pragmas(dbapi_connection, connection_record):
+        connection._apply_sqlite_pragmas(dbapi_connection)
+
+    loop_guard.install(eng)
+    return eng
+
+
+def with_users(engine, *ids):
+    """The household members a fixture's rows belong to. Foreign keys are
+    enforced (memory_engine), so a play, proposal or message needs its user
+    to exist first — as it must in the app. User 1 is the admin."""
+    from sqlalchemy.orm import Session
+    from src.database.models import Base, User
+    Base.metadata.create_all(engine, tables=[User.__table__])
+    with Session(engine) as db:
+        for uid in sorted(set(ids) or {1}):
+            if db.get(User, uid) is None:
+                db.add(User(id=uid, plex_user_id=str(uid), plex_username=f"user{uid}",
+                            is_admin=uid == 1))
+        db.commit()
+    return engine

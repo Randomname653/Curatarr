@@ -61,9 +61,7 @@ else:
 check("a bare chapter is one column", ".wu-chapter.wu-chapter-bare { grid-template-columns: 1fr; }" in CSS)
 
 # ── an artist's picture by its id ───────────────────────────────────────────
-from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, WatchHistoryEntry as W  # noqa: E402
@@ -71,8 +69,10 @@ from src.routers import wrapup as wr  # noqa: E402
 import src.cache.metadata_cache as mcm  # noqa: E402
 from datetime import datetime  # noqa: E402
 
-engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+from _checks import memory_engine, with_users  # noqa: E402
+engine = memory_engine()
 Base.metadata.create_all(engine)
+with_users(engine, 1)
 S = sessionmaker(bind=engine)
 
 
