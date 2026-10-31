@@ -236,6 +236,121 @@ check("a closed year built on older watch data is rebuilt once",
       thawed["facts_hash"] == "new" and ws.load(1, "all", "year:2025")["facts"]["facts_hash"] == "new")
 check("...and frozen again after that", again["facts_hash"] == "new" and len(_built) == 1)
 
+print("\nhousehold isolation")
+# Every user-scoped section filters by user on its own (comebacks, discovery,
+# prior completions, dismissals, the video rows, music, swipes, the curation
+# angle, look-ahead, time-to-watch, nanogenres, consensus, drift, ...). A twin
+# member with overlapping, noisy history in every one of those tables proves
+# each filter, not only the base one: user 2 had no plays before, so a dropped
+# filter in any sub-query stayed green. User 1 first gets the little data the
+# sections above never needed, so each section has something to leak into.
+from src.database.models import (ConversationMessage, CuratorPrinciple,  # noqa: E402
+                                 JudgeVerdict, LibraryItem, MusicSkip, Nanogenre,
+                                 PlexRating, ProtectedMedia, TitleNanogenre)
+
+VERIFIED["Arrival"] = {"year": 2016, "rating": 7.9, "votes": 700_000, "runtime_min": 116}
+with fake_session() as db:
+    db.add(WatchHistoryEntry(user_id=1, plex_user_id="1", plex_item_id="alien-old", title="Alien Old",
+                             media_type="movie", viewed_at=datetime(2022, 2, 1, 20),
+                             duration_ms=100 * MIN, completed=True))     # old-only: comeback bait
+    db.add(WatchHistoryEntry(user_id=1, plex_user_id="1", plex_item_id="arrival", title="Arrival",
+                             media_type="movie", viewed_at=datetime(2026, 10, 14, 20),
+                             duration_ms=116 * MIN, completed=True, genres="Sci-Fi"))
+    for i, title in enumerate(("Cats", "Old Film", "Dark", "Arrival", "Avatar")):
+        db.add(LibraryItem(plex_rating_key=f"li{i}", media_type="show" if title == "Dark" else "movie",
+                           title=title, added_at=datetime(2026, 9, 1)))   # time-to-watch
+    db.add_all([Nanogenre(id=1, grp="video", idx=0, name="heist slow-burn", size=1,
+                          centroid=b"\0", version=1),
+                Nanogenre(id=2, grp="video", idx=1, name="time-loop mystery", size=1,
+                          centroid=b"\0", version=1)])      # new to user 1 this period
+    db.add_all([TitleNanogenre(parent="radarr:heat", title="Heat", domain="movie", nanogenre_id=1),
+                TitleNanogenre(parent="sonarr:dark", title="Dark", domain="show", nanogenre_id=2)])
+period30 = wf.resolve_period("30d", NOW)
+before = wf.build_wrapup_facts(1, "all", "30d", now=NOW, is_admin=True)
+before_av, before_drift = wf.available(1), wf._drift_rows(1, "movie", period30)
+_present = [k for k in ("time_to_watch", "nanogenres", "consensus", "comebacks", "music") if before.get(k)]
+check(f"isolation: user 1 has the sections a leak could land in {_present}", len(_present) == 5)
+
+with fake_session() as db:
+    def twin(title, mt, at, dur_min=50, done=True, series=None, season=None, ep=None,
+             off_min=None, source=None):
+        db.add(WatchHistoryEntry(
+            user_id=2, plex_user_id="2", plex_item_id=f"{series or title}:{season}:{ep}",
+            title=title, media_type=mt, series_title=series, season=season, episode=ep,
+            viewed_at=at, duration_ms=int(dur_min * MIN),
+            view_offset_ms=off_min and int(off_min * MIN), completed=done,
+            genres="Horror", source=source))
+
+    twin("Ghost", "movie", datetime(2023, 3, 1, 20))                  # a comeback, user 2's only
+    twin("Ghost", "movie", datetime(2026, 10, 6, 20))
+    twin("Alien Old", "movie", datetime(2026, 10, 6, 22))             # user 1's old-only title
+    twin("Old Film", "movie", datetime(2022, 5, 1, 20))               # makes it a "comeback"
+    twin("Heat", "movie", datetime(2026, 10, 7, 20), 170)             # a title user 1 has too
+    twin("Heat", "movie", datetime(2026, 9, 1, 20), 170)              # the previous window
+    twin("Cats", "movie", datetime(2026, 10, 8, 20), 110)             # user 1 dropped it
+    twin("Avatar", "movie", datetime(2026, 10, 8, 23), 160)           # user 1's dust collector
+    for i in range(6):                                                # Dark, finished long ago
+        twin(f"Ep {i + 1}", "show", datetime(2025, 6, 1, 21) + timedelta(minutes=55 * i),
+             series="Dark", season=1, ep=i + 1)
+    twin("Junk Movie", "movie", datetime(2026, 10, 9, 20), 120, done=False)
+    for i in range(25):                                               # a louder repeat song
+        twin("Other Song", "music", datetime(2026, 10, 16, 3) + timedelta(minutes=4 * i),
+             dur_min=4, off_min=200 / 60, series="Other Artist", source="spotify")
+    db.add(PlexRating(user_id=2, plex_item_id="m1", media_type="music", rating=10,
+                      artist_name="Other Artist"))
+    db.add_all([MusicSkip(user_id=2, at=datetime(2026, 10, 16, 2, i), title="Other Song",
+                          artist="Other Artist") for i in range(4)])
+    db.add(DeletionProposal(user_id=2, media_id="9", title="Bebop", service="sonarr",
+                            storage_mb=900_000, status="deleted", category="anime",
+                            resolved_at=datetime(2026, 10, 9)))       # acclaimed, beats Cats
+    db.add(DeletionProposal(user_id=2, media_id="10", title="Returned One", service="radarr",
+                            storage_mb=10, status="deleted", category="movie",
+                            returned_at=datetime(2026, 10, 10)))
+    db.add(SwipeRating(user_id=2, category="show", doc_id="sonarr:1", title="Dark",
+                       seen=True, stars=10))                          # same title, other verdict
+    db.add(SwipeRating(user_id=2, category="movie", doc_id="radarr:5", title="Heat",
+                       seen=True, stars=1))
+    db.add(CuratorResolutionLog(user_id=2, title="Other Pleasure", category="movie",
+                                outcome="kept", resolution_type="override",
+                                curator_stance="noise", override_reason="Spite",
+                                created_at=datetime(2026, 10, 5)))
+    db.add(ProtectedMedia(user_id=2, identifier="radarr:77", category="movie", source="manual",
+                          title="Shielded", created_at=datetime(2026, 10, 5)))
+    db.add(CuratorPrinciple(user_id=2, text="Never delete horror.", category="movie",
+                            status="active", activated_at=datetime(2026, 10, 5)))
+    for i in range(4):
+        db.add(ConversationMessage(user_id=2, role="user", content=f"keep it {i}",
+                                   thread_id="deletion_proposal:1",
+                                   created_at=datetime(2026, 10, 6, 10, i)))
+    db.add(CachedRecommendation(user_id=2, category="movie", lane="library", title="Hereditary",
+                                year=2018, reason="Your kind of dread", confidence=0.99))
+    db.add(JudgeVerdict(user_id=2, category="movie", item_key="radarr:1", title="Heat",
+                        verdict="CUT", last_at=datetime(2026, 10, 10)))
+after = wf.build_wrapup_facts(1, "all", "30d", now=NOW, is_admin=True)
+
+check("isolation: user 2 really has a wrap-up of their own",
+      wf.build_wrapup_facts(2, "all", "30d", now=NOW)["eligible"] is True)
+for key in ("tempo", "comebacks", "discovery", "completion", "comfort", "dismissal", "binge",
+            "music", "contrarian", "genres", "curatarr", "look_ahead", "court",
+            "time_to_watch", "nanogenres", "consensus"):
+    check(f"isolation: user 1's {key} ignores user 2's history", before.get(key) == after.get(key))
+# velocity is server-wide on purpose — the owner's library, GB in and out
+# (wrapup_facts: "the server is the owner's to fill and to prune").
+_HOUSEHOLD_WIDE = {"velocity", "generated_at", "facts_hash"}
+leaked = sorted(k for k in set(before) | set(after)
+                if k not in _HOUSEHOLD_WIDE and before.get(k) != after.get(k))
+check(f"isolation: nothing else on user 1's sheet moved {leaked or ''}", leaked == [])
+check("isolation: the period selector offers user 1 only their own years and media",
+      wf.available(1) == before_av)
+check("isolation: ...and user 2, who never watched anime, is not offered it",
+      "anime" not in wf.available(2)["scopes"])
+check("isolation: a nanogenre is new to user 1 even if user 2 knew it",
+      "time-loop mystery" in (after.get("nanogenres") or {}).get("new_to_you", []))
+check("isolation: the taste-drift rows are user 1's own",
+      wf._drift_rows(1, "movie", period30) == before_drift)
+check("isolation: the server-wide section is the owner's alone",
+      "velocity" in after and "velocity" not in wf.build_wrapup_facts(2, "all", "30d", now=NOW))
+
 print("\nwiring")
 main = (ROOT / "src/main.py").read_text(encoding="utf-8")
 check("wrapup router mounted at /api/wrapup", 'prefix="/api/wrapup"' in main)
