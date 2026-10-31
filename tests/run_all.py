@@ -27,6 +27,12 @@ run side by side, one per CPU by default:
 
     python tests/run_all.py --serial     # one at a time; names a data/ writer
     python tests/run_all.py -j4          # or CURATARR_TEST_JOBS=4
+
+Where is a module tested? The suites carry the name of the audit that wrote
+them (loop_free_g3, fail_closed_s2_g1, ...), not of their subsystem:
+
+    python tests/run_all.py --for vector_reconcile --list   # which suites
+    python tests/run_all.py --for src/services/wrapup_facts.py   # run them
 """
 import importlib.util
 import json
@@ -164,6 +170,30 @@ def run_suite(f: Path, env: dict) -> dict:
             "secs": time.monotonic() - t0}
 
 
+def _module_names(target: str) -> tuple:
+    """``src/services/vector_reconcile.py`` / ``src.services.vector_reconcile``
+    / ``vector_reconcile`` -> (dotted name, file path, bare name)."""
+    t = target.strip().removesuffix(".py").replace("\\", "/")
+    dotted = t.replace("/", ".")
+    if not dotted.startswith("src."):
+        hits = sorted(ROOT.glob(f"src/**/{dotted.rsplit('.', 1)[-1]}.py"))
+        if len(hits) == 1:
+            dotted = ".".join(hits[0].relative_to(ROOT).with_suffix("").parts)
+    return dotted, dotted.replace(".", "/") + ".py", dotted.rsplit(".", 1)[-1]
+
+
+def suites_for(target: str, files: list) -> list:
+    """The suites that exercise ``target``: they import it (any spelling) or
+    read its source. Answers "where is X tested" across the suites that are
+    named after the audit that wrote them, not after their subsystem."""
+    dotted, path, bare = _module_names(target)
+    parent, _, leaf = dotted.rpartition(".")
+    pats = [re.compile(r"\b(import|from)\s+" + re.escape(dotted) + r"\b"),
+            re.compile(r"\bfrom\s+" + re.escape(parent) + r"\s+import\s+[^\n]*\b" + re.escape(leaf) + r"\b"),
+            re.compile(re.escape(path))]
+    return [f for f in files if any(p.search(f.read_text(encoding="utf-8")) for p in pats)]
+
+
 def jobs_wanted() -> int:
     """--serial, -jN / --jobs N, CURATARR_TEST_JOBS, else one per CPU."""
     args = sys.argv[1:]
@@ -183,6 +213,15 @@ def main() -> int:
         return run_bare(Path(sys.argv[2]))
 
     files = sorted(TESTS.glob("test_*.py"))
+    targets = [a for i, a in enumerate(sys.argv[1:], 1) if sys.argv[i - 1] == "--for"]
+    if targets:
+        files = sorted({f for t in targets for f in suites_for(t, files)})
+        print(f"{len(files)} suite(s) exercise {', '.join(targets)}: "
+              + ", ".join(f.name for f in files))
+        if "--list" in sys.argv:
+            return 0
+        if not files:
+            return 1
     # PYTHONIOENCODING: a captured child inherits the console codepage, so on a
     # cp1252 Windows shell a suite printing an arrow or an accented title dies
     # in print() and reads as a test failure. Pin UTF-8 so the result does not

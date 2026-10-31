@@ -40,7 +40,13 @@ No pytest — every suite is a plain script, run with the venv's Python:
 python tests/run_all.py          # the whole battery, one suite per CPU (CI runs exactly this)
 python tests/run_all.py --serial # one at a time (-j4 / CURATARR_TEST_JOBS=4 to choose)
 python tests/test_<name>.py      # one suite
+python tests/run_all.py --for wrapup_facts          # every suite that exercises a module
+python tests/run_all.py --for wrapup_facts --list   # ...or just name them
 ```
+
+The suites from the 2026 audits carry the audit's name (`loop_free_g3`,
+`fail_closed_s2_g1`, `silent_failures_r3_*`) because the sweep docs cite
+them as evidence; `--for` answers "where is this module tested" across them.
 
 No suite touches your `data/` or `.env`: the runner gives each suite its own
 temp database, vector store and caches, and fails the run if one still

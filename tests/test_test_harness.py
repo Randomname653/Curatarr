@@ -150,4 +150,18 @@ for _p in sorted((ROOT / "tests").glob("test_*.py")):
                 _bad.append(f"{_p.name}:{_fn.lineno} {_fn.name}")
 check(f"every fake session commits on a clean exit, like get_db_session {_bad or ''}", not _bad)
 
+# ── 8. run_all --for: which suites exercise a module ───────────────────────
+_d = Path(tempfile.mkdtemp())
+(_d / "test_a.py").write_text("import src.services.vector_reconcile as vr\n", encoding="utf-8")
+(_d / "test_b.py").write_text("from src.services import app_state, vector_reconcile\n", encoding="utf-8")
+(_d / "test_c.py").write_text("src = (ROOT / 'src/services/vector_reconcile.py').read_text()\n", encoding="utf-8")
+(_d / "test_d.py").write_text("import src.services.vector_reconcile_extra\n# vector_reconcile in prose\n",
+                              encoding="utf-8")
+_files = sorted(_d.glob("test_*.py"))
+check.table("run_all --for finds a module by every spelling", [
+    ("bare name", "vector_reconcile", ["test_a.py", "test_b.py", "test_c.py"]),
+    ("dotted", "src.services.vector_reconcile", ["test_a.py", "test_b.py", "test_c.py"]),
+    ("path", "src/services/vector_reconcile.py", ["test_a.py", "test_b.py", "test_c.py"]),
+], lambda target: [f.name for f in run_all.suites_for(target, _files)])
+
 check.done()
