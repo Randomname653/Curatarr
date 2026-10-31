@@ -19,13 +19,25 @@ Every suite also runs with the loop guard dumping its sites
 (src/database/loop_guard.py): a database statement that ran on the event
 loop from a src/ coroutine anywhere in the battery fails the run, even
 when no suite asserts on it.
+
+Every suite gets its own temp database, vector store, enrichment cache and
+.env (``suite_env``), so none reaches the developer's data/ — and the data/
+guard fails the run if one still does. That is also what lets the suites
+run side by side, one per CPU by default:
+
+    python tests/run_all.py --serial     # one at a time; names a data/ writer
+    python tests/run_all.py -j4          # or CURATARR_TEST_JOBS=4
 """
 import importlib.util
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +145,39 @@ def suite_env(base: dict) -> dict:
             "CURATARR_ENV_FILE": str(tmp / ".env")}
 
 
+def run_suite(f: Path, env: dict) -> dict:
+    """One suite in its own process with its own temp stores."""
+    cmd = ([sys.executable, __file__, "--bare", str(f)] if is_bare(f)
+           else [sys.executable, str(f)])
+    senv = suite_env(env)
+    t0 = time.monotonic()
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, env=senv, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
+    finally:
+        shutil.rmtree(senv["CURATARR_SUITE_TMP"], ignore_errors=True)
+    out = (r.stdout or "") + (r.stderr or "")
+    summary = re.search(r"(\d+) passed, (\d+) failed", out)
+    bad = r.returncode != 0 or bool(summary and summary.group(2) != "0")
+    tail = summary.group(0) if summary else (out.strip().splitlines()[-1:] or ["(no output)"])[0]
+    return {"name": f.name, "bad": bad, "tail": tail, "out": out,
+            "secs": time.monotonic() - t0}
+
+
+def jobs_wanted() -> int:
+    """--serial, -jN / --jobs N, CURATARR_TEST_JOBS, else one per CPU."""
+    args = sys.argv[1:]
+    if "--serial" in args:
+        return 1
+    for i, a in enumerate(args):
+        if a.startswith("-j") and a[2:].isdigit():
+            return max(1, int(a[2:]))
+        if a == "--jobs" and i + 1 < len(args) and args[i + 1].isdigit():
+            return max(1, int(args[i + 1]))
+    env = os.environ.get("CURATARR_TEST_JOBS", "")
+    return max(1, int(env)) if env.isdigit() else (os.cpu_count() or 1)
+
+
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--bare":
         return run_bare(Path(sys.argv[2]))
@@ -143,32 +188,47 @@ def main() -> int:
     # in print() and reads as a test failure. Pin UTF-8 so the result does not
     # depend on which terminal launched it.
     dump_dir = tempfile.mkdtemp(prefix="curatarr-loop-guard-")
-    env = {**__import__("os").environ,
+    env = {**os.environ,
            "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8",
            "CURATARR_LOOP_GUARD_DUMP": dump_dir}
-    failures, locked, touched = [], [], {}
-    for f in files:
-        cmd = ([sys.executable, __file__, "--bare", str(f)] if is_bare(f)
-               else [sys.executable, str(f)])
+    jobs = jobs_wanted()
+    failures, locked, touched, results = [], [], {}, []
+    t0 = time.monotonic()
+
+    def report(res: dict) -> None:
+        results.append(res)
+        print(f"{'FAIL' if res['bad'] else 'ok  '}  {res['name']}  {res['tail']}", flush=True)
+        if res["bad"]:
+            failures.append(res["name"])
+            if LOCK_HINT in res["out"]:
+                locked.append(res["name"])
+            else:
+                print(res["out"][-2000:], flush=True)
+
+    if jobs == 1:
+        # Serial: the data/ guard can name the suite that touched data/.
+        for f in files:
+            before = data_snapshot()
+            res = run_suite(f, env)
+            changed = data_changes(before, data_snapshot())
+            if changed:
+                touched[f.name] = changed
+            report(res)
+    else:
+        # Every suite has its own stores, so they run side by side; the
+        # data/ guard then sees the whole battery at once.
         before = data_snapshot()
-        r = subprocess.run(cmd, cwd=ROOT, env=suite_env(env), capture_output=True,
-                           text=True, encoding="utf-8", errors="replace")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            for fut in as_completed([pool.submit(run_suite, f, env) for f in files]):
+                report(fut.result())
         changed = data_changes(before, data_snapshot())
         if changed:
-            touched[f.name] = changed
-        out = (r.stdout or "") + (r.stderr or "")
-        summary = re.search(r"(\d+) passed, (\d+) failed", out)
-        bad = r.returncode != 0 or (summary and summary.group(2) != "0")
-        tail = summary.group(0) if summary else out.strip().splitlines()[-1:] or ["(no output)"]
-        print(f"{'FAIL' if bad else 'ok  '}  {f.name}  {tail if isinstance(tail, str) else tail[0]}")
-        if bad:
-            failures.append(f.name)
-            if LOCK_HINT in out:
-                locked.append(f.name)
-            else:
-                print(out[-2000:])
-    print(f"\n{len(files) - len(failures)}/{len(files)} suites green"
-          + (f" — FAILED: {', '.join(failures)}" if failures else ""))
+            touched[f"(one of the suites, {jobs} at a time — rerun with --serial to name it)"] = changed
+    print(f"\n{len(files) - len(failures)}/{len(files)} suites green in "
+          f"{time.monotonic() - t0:.0f} s ({jobs} at a time)"
+          + (f" — FAILED: {', '.join(sorted(failures))}" if failures else ""))
+    slowest = sorted(results, key=lambda r: -r["secs"])[:5]
+    print("slowest: " + ", ".join(f"{r['name']} {r['secs']:.1f} s" for r in slowest))
     on_loop = loop_guard_sites(dump_dir)
     for site, suites in sorted(on_loop.items()):
         print(f"FAIL  loop guard: database statement on the event loop at {site} "
