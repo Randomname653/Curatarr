@@ -1,22 +1,14 @@
 """Tests for the series-aware rewatch fix + subject de-duplication / rotation
 in proactive message generation.
 
-Same mock preamble as test_proactive_messages.py — the DB / config / http
-layers are stubbed so the pure in-memory detectors can be exercised directly.
-The detectors covered here (rewatch, history_deep_dive, the suppression helpers)
-take their data from the in-memory ``entries`` list + ``asked_subjects`` and
-never touch the DB, so the stubs are enough.
+The detectors (rewatch, history_deep_dive, the suppression helpers) take
+their data from the in-memory ``entries`` list + ``asked_subjects``; the
+history index they rotate on is read from the app's real (temp, migrated)
+database — no MagicMock'd sqlalchemy, config or models.
 """
 
-import sys
-from unittest.mock import MagicMock
+from _harness import app_db  # noqa: I001 - first: temp stores, never the live data/
 
-sys.modules['httpx'] = MagicMock()
-sys.modules['sqlalchemy'] = MagicMock()
-sys.modules['sqlalchemy.orm'] = MagicMock()
-sys.modules['src.database.connection'] = MagicMock()
-sys.modules['src.database.models'] = MagicMock()
-sys.modules['src.config'] = MagicMock()
 
 from datetime import datetime
 
@@ -241,38 +233,25 @@ def test_resolve_sonarr_tvdb_fallback_only_when_no_title_match():
 
 
 def test_load_asked_subjects_tolerates_malformed_json():
+    """Real rows: malformed trigger_data is skipped, not fatal; another
+    member's history is never part of this user's index."""
+    import json
+    from src.database.models import ProactiveMessage, User
     from src.services.proactive_messages import _load_asked_subjects
-    from unittest.mock import patch
-
-    # Mock the DB query chain to return some rows, including malformed ones.
-    class MockQuery:
-        def __init__(self, rows):
-            self.rows = rows
-        def filter(self, *args, **kwargs): return self
-        def order_by(self, *args, **kwargs): return self
-        def limit(self, *args, **kwargs): return self
-        def all(self): return self.rows
-
-    class MockSession:
-        def __init__(self, rows):
-            self.rows = rows
-        def __enter__(self): return self
-        def __exit__(self, exc_type, exc_val, exc_tb): pass
-        def query(self, *args, **kwargs): return MockQuery(self.rows)
-
-    def mock_get_db_session():
-        rows = [
-            ("track_obsession", '{"track": "good song"}'),
-            ("track_obsession", "not json"),            # ValueError / JSONDecodeError
-            ("track_obsession", None),                  # Handled as {}
-            ("track_obsession", '{"track": "other"}'),
-            ("track_obsession", 123),                   # TypeError / not a string / not a dict later
-        ]
-        return MockSession(rows)
-
-    with patch("src.services.proactive_messages.get_db_session", mock_get_db_session):
-        result = _load_asked_subjects(1)
-
-        assert "good song" in result["tracks"]
-        assert "other" in result["tracks"]
-        assert len(result["tracks"]) == 2
+    conn = app_db()
+    with conn.get_db_session() as db:
+        if not db.get(User, 1):
+            db.add_all([User(id=1, plex_user_id="1", plex_username="owner", is_admin=True),
+                        User(id=2, plex_user_id="2", plex_username="member")])
+            db.flush()                  # foreign keys are enforced: users first
+        db.query(ProactiveMessage).delete()
+        for i, data in enumerate(['{"track": "good song"}', "not json", None,
+                                  '{"track": "other"}', "123", json.dumps(["a list"])]):
+            db.add(ProactiveMessage(user_id=1, trigger_type="track_obsession", message="m",
+                                    trigger_data=data, created_at=datetime(2026, 1, 1, 10, i)))
+        db.add(ProactiveMessage(user_id=2, trigger_type="track_obsession", message="m",
+                                trigger_data='{"track": "their song"}'))
+    result = _load_asked_subjects(1)
+    assert result["tracks"] == {"good song", "other"}, result["tracks"]
+    assert "their song" not in _load_asked_subjects(1)["tracks"]
+    assert _load_asked_subjects(2)["tracks"] == {"their song"}

@@ -1,13 +1,8 @@
-import sys
-from unittest.mock import MagicMock
-
-# Mock missing dependencies
-sys.modules['httpx'] = MagicMock()
-sys.modules['sqlalchemy'] = MagicMock()
-sys.modules['sqlalchemy.orm'] = MagicMock()
-sys.modules['src.database.connection'] = MagicMock()
-sys.modules['src.database.models'] = MagicMock()
-sys.modules['src.config'] = MagicMock()
+"""The proactive detectors (night owl, series completion) on in-memory
+history. The real modules are imported — the old preamble swapped sqlalchemy,
+httpx, the config and the models for MagicMocks, under which an import-time
+or schema problem in proactive_messages could never surface."""
+import _harness  # noqa: F401  (first: temp stores, never the live data/)
 
 from datetime import datetime, timedelta
 from src.services.proactive_messages import detect_night_owl, detect_series_completion
