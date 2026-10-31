@@ -48,17 +48,7 @@ from src.services.media_server import rebind  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
 from src.services.media_server.plex_adapter import PlexAdapter  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 JANE, SAM = "b0c1d2e3f405162738495a6b7c8d9e0f", "c1d2e3f405162738495a6b7c8d9e0fa1"
@@ -394,5 +384,4 @@ check("dry run by default, --write / --undo / --map-user / --skip-user / --accep
 check("--write and --undo refuse while Curatarr answers on its port",
       "if (args.write or args.undo) and _server_running():" in cli)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

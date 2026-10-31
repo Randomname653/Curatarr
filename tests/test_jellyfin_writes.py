@@ -45,17 +45,7 @@ from src.services.media_server import jellyfin_tech, jellyfin_writes as jw  # no
 from src.services.media_server.base import ServerUser  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 JANE, SAM = "b0c1d2e3f405162738495a6b7c8d9e0f", "c1d2e3f405162738495a6b7c8d9e0fa1"
@@ -242,5 +232,4 @@ finally:
 check("limbo asks the adapter: deleted = gone, present = there, a Plex id = no answer",
       gone is True and there is False and junk is None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

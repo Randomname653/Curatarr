@@ -40,17 +40,7 @@ import src.services.media_server as ms  # noqa: E402
 import src.services.media_server.jellyfin_adapter as jfa  # noqa: E402
 import src.services.setup_wizard as sw  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 URL = "http://192.168.1.50:8096"
@@ -186,5 +176,4 @@ check("with their item counts and folders",
       and rows["Movies"]["locations"] == ["/media/movies"]
       and rows["Movies"]["key"] == "f137a2dd21bbc1b99aa5c0f6bf02a805")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

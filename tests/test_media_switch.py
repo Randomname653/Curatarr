@@ -35,17 +35,7 @@ Base.metadata.create_all(conn_mod.engine)
 from src.services.app_state import get_state, set_state  # noqa: E402
 from src.services.media_server import jellyfin_history as jh, rebind, switch  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 calls = {"build": [], "apply": [], "sync": [], "reset": [], "poller": []}
@@ -181,5 +171,4 @@ async def main():
 
 
 asyncio.run(main())
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

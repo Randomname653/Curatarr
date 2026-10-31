@@ -32,17 +32,7 @@ Base.metadata.create_all(conn_mod.engine)
 from src.services.media_server import jellyfin_writes as jw  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 calls = []
@@ -132,5 +122,4 @@ try:
 finally:
     jw.server_user, jw._adapter = saved
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

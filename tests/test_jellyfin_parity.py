@@ -39,17 +39,7 @@ from src.services.media_server import jellyfin_history, jellyfin_music  # noqa: 
 from src.services.media_server.base import ServerUser  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 JANE = "b0c1d2e3f405162738495a6b7c8d9e0f"
@@ -281,5 +271,4 @@ finally:
     settings.MEDIA_SERVER_TYPE = None
     ms.get_adapter = real_get
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

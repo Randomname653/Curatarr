@@ -24,17 +24,7 @@ from collections import Counter  # noqa: E402
 from src.services.media_server.base import ExternalIds as X, FileRef, MediaItem, canonical_keys  # noqa: E402
 from src.services.media_server.id_map import item_rows, key_rank  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the keys of one item ────────────────────────────────────────────────────
@@ -125,5 +115,4 @@ check("the library walk, the children of a series and the title search leave mis
       '_NOT_MISSING = {"IsMissing": "false"}' in ad and ad.count("**_NOT_MISSING") == 3)
 check("a page may take two minutes while the server scans", "_TIMEOUT = 120.0" in ad)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()
