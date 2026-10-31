@@ -98,6 +98,66 @@ c2049 = next(c for c in CARDS if "Blade Runner 2049" in c["refs"]) if any(
     "Blade Runner 2049" in c["refs"] for c in CARDS) else None
 check("a numeral inside a cited title is the title's, not an invented number",
       c2049 is None or faults(f"Blade Runner 2049, twice [{c2049['id']}].", [c2049["id"]]) == [])
+
+# ── spelled-out numbers are numbers ─────────────────────────────────────────
+# A check that read only digits let "ninety hours" through. Each row: the
+# sentence (citing the card in braces) and the number the fault must name, or
+# None when it must pass.
+I03, T0 = top["id"], tempo["id"]
+SPELLED = [
+    (f"Severance took 95 hours [{I03}].", "95"),
+    (f"Severance took ninety hours [{I03}].", "90"),
+    (f"Severance took ninety-five hours [{I03}].", "95"),
+    (f"Severance took Ninety Five hours [{I03}].", "95"),
+    (f"Severance took twenty-one hours [{I03}].", "21"),
+    (f"Severance took a hundred hours [{I03}].", "100"),
+    (f"Severance took two thousand hours [{I03}].", "2000"),
+    (f"Severance took two dozen hours [{I03}].", "24"),
+    (f"Severance took over a hundred hours [{I03}].", "over 100"),
+    (f"Severance took hundreds of hours [{I03}].", "hundreds of"),
+    (f"Severance took over 50 hours [{I03}].", "over 50"),
+    (f"Severance took twenty hours [{I03}].", None),
+    (f"Nearly sixty hours in all [{T0}].", None),
+    (f"Over 50 hours in all [{T0}].", None),
+    (f"Over fifty hours, dozens of them at night [{T0}].", None),
+]
+for sent, want in SPELLED:
+    f = faults(sent, [I03])
+    check(f"spelled numbers: {sent!r} → {want or 'passes'}",
+          f == [] if want is None else (len(f) == 1 and want in f[0]))
+check("'twenty' passes because it is the card's 20, not because it is invisible",
+      ww.numerals("twenty hours") == {"20"} and faults(f"Severance took twenty hours [{I03}].", [I03]) == []
+      and faults(f"Severance took twenty-two hours [{I03}].", [I03]) != [])
+check("number words in a headline are checked too",
+      faults(f"It happened [{I03}].", [I03], head="Ninety reasons") != []
+      and faults(f"It happened [{I03}].", [I03], head="Twenty hours") == [])
+check("multipliers and dozens read as numbers",
+      ww.numerals("twice, tenfold, a dozen, half a dozen, two and a half days")
+      == {"2", "10", "12", "6", "2.5"})
+
+# A number word inside a cited title is the title's.
+TITLED = [
+    {"id": "X1", "claim": "Seven took 4 hours.", "values": {"hours": 4.0}, "say": {"hours": ["4 hours"]},
+     "refs": ["Seven"]},
+    {"id": "X2", "claim": "Thirteen Lives took 3 hours.", "values": {"hours": 3.0},
+     "say": {"hours": ["3 hours", "three hours"]}, "refs": ["Thirteen Lives"]},
+]
+ev_t = ww.evidence(TITLED, {})
+
+
+def tfaults(text, own):
+    return ww.check_section(text, "", own, ev_t, ["Seven", "Thirteen Lives"])
+
+
+f = tfaults("Seven took ninety-five hours [X1].", ["X1"])
+check("a film called Seven: the invented ninety-five fails, the title does not", len(f) == 1 and "95" in f[0])
+f = tfaults("Thirteen Lives took ninety hours [X2].", ["X2"])
+check("a film called Thirteen Lives: only the invented ninety is named", len(f) == 1 and "90" in f[0])
+check("...its title's number is not a licence to claim it: 'thirteen hours' fails, 'three hours' passes",
+      any("13" in x for x in tfaults("Thirteen Lives took thirteen hours [X2].", ["X2"]))
+      and tfaults("Thirteen Lives took three hours [X2].", ["X2"]) == [])
+f = tfaults("Thirteen Lives took dozens of hours [X2].", ["X2"])
+check("'dozens of' needs a value of at least 24 on the cited card", len(f) == 1 and "dozens of" in f[0])
 check("the headline's numbers must be its own card's",
       faults(f"It happened [{top['id']}].", [top["id"]], head="77 reasons") != [])
 check("a pick's year is on the pick", faults("Stalker, from 1979, is waiting [U1].", ["U1"]) == [])
