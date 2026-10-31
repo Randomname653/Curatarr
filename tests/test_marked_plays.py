@@ -27,17 +27,7 @@ from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.services import plex_sync as ps  # noqa: E402
 from src.services import wrapup_facts as wf  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the sync recognises a mark ──────────────────────────────────────────────
@@ -116,5 +106,4 @@ orphan = (ROOT / "src/services/orphan_repair.py").read_text(encoding="utf-8")
 check("the orphan import stores a history play without a length as played",
       "completed = not duration_ms or (" in orphan)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

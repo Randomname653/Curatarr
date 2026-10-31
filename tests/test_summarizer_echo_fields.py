@@ -20,17 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.services import media_enricher as me  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 check("a year is a number, a missing or odd one is None",
@@ -82,5 +72,4 @@ check("a title with quotes is escaped in the template",
       '"title": ' + json.dumps(artist["title"], ensure_ascii=False) + "," in prompts[-1])
 check("...and the profile carries it as the source wrote it", p["title"] == artist["title"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

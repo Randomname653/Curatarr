@@ -26,17 +26,7 @@ from src.config import settings  # noqa: E402
 from src.services import pc_host  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 TOKEN = "t" * 24
@@ -182,5 +172,4 @@ check("the NAS polls every few seconds when an agent is configured, and a PC tha
 main_src = (ROOT / "src/main.py").read_text(encoding="utf-8")
 check("the goodbye route is mounted", 'prefix="/api/hosts"' in main_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

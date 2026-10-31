@@ -13,17 +13,7 @@ import numpy as np
 import src.vector_store.chromadb_wrapper as cw
 from src.services.taste_engine import _cluster_centroids, _corpus_calibration
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _unit(v):
@@ -100,5 +90,4 @@ check("library-lane ranking is max over centroids",
 check("prompts surface the clusters (serve all, not a blend)",
       "serve them ALL, not a blend" in re_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

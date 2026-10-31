@@ -32,7 +32,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import httpx  # noqa: E402
@@ -46,18 +46,6 @@ Base.metadata.create_all(conn_mod.engine)
 
 import src.routers.recommendations as recs  # noqa: E402
 import src.services.recommendations_engine as eng  # noqa: E402
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 class _Capture(logging.Handler):
@@ -346,5 +334,4 @@ asyncio.run(eng.score_arr_items(1, "movie", [far, fit], top_n=2))
 check("a corrupt recs taste blob is logged at WARNING",
       log.warnings("taste blob is corrupt"))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

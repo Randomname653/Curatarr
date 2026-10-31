@@ -31,17 +31,7 @@ from src import self_update as su  # noqa: E402
 from src.services import notifications as nt  # noqa: E402
 from src.services import pc_host  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 ID = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"]
@@ -279,5 +269,4 @@ app_js = (ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
 check("the bell's button is a fixed handler, registered",
       "pc_update: () => act('updateNode')" in notif_js and "  updateNode,\n" in app_js)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

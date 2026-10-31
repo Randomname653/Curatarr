@@ -33,17 +33,7 @@ import src.services.plex_sync as ps
 import src.services.taste_engine as te
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -297,5 +287,4 @@ check("without the history a resume point is not read as a partial play",
 check("...and the backfill is not recorded, so it runs again",
       state.get(ps.OWNER_BACKFILL_KEY) is None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

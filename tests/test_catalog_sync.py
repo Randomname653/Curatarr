@@ -16,17 +16,7 @@ import src.services.app_state as app_state
 import src.services.music_catalog_sync as mcs
 import src.services.soulsync_client as sc
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────
@@ -240,5 +230,4 @@ check("soulsync: the one POST is the blocklist ban, never the download trigger",
       and '"/request"' not in ss and "'/request'" not in ss
       and ".put(" not in ss and ".patch(" not in ss and ".delete(" not in ss)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -10,17 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.taste_engine import weighted_mean_embedding
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── weighted_mean_embedding: positives only + pre-norm diagnostic ────────────
@@ -75,5 +65,4 @@ check("penalty guarded on drop centroid AND its anchors",
 check("discovery prompt carries the 15% exploration quota",
       "EXPLORATION QUOTA" in re_src and "Exploration pick:" in re_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -47,17 +47,7 @@ with conn_mod.get_db_session() as _db:
     _db.add(User(id=1, plex_user_id="p1", plex_username="admin", is_admin=True, is_active=True))
     _db.commit()
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _on_main() -> bool:
@@ -337,5 +327,4 @@ check("music_service ran off the loop", _music == [False])
 check("the scan still wrote its proposal",
       out is None and rows == [("Old Song", "pending", "music")])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

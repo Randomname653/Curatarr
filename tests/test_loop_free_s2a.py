@@ -56,17 +56,7 @@ import src.routers.library as lib  # noqa: E402
 import src.services.arr_client as ac  # noqa: E402
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _on_loop() -> bool:
@@ -503,5 +493,4 @@ check("a value .env must not hold is still a 400", refused == 400)
 
 json.loads = _real_loads
 httpx.AsyncClient = _RealAsyncClient
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

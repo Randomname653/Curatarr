@@ -27,17 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # Before ANY wrapper exists: temp store + a pinned profile (no app_state read).
@@ -324,5 +314,4 @@ check("the old worker finishing does not unregister the new one", r["still_runni
 check("stopping the new one clears the flag", r["cleared_after_stop"])
 
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

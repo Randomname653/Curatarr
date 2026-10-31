@@ -11,17 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import src.services.app_state as app_state
 import src.services.embed_service as es
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── profile: default, flip, cache invalidation ───────────────────────────────
@@ -123,5 +113,4 @@ en = (root / "src/routers/enrichment.py").read_text(encoding="utf-8")
 check("migration + rollback endpoints registered",
       '"/embedding-migration"' in en and '"/embedding-migration/rollback"' in en)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

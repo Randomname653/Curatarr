@@ -25,17 +25,7 @@ import src.services.media_enricher as me  # noqa: E402
 from src.cache.metadata_cache import MetadataCache  # noqa: E402
 from src.database.models import Base, MediaCompany, MediaCredit, MediaWork  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the TMDB fetch keeps what it used to drop ───────────────────────────────
@@ -182,5 +172,4 @@ job = _registry_job()
 check("the custodian walks it daily, no model needed",
       job is not None and not job.needs_llm and job.takes_task and job.cadence_h == 24.0)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -58,7 +58,7 @@ except Exception:
 # bypassed the redirect and opened data/chromadb while the app holds it.
 LOCK_HINT = "in use by another process"
 
-_BARE_MARKERS = re.compile(r"unittest\.main|sys\.exit|__main__")
+_BARE_MARKERS = re.compile(r"unittest\.main|sys\.exit|__main__|check\.done\(\)")
 
 # Coroutine sites the battery may produce on purpose: test_loop_guard compiles
 # a probe coroutine under this src/ path to check the guard's attribution.

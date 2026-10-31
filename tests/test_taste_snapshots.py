@@ -24,17 +24,7 @@ import src.services.taste_engine as te  # noqa: E402
 import src.services.taste_snapshots as ts  # noqa: E402
 from src.database.models import Base, TasteSnapshot, User, WatchHistoryEntry  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -169,5 +159,4 @@ try:
 finally:
     cw.get_chroma_db = saved_get
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

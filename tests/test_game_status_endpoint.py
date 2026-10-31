@@ -18,17 +18,7 @@ import src.routers.process_monitor as pmr  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.process_monitor as pm  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # The handler sits behind ttl_response; call the undecorated function.
@@ -56,5 +46,4 @@ try:
 finally:
     app_state.get_state, pm.is_game_running = _real
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

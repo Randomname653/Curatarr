@@ -13,17 +13,7 @@ from src.services.llm_utils import seasonal_context
 from src.services.taste_vectors import compute_temporal_patterns
 from src.services.recommendations_engine import _rhythm_line
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── seasonal_context windows ─────────────────────────────────────────────────
@@ -92,5 +82,4 @@ re_src = (root / "src/services/recommendations_engine.py").read_text(encoding="u
 check("both prompts carry the context line",
       re_src.count("{context_line}") == 2 and "seasonal_context()" in re_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

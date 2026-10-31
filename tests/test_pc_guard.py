@@ -27,17 +27,7 @@ import httpx  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.services import pc_guard, pc_host  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class Hanging(BaseHTTPRequestHandler):
@@ -202,5 +192,4 @@ check("a chat turn retries once on the main host when the PC goes away before th
       "except PcLost:" in chat and "if full_response or _attempt > 1 or _fallback.url == _url:" in chat
       and "_msgs, _ = _fm(messages, _bf(_fallback.num_ctx, _predict))" in chat)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

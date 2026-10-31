@@ -27,17 +27,7 @@ from src.services import ollama_hosts as oh  # noqa: E402
 from src.services import pc_host  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 TOKEN = "t" * 24
@@ -157,5 +147,4 @@ check("a game on the PC evicts Curatarr's models from the PC's card",
 check("the model-update test judges on the host it manages",
       "host=main_host()" in mu and "host=host)" in mu)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -30,17 +30,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.services import state_lease as L
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -156,5 +146,4 @@ check("enricher script: honours the web UI's Stop and heartbeats",
 check("enricher script: Windows console close (SIGBREAK) stops it cleanly",
       'getattr(signal, "SIGBREAK", None)' in script)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

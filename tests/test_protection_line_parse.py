@@ -17,17 +17,7 @@ from sqlalchemy.pool import StaticPool
 import src.services.episodic_memory as em
 from src.database.models import Base, ProtectedMedia
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 TITLE = "Cowboy Bebop | Knockin' on Heaven's Door"
@@ -92,5 +82,4 @@ check("a run of spaces inside a title survives verbatim",
       em._split_action_line("ACTION: PROTECT_MEDIA | TITLE: a" + " " * 50 + "b | REASON: r")[1]
       == " TITLE: a" + " " * 50 + "b ")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

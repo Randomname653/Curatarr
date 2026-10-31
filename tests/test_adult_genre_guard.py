@@ -14,17 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 from src.services.media_enricher import _merge_raw_metadata
@@ -63,5 +53,4 @@ m = _merge_raw_metadata(
      "overview": "r" * 50})
 check("'Ecchi' passes unguarded", "Ecchi" in m["genres"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

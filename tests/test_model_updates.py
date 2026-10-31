@@ -16,17 +16,7 @@ from src.services import model_updates as mu  # noqa: E402
 import src.routers.model_updates as rmu  # noqa: E402
 from src.services import notifications as nt  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── refs + identity ────────────────────────────────────────────────────────
@@ -667,5 +657,4 @@ check("bell: one broken provider does not empty the list",
       len(nt.system_notifications(U(True))["items"]) == 2)
 nt.PROVIDERS.pop(0)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

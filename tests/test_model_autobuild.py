@@ -24,17 +24,7 @@ from src.services import model_check as mc  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 from src.services import setup_wizard as sw  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class Logs(logging.Handler):
@@ -210,5 +200,4 @@ check("the Settings 'build models' button follows the host plan (no pitcher on a
       'host_plan, "main"' in ep and "base_pitcher=plan[\"pitcher\"]" in ep
       and "settings.BASE_PITCHER_MODEL" not in ep)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

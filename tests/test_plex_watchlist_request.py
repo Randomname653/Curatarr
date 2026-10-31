@@ -26,17 +26,7 @@ import httpx
 import src.database.connection as conn_mod
 import src.services.plex_watchlist as pw
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────
@@ -161,5 +151,4 @@ res = asyncio.run(pw.add_to_watchlist(1, "Nothing Like It", None, "movie"))
 check("no unambiguous match -> no add", res["ok"] is False and "no unambiguous" in res["error"]
       and [c[0] for c in calls] == ["GET"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

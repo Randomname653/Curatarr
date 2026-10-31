@@ -15,17 +15,7 @@ import src.routers.library as lib  # noqa: E402
 import src.routers.tasks as tasks  # noqa: E402
 from src.services.task_monitor import task_monitor  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 ADMIN = SimpleNamespace(id=1, is_admin=True)
@@ -79,5 +69,4 @@ check("member gets configured + music source, nothing about the LAN",
       m["sonarr"]["configured"] is True and m["sonarr"]["url"] == "" and m["sonarr"]["defaults"] == {}
       and m["sonarr"]["last_test"] is None and "music_source" in m["lidarr"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

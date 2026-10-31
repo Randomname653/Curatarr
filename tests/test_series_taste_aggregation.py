@@ -21,17 +21,7 @@ sys.path.insert(0, str(ROOT))
 from src.services.taste_engine import (  # noqa: E402
     DROP_GRACE_DAYS, _is_drop, _naive_utc, _series_entries, recency_weight)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 NOW = datetime(2026, 10, 15, 12, 0, 0)
@@ -274,5 +264,4 @@ check("the series' own key is looked up too, so a play without the alias still c
 check("...and the rebuild asks for those keys",
       "_cache_many, _profile_keys(entries, series_key_by_title)" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

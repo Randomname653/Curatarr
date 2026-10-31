@@ -50,17 +50,7 @@ settings.ENRICHMENT_CACHE = CACHE_FILE
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.connection import get_db_session, init_db  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 check("test DB is the temp file, not the real one",
@@ -485,5 +475,4 @@ check("no ORM attribute read after the commit (it re-opened a transaction)",
 check("the chat path holds no request session (its DB work runs on worker threads)",
       "db: Session" not in body.split(")")[0] and "return StreamingResponse(stream" in after)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

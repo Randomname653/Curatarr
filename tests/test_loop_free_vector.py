@@ -37,17 +37,7 @@ from src.database.models import Base  # noqa: E402
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── 0. import builds nothing ────────────────────────────────────────────────
@@ -188,5 +178,4 @@ check("every master block is scanned off the loop thread",
 check("the result is unchanged (2,000 masters matched, the style stored)",
       res.get("matched_masters") == 2000 and styles and "Hardcore" in styles[0])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

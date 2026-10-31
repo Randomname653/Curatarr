@@ -10,20 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.vector_store.chromadb_wrapper as cw
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 # ── init runs quick_check + takes the lock (a temp store, never data/) ──────
@@ -64,5 +52,4 @@ check("quick_check fails loudly with the restore path",
 check("lock releases with the process (OS lock, no stale lockfiles)",
       "msvcrt" in src and "LK_NBLCK" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

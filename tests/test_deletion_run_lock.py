@@ -20,17 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # suite or a dev install happened to create it.
 os.environ["DATABASE_URL"] = f"sqlite:///{(Path(tempfile.mkdtemp()) / 'curatarr.db').as_posix()}"
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 root = Path(__file__).resolve().parents[1]
@@ -129,5 +119,4 @@ check("boot + shutdown clear a crashed run's lock",
       '"deletion_run"' in _boot and 'set_state(_flag, "0")' in _boot
       and mn.count('set_state("deletion_run", "0")') == 1)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

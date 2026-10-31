@@ -33,17 +33,7 @@ import src.services.taste_engine as te
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry
 from src.services.task_monitor import task_monitor, TaskStatus
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── throwaway DB ─────────────────────────────────────────────────────────────
@@ -279,5 +269,4 @@ src = (Path(__file__).resolve().parents[1] / "src/services/plex_sync.py").read_t
 check("busy skip is marked so the scheduler can tell it from the cooldown",
       '"busy": True' in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

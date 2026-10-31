@@ -16,17 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.config import settings  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 check("off by default: every install that is not the PC of a split runs as before",
@@ -90,5 +80,4 @@ check("...and names no real address: placeholders, no LAN IPs, no domains",
       and not re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", doc.replace("0.0.0.0", ""))
       and not re.search(r"https?://[a-z0-9-]+\.[a-z0-9.-]+\.(?:de|com|net|org)\b", doc))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

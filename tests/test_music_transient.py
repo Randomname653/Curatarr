@@ -24,17 +24,7 @@ import src.services.music_metadata as mm
 import src.services.soulsync_client as ssc
 from src.services.enrichment_state import TRANSIENT
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 writes: list = []          # (key, value, days)
@@ -215,5 +205,4 @@ with fake_db_session() as db:
                                                   EnrichmentStatus.enriched == False).count()  # noqa: E712
 check("upstreams down for a run of artists: stops, marks nothing", untouched == 5)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

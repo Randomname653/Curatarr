@@ -10,17 +10,7 @@ from tests.frontend_files import everything as _frontend_everything  # index.htm
 
 from src.services.upgrade_curation import _judge
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 LOVE = {"reason": "rewatched (3 plays)"}
@@ -82,5 +72,4 @@ check("arr match is category-scoped (same-name titles can't steal the link)",
 check("panel renders both links + file lines",
       "Open in Plex" in html and "per-file detail unavailable" in html)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -16,17 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── rebuild_doc_from_prefetch unit tests (stubbed IO) ────────────────────────
@@ -168,5 +158,4 @@ check("zombie walk skips already-rebuilt gone docs (no weekly re-embed)",
       and _walk.index("if d in truth:") < _walk.index("md.get(REBUILT_MARK)")
       < _walk.index('bucket["gone"].append'))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

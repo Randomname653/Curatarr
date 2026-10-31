@@ -17,17 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 import src.routers.recommendations as rr
@@ -82,5 +72,4 @@ sch = (Path(__file__).resolve().parents[1] / "src/services/scheduler.py").read_t
 check("scheduler builds its item map via build_proposal_item_map",
       "build_proposal_item_map(cat_items)" in sch)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

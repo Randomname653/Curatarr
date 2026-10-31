@@ -26,17 +26,7 @@ import src.services.library_ledger as ll  # noqa: E402
 import src.services.plex_sync as ps  # noqa: E402
 from src.database.models import Base, LibraryConfig, LibraryEvent, LibraryItem, MediaTechProfile  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -201,5 +191,4 @@ check("the tech walk writes the ledger next to the profiles",
 check("...and, being complete, marks the films it no longer lists as gone",
       item("10").gone_at is not None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

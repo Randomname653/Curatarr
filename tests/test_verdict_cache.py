@@ -31,17 +31,7 @@ settings.ENRICHMENT_CACHE = str(Path(_tmp) / "enrichment.db")   # never the real
 from src.services import verdict_cache as vc  # noqa: E402
 from src.services.ollama_hosts import OllamaHost  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 PC = OllamaHost(url="http://pc:11434", profile="large", num_ctx=16384, gpu={"num_gpu": 99})
@@ -126,5 +116,4 @@ check("the weights' digest is read once per run", loop.count("verdict_cache.bake
 check("every title the run can reach has its keep-value scored, and it never goes further",
       "_consider_slice = scored_candidates[:_reach]" in loop and "or _ci >= _reach):" in loop)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

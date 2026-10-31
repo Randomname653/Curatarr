@@ -11,17 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.taste_vectors import merge_feedback_into_vector
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the ratchet is gone: praise undoes a dislike ─────────────────────────────
@@ -96,5 +86,4 @@ pl = (root / "src/services/pillars.py").read_text(encoding="utf-8")
 check("pillars aversion line carries scores",
       '({v:.2f})' in pl and "(0-1)" in pl)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

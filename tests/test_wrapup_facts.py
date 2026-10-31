@@ -21,24 +21,12 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.services.wrapup_facts as wf  # noqa: E402
 import src.services.wrapup_store as ws  # noqa: E402
 from src.database.models import (Base, CachedRecommendation, CuratorResolutionLog,  # noqa: E402
                                  DeletionProposal, MediaTechProfile, SwipeRating, User,
                                  WatchHistoryEntry)
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -358,5 +346,4 @@ r = (ROOT / "src/routers/wrapup.py").read_text(encoding="utf-8")
 check("every member's own wrap-up: get_current_user, not require_admin",
       "get_current_user" in r and "require_admin" not in r)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -26,17 +26,7 @@ from src.config import settings  # noqa: E402
 from src.services import llm_utils as lu  # noqa: E402
 from src.services.ollama_hosts import ROLES, OllamaHost, host_for, ollama_for  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── one endpoint: every role is it ──────────────────────────────────────────
@@ -145,5 +135,4 @@ check("the deletion run resolves its host once, like its bake",
       'judge_host = host_for("judge")' in src_files["src/services/recommendations_engine.py"]
       and src_files["src/services/recommendations_engine.py"].count("host=judge_host") >= 5)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

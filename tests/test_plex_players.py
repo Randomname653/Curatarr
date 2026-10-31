@@ -25,17 +25,7 @@ from src.database.models import Base, WatchHistoryEntry as W  # noqa: E402
 import src.services.plex_players as pp  # noqa: E402
 from src.services import plex_sync as ps  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 PLAYERS = {7: ("iPhone", "iOS"), 9: ("Desktop", "Windows")}
@@ -105,5 +95,4 @@ check("the backfill runs in the custodian without a model; the artist moods are 
 conn = (ROOT / "src/database/connection.py").read_text(encoding="utf-8")
 check("existing installs get the player column", '("watch_history",          "player",' in conn)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

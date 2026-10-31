@@ -28,17 +28,7 @@ from src.database.models import (Base, CuratorResolutionLog, LibraryEvent, Libra
 from src.services.wrapup_facts import resolve_period  # noqa: E402
 from src.services.wrapup_story import numbers_in, render_fact_sheet  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── renderings ───────────────────────────────────────────────────────────────
@@ -210,5 +200,4 @@ check("the collector builds the sections; the server's balance for the owner onl
 r = (Path(__file__).resolve().parents[1] / "src/routers/wrapup.py").read_text(encoding="utf-8")
 check("the page gets the ranked cards", '"insights": mine(facts)' in r)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

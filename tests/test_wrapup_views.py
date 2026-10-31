@@ -29,17 +29,7 @@ from src.database.models import (Base, JudgeVerdict, Nanogenre, TitleNanogenre, 
 from src.services import wrapup_sections as ws  # noqa: E402
 from src.services import wrapup_facts as wf  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
@@ -152,5 +142,4 @@ else:
     print("  (node not installed - checked statically)")
 check("no inline style in the story mode", 'style="' not in JS and ".style." not in JS)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

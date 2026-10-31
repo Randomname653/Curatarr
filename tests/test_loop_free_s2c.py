@@ -45,17 +45,7 @@ from src.database.models import (Base, EncryptedTasteVector, EnrichmentStatus,  
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def _on_loop_thread() -> bool:
@@ -594,5 +584,4 @@ check("the stored vector was used for the sitcom, the miniseries re-embedded",
       res and res["embedding_items"] == 2
       and not any("SITCOM" in t for t in _embedded) and any("MINI" in t for t in _embedded))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

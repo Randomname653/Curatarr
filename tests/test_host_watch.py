@@ -19,17 +19,7 @@ from src.services import host_watch as hw  # noqa: E402
 from src.services import notifications as nf  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 class Logs(logging.Handler):
@@ -93,5 +83,4 @@ src = (ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
 check("the scheduler probes every 30 s, off the event loop",
       'id="ollama_watch"' in src and "await asyncio.to_thread(host_watch.check)" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -23,17 +23,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.routers.chat import _household_use_block  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
@@ -65,5 +55,4 @@ src = (ROOT / "src/routers/chat.py").read_text(encoding="utf-8")
 check("free chat adds it for the owner only",
       "if user.is_admin:" in src and "_in_session, _household_use_block, user.id, active_title" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

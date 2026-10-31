@@ -28,17 +28,7 @@ import src.services.swipe as sw  # noqa: E402
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 from src.database.models import Base, EncryptedTasteVector, SwipeRating, User, WatchHistoryEntry  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -273,5 +263,4 @@ check("the scrollable text panel keeps touch-action none (a touch on the text us
       "pan it and cancel the card drag)",
       info is not None and "overflow-y: auto" in info.group(0) and "touch-action: none" in info.group(0))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

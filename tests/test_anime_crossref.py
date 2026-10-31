@@ -28,17 +28,7 @@ from src.database.models import (ArrEnrichmentStatus as AES, Base, EnrichmentFin
 from src.services import anime_crossref as X, anime_mapping, anime_offline, kb_overview  # noqa: E402
 import src.routers.enrichment as R  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
@@ -142,5 +132,4 @@ check("a second run does not re-pin (the loop guard)", res["pinned"] == 0 and le
 src = (ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
 check("the custodian runs it daily", 'Task("anime_crossref"' in src and "_run_anime_crossref" in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

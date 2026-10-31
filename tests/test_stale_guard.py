@@ -13,17 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 from src.services.stale_guard import is_implausible_mass_stale as g
@@ -42,5 +32,4 @@ check("zombie walk: classify first, guard PER SERVICE, then act",
 check("guarded skip is loud and counted in the result",
       "implausible (arr down?)" in en)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

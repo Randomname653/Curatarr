@@ -29,17 +29,7 @@ from src.database.models import Base, DeletionProposal
 from tests.frontend_files import everything
 
 ROOT = Path(__file__).resolve().parents[1]
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 TERMS = dict(mismatch=0.82, taste_src="embedding", size_pts=9.4, size_gb=45.0,
@@ -155,5 +145,4 @@ check(f"the card's Why? names the engine's cut ({eng.SHORTLIST_SCORE})",
       m is not None and int(m.group(1)) == eng.SHORTLIST_SCORE
       and "above ${_SHORTLIST_SCORE}" in ui)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

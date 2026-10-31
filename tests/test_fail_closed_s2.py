@@ -33,17 +33,7 @@ from src.services import app_state  # noqa: E402
 
 Base.metadata.create_all(conn_mod.engine)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── 1. game flag ────────────────────────────────────────────────────────────
@@ -144,5 +134,4 @@ check("user 1 sees their own watched titles",
 check("user 2, asking within the memo window, does not see user 1's numbers",
       b["categories"]["movie"]["total_unique"] == 0)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

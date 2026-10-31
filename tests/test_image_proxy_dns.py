@@ -13,17 +13,7 @@ sys.path.insert(0, str(_ROOT))
 
 import src.routers.image_proxy as ip  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def resolves(host, resolver):
@@ -65,5 +55,4 @@ check("wiring: the initial host and every redirect target are resolved before co
       and fetch.index("await _host_resolves_public(parsed.host") < fetch.index("httpx.AsyncClient(")
       and fetch.index("_host_allowed(target_host)") < fetch.index("await _host_resolves_public(target_host)"))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

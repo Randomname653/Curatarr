@@ -10,17 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.services.facet_index as fi
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── stubs ────────────────────────────────────────────────────────────────────
@@ -202,5 +192,4 @@ asyncio.run(fi.run_facet_backfill())
 check("backfill pre-embeds the page DEDUPED (one chunked call, no per-title calls)",
       len(calls) == 1 and sorted(calls[0]) == ["only-a", "only-b", "shared theme"])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

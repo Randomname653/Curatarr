@@ -15,17 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 from src.database.models import MediaMatchOverride
@@ -101,5 +91,4 @@ check("the picker is shared: deletion cards open the same renderMatchPicker",
       "renderMatchPicker(box" in fe and fe.count("renderMatchPicker(") >= 2
       and "p.category||'movie'" not in fe)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

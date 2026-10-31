@@ -12,17 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import src.services.music_metadata as mm
 import src.services.soulsync_client as sc
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── fakes: no network, no cache DB ───────────────────────────────────────────
@@ -200,5 +190,4 @@ check("one failed lookup does not discard the others",
       part_names == ["A1", "C1"])
 check("a partial result is NOT frozen in the 168h cache", part_cache is None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

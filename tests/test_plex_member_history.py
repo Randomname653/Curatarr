@@ -32,17 +32,7 @@ import src.services.plex_sync as ps
 import src.services.taste_engine as te
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -230,5 +220,4 @@ check("the judge's household lookup finds the member's Free Rein episodes",
 check("...and the household floor protects the show from a CUT",
       pillars._household_claim(others, "show", episodes_total=10) == "member")
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

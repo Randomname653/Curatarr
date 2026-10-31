@@ -18,17 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 import src.services.size_norms as sn
@@ -627,5 +617,4 @@ check("attachment-strength ambiguity still reads owner-favouring",
 check("a bitrate outlier cannot demote a verdict tier",
       "nor does an outlier LOWER a verdict tier" in _pl3)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

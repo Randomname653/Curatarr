@@ -17,17 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import src.routers.recommendations as recs  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 q = recs.poster_query
@@ -58,5 +48,4 @@ sched = (ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
 check("the cache refresh looks posters up this way",
       'await fetch_rec_art(\n                                rec.get("title", ""), cat, rec.get("year"))' in sched)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

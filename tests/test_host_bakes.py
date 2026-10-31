@@ -27,17 +27,7 @@ from src.config import settings  # noqa: E402
 from src.services import embed_service as es  # noqa: E402
 from src.services import model_check as mc  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 KEYS = ("OLLAMA_PC_ENDPOINT", "PITCHER_MODEL", "BASE_CURATOR_MODEL", "BASE_SUMMARIZER_MODEL",
@@ -171,5 +161,4 @@ check("a weights mismatch is exit 3: start.bat warns instead of rebuilding on ev
       "rc = 3 if rc == 0 else rc" in bm and 'if errorlevel 3 set "_MODELS_RC=3"' in bat
       and '"%_MODELS_RC%"=="3"' in bat)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

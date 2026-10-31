@@ -16,17 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.services.recommendations_engine import positioned_titles  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 TEXT = ("The Big Bang Theory is a long-running sitcom; if you ask me, the other shows in 10 years "
@@ -48,5 +38,4 @@ src = (ROOT / "src/services/recommendations_engine.py").read_text(encoding="utf-
 check("the deletion run uses it", "curator_positioned = positioned_titles(_blob, candidate_titles)" in src
       and "if t and t.lower() in _blob:" not in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

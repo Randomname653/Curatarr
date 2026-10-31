@@ -26,17 +26,7 @@ from src.services import notifications as nt  # noqa: E402
 from src.services import pc_host  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the counters ────────────────────────────────────────────────────────────
@@ -174,5 +164,4 @@ check("...registered, and an answer refreshes the bell",
       "  answerGameQuestion,\n" in app_js and "loadUnreadMessages()" in game_js)
 check("an answer (toast or bell) forgets the cached question", "forget_game_questions()" in router)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

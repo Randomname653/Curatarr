@@ -27,17 +27,7 @@ import src.services.wrapup_insights as wi  # noqa: E402
 from src.database.models import Base, MusicTag, User, WatchHistoryEntry as W  # noqa: E402
 from src.services.wrapup_story import render_fact_sheet  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -216,5 +206,4 @@ check("the fact sheet carries the moods, the parts of the day and the players",
       and "Played on: iPhone" in sheet and "After 23:00 mostly on iPhone" in sheet)
 check("the facts' shape changed: FACTS_VERSION moved", wf.FACTS_VERSION >= 10)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

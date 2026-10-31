@@ -31,17 +31,7 @@ import src.services.retention as ret
 from src.database.models import (AppState, Base, ChatStarter, ConversationMessage,
                                  DeletionProposal, ProactiveMessage)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -204,5 +194,4 @@ t = next((t for t in dc._registry() if t.job_id == "retention"), None)
 check("retention is a daily background wrapper task",
       t is not None and t.cadence_h == 24.0 and t.takes_task and not t.needs_llm)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

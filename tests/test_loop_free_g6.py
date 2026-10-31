@@ -43,17 +43,7 @@ from src.database.models import (Base, EncryptedTasteVector, MediaIdentity,  # n
                                  User, WatchHistoryEntry)
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
@@ -372,5 +362,4 @@ check("the form guard's cache read answered, off the loop thread",
       flags.get("significance_unchecked") is False and _ThreadCache.threads
       and _loop_thread[0] not in _ThreadCache.threads)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

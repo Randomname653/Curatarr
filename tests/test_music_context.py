@@ -20,22 +20,10 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 import src.services.spotify_import as si  # noqa: E402
 from src.database.models import Base, MusicSkip, User, WatchHistoryEntry  # noqa: E402
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -180,5 +168,4 @@ job = next((t for t in _registry() if t.job_id == "spotify_reread"), None)
 check("the custodian re-reads the imported files (once; no model)",
       job is not None and not job.needs_llm)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

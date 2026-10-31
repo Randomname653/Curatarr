@@ -36,17 +36,7 @@ from src.database.models import (
     Base, CuratorResolutionLog, DeletionProposal, ProtectedMedia,
 )
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
@@ -455,5 +445,4 @@ mn = (Path(__file__).resolve().parents[1] / "src/main.py").read_text(encoding="u
 check("boot parks interrupted 'deleting' claims in limbo",
       '_DP.status == "deleting"' in mn and '{"status": "limbo"}' in mn)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

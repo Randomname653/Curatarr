@@ -11,17 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -46,5 +36,4 @@ check("on a phone a poster card is a grid: the actions under the title line, the
       "grid-template-columns: 72px minmax(0, 1fr)" in css
       and ".poster-card > .grow, .poster-card > .grow > .panel-item-head { display: contents; }" in css)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

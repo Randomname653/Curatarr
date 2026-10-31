@@ -29,17 +29,7 @@ import src.services.app_state as app_state  # noqa: E402
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 from src.services.task_monitor import task_monitor  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── preflight (pure) ─────────────────────────────────────────────────────────
@@ -146,5 +136,4 @@ check("preflight runs before any collection is deleted",
 check("rollback no longer re-applies the default profile",
       "set_profile(_default_profile())" not in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

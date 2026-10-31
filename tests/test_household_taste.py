@@ -26,17 +26,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 import src.services.recommendations_engine as eng  # noqa: E402
 from src.database.models import Base, EncryptedTasteVector, User  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 # ── the Why? line ────────────────────────────────────────────────────────────
@@ -122,5 +112,4 @@ check("the judge reads it as a household reason weaker than a watch",
 check("a taste fit is never the household floor",
       "household_taste" not in pil.split("def _household_claim")[1].split("\ndef ")[0])
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()
