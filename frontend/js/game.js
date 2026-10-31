@@ -2,6 +2,7 @@
 import { _errMsg, toast } from './ui.js';
 import { api } from './api.js';
 import { loadUnreadMessages } from './notifications.js';
+import { setServerModelBusy } from './brand.js';
 const _shownProcesses = new Set();   // names already shown in a toast this session
 let   _processPollTimer = null;
 
@@ -74,6 +75,7 @@ export async function _pollGameProcesses() {
     // Update topbar indicator
     const statusR = await api('/api/processes/status').catch(e => ({_err: _errMsg(e)}));
     _renderLaneBadge(statusR);
+    if (!statusR._err) setServerModelBusy(statusR.model_busy);
 
     // Check for unknown processes — show one toast per unknown exe
     const r = await api('/api/processes/unknown')

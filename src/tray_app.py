@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import json
 import logging
 import os
 import socket
@@ -37,7 +38,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from src.paths import ROOT, LOG_DIR
+from src.paths import DATA_DIR, LOG_DIR, ROOT
 
 logger = logging.getLogger("curatarr.tray")
 
@@ -47,42 +48,43 @@ _STARTUP_LNK = (Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows"
 _CREATE_NO_WINDOW = 0x08000000
 
 
-# ── brand icon, drawn from the exact curation-eye geometry ────────────────────
+# ── brand icon ────────────────────────────────────────────────────────────────
 
-def _draw_eye(size: int = 64):
-    """The favicon's aperture-C eye as a PIL image (transparent background).
-    Supersampled then LANCZOS-downscaled so the thin arcs stay crisp at 16px.
-    Flat amber #efb02c stands in for the gradient — indistinguishable at tray
-    sizes. PIL arc angles: 0 deg = 3 o'clock, clockwise, y-down (same frame
-    as the SVG, so the segment angles convert directly)."""
+_TRAY_PREFS = DATA_DIR / "tray.json"
+
+
+def _classic_icon(_item=None) -> bool:
+    """The tray's own icon choice (its menu), apart from the browser's."""
+    try:
+        return json.loads(_TRAY_PREFS.read_text(encoding="utf-8")).get("icon") == "classic"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _toggle_classic_icon(icon, _item):
+    classic = not _classic_icon()
+    try:
+        _TRAY_PREFS.parent.mkdir(parents=True, exist_ok=True)
+        _TRAY_PREFS.write_text(json.dumps({"icon": "classic" if classic else "modern"}), encoding="utf-8")
+    except OSError as e:
+        logger.warning("Tray icon choice not saved: %s", e)
+    icon.icon = _brand_icon(64)
+
+
+def _brand_icon(size: int = 64):
+    """The Curatarr mark (assets/brand/curatarr-mark.png, or the classic one
+    when the tray menu says so) as a PIL image. A missing file falls back to
+    a flat amber disc, so the tray still starts."""
     from PIL import Image, ImageDraw
 
-    S = 64 * 16
-    k = S / 64.0
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    amber = (239, 176, 44, 255)     # #efb02c
-    inner = (240, 185, 58, 255)     # #f0b93a
-    bright = (255, 216, 115, 255)   # #ffd873
-
-    def bbox(r):
-        return [(32 - r) * k, (32 - r) * k, (32 + r) * k, (32 + r) * k]
-
-    # outer aperture: three blade segments (gaps at the C-opening + 2 cuts)
-    for start, end in ((231, 320), (141, 219), (40, 129)):
-        d.arc(bbox(22), start=start, end=end, fill=amber, width=round(9 * k))
-    # inner focus arc (270deg C, opening at 3 o'clock) + round end caps
-    d.arc(bbox(12), start=45, end=315, fill=inner, width=round(3.6 * k))
-    for cx, cy in ((40.5, 23.5), (40.5, 40.5)):
-        r = 1.8 * k
-        d.ellipse([cx * k - r, cy * k - r, cx * k + r, cy * k + r], fill=inner)
-    # pupil + highlight
-    for r, col in ((5, amber), (2, bright)):
-        rr = r * k
-        d.ellipse([32 * k - rr, 32 * k - rr, 32 * k + rr, 32 * k + rr], fill=col)
-
-    from PIL import Image as _I
-    return img.resize((size, size), _I.LANCZOS)
+    src = ROOT / "assets" / "brand" / ("curatarr-mark-classic.png" if _classic_icon()
+                                       else "curatarr-mark.png")
+    try:
+        return Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS)
+    except OSError:
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        ImageDraw.Draw(img).ellipse([2, 2, size - 3, size - 3], fill=(239, 176, 44, 255))
+        return img
 
 
 # ── single-instance guards ────────────────────────────────────────────────────
@@ -444,7 +446,7 @@ def _agent_only(settings, mutex) -> None:
             icon.stop()
 
     icon = pystray.Icon(
-        "curatarr", _draw_eye(64), "Curatarr agent (lends this PC's card)",
+        "curatarr", _brand_icon(64), "Curatarr agent (lends this PC's card)",
         menu=pystray.Menu(
             pystray.MenuItem("Open Curatarr", lambda: webbrowser.open(nas),
                              default=True, enabled=bool(nas)),
@@ -452,6 +454,7 @@ def _agent_only(settings, mutex) -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Start with Windows", _toggle_autostart,
                              checked=_autostart_enabled),
+            pystray.MenuItem("Classic icon", _toggle_classic_icon, checked=_classic_icon),
             *_update_items(_restart_after_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit agent", lambda: _stop_for_good()),
@@ -551,7 +554,7 @@ def main() -> None:
         _initiate_stop()
 
     icon = pystray.Icon(
-        "curatarr", _draw_eye(64), "Curatarr",
+        "curatarr", _brand_icon(64), "Curatarr",
         menu=pystray.Menu(
             pystray.MenuItem(
                 "Open Curatarr",
@@ -561,6 +564,7 @@ def main() -> None:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Start with Windows", _toggle_autostart,
                              checked=_autostart_enabled),
+            pystray.MenuItem("Classic icon", _toggle_classic_icon, checked=_classic_icon),
             *_update_items(_restart_after_update),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Restart",

@@ -143,7 +143,7 @@ example `venv\Scripts\python update_db.py`.
 | `python scripts/facts_speedrunner.py` | Clear the archive-metadata backlog in one go (`--skip-significance` leaves the GPU alone) |
 | `python benchmark.py` | Measure a candidate Ollama model's throughput |
 | `python tests/run_all.py` | Full test battery, what CI runs. **Stop Curatarr first**: the vector store admits one process at a time |
-| `python scripts/make_icon.py` | Re-render the app icons |
+| `python scripts/make_icon.py` | Re-render the app icons from `assets/brand/` |
 
 The standalone runners skip the daily batch limits and use the same
 locks as the in-app pipeline, so they cannot collide with it.

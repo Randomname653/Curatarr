@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="assets/curatarr_256.png" alt="Curatarr" width="112">
-
-# Curatarr
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/curatarr-logo.svg">
+  <img src="assets/brand/curatarr-logo-dark.svg" alt="Curatarr" width="360">
+</picture>
 
 **A self-hosted AI curator for Plex or Jellyfin and the \*arr stack.**
 
@@ -517,6 +518,10 @@ python tests/run_all.py
 work and network-hosted forks must stay open source. Ported components
 keep their original licenses, listed in
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+The Curatarr name, logo and wordmark (everything in `assets/brand/` and
+the icons rendered from it) are not covered by the AGPL-3.0: all rights
+reserved. A fork is welcome to the code, under its own name and logo.
 
 ## Acknowledgements
 

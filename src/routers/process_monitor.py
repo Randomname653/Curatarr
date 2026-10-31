@@ -152,9 +152,15 @@ def game_status(_user: User = Depends(get_current_user)):
     # The watcher's verdict answers; a live probe only before its first tick.
     flag = get_state("game_active")
     running = flag == "1" if flag in ("0", "1") else is_game_running()
+    # A model at work, for the logo's pulse: a curator call holds a lane's
+    # gate, or the enrichment run (summariser + embeddings) is going.
+    from src.services.llm_priority import lanes
+    model_busy = (any(ln.gate.locked() for ln in lanes())
+                  or get_state("enrichment_running") == "1")
     return {
         "game_running": running,
         "models_unloaded": [],
         "lane": lane,
         "lane_reason": reason,
+        "model_busy": model_busy,
     }

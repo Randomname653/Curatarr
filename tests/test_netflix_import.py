@@ -261,8 +261,9 @@ check("a film that arrived in the library later is linked by its TMDB id",
       n >= 1 and arr.plex_item_id == "radarr:77")
 db.close()
 sync = (ROOT / "src/services/plex_sync.py").read_text(encoding="utf-8")
-check("the Plex sync never resumes or advances a Netflix row",
-      sync.count('func.coalesce(WatchHistoryEntry.source, "") != "netflix"') == 2)
+check("the Plex sync never resumes, advances or finishes a Netflix row",
+      # resume an in-progress row, promote a stale one, finish a started one on a mark
+      sync.count('func.coalesce(WatchHistoryEntry.source, "") != "netflix"') == 3)
 check("...nor re-attributes or hides one",
       sync.count('notin_(("spotify", "netflix"))') == 2)
 check("the player backfill and the dedupe script leave them alone",

@@ -170,6 +170,10 @@ def rhythm(entries: list[dict], now: Optional[datetime] = None, *,
     binge = max_sit >= binge_threshold
     if not ss:
         phrase = ""
+    elif episodes == 0:
+        # Plays, none watched far enough to count: "0 episodes on Thursday"
+        # read to the openers as "untouched" (2026-10-29).
+        phrase = f"an episode started {_when(last['end'], now)}, not finished yet"
     elif last["episodes"] >= binge_threshold:
         # the latest sitting is the story
         phrase = (f"{last['episodes']} episodes in one sitting {_when(last['end'], now)}"

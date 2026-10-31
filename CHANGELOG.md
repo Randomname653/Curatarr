@@ -406,6 +406,148 @@ applies. A miss that every source missed still trips the guard.
 
 Tests: `tests/test_node_names.py`.
 
+**The summariser no longer writes the title and year itself.** The METADATA STRUCTURING template
+showed `"title": "..."` and `"year": ...` and let the model fill them in. With no year in the
+source, the model wrote `"year": 19XX`: invalid JSON, so the item fell back to a rule-based
+profile and was retried. One anime failed 29 times this way on the NAS. A title with quotes in it
+("Weird Al" Yankovic) came back unescaped, with the same result. The template now carries the
+source's title, year (`null` when there is none) and type as JSON, and the profile takes title and
+year from the source again, as it already did for the rating. Before, a year the model guessed
+could also win over the source's empty one in the merged profile. On the PC, three runs each: the
+two failing titles went from 0 of 3 to 3 of 3, and the two control titles were unchanged.
+
+Tests: `tests/test_summarizer_echo_fields.py`.
+
+**A new logo.** Curatarr has a designed logo now: a C with a diamond at its heart. The ring C
+(the "classic") is kept beside it. Every icon is rendered from one set of files in
+`assets/brand/` (SVG plus a 1024 px master each):
+- **Favicon:** the mark, as `/icons/favicon.svg`.
+- **Phone and PWA icons:** the app icon, a dark tile with a ruby diamond. The rounded tile serves
+  as "any". The maskable and iOS icons are full bleed, because the phone rounds them itself, and
+  the mark sits inside the safe circle. A new monochrome icon covers themed icons and badges.
+- **Tray and `.ico`:** the mark (the tray drew the old eye in code).
+- **Sidebar, login, shutdown screen:** the wordmark and mark as inline SVG, coloured by brand
+  tokens (`--brand-amber`, `--brand-diamond`, `--brand-ruby`). Amber stays the UI's only accent.
+- **README header:** the wordmark, with a dark one for GitHub's light mode, plus a social preview
+  image (`docs/brand/social-preview.png`).
+
+`scripts/make_icon.py` renders all of it. The service worker's shell is v2, and the icons
+revalidate like the scripts so the new ones show up. The name, logo and wordmark are not under
+the AGPL-3.0: all rights reserved (README, License).
+
+Tests: `tests/test_brand.py`.
+
+**The logo at work: classic icon, thinking ring, busy pulse, a watermark.**
+- **Classic, per device:** Settings → Account → This device → App icon: Modern / Classic switches
+  the tab's icon and the top-bar and login logos (`favicon-classic.svg`, the classic wordmark). The
+  tray has its own "Classic icon" switch in its menu (`data/tray.json`). An installed app keeps the
+  icon it was installed with, because the manifest is fixed.
+- **One logo in the chat:** the curator's avatar beside each reply is the favicon file, the classic
+  one under Classic. It used to be the old eye drawn as a data URI. The mark now sits on its
+  circle's own centre: the C opens to the right, so its drawing box was narrower than the circle
+  and the mark sat 2 % off. Its size is whole pixels (14 px in the 18 px badge).
+- **The avatar thinks:** while a reply is on its way, the avatar's own mark moves, in place of
+  three dots. Its four segments run one after another onto the first, then the stack spins once,
+  fast, and unfolds back into the C (2.8 s a cycle). The diamond twinkles like an AI sparkle: it
+  shrinks while the segments gather, then flares, turns and glows ruby during the spin. A
+  "Thinking…" line shimmers until the server's status lines take over, and they shimmer too. A
+  first cut lit the classic ring's segments in place, one by one; that read as choppy and put a
+  third logo on screen.
+- **Busy pulse:** while a model works, the diamond in the top-bar logo breathes ruby. That covers a
+  reply streaming in this tab, or the server reporting a curator call or an enrichment run
+  (`model_busy` in `/api/processes/status`, the 30 s poll).
+- **Watermark:** the wrap-up's summary card and every story slide carry the mark, so a screenshot
+  says where it came from.
+
+Under reduced motion the avatar and the text stand still, and the pulse is a steady ruby.
+
+Tests: `tests/test_brand.py`, `tests/test_a11y_nav.py`.
+
+**Curatarr's icon and description in the TrueNAS app list.** A custom app showed TrueNAS's generic
+icon and an empty description: the compose file has no place for them. A new script,
+`deploy/truenas/apply_metadata.py`, runs on the NAS as root and fills in the app's metadata file.
+It sets:
+- the icon and the description
+- the home page and the sources
+- five screenshots, keywords and a category
+- a Web UI button and short notes
+
+It keeps every field TrueNAS owns, leaves a `.bak` copy, and is safe to repeat (TrueNAS can rewrite
+the file on an update). `deploy/docker-compose.yml` gains an `x-portals` block, so a fresh install
+has the Web UI button from the start. The steps are in `deploy/truenas/README.md`. This is the
+community workaround; TrueNAS has no official field for it yet.
+
+The icon is the mark cut out, with the app icon's ruby diamond (`icon-transparent-512.png`, new
+in `make_icon.py`): the dark app tile looked like a square box among the other apps' icons. The
+script also sets the title back to "Curatarr" (TrueNAS rewrites it to "Custom App").
+
+Tests: `tests/test_truenas_metadata.py` (against a real custom app's metadata file).
+
+**Chat openers no longer scold the user's own pace.** The starters told the owner off for pauses
+that were simply how he watches. Examples: "you haven't touched Tanya the Evil in a week" for a
+series he watches once a fortnight, and "only on episode four and already losing interest" for an
+episode from the night before. The facts handed to the curator said "N days ago" and nothing to
+compare it with. Now:
+- **A `pause` in each title fact:** last watched, active and stalled each carry one. It is
+  measured against the user's own rhythm for that title (the median gap between its sittings
+  over the past year) and against whether anything else was watched since. It reads one of:
+  - normal for this user, usually every N days
+  - nothing at all watched since, so a break from everything rather than from this title
+  - longer than usual, with other titles watched since
+- **Enforced in code:** the prompt asks to leave the user's own pace alone. A replay with the real
+  curator on the owner's data showed that the curator's pointed voice still found gaps to poke
+  at ("already pausing", "glacial"). So, like the starters' other rules, it is enforced in code. An
+  opener that talks of pauses, pace or giving up stays only when it is about a title whose pause
+  is longer than usual. In the replay, every such line about the owner's normal-paced titles was
+  dropped. The lines about a series really left for 70 days remained.
+- **A started episode is no longer "0 episodes":** the viewing rhythm called an episode started but
+  not finished "0 episodes on Thursday evening", which read as untouched. It now says "an episode
+  started on Thursday evening, not finished yet".
+
+Starters already in the pool expire on their own within 48 hours.
+
+Tests: `tests/test_chat_starters.py`.
+
+**Episodes marked as played one at a time are no viewings.** Plex's "mark as played" writes no
+history event. The sync caught a mark only when three or more items shared one second. Marking
+episodes one after another lands them seconds apart: 53 plays in 20 runs on the owner's server. In
+one run, Goblin Slayer E8, E5, E7, E1, E3 and E4 came within 30 s. High School DxD E3–E8, 5 s apart,
+read as a six-episode binge.
+- **The sync:** a finished video item whose last-viewed time matches no play event in the
+  history is a mark, flagged like a bulk mark: seen, not a viewing. This runs only on an
+  incremental sync whose history walk covered the window. A first full sync can list items older
+  than the history keeps.
+- **Started, then marked:** the unfinished row of that viewing (within 30 days) is finished now.
+  It keeps its own evening and the minutes really watched. Before, it moved to the moment of the
+  mark and counted in full.
+- **Played time:** a finished row whose resume point is short of the episode's length counts
+  that point. A finished viewing's resume point is its length, so nothing else changes.
+- **What was stored:** a one-shot migration (schema generation 3) marks two finished plays of
+  different items of one title, a minute or less apart, neither with a play event (no player).
+  On the owner's data that is 57 rows, all in such runs. An evening's two episodes, plays with a
+  player and one item played twice stay viewings.
+- **Stored wrap-ups:** `FACTS_VERSION` 12 rebuilds their facts on the repaired history the next
+  time each is opened. A story whose facts changed is marked stale.
+
+Tests: `tests/test_single_marks.py`; `tests/test_netflix_import.py` counts the third query that
+leaves Netflix rows alone.
+
+**The bell says when this server's Ollama stops answering.** The NAS's Ollama app went down on
+2026-10-29 at 19:10 and stayed down for 21 hours. Embeddings, the summariser, lyrics and memory
+extraction failed, each only in a log line of its own, while chat kept working on the PC. A memory
+extraction error finally surfaced it.
+- **The probe:** a job asks the main host's `/api/version` every 30 s. Three misses in a row, so
+  a model that is loading is no outage, mark the host down from the first miss. The log says so
+  once, and again when it answers (`[hosts]`).
+- **The bell:** admins get a danger item. It gives the time it stopped, what waits (embeddings,
+  the summariser, search), where chat still runs, and that a restart of the Ollama app is all it
+  takes. It counts in the bell badge although it has no button.
+
+The work that failed meanwhile resumes by itself. Memory extraction only moves its cursor after a
+run that succeeded, and the custodian's catch-up retries.
+
+Tests: `tests/test_host_watch.py`.
+
 **Wrap-Up v2, step 2: an editor picks the story, a writer tells it.** v1 asked for the whole
 story as one JSON form and checked it with rules that were strict on style and loose on truth:
 - an honest rounding, a title with an "!" or a band called Journey sent everything back;

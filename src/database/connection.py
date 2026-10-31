@@ -212,7 +212,9 @@ def checkpoint_and_dispose() -> None:
 # any new one-shot backfill and gate that backfill on the old value.
 # 2 = video plays Plex wrote for "mark as played" are source "marked", and music
 #     plays imported from Plex's history without a length count as played (2026-10-25).
-SCHEMA_VERSION = 2
+# 3 = episodes marked as played one after another (seconds apart, no play event)
+#     are source "marked" too (2026-10-30).
+SCHEMA_VERSION = 3
 
 
 def _migrate_columns() -> None:
@@ -488,6 +490,22 @@ def _migrate_columns() -> None:
                     "UPDATE watch_history SET completed = 1 "
                     "WHERE media_type = 'music' AND source IS NULL AND completed = 0 "
                     "AND duration_ms IS NULL AND view_offset_ms IS NULL")
+            if schema_was < 3 and "watch_history" in tables:
+                # Marking episodes as played one after another lands them
+                # seconds apart, past the one-second rule above: 53 plays in
+                # 20 runs on the owner's server (Goblin Slayer E8, E5, E7, E1,
+                # E3, E4 within 30 s), each counted as a viewing, a run of them
+                # as a binge. Two finished plays of different items of one
+                # title, a minute or less apart, neither with a play event
+                # (no player), are such marks. Same rule as plex_sync.
+                conn.exec_driver_sql(
+                    "UPDATE watch_history SET source = 'marked' WHERE id IN ("
+                    "  WITH v AS (SELECT id, user_id, COALESCE(series_title, title) AS t,"
+                    "    plex_item_id AS p, CAST(strftime('%s', viewed_at) AS INTEGER) AS s"
+                    "    FROM watch_history WHERE source IS NULL AND completed = 1"
+                    "    AND player IS NULL AND media_type IN ('movie', 'show', 'anime'))"
+                    "  SELECT a.id FROM v a JOIN v b ON b.user_id = a.user_id AND b.t = a.t"
+                    "    AND b.p != a.p AND b.s BETWEEN a.s - 60 AND a.s + 60)")
             # Record the schema generation this boot brought the file to. A
             # future one-shot backfill keys on it (``if user_version < N``)
             # rather than on whether its column happened to be added just now.
