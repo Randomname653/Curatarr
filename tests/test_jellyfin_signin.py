@@ -36,17 +36,7 @@ from src.routers import auth  # noqa: E402
 from src.services import rate_limit  # noqa: E402
 import src.services.media_server.jellyfin_auth as ja  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 def req(host="192.168.1.20", headers=None):
@@ -160,5 +150,4 @@ settings.JELLYFIN_URL = None
 check("Jellyfin not configured: 503", call(auth.jellyfin_quick_connect(req("10.1.1.2")))[0] == 503)
 settings.MEDIA_SERVER_TYPE = None
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

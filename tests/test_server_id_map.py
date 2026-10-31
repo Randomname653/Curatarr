@@ -31,20 +31,11 @@ from src.services.media_server import base as b, id_map  # noqa: E402
 from src.services.media_server.plex_adapter import PlexAdapter  # noqa: E402
 from media_server_fixtures import plex_transport  # noqa: E402
 
-PASS = FAIL = 0
+from _checks import check  # noqa: E402
 
 
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
-
-
-eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+eng = memory_engine()
 Base.metadata.create_all(eng)
 Session = sessionmaker(bind=eng)
 
@@ -180,5 +171,4 @@ except Exception:  # noqa: BLE001 - the raise IS the assertion
     raised = True
 check("record_walk raises when the server does not answer (the walk's caller logs it)", raised)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

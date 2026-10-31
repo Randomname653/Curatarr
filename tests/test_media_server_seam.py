@@ -23,17 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.services.media_server import base as b  # noqa: E402
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 GUID = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
@@ -165,7 +155,8 @@ from datetime import datetime  # noqa: E402
 from src.database.models import (ArrEnrichmentStatus as AES, Base, User,  # noqa: E402
                                  WatchHistoryEntry as W)
 
-eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+from _checks import memory_engine  # noqa: E402
+eng = memory_engine()
 Base.metadata.create_all(eng)
 db = sessionmaker(bind=eng)()
 db.add(User(id=1, plex_user_id="u1", plex_username="jane"))
@@ -340,5 +331,4 @@ check("settings: MEDIA_SERVER_TYPE accepts plex/jellyfin, blank means unset",
       Settings(_env_file=None, MEDIA_SERVER_TYPE="jellyfin").MEDIA_SERVER_TYPE == "jellyfin"
       and Settings(_env_file=None, MEDIA_SERVER_TYPE="").MEDIA_SERVER_TYPE is None)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

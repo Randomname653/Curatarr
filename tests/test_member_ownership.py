@@ -133,6 +133,8 @@ check("wrap-up status: user 1 cannot read user 12's task by prefix",
 # parameter fails here until someone decides which it is.
 NOT_OWNED = {
     "auth GET /plex/poll/{pin_id}": "PIN nonce checked in the handler, pre-login",
+    "auth GET /jellyfin/quickconnect/{login_id}": "login nonce checked (pinned below), pre-login",
+    "setup GET /jellyfin/connect/{login_id}": "login nonce checked (pinned below), admin or first run",
     "library GET /items/{service}": "an arr service name",
     "library GET /search/{service}": "an arr service name",
 }
@@ -142,6 +144,33 @@ OWNED_ROUTES = {
     "messages POST /{message_id}/read",
     "wrapup GET /status/{task_id}",
 }
+
+# The pre-login codes are not per-user rows, but they are bearer-like: only the
+# browser that started a sign-in may poll it (its nonce), never a guess.
+import src.routers.auth as auth_router  # noqa: E402
+from src.services.media_server import jellyfin_connect as jc  # noqa: E402
+
+def forbidden(fn):
+    try:
+        fn()
+    except HTTPException as e:
+        return e.status_code == 403
+    return False
+
+
+lid, nonce = "qc-login-1", "the-browsers-nonce"
+auth_router._qc_logins[lid] = (nonce, "secret", "device", __import__("time").time())
+check("Jellyfin Quick Connect poll: another browser's nonce is refused",
+      forbidden(lambda: auth_router._check_qc(lid, "a-guess")))
+check("Jellyfin Quick Connect poll: no nonce at all is refused",
+      forbidden(lambda: auth_router._check_qc(lid, "")))
+check("Jellyfin Quick Connect poll: the starting browser gets its code",
+      auth_router._check_qc(lid, nonce) == ("secret", "device"))
+sid, snonce = jc.bind_pending("secret", "device", "http://jf.local")
+check("Jellyfin setup connect: another browser's nonce is refused",
+      jc.check_pending(sid, "a-guess") is None and jc.check_pending(sid, "") is None)
+check("Jellyfin setup connect: the starting browser gets its code",
+      jc.check_pending(sid, snonce) == ("secret", "device", "http://jf.local"))
 
 main_src = (ROOT / "src/main.py").read_text(encoding="utf-8")
 admin_routers = set(re.findall(r"include_router\((\w+)\.router[^)]*?dependencies=_ADMIN_ONLY",

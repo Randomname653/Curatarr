@@ -25,17 +25,7 @@ from src.services.media_server import jellyfin_connect as jc  # noqa: E402
 from src.services.media_server.jellyfin_auth import (JellyfinAuth, JellyfinAuthRefused,  # noqa: E402
                                                      KEY_APP_NAME)
 
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
+from _checks import check  # noqa: E402
 
 
 SID = "f" * 32
@@ -172,5 +162,4 @@ try:
 finally:
     setup_router._write_env_or_400, setup_router.build_ollama_models = saved_w, saved_b
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()
