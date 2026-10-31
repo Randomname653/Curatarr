@@ -53,10 +53,11 @@ _ALERT_TRIGGER = "vector_desync"
 _REQUEUED_KEY = "vector_reconcile:requeued"
 
 
-def doc_id_for(profile: dict) -> str:
-    """The Chroma doc id store_profile_vector writes for *profile*."""
+def doc_id_for(profile: dict, fallback_title: str = "") -> str:
+    """The Chroma doc id of *profile* — store_profile_vector writes under it
+    and this pass reads by it (one definition, so the two cannot drift)."""
     return str(profile.get("plex_rating_key") or profile.get("tmdb_id")
-               or profile.get("anilist_id") or profile.get("title") or "")
+               or profile.get("anilist_id") or profile.get("title", fallback_title) or "")
 
 
 def _chroma_ids() -> set:
