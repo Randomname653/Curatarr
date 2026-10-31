@@ -4307,9 +4307,6 @@ async def store_profile_vector(profile: dict, *, media_type: str,
     """Embed a polished profile and upsert it into ChromaDB. True when the
     vector landed, or there was nothing to embed; False when it should be
     retried. Ids come off the profile (plex key, TMDB, AniList, title)."""
-    plex_rating_key = profile.get("plex_rating_key")
-    tmdb_id = profile.get("tmdb_id")
-    anilist_id = profile.get("anilist_id")
     gen = None
     try:
         from src.embeddings.embedding_generator import EmbeddingGenerator
@@ -4331,7 +4328,10 @@ async def store_profile_vector(profile: dict, *, media_type: str,
             logger.warning("[enricher] no embedding for %r - vector retried next run",
                            title)
             return False
-        doc_id = str(plex_rating_key or tmdb_id or anilist_id or title)
+        # The one definition of a profile's doc id: the vector reconcile pass
+        # looks docs up by the same function, so the two can never drift.
+        from src.services.vector_reconcile import doc_id_for
+        doc_id = doc_id_for(profile, fallback_title)
         _dom = _domain_for_write(media_type, profile.get("genres"))
         chroma_meta = {
             "title": title,
