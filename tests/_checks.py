@@ -54,3 +54,24 @@ async def wait_until(pred, timeout=5.0, what="condition"):
         if loop.time() > deadline:
             raise AssertionError(f"timed out after {timeout}s waiting for {what}")
         await asyncio.sleep(0.002)
+
+
+def loop_guarded(coro_fn, *args, mine=(), **kwargs):
+    """Run ``coro_fn(*args, **kwargs)`` with src/database/loop_guard.py in
+    raise mode: a database statement on the event-loop thread raises
+    LoopBlockingQuery there. Returns ``(result, error, sites)`` — ``sites``
+    the guard recorded in a file whose path contains one of ``mine``."""
+    import os
+    from src.database import loop_guard
+    loop_guard.reset()
+    os.environ["CURATARR_LOOP_GUARD"] = "raise"
+    res = err = None
+    try:
+        res = asyncio.run(coro_fn(*args, **kwargs))
+    except Exception as e:  # noqa: BLE001 - the caller's checks report it
+        err = e
+    finally:
+        os.environ.pop("CURATARR_LOOP_GUARD", None)
+    sites = [s["site"] for s in loop_guard.snapshot()["sites"]
+             if any(m in s["site"] for m in mine)]
+    return res, err, sites

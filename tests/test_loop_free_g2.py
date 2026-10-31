@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 
+from _checks import loop_guarded  # noqa: E402
 from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn_mod  # noqa: E402
 from src.database import loop_guard  # noqa: E402
@@ -56,18 +57,8 @@ MINE = ("src/routers/recommendations.py", "src/routers/music.py", "src/routers/l
 
 
 def guarded(coro_fn):
-    """Run coro_fn() under raise mode; (result, error, sites in my files)."""
-    loop_guard.reset()
-    os.environ["CURATARR_LOOP_GUARD"] = "raise"
-    out = err = None
-    try:
-        out = asyncio.run(coro_fn())
-    except Exception as e:  # noqa: BLE001 - reported by the checks
-        err = e
-    finally:
-        os.environ.pop("CURATARR_LOOP_GUARD", None)
-    sites = [s["site"] for s in loop_guard.snapshot()["sites"] if s["site"].startswith(MINE)]
-    return out, err, sites
+    """Run one coroutine with the guard raising: (result, error, my sites)."""
+    return loop_guarded(coro_fn, mine=MINE)
 
 
 def seed(*rows):
