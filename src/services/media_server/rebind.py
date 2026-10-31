@@ -582,6 +582,17 @@ async def sync_watched_state(plan: Plan, target_adapter) -> dict:
     return {"marked_played": marked, "liked": likes, "failed": failed}
 
 
+# (new server's id, old server's id) of every item the id memory knows on
+# both sides; keyed by "the rebind went to Jellyfin". Two fixed queries, no
+# column name is ever built from input.
+_REMEMBERED_PAIRS = {
+    True: "SELECT jellyfin_id, plex_id FROM server_id_map WHERE jellyfin_id IS NOT NULL "
+          "AND plex_id IS NOT NULL AND entity_type NOT IN ('user', 'library') ORDER BY id",
+    False: "SELECT plex_id, jellyfin_id FROM server_id_map WHERE plex_id IS NOT NULL "
+           "AND jellyfin_id IS NOT NULL AND entity_type NOT IN ('user', 'library') ORDER BY id",
+}
+
+
 async def undo(mpath: Path, *, chroma=None, settings_writer=None) -> dict:
     """Replay a manifest backwards, by value, so rows written after the
     switch go back too; delete the Chroma copies under the new ids."""
@@ -618,12 +629,8 @@ async def undo(mpath: Path, *, chroma=None, settings_writer=None) -> dict:
             # after an undo, orphans on the old server (2026-10-31, two
             # episodes watched on the test Jellyfin). The id memory, filled
             # by the rebind's walks of both sides, knows the old id too.
-            new_col, old_col = (("jellyfin_id", "plex_id") if manifest["to"] == "jellyfin"
-                                else ("plex_id", "jellyfin_id"))
             remembered = {}
-            for n, o in c.execute(text(  # nosec B608 - two fixed column names, no input
-                    f"SELECT {new_col}, {old_col} FROM server_id_map WHERE {new_col} IS NOT NULL "
-                    f"AND {old_col} IS NOT NULL AND entity_type NOT IN ('user', 'library') ORDER BY id")):
+            for n, o in c.execute(text(_REMEMBERED_PAIRS[manifest["to"] == "jellyfin"])):
                 if n not in back and n not in shared:
                     remembered.setdefault(n, o)
             for table, col in ITEM_COLUMNS:
