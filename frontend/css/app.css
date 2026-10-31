@@ -520,12 +520,12 @@ html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon
    measured circle centres (modern C: r 692.7 about 1029.04/1000; classic
    ring: r 719.1 about 1000/989.62). The diamond pivots on its own
    fill-box centre (classic: deliberately 7 units left of the ring centre).
-   Motion is rotate/scale only plus one fill; contain keeps the repaint
-   inside the mark. */
+   Motion is rotate/scale/translate only plus one fill. */
 :root { --think-cycle: 2.4s; }
 .thinking { display: inline-flex; align-items: center; min-height: 24px; }
 .msg.assistant:has(> .thinking) { padding-left: 48px; }
-.thinking-mark { position: absolute; left: 14px; top: 10px; width: 24px; height: 24px; contain: layout paint; }
+/* No paint containment: it clips at the box, and the arcs step out past it. */
+.thinking-mark { position: absolute; left: 14px; top: 10px; width: 24px; height: 24px; contain: layout; }
 .thinking-mark .brand-logo { width: 100%; height: 100%; display: block; overflow: visible; }
 .thinking-mark .brand-ring { fill: var(--brand-amber); }
 /* Easing lives in the keyframes, per phase; linear here is a placeholder.
