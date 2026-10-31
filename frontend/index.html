@@ -108,7 +108,7 @@
   <div class="tb-spacer"></div>
   <form id="topbar-search-form" data-on-submit="topbarSearch" data-args='["$event"]' role="search">
     <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input id="topbar-search" type="text" placeholder="Search your library…" aria-label="Search your library" title="Search your library (Ctrl+K)">
+    <input id="topbar-search" type="search" placeholder="Search your library…" aria-label="Search your library" title="Search your library (Ctrl+K)">
   </form>
   <!-- Phones: the search box folds into this button and opens across the topbar -->
   <button id="tb-search-btn" data-action="toggleTopbarSearch" title="Search your library" aria-label="Search your library" aria-controls="topbar-search-form">
@@ -322,7 +322,7 @@
           </div>
           <button class="btn btn-secondary" data-action="regenerateRecs">Regenerate</button>
           <div class="toolbar-right">
-            <input id="lib-search" class="w-220 input" aria-label="Search your library" placeholder="Search your library…" data-on-keydown="searchOnEnter" data-args='["$event"]'>
+            <input id="lib-search" type="search" class="w-220 input" aria-label="Search your library" placeholder="Search your library…" data-on-keydown="searchOnEnter" data-args='["$event"]'>
             <button class="btn btn-secondary btn-sm" data-action="searchLibrary" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
           </div>
         </div>
@@ -599,7 +599,7 @@
               <option value="watch_history">Watch history</option>
               <option value="arr">Arr apps</option>
             </select>
-            <input id="profile-search" class="w-200 input" aria-label="Search profiles by title" placeholder="Search title…" data-on-keydown="loadProfilesOnEnter" data-args='["$event"]'>
+            <input id="profile-search" type="search" class="w-200 input" aria-label="Search profiles by title" placeholder="Search title…" data-on-keydown="loadProfilesOnEnter" data-args='["$event"]'>
             <button class="btn btn-secondary btn-sm" data-action="loadProfiles">Browse</button>
             <span class="fs-12 t3 row-end">What Curatarr knows about each title</span>
           </div>
