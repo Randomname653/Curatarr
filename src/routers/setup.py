@@ -14,7 +14,7 @@ Auth model:
 
 import asyncio
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
@@ -264,6 +264,9 @@ class SetupCompleteRequest(BaseModel):
     plex_token: str = ""
     jellyfin_url: str = ""
     jellyfin_api_key: str = ""
+    # A finished Jellyfin connect (POST /jellyfin/connect...): the address
+    # and the key Curatarr made stay on the server under this ticket.
+    jellyfin_ticket: str = Field(default="", max_length=128)
     ollama_endpoint: str = "http://localhost:11434"
     base_curator_model: str = "gemma4:31b"
     base_summarizer_model: str = "granite4.1:8b"
@@ -362,6 +365,14 @@ async def complete_setup(
     """
     # Blank Plex fields used to flip FIRST_RUN=false anyway, leaving an
     # install the UI could never route back into the wizard.
+    ticket = req.jellyfin_ticket
+    if req.media_server_type == "jellyfin" and ticket:
+        from src.services.media_server.jellyfin_connect import held
+        got = held(ticket)
+        if got is None:
+            raise HTTPException(status_code=422,
+                                detail="That Jellyfin connection expired - connect again")
+        req.jellyfin_url, req.jellyfin_api_key = got
     if req.media_server_type == "jellyfin":
         if not req.jellyfin_url.strip() or not req.jellyfin_api_key.strip():
             raise HTTPException(status_code=422,
@@ -371,6 +382,7 @@ async def complete_setup(
                             detail="Plex URL and token are required to complete setup")
     # Write .env - enable_pitcher becomes the baked name the runtime keys on
     cfg = req.dict()
+    cfg.pop("jellyfin_ticket", None)
     # Blank = plex in .env, the same as every install before Jellyfin support.
     cfg["media_server_type"] = "" if req.media_server_type == "plex" else req.media_server_type
     await _refuse_resolved(cfg)
@@ -378,6 +390,9 @@ async def complete_setup(
     # On a worker: write_env does file I/O and, on Windows, two icacls
     # subprocesses (up to 10 s each). The 400 mapping travels with it.
     await asyncio.to_thread(_write_env_or_400, cfg)
+    if ticket:
+        from src.services.media_server.jellyfin_connect import release
+        release(ticket)
 
     # Build Ollama models in background (takes a moment). The pitcher bake
     # used to be unreachable from here - only the post-setup rebuild built it.
@@ -471,3 +486,162 @@ async def reconfigure(req: ReconfigureRequest, _admin=Depends(require_admin)):
     return {"ok": True, "changed": sorted(changes),
             "models_changed": models_changed,
             "restart_recommended": models_changed or endpoints_changed}
+
+
+# ── Jellyfin: found and connected without copying a key ─────────────────────
+# (src/services/media_server/jellyfin_connect.py). Same gate as /test: open
+# while no admin exists, the admin's afterwards.
+
+SETUP_POLLS_PER_IP_PER_MINUTE = 30
+SETUP_PW_TRIES_PER_IP = 10
+SETUP_PW_WINDOW_S = 15 * 60
+
+
+def _ip(request: Request) -> str:
+    return (request.client.host if request.client else "") or "?"
+
+
+@router.get("/jellyfin/servers")
+async def jellyfin_servers(request: Request, _gate=Depends(require_admin_or_first_run)):
+    """The Jellyfin servers on the LAN, for the wizard's pick list. The host
+    this page was loaded from is asked too (on a NAS, Jellyfin's likely
+    home); it passes the endpoint policy like every other candidate."""
+    from dataclasses import asdict
+    from src.services.media_server.jellyfin_connect import find_servers
+    found = await find_servers(via_host=request.url.hostname)
+    return {"servers": [asdict(f) for f in found]}
+
+
+class JellyfinConnectRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    _url = field_validator("url")(validate_service_url)
+
+
+async def _connect_target(url: str) -> str:
+    url = url.strip().rstrip("/")
+    await _refuse_resolved({"jellyfin_url": url})
+    return url
+
+
+async def _connected(url: str, who, api_key: str) -> dict:
+    """The finished connect: the key checked like a pasted one, then held
+    under a ticket - the browser never sees it."""
+    from src.services.media_server.jellyfin_connect import hold
+    result = await test_jellyfin(url, api_key)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error") or "Jellyfin did not answer")
+    logger.info("[setup] Jellyfin connected by its admin %s (%s %s)",
+                who.name, result.get("server_name"), result.get("version"))
+    return {"status": "ok", "ticket": hold(url, api_key), "url": url, "admin": who.name,
+            "server_name": result.get("server_name"), "version": result.get("version")}
+
+
+@router.post("/jellyfin/connect")
+async def jellyfin_connect_start(req: JellyfinConnectRequest, request: Request,
+                                 _gate=Depends(require_admin_or_first_run)):
+    """Step 1 - a Quick Connect code for the Jellyfin admin to approve."""
+    from src.routers.auth import _enforce_pin_create_rate_limit
+    from src.services.media_server.jellyfin_auth import (JellyfinAuth, JellyfinAuthError,
+                                                         JellyfinAuthRefused)
+    from src.services.media_server.jellyfin_connect import PENDING_TTL_S, bind_pending
+    _enforce_pin_create_rate_limit(_ip(request))
+    url = await _connect_target(req.url)
+    auth = JellyfinAuth(url)
+    try:
+        secret, code = await auth.initiate()
+    except JellyfinAuthRefused:
+        raise HTTPException(status_code=409, detail="Quick Connect is off on this Jellyfin server - "
+                                                    "connect with the admin password instead, or turn "
+                                                    "it on (Dashboard -> General)")
+    except JellyfinAuthError as e:
+        logger.warning("[setup] Jellyfin Quick Connect not started: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer at that address")
+    login_id, nonce = bind_pending(secret, auth.device_id, url)
+    return {"login_id": login_id, "code": code, "nonce": nonce, "expires_in": PENDING_TTL_S}
+
+
+@router.get("/jellyfin/connect/{login_id}")
+async def jellyfin_connect_poll(login_id: str, request: Request,
+                                _gate=Depends(require_admin_or_first_run)):
+    """Step 2 - poll until the code is approved; then Curatarr's API key
+    is made (or found again) and held under a ticket."""
+    from src.services import rate_limit
+    from src.services.media_server.jellyfin_auth import (JellyfinAuth, JellyfinAuthError,
+                                                         JellyfinAuthRefused)
+    from src.services.media_server.jellyfin_connect import check_pending, drop_pending
+    rate_limit.enforce("jellyfin-setup-poll-ip", _ip(request), SETUP_POLLS_PER_IP_PER_MINUTE, 60,
+                       detail="Too many requests")
+    pending = check_pending(login_id, request.headers.get("X-Jellyfin-Login-Nonce", ""))
+    if pending is None:
+        raise HTTPException(status_code=403, detail="Unknown or expired code - start Quick Connect again")
+    secret, device_id, url = pending
+    auth = JellyfinAuth(url, device_id=device_id)
+    try:
+        if not await auth.approved(secret):
+            return {"status": "pending"}
+        who, api_key = await auth.admin_api_key(secret=secret)
+    except JellyfinAuthRefused as e:
+        drop_pending(login_id)
+        raise HTTPException(status_code=403, detail=(
+            "That Jellyfin account is no administrator - approve the code with an admin account"
+            if "administrator" in str(e) else "Jellyfin refused this code - start Quick Connect again"))
+    except JellyfinAuthError as e:
+        logger.warning("[setup] Jellyfin Quick Connect poll failed: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer")
+    drop_pending(login_id)
+    return await _connected(url, who, api_key)
+
+
+class JellyfinPasswordConnect(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(default="", max_length=1024)   # Jellyfin allows an empty password
+    _url = field_validator("url")(validate_service_url)
+
+
+@router.post("/jellyfin/connect-password")
+async def jellyfin_connect_password(req: JellyfinPasswordConnect, request: Request,
+                                    _gate=Depends(require_admin_or_first_run)):
+    """The same connect with the admin's name and password, for a server
+    whose Quick Connect is off. The password goes to Jellyfin once and is
+    never stored or logged."""
+    from src.services import rate_limit
+    from src.services.media_server.jellyfin_auth import (JellyfinAuth, JellyfinAuthError,
+                                                         JellyfinAuthRefused)
+    rate_limit.enforce("jellyfin-setup-pw-ip", _ip(request), SETUP_PW_TRIES_PER_IP, SETUP_PW_WINDOW_S,
+                       detail="Too many tries - wait 15 minutes, or use Quick Connect")
+    url = await _connect_target(req.url)
+    try:
+        who, api_key = await JellyfinAuth(url).admin_api_key(username=req.username,
+                                                             password=req.password)
+    except JellyfinAuthRefused as e:
+        raise HTTPException(status_code=403, detail=(
+            "That Jellyfin account is no administrator" if "administrator" in str(e)
+            else "Wrong name or password"))
+    except JellyfinAuthError as e:
+        logger.warning("[setup] Jellyfin password connect failed: %s", e)
+        raise HTTPException(status_code=502, detail="Jellyfin did not answer at that address")
+    return await _connected(url, who, api_key)
+
+
+class JellyfinSaveRequest(BaseModel):
+    ticket: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/jellyfin/save")
+async def jellyfin_save(req: JellyfinSaveRequest, _admin=Depends(require_admin)):
+    """After setup: a finished connect's address and key into the settings.
+    Which server signs people in does not change here - that is the media
+    server switch's job."""
+    from src.services.media_server.jellyfin_connect import held, release
+    from src.services.setup_wizard import current_env_config, merge_env_config
+    got = held(req.ticket)
+    if got is None:
+        raise HTTPException(status_code=422, detail="That Jellyfin connection expired - connect again")
+    url, api_key = got
+    merged = merge_env_config(current_env_config(), {"jellyfin_url": url, "jellyfin_api_key": api_key})
+    await asyncio.to_thread(_write_env_or_400, merged)
+    settings.__init__()
+    release(req.ticket)
+    logger.info("[setup] Jellyfin address and key saved by admin")
+    return {"ok": True, "url": url}

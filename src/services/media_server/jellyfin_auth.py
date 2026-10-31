@@ -13,7 +13,8 @@ plex.tv):
   server once and is never stored or logged.
 
 Either way the Jellyfin session the server opens for Curatarr is only used to
-read who signed in, then closed (``POST /Sessions/Logout``): Curatarr keeps no
+read who signed in (and, when an admin connects the server in setup, to make
+Curatarr's API key), then closed (``POST /Sessions/Logout``): Curatarr keeps no
 user token. Each sign-in runs under its own device id, because Jellyfin ties a
 Quick Connect secret and a session to the device that asked.
 """
@@ -32,6 +33,7 @@ from src.services.media_server.base import normalize_jellyfin_id
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15.0
+KEY_APP_NAME = "Curatarr"      # the API key setup makes, under Dashboard -> API Keys
 
 
 class JellyfinAuthError(RuntimeError):
@@ -113,14 +115,58 @@ class JellyfinAuth:
                                 json={"Username": username, "Pw": password})
         return await self._signed_in(body)
 
+    # ── Curatarr's own API key (setup; jellyfin_connect.py) ─────────────────
+    async def admin_api_key(self, *, secret: Optional[str] = None, username: str = "",
+                            password: str = "") -> tuple[SignedIn, str]:
+        """An admin's Quick Connect ``secret`` (or name and password) turned
+        into Curatarr's API key: the one named "Curatarr" an earlier connect
+        made, else a new one. The admin's session only lives for these
+        calls. Refused for an account that is no administrator."""
+        if secret:
+            body = await self._call("POST", "/Users/AuthenticateWithQuickConnect", json={"Secret": secret})
+        else:
+            body = await self._call("POST", "/Users/AuthenticateByName",
+                                    json={"Username": username, "Pw": password})
+        token = (body or {}).get("AccessToken")
+        try:
+            who = self._who(body)
+            if not who.is_admin:
+                raise JellyfinAuthRefused(f"{who.name} is no Jellyfin administrator")
+            if not token:
+                raise JellyfinAuthError("Jellyfin answered the sign-in without a session")
+            return who, await self._own_key(token)
+        finally:
+            if token:
+                await self._logout(token)
+
+    async def _own_key(self, token: str) -> str:
+        def newest(body) -> Optional[str]:
+            mine = [k for k in (body or {}).get("Items") or []
+                    if k.get("AppName") == KEY_APP_NAME and k.get("AccessToken")]
+            mine.sort(key=lambda k: str(k.get("DateCreated") or ""), reverse=True)
+            return str(mine[0]["AccessToken"]) if mine else None
+        key = newest(await self._call("GET", "/Auth/Keys", token=token))
+        if not key:
+            await self._call("POST", "/Auth/Keys", params={"app": KEY_APP_NAME}, token=token)
+            key = newest(await self._call("GET", "/Auth/Keys", token=token))
+            if key:
+                logger.info("[auth] made a Jellyfin API key named %r", KEY_APP_NAME)
+        if not key:
+            raise JellyfinAuthError("Jellyfin made no API key")
+        return key
+
     # ── both ────────────────────────────────────────────────────────────────
     async def _signed_in(self, body) -> SignedIn:
-        user = (body or {}).get("User") or {}
-        key = normalize_jellyfin_id(user.get("Id"))
-        name = str(user.get("Name") or "").strip()
         token = (body or {}).get("AccessToken")
         if token:
             await self._logout(token)
+        return self._who(body)
+
+    @staticmethod
+    def _who(body) -> SignedIn:
+        user = (body or {}).get("User") or {}
+        key = normalize_jellyfin_id(user.get("Id"))
+        name = str(user.get("Name") or "").strip()
         if not key or not name:
             raise JellyfinAuthError("Jellyfin answered the sign-in without a user")
         return SignedIn(user_key=key, name=name,

@@ -5,6 +5,7 @@ import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBus
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
+import { findJellyfinServers, jellyfinConnectHtml, stopJellyfinConnect } from './jellyfin_connect.js';
 function serverChoice() {
   const kind = state.setupData.media_server_type === 'jellyfin' ? 'jellyfin' : 'plex';
   return `<div class="form-group">
@@ -18,6 +19,22 @@ function serverChoice() {
 }
 
 
+// A finished Jellyfin connect: the key stays on the server under the
+// ticket, /complete hands it back.
+function setupJellyfinConnected(c) {
+  state.setupData.jellyfin_url = c.url;
+  state.setupData.jellyfin_ticket = c.ticket;
+  state.setupData.jellyfin_api_key = '';
+  state.setupData.jellyfin_connected = {server_name: c.server_name, version: c.version, admin: c.admin};
+  renderSetupStep(state.setupStep);
+}
+
+export function jellyfinConnectAgain() {
+  state.setupData.jellyfin_ticket = '';
+  state.setupData.jellyfin_connected = null;
+  renderSetupStep(state.setupStep);
+}
+
 export function setupServerKind() {
   collectStep();
   state.setupData.media_server_type = document.getElementById('s-media-server')?.value === 'jellyfin' ? 'jellyfin' : 'plex';
@@ -29,18 +46,17 @@ const SETUP_CONTENT = {
   plex: () => state.setupData.media_server_type === 'jellyfin' ? `
     <h2 class="setup-heading">Jellyfin Connection</h2>
     ${serverChoice()}
-    <div class="form-group">
-      <label for="s-jellyfin-url">Jellyfin Server URL</label>
-      <input id="s-jellyfin-url" placeholder="http://192.168.1.100:8096" value="${esc(state.setupData.jellyfin_url||'')}">
-      <div class="hint">The local address of your Jellyfin server (10.9 or newer).</div>
-    </div>
-    <div class="form-group">
-      <label for="s-jellyfin-key">Jellyfin API Key</label>
-      <input id="s-jellyfin-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(state.setupData.jellyfin_api_key||'')}">
-      <div class="hint">Dashboard → API Keys → +. Household members sign in with their own Jellyfin accounts; turn on Quick Connect (Dashboard → General) so they can without typing a password here.</div>
-    </div>
-    <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>Test connection</button>
-    <div id="test-jellyfin-result"></div>` : `
+    ${jellyfinConnectHtml(state.setupData.jellyfin_url, state.setupData.jellyfin_ticket ? state.setupData.jellyfin_connected : null, setupJellyfinConnected)}
+    ${state.setupData.jellyfin_ticket ? '' : `<details class="mt-12">
+      <summary class="fs-12 t2 pointer">Paste an API key instead</summary>
+      <div class="form-group mt-8">
+        <label for="s-jellyfin-key">Jellyfin API Key</label>
+        <input id="s-jellyfin-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(state.setupData.jellyfin_api_key||'')}">
+        <div class="hint">Dashboard → API Keys → +, for the address above.</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>Test connection</button>
+      <div id="test-jellyfin-result"></div>
+    </details>`}` : `
     <h2 class="setup-heading">Plex Connection</h2>
     ${serverChoice()}
     <div class="form-group">
@@ -219,11 +235,14 @@ const SETUP_CONTENT = {
 export function renderSetupStep(step) {
   state.setupStep = step;
   const key = SETUP_STEPS[step];
+  stopJellyfinConnect();
   document.getElementById('setup-body').innerHTML = SETUP_CONTENT[key]();
   const steps = SETUP_STEPS.length - 1;   // the closing summary is not a step
   document.getElementById('setup-step-label').textContent = step < steps ? `Step ${step+1} of ${steps}` : 'Ready';
   document.getElementById('setup-back').style.visibility = step > 0 ? 'visible' : 'hidden';
   document.getElementById('setup-next').style.display = step === SETUP_STEPS.length-1 ? 'none' : 'inline-block';
+  const firstDot = document.getElementById('step-dot-0');   // the media server's step, named after it
+  if (firstDot) firstDot.textContent = state.setupData.media_server_type === 'jellyfin' ? 'Jellyfin' : 'Plex';
   SETUP_STEPS.forEach((s,i) => {
     const dot = document.getElementById(`step-dot-${i}`);
     if (dot) dot.className = 'setup-step-dot' + (i===step?' active':i<step?' done':'');
@@ -234,6 +253,9 @@ export function renderSetupStep(step) {
     testConn('ollama');
   }
   if (key === 'import') refreshSpotifyPending('su-sp');
+  if (key === 'plex' && state.setupData.media_server_type === 'jellyfin' && !state.setupData.jellyfin_ticket) {
+    findJellyfinServers();
+  }
 }
 
 export function collectStep() {

@@ -148,8 +148,8 @@ def test_setup_routes_turn_a_refused_value_into_a_400():
         setup_router.write_env = real
     assert seen
     src = (_ROOT / "src/routers/setup.py").read_text(encoding="utf-8")
-    assert src.count("asyncio.to_thread(_write_env_or_400,") == 2, \
-        "complete + reconfigure both go through it, off the loop"
+    assert src.count("asyncio.to_thread(_write_env_or_400,") == 3, \
+        "complete, reconfigure and the Jellyfin save all go through it, off the loop"
 
 
 class _FreshInstall(_LiveSettings):
