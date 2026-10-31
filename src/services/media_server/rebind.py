@@ -613,8 +613,21 @@ async def undo(mpath: Path, *, chroma=None, settings_writer=None) -> dict:
             for o, n in sorted(manifest["pairs"].items()):
                 if n in shared:
                     first.setdefault(n, o)
+            # A title first played after the switch carries a key the
+            # manifest never paired: its plays stayed on the new server's id
+            # after an undo, orphans on the old server (2026-10-31, two
+            # episodes watched on the test Jellyfin). The id memory, filled
+            # by the rebind's walks of both sides, knows the old id too.
+            new_col, old_col = (("jellyfin_id", "plex_id") if manifest["to"] == "jellyfin"
+                                else ("plex_id", "jellyfin_id"))
+            remembered = {}
+            for n, o in c.execute(text(  # nosec B608 - two fixed column names, no input
+                    f"SELECT {new_col}, {old_col} FROM server_id_map WHERE {new_col} IS NOT NULL "
+                    f"AND {old_col} IS NOT NULL AND entity_type NOT IN ('user', 'library') ORDER BY id")):
+                if n not in back and n not in shared:
+                    remembered.setdefault(n, o)
             for table, col in ITEM_COLUMNS:
-                out[f"{table}.{col}"] = _rekey(c, table, col, {**back, **first})
+                out[f"{table}.{col}"] = _rekey(c, table, col, {**remembered, **back, **first})
             for table, col in DOC_COLUMNS:
                 out[f"{table}.{col}"] = _rekey(c, table, col, doc_back)
             for table, col in USER_COLUMNS:

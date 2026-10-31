@@ -478,9 +478,17 @@ class JellyfinAdapter:
             path = "/Items"
             params = {"SearchTerm": title, "Recursive": "true", "IncludeItemTypes": _ITEM_TYPE[kind],
                       **_NOT_MISSING, "Fields": "ProviderIds,Path"}
+        # A library that did not move with a rebind keeps its Plex section
+        # key ("1"); Jellyfin answers ParentId=1 with HTTP 400, and the
+        # watchlist and playlist pushes broke off (2026-10-31, the owner's
+        # Movies, not on the test Jellyfin). No Jellyfin library for this
+        # kind: not in the library.
+        libs = [k for k in (normalize_jellyfin_id(x) for x in library_keys or ()) if k]
+        if library_keys and not libs:
+            return None
         hits = []
         async with self._client() as c:
-            for lib in (library_keys or [None]):
+            for lib in (libs or [None]):
                 q = {**params, "Limit": 20, **({"ParentId": lib} if lib else {})}
                 hits += (await self._get(c, path, params=q)).get("Items") or []
         if artist:

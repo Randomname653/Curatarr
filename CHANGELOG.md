@@ -68,8 +68,20 @@ Tried live against the owner's Plex and a test Jellyfin on the same anime librar
   Matched: series 99.8 %, episodes 0.4 % -> 99.6 %. The dry run on a copy of the owner's
   database re-keyed 156 of 156 anime watch-history rows.
 - **Timeout:** a page of 500 items took up to 104 s while the server scanned; 120 s instead of 30.
+- **The full round trip, in a sandbox copy:** `--write` re-keyed 156 of 156 anime plays, 2,178 tech
+  profiles and the owner's account. Quick Connect signed him in. The first poll stored the episode
+  he had watched (as a mark), and the live sessions caught the next one at 24:07 of 24:12 from
+  Firefox; the poll after it merged it instead of doubling it. The watchlist took the next unwatched
+  episode, mark-played moved it on, and `--undo` put every row back exactly. Fixed on the way:
+  - a library left on its Plex key by the rebind (the owner's Movies, not on the test server) was
+    searched with that key: HTTP 400, the watchlist said so and the playlist push broke off. Now it
+    is not in the library;
+  - a series whose episodes Jellyfin had not attached yet went onto the watchlist as the series id,
+    which Jellyfin drops silently, and Curatarr said ok. Now it says there is no episode yet;
+  - plays of a title first seen after the switch stayed on the Jellyfin id through `--undo`. The
+    id memory knows both ids, and the undo uses it now.
 
-Tests: `tests/test_media_server_keys.py`.
+Tests: `tests/test_media_server_keys.py`, `tests/test_jellyfin_live_findings.py`, `tests/test_rebind.py`.
 
 **Wrap-Up: every household member's own period in review (the Curation Report folded in).**
 A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year

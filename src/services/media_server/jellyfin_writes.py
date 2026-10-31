@@ -237,7 +237,13 @@ async def add_to_watchlist(user_id: int, title: str, year: Optional[int] = None,
         if not key:
             return {"ok": False, "error": f"{title!r} is not in the Jellyfin library"}
         if cat in ("show", "anime"):
-            key = await adapter.next_episode(who, key) or key
+            # The series id itself is no playlist entry: Jellyfin drops it
+            # without a word, and this said ok over an empty watchlist
+            # (2026-10-31, Death Note on a Jellyfin that had not attached
+            # its episodes yet).
+            key = await adapter.next_episode(who, key)
+            if not key:
+                return {"ok": False, "error": f"{title!r} has no episode in Jellyfin yet"}
         current = await adapter.playlist_keys(who, WATCHLIST_TITLE)
         if key not in current:
             await adapter.upsert_playlist(who, WATCHLIST_TITLE, current + [key], "Video")

@@ -229,6 +229,12 @@ print("\n-- --undo --")
 with conn_mod.engine.begin() as c:   # a play recorded on Jellyfin after the switch
     c.execute(text(f"INSERT INTO watch_history (id, user_id, plex_user_id, plex_item_id, title, media_type, viewed_at, source) "
                    f"VALUES (11, 1, '{JANE}', '{HEAT}', 'Heat', 'movie', '2026-10-27 21:00:00', 'jellyfin_session')"))
+    # a title first played on Jellyfin: not in the manifest, but the id memory knows its Plex id
+    c.execute(text("INSERT INTO server_id_map (entity_type, canonical_key, plex_id, jellyfin_id, "
+                   "match_method, last_verified_at) VALUES ('episode', 'tvdb-ep:999001', '7777', "
+                   "'abcdefabcdefabcdefabcdefabcdef01', 'external_id', '2026-10-28 21:00:00')"))
+    c.execute(text(f"INSERT INTO watch_history (id, user_id, plex_user_id, plex_item_id, title, media_type, viewed_at, source) "
+                   f"VALUES (12, 1, '{JANE}', 'abcdefabcdefabcdefabcdefabcdef01', 'New', 'anime', '2026-10-28 21:00:00', 'jellyfin_session')"))
 u = run(rebind.undo(mpath, chroma=chroma, settings_writer=flips.append))
 back = columns()
 wh_back = dict(back["watch_history.plex_item_id"])
@@ -238,6 +244,8 @@ check("every value is back, the double episode's two rows each to its own Plex e
       and wh_back[4] == "2004" and wh_back[5] == "2005" and wh_back[1] == "1001")
 check("...and the play recorded after the switch comes along", wh_back[11] == "1001"
       and dict(back["watch_history.plex_user_id"])[11] == "12345678")
+check("...and so does a play of a title first seen after the switch, by the id memory",
+      wh_back[12] == "7777")
 check("vectors back under the old ids, no twins left; facets back; setting back",
       set(chroma.docs) == {"1001", "2001", "1002"} and chroma.facets == {"1001": 3, "2001": 2}
       and flips[-1] == "plex" and json.loads(mpath.read_text())["status"] == "undone")
