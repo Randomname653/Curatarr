@@ -56,6 +56,21 @@ proposals onto the other server's ids: a dry run first, `--write` with a
 backup and a manifest, `--undo`, and a permanent id memory
 (`server_id_map`) so a move back finds every title again.
 
+Tried live against the owner's Plex and a test Jellyfin on the same anime library (2,188 series,
+39,703 episodes, Jellyfin mid-scan with the TheTVDB plugin), and fixed:
+- **Ghost items:** Jellyfin lists the episodes and seasons its metadata knows but no file holds as
+  "missing" items, 58,135 episodes beside 39,427 real ones. They carried the TVDB ids, so matches
+  went onto them. The library walk, the children of a series and the title search leave them out.
+- **Every key, the strongest shared one wins:** one key per title could not meet across servers.
+  Plex keyed episodes by their TVDB id, Jellyfin (no ids or numbers yet) by file, and a TMDb-only
+  Jellyfin keys series by TMDb. Each title now files all its keys (id, series chain, file), the
+  rebind takes the strongest both sides share, and conflicts count one identity per title.
+  Matched: series 99.8 %, episodes 0.4 % -> 99.6 %. The dry run on a copy of the owner's
+  database re-keyed 156 of 156 anime watch-history rows.
+- **Timeout:** a page of 500 items took up to 104 s while the server scanned; 120 s instead of 30.
+
+Tests: `tests/test_media_server_keys.py`.
+
 **Wrap-Up: every household member's own period in review (the Curation Report folded in).**
 A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year
 or all time, for everything or one medium. Every number is decided in code before the

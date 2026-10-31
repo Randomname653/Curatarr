@@ -70,10 +70,20 @@ def item_rows(items: Iterable[MediaItem], roots_by_library: dict, *,
     canon: dict = {}                     # server key -> its keys, strongest first
     rows, seasons = [], set()
 
+    taken: dict = {}                     # (entity, key) -> the server key that filed it
+
     def keys_of(it: MediaItem, parents: list, roots: tuple) -> list:
         ks = [k for k in canonical_keys(it, parent_keys=parents, roots=roots)
               if not (k.startswith("file:") and not roots)]
-        return ks if aliases else ks[:1]
+        if not aliases:
+            return ks[:1]
+        # An alias another item of this walk already filed (the bare file
+        # of a double episode, which Plex lists twice) is no key of this
+        # one: only the strongest key may collide (a real duplicate).
+        out = [k for i, k in enumerate(ks) if i == 0 or taken.get((it.kind, k), it.key) == it.key]
+        for k in out:
+            taken.setdefault((it.kind, k), it.key)
+        return out
 
     for it in items:
         roots = tuple(roots_by_library.get(it.library_key or "", ()))
