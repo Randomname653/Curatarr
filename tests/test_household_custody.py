@@ -43,6 +43,7 @@ def check(name, cond, info=None):
         print(f"  FAIL  {name}" + (f"  [{info}]" if info is not None else ""))
 
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 from src.database.models import (  # noqa: E402
     ArrEnrichmentStatus, Base, DeletionProposal, EnrichmentStatus, ProtectedMedia,
@@ -58,9 +59,17 @@ def _fresh_db():
 
     @contextmanager
     def session():
+        # The contract of connection.get_db_session, which this stands in
+        # for: commit on a clean exit, roll back on any exception. Without the
+        # commit every write the app made through it (app_state among them)
+        # silently vanished.
         s = make()
         try:
             yield s
+            s.commit()
+        except BaseException:
+            s.rollback()
+            raise
         finally:
             s.close()
     return make, session
@@ -317,11 +326,10 @@ import src.services.app_state as app_state  # noqa: E402
 import src.services.data_custodian as dc  # noqa: E402
 import src.services.scheduler as sched  # noqa: E402
 
-STATE: dict = {}
+from _checks import real_state  # noqa: E402
+STATE = real_state()          # the real app_state table, not a dict
 _saved_state = (app_state.get_state, app_state.set_state,
                 sched._record_job_run, sched._job_overdue, dc._gaming)
-app_state.get_state = lambda k: STATE.get(k)
-app_state.set_state = lambda k, v: STATE.__setitem__(k, v) or True
 recorded: list = []
 sched._record_job_run = lambda job_id: recorded.append(job_id)
 sched._job_overdue = lambda job_id, cadence_h: True
@@ -662,13 +670,13 @@ try:
                                     vs.start_verification_session(1))
     a, b = asyncio.run(_both())
     with session() as s:
-        qs = s.query(ProactiveMessage).filter(ProactiveMessage.user_id == 1,
-                                              ProactiveMessage.trigger_type == "verification").all()
+        qs = [(q.expires_at, q.created_at) for q in s.query(ProactiveMessage).filter(
+            ProactiveMessage.user_id == 1, ProactiveMessage.trigger_type == "verification")]
     check("two concurrent starts store ONE verification question",
           len(qs) == 1 and sorted([bool(a), bool(b)]) == [False, True], (a, b, len(qs)))
     check("a verification question expires (7 days), it no longer blocks the bell forever",
-          qs and qs[0].expires_at is not None
-          and timedelta(days=6) < qs[0].expires_at - qs[0].created_at <= timedelta(days=7))
+          qs and qs[0][0] is not None
+          and timedelta(days=6) < qs[0][0] - qs[0][1] <= timedelta(days=7))
     # The write-time re-check: another process stored one during the LLM call.
     vsrc = (ROOT / "src/services/verification_session.py").read_text(encoding="utf-8")
     _st = vsrc[vsrc.index("    def _store() -> bool:"):vsrc.index("if not await run_write(_store):")]
@@ -727,9 +735,9 @@ try:
     mm.record_miss("Foo Fighters ")
     mm.record_miss("foo fighters")
     with session() as s:
-        rows = s.query(MusicLookupMiss).all()
+        rows = [(r.name, r.attempts) for r in s.query(MusicLookupMiss)]
     check("a case variant updates the same miss row (backoff keeps growing)",
-          len(rows) == 1 and rows[0].attempts == 2, [(r.name, r.attempts) for r in rows])
+          len(rows) == 1 and rows[0][1] == 2, rows)
     mm.clear_miss("FOO FIGHTERS")
     with session() as s:
         check("clearing matches case-insensitively", s.query(MusicLookupMiss).count() == 0)

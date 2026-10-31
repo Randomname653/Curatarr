@@ -107,6 +107,10 @@ def fake_session():
     db = S()
     try:
         yield db
+        db.commit()          # the contract of get_db_session: commit on a clean exit
+    except BaseException:
+        db.rollback()
+        raise
     finally:
         db.close()
 

@@ -132,4 +132,22 @@ check("real_state on the event loop works and stays off the loop guard",
       got == "x" and snap == {"harness:loop": "x"}
       and not [s for s in loop_guard.snapshot()["sites"] if "tests/" in s["site"] or s.get("coroutine")])
 
+# ── 7. a stand-in for get_db_session keeps its contract ────────────────────
+# connection.get_db_session commits on a clean exit and rolls back on an
+# exception. Fakes that only closed made every write the app relied on that
+# commit for (app_state among them) vanish without a trace.
+import ast as _ast  # noqa: E402
+
+_bad = []
+for _p in sorted((ROOT / "tests").glob("test_*.py")):
+    for _fn in _ast.walk(_ast.parse(_p.read_text(encoding="utf-8"))):
+        if isinstance(_fn, _ast.FunctionDef) and any(
+                getattr(d, "id", getattr(d, "attr", None)) == "contextmanager"
+                for d in _fn.decorator_list):
+            _src = _ast.unparse(_fn)
+            if "yield" in _src and any(m in _src for m in ("Session(", "make()", " S()", "sessionmaker")) \
+                    and ".commit()" not in _src:
+                _bad.append(f"{_p.name}:{_fn.lineno} {_fn.name}")
+check(f"every fake session commits on a clean exit, like get_db_session {_bad or ''}", not _bad)
+
 check.done()

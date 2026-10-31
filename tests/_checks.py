@@ -141,17 +141,25 @@ class RealState(dict):
 
     def __init__(self):
         super().__init__()
-        from src.database import connection
         from src.database.models import AppState
-        with connection.SessionLocal() as s:
-            AppState.__table__.create(s.get_bind(), checkfirst=True)
+
+        def _create():
+            with self._session() as s:
+                AppState.__table__.create(s.get_bind(), checkfirst=True)
+        _off_loop(_create)
+
+    @staticmethod
+    def _session():
+        """The session factory app_state itself uses — a suite may have
+        pointed it at its own engine, and this view must read that one."""
+        from src.services import app_state
+        return app_state.get_db_session()
 
     @staticmethod
     def _rows():
         def _read():
-            from src.database.connection import SessionLocal
             from src.database.models import AppState
-            with SessionLocal() as s:
+            with RealState._session() as s:
                 return dict(s.query(AppState.key, AppState.value).all())
         return _off_loop(_read)
 
@@ -173,9 +181,8 @@ class RealState(dict):
 
     def __delitem__(self, key):
         def _delete():
-            from src.database.connection import SessionLocal
             from src.database.models import AppState
-            with SessionLocal() as s:
+            with self._session() as s:
                 n = s.query(AppState).filter(AppState.key == key).delete()
                 s.commit()
                 return n
@@ -212,9 +219,8 @@ class RealState(dict):
 
     def clear(self):
         def _clear():
-            from src.database.connection import SessionLocal
             from src.database.models import AppState
-            with SessionLocal() as s:
+            with self._session() as s:
                 s.query(AppState).delete()
                 s.commit()
         _off_loop(_clear)
