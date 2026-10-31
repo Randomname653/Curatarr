@@ -21,6 +21,7 @@ import sys
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+from _harness import wait_until  # noqa: E402  (first: temp stores, not the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.data_custodian as dc  # noqa: E402
 import src.services.plex_sync as ps  # noqa: E402
@@ -74,6 +75,31 @@ sched._job_overdue = lambda job_id, cadence_h: True
 dc._gaming = lambda: False
 dc._AFTER_POLL_S = 0.01
 ran: list = []
+# The model queue's cross-queue wait polls _ahead_in; counting its polls lets
+# a test say "it checked several times and stayed parked" without a sleep.
+_ahead_polls = {"n": 0}
+_real_ahead_in = dc._ahead_in
+
+
+def _counting_ahead_in(queue):
+    _ahead_polls["n"] += 1
+    return _real_ahead_in(queue)
+
+
+dc._ahead_in = _counting_ahead_in
+
+# A queue's run is over when its report is stored — not when its busy flag
+# drops, which happens just before (polling the flag raced the report).
+stored = {"background": 0, "model": 0}
+_real_store_report = dc._store_report
+
+
+def _counting_store_report(queue, report):
+    _real_store_report(queue, report)
+    stored[queue] += 1
+
+
+dc._store_report = _counting_store_report
 gates: dict = {}
 
 
@@ -88,6 +114,7 @@ def runner(name, gate=None):
 
 
 def reset(reg):
+    stored.update(background=0, model=0)
     ran.clear()
     recorded.clear()
     state.clear()
@@ -103,14 +130,15 @@ async def starvation():
     gates["gpu"] = asyncio.Event()
     reset(reg)
     r1 = await dc.custodian_tick(wait=False)
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: stored["background"] == 1 and "gpu_long:start" in ran,
+                     what="tick 1's background run")
     after_1 = list(ran)
     status_mid = dc.custodian_status()
     r2 = await dc.custodian_tick(wait=False)        # "30 minutes later"
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: stored["background"] == 2, what="tick 2's background run")
     after_2 = list(ran)
     gates["gpu"].set()
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: stored["model"] == 1, what="the model task to end")
     return r1, r2, after_1, after_2, status_mid
 
 
@@ -131,14 +159,19 @@ check("the merged report carries both queues' latest runs",
       and {a["task"] for a in merged["actions"]} == {"bg_quick", "gpu_long"})
 
 # ── 3. two ticks at once start each queue once ─────────────────────────────
-reg3 = [dc.Task("gpu_a", "GPU a", 24.0, runner("gpu_a"), needs_llm=True, reports_own=True),
-        dc.Task("bg_a", "Background a", 24.0, runner("bg_a"), reports_own=True)]
+reg3 = [dc.Task("gpu_a", "GPU a", 24.0, runner("gpu_a", "a"), needs_llm=True, reports_own=True),
+        dc.Task("bg_a", "Background a", 24.0, runner("bg_a", "a"), reports_own=True)]
 
 
 async def double():
+    # Gated: both queues stay claimed until both ticks have answered, so the
+    # second tick meets them busy however the loop schedules the first one's
+    # (otherwise instant) runs.
+    gates["a"] = asyncio.Event()
     reset(reg3)
     a, b = await asyncio.gather(dc.custodian_tick(wait=False), dc.custodian_tick(wait=False))
-    await asyncio.sleep(0.05)
+    gates["a"].set()
+    await wait_until(lambda: stored == {"background": 1, "model": 1}, what="both queues")
     return a, b
 
 
@@ -157,10 +190,14 @@ async def wait_case():
     gates["sync"] = asyncio.Event()
     reset(reg4)
     await dc.custodian_tick(wait=False)
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: "bg_sync:start" in ran, what="the sync to start")
+    polls = _ahead_polls["n"]
+    # Parked, not merely slow: the model queue re-checked three times and
+    # still did not start the task that needs the sync.
+    await wait_until(lambda: _ahead_polls["n"] >= polls + 3, what="the model queue to re-check")
     before = list(ran)
     gates["sync"].set()
-    await asyncio.sleep(0.1)
+    await wait_until(lambda: stored == {"background": 1, "model": 1}, what="the waiting task to run")
     return before
 
 
@@ -177,10 +214,10 @@ async def defer_case():
     gates["recs"] = asyncio.Event()
     reset(reg5)
     await dc.custodian_tick(wait=False)
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: stored["background"] == 1, what="the background report")
     snap = (list(ran), list(recorded), __import__("json").loads(state[f"{dc._REPORT_KEY}:background"]))
     gates["recs"].set()
-    await asyncio.sleep(0.05)
+    await wait_until(lambda: stored["model"] == 1, what="the model task to end")
     return snap
 
 

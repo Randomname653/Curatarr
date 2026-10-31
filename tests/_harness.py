@@ -87,7 +87,7 @@ def app_db():
     return connection
 
 
-async def wait_until(pred, timeout=2.0, what="condition"):
+async def wait_until(pred, timeout=5.0, what="condition"):
     """Return as soon as ``pred()`` is true; fail loudly after ``timeout``."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout

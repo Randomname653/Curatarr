@@ -101,9 +101,12 @@ def freed_by_prune(path):
 
 
 sched._free_bytes = freed_by_prune
+# The snapshot above is named after this very second; date it back instead
+# of sleeping into the next one, so the next snapshot gets a name of its own.
+for p in bdir.glob("curatarr_*.db"):
+    if not p.name.startswith("curatarr_2026010"):
+        p.rename(bdir / "curatarr_20260109_000000.db")
 before = set(p.name for p in bdir.glob("curatarr_*.db"))
-import time  # noqa: E402
-time.sleep(1.1)       # a new second, a new snapshot name
 res = asyncio.run(sched.job_db_backup())
 after = set(p.name for p in bdir.glob("curatarr_*.db"))
 check("making way for today's snapshot is enough when it frees the room",
