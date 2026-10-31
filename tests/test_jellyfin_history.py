@@ -10,9 +10,11 @@
 - merging: two reports of one play less than 20 minutes apart are one row,
   the richer witness wins (hook > session > report > poll > marked); plays
   from other sources are never merged; further apart they stay two;
-- tier C: the first poll files one "marked" row per played item; later a
-  count up by n is n plays (the extra ones date-only), a re-mark without a
-  count change is one, nothing changed is nothing;
+- tier C: the first poll files one "marked" row per played item (none for
+  an item with a finished play on record: after a server switch that is
+  the carried-over history); later a count up by n is n plays (the extra
+  ones date-only), a re-mark without a count change is one, nothing changed
+  is nothing; the switch's reset_poll makes the next poll a first one;
 - tier D: the Playback Reporting rows of this user past 80 %, once; without
   the plugin that is recorded, not retried;
 - tier B: the webhook needs its secret, takes JSON objects of a capped size,
@@ -221,6 +223,42 @@ check("a count up by two is two plays: one at the last-played date, one date-onl
 check("a re-mark without a count change is one play", len(rows(plex_item_id=HUNTER, source="jellyfin_poll")) == 1
       and moved["inserted"] == 3)
 
+# After a media server switch: the switch reset the poll, and marked as
+# played on Jellyfin what Curatarr already had from Plex. The first poll
+# finds those played - nothing new, no twin "marked" rows.
+wipe()
+with conn_mod.get_db_session() as db:
+    db.add(W(user_id=1, plex_user_id=JANE, plex_item_id=HEAT, title="Heat", media_type="movie",
+             viewed_at=datetime(2026, 9, 1, 20, 0), source=None, completed=True))
+    db.commit()
+asyncio.run(asyncio.to_thread(jh.reset_poll, [1]))
+check("the switch's reset makes the next poll a first one again",
+      get_state(jh._POLL_SEEDED.format(uid=1)) is None and not asyncio.run(asyncio.to_thread(jh._load_snapshot, 1)))
+again = asyncio.run(jh.poll_user(adapter(played={JANE: played}), 1, JANE, now=T0 + timedelta(days=1)))
+check("...whose 'played' for a title with a finished play on record adds no twin row",
+      again["first"] is True and len(rows(plex_item_id=HEAT)) == 1
+      and {x.plex_item_id for x in rows(user_id=1, source="marked")} == {HUNTER, played[2]["Id"].replace("-", "")} - {HEAT})
+
+# The switch's own marks, seen late: a server still scanning lists a marked
+# item as played only after the first poll - then it must not be a play.
+import calendar  # noqa: E402
+import json  # noqa: E402
+wipe()
+mark_at = datetime(2026, 10, 31, 12, 52, 30)
+epoch = calendar.timegm(mark_at.timetuple())
+asyncio.run(asyncio.to_thread(set_state, jh.SWITCH_MARKS, json.dumps(
+    {"from": epoch - 20, "to": epoch + 20, "keys": [HUNTER]})))
+late = asyncio.run(jh.record_plays([
+    Play(user_key=JANE, item_key=HUNTER, played_at=mark_at, source="jellyfin_poll", completed=True),
+    Play(user_key=JANE, item_key=HUNTER, played_at=mark_at + timedelta(days=2), source="jellyfin_poll",
+         completed=True),
+    Play(user_key=JANE, item_key=HEAT, played_at=mark_at, source="jellyfin_poll", completed=True)], a))
+check("a played mark the switch set is no play when a later poll finds it; a real play of it is, "
+      "and so is another title at the same moment",
+      late["inserted"] == 2 and {(x.plex_item_id, x.viewed_at) for x in rows(user_id=1)}
+      == {(HUNTER, mark_at + timedelta(days=2)), (HEAT, mark_at)})
+asyncio.run(asyncio.to_thread(set_state, jh.SWITCH_MARKS, ""))
+
 print("\n-- tier D: Playback Reporting --")
 wipe()
 asyncio.run(asyncio.to_thread(set_state, "jellyfin_report_done:1", ""))
@@ -314,7 +352,7 @@ check("the scheduler, startup and the Sync button dispatch to Jellyfin",
       and srcs["src/main.py"].count("jellyfin_history import sync_history") == 1
       and "jellyfin_history import sync_history" in srcs["src/routers/history.py"])
 check("the session poller starts with a configured Jellyfin install",
-      'track_task(run_session_poller(), name="jellyfin_sessions")' in srcs["src/main.py"])
+      "start_session_poller()" in srcs["src/main.py"])
 settings.MEDIA_SERVER_TYPE = None
 
 print(f"\n{PASS} passed, {FAIL} failed")

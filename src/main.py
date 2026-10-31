@@ -203,8 +203,8 @@ async def lifespan(app: FastAPI):
         from src.services.media_server import active_kind
         if active_kind() == "jellyfin":
             # History tier A (docs/JELLYFIN_DESIGN.md §4.1): what plays right now.
-            from src.services.media_server.jellyfin_history import run_session_poller
-            track_task(run_session_poller(), name="jellyfin_sessions")
+            from src.services.media_server.jellyfin_history import start_session_poller
+            start_session_poller()
         if settings.AUTO_BUILD_MODELS:
             # The container's start.bat step: missing bakes are pulled and
             # built in the background while the server already answers.

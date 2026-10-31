@@ -647,6 +647,10 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                     len(owner_extra), " (history backfill)" if owner_backfill else "",
                     partial_rewatches)
     all_entries.extend(owner_extra)
+    switch_marks = drop_switch_marks(all_entries, await run_read(get_state, "switch_plex_marks"))
+    if switch_marks:
+        logger.info("Plex sync: %d played mark(s) the move back from Jellyfin set, not viewings",
+                    switch_marks)
     players = await fetch_players(plex_url, headers)
     play_devices = capture.get("devices") or {}
 
@@ -1360,6 +1364,24 @@ def _mark_partial_rewatches(entries: list, history_by_rk: dict) -> int:
             continue
         e["_in_progress"] = True
         n += 1
+    return n
+
+
+def drop_switch_marks(entries: list, raw: Optional[str]) -> int:
+    """Remove the played marks the media server switch set on the way back
+    from Jellyfin (rebind._sync_to_plex): each one moves the item's
+    lastViewedAt to the moment of the switch, which read as a new viewing
+    next to the Jellyfin play the switch carried over. ``raw`` is the
+    switch's note: its keys and when it marked them."""
+    try:
+        note = json.loads(raw) if raw else None
+        keys, lo, hi = set(note["keys"]), float(note["from"]) - 60, float(note["to"]) + 60
+    except (ValueError, TypeError, KeyError):
+        return 0
+    keep = [e for e in entries if not (str(e.get("ratingKey") or "") in keys
+                                       and lo <= float(e.get("lastViewedAt") or 0) <= hi)]
+    n = len(entries) - len(keep)
+    entries[:] = keep
     return n
 
 

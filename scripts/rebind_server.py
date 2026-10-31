@@ -1,5 +1,8 @@
 """Move this install from Plex to Jellyfin, or back, keeping everything.
 
+The web page does the same with Curatarr running: Settings -> Media server
+(src/services/media_server/switch.py). This script is the headless way.
+
     python scripts/rebind_server.py --to jellyfin                    # dry run (default)
     python scripts/rebind_server.py --to jellyfin --write
     python scripts/rebind_server.py --to plex --map-user anna=Anna_K --write
@@ -64,7 +67,7 @@ def _print_report(rep: dict) -> None:
             print(f"    {name:42} {t['matched']:>7} / {t['unmatched']}")
     print("  users:")
     for uid, u in rep["users"].items():
-        print(f"    #{uid}: {u['from']} -> {u['to']} ({u['how']})")
+        print(f"    #{uid} {u.get('name') or ''}: {u['from']} -> {u['to']} ({u['how']})")
     for name in rep["users_unmatched"]:
         print(f"    NO MATCH: {name}")
     for name in rep["users_skipped"]:
@@ -78,7 +81,7 @@ def _print_report(rep: dict) -> None:
     for s in rep["suggestions"]:
         print(f"    suggestion: {s['key']} {s['title']!r} -> {s['target']} (--accept-suggestions)")
     for b in rep["blocking"]:
-        print(f"  BLOCKING: {b}")
+        print(f"  BLOCKING: {b} (use --map-user or --skip-user)")
 
 
 def _server_running() -> bool:

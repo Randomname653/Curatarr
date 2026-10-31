@@ -115,6 +115,31 @@ class SessionTracker:
         return out
 
 
+_poller: Optional[asyncio.Task] = None
+
+
+def start_session_poller() -> None:
+    """Start tier A once (the lifespan on a Jellyfin install, the media
+    server switch towards Jellyfin)."""
+    global _poller
+    if _poller is None or _poller.done():
+        from src.services.bg_tasks import track_task
+        _poller = track_task(run_session_poller(), name="jellyfin_sessions")
+
+
+async def stop_session_poller() -> None:
+    """Stop tier A (the media server switch: before the re-key, and for
+    good when the install moves to Plex)."""
+    global _poller
+    task, _poller = _poller, None
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001 - a stopped poller's last error is moot
+            pass
+
+
 async def run_session_poller() -> None:
     """Tier A, for the life of the process: one cheap /Sessions read per
     interval, slower after a quiet day. Every failure is logged and the loop
@@ -255,6 +280,30 @@ def _load_context() -> tuple[dict, dict]:
     return users, cats
 
 
+SWITCH_MARKS = "switch_jellyfin_marks"    # app_state: what a move to Jellyfin marked played
+_SWITCH_SLACK_S = 5 * 60                   # the Jellyfin host's clock against this one
+
+
+def drop_switch_marks(plays: list, raw: Optional[str]) -> list:
+    """The plays that are not the played marks the media server switch set
+    on its move here (rebind.sync_watched_state). Jellyfin stamps a mark
+    with the moment it was set, and a server still scanning lists the item
+    as played only later: a poll after the switch read the mark as a new
+    play beside the history the switch carried over (2026-10-31, 133 marks
+    on a test server mid-scan, 4 of them visible to the played filter)."""
+    import json
+    try:
+        note = json.loads(raw) if raw else None
+        keys = set(note["keys"])
+        lo = float(note["from"]) - _SWITCH_SLACK_S
+        hi = float(note["to"]) + _SWITCH_SLACK_S
+    except (ValueError, TypeError, KeyError):
+        return plays
+    from calendar import timegm
+    return [p for p in plays if not (p.item_key in keys and p.played_at is not None
+                                     and lo <= timegm(p.played_at.timetuple()) <= hi)]
+
+
 async def record_plays(plays: list, adapter, *, min_share: Optional[float] = None) -> dict:
     """Write ``plays`` (any tier) as watch-history rows. Plays of users who
     never signed in to Curatarr, of items in no mapped library, or of an
@@ -262,6 +311,9 @@ async def record_plays(plays: list, adapter, *, min_share: Optional[float] = Non
     drops plays whose played length is below that share of the runtime
     (tier D's rows are every start, not every play)."""
     from src.database.runner import run_read, run_write
+    from src.services.app_state import get_state
+    if plays:
+        plays = drop_switch_marks(plays, await run_read(get_state, SWITCH_MARKS))
     if not plays:
         return {"inserted": 0, "merged": 0, "skipped": 0}
     users, cats = await run_read(_load_context)
@@ -301,6 +353,34 @@ def _load_snapshot(user_id: int) -> dict:
                 for s in db.query(S).filter(S.user_id == user_id).all()}
 
 
+def _known_finished(user_id: int, keys: list) -> set:
+    """The items this user has a finished play of on record, any source."""
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    out = set()
+    with get_db_session() as db:
+        for i in range(0, len(keys), 500):
+            out.update(k for (k,) in db.query(W.plex_item_id).filter(
+                W.user_id == user_id, W.completed.is_(True),
+                W.plex_item_id.in_(keys[i:i + 500])).distinct())
+    return out
+
+
+def reset_poll(user_ids: list) -> int:
+    """Blocking (run_write): forget the delta poll's snapshot, so the next
+    poll is a first one again. The media server switch calls it when this
+    install moves (back) to Jellyfin: the snapshot of an earlier Jellyfin
+    period would read the played marks the switch just set as new plays."""
+    from src.database.connection import get_db_session
+    from src.database.models import AppState, ServerPlayState as S
+    with get_db_session() as db:
+        n = db.query(S).filter(S.user_id.in_(user_ids)).delete(synchronize_session=False)
+        keys = [k.format(uid=u) for u in user_ids for k in (_POLL_SEEDED, _LAST_POLL)]
+        db.query(AppState).filter(AppState.key.in_(keys)).delete(synchronize_session=False)
+        db.commit()
+    return n
+
+
 def _save_snapshot(user_id: int, updates: list, now: datetime) -> None:
     from src.database.connection import get_db_session
     from src.database.models import ServerPlayState as S
@@ -329,14 +409,20 @@ async def poll_user(adapter, user_id: int, user_key: str, now: Optional[datetime
                                        since=(last - POLL_MARGIN) if (seeded and last) else None)
     from src.database.runner import run_read, run_write
     snap = await run_read(_load_snapshot, user_id)
+    # A first poll only learns "played at some point": for an item with a
+    # finished play on record - carried over from Plex by the switch, then
+    # marked played here by it - that is nothing new, and was a twin row.
+    known = set() if seeded else await run_read(_known_finished, user_id,
+                                                [st.item_key for st in states])
     plays, updates = [], []
     for st in states:
         prev = snap.get(st.item_key)
         updates.append((st.item_key, st.play_count, st.last_played_at))
         at = st.last_played_at
         if not seeded:
-            plays.append(Play(user_key=user_key, item_key=st.item_key, played_at=at or now,
-                              source="marked", completed=True, date_only=at is None))
+            if st.item_key not in known:
+                plays.append(Play(user_key=user_key, item_key=st.item_key, played_at=at or now,
+                                  source="marked", completed=True, date_only=at is None))
             continue
         if prev is None:
             new = max(1, st.play_count)

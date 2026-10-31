@@ -35,7 +35,7 @@ follow them:
   check with "Update available" under the sidebar.
 - **Jellyfin**: one install runs on Plex *or* Jellyfin 10.9+, behind one
   media-server seam, and moves between them both ways without losing
-  anything (`scripts/rebind_server.py`).
+  anything (Settings -> Media server, or `scripts/rebind_server.py`).
 
 **Jellyfin support (docs/JELLYFIN_DESIGN.md).** `MEDIA_SERVER_TYPE=jellyfin`
 runs the install on Jellyfin instead of Plex. Sign-in through Quick Connect
@@ -85,7 +85,46 @@ Tried live against the owner's Plex and a test Jellyfin on the same anime librar
     an administrator: a title that leaves a shelf leaves the collection (live: one in, one out,
     same collection id).
 
-Tests: `tests/test_media_server_keys.py`, `tests/test_jellyfin_live_findings.py`, `tests/test_rebind.py`.
+**No scripts: setup and the move, both on the web page.**
+- **Setup finds and connects Jellyfin.** The wizard no longer asks for a pasted API key. It looks
+  for the server and an admin approves a Quick Connect code (or types the admin password once).
+  Curatarr then makes its own API key, "Curatarr", reuses it on a reconnect, and closes the admin's
+  session. The key stays on the server under a ticket and never reaches the browser.
+  The discovery broadcast went unanswered from the TrueNAS app (bridge network). So the host the
+  page came from, the container's gateway and the configured hosts are asked too, on 8096 and
+  30013, each through the endpoint policy.
+- **Settings -> Media server** connects the other server and moves the install, Plex to Jellyfin
+  and back. A check runs first: both libraries are walked and the report is shown, with a dropdown
+  for each user or library without a match. The move then runs inside the live server:
+  - the custodian is paused, the session poller stopped, and the Plex and Jellyfin sync locks held;
+  - the database is backed up, every key re-keyed, the setting flipped and reloaded in place;
+  - the first sync on the new server runs, with progress in Activity;
+  - it refuses while an enrichment, the music pipeline or a deletion run holds its lock;
+  - undo stays as an emergency exit.
+- **No gap on the way back.** The move to Plex carries the Jellyfin period's plays like every
+  other row. "Mark what was watched as played" then marks each finished Jellyfin-period play on
+  Plex with its member's own token, so Plex's "unwatched" agrees. The next Plex sync knows those
+  marks and does not count them as viewings. Towards Jellyfin, the first poll after a move skips
+  items Curatarr already holds a finished play of. Before, the marks the move set came back as
+  twin "marked" rows.
+- **Marks seen late are no plays either.** A Jellyfin still scanning listed only 4 of 133 fresh
+  marks as played; the rest would have come in later as new plays. Each move notes the keys it
+  marked and when, and every history tier on both servers leaves exactly those out.
+- The move reuses the check's library walks for an hour, so it takes seconds instead of another
+  full walk. If plex.tv refuses the server token (HTTP 401, seen live), the way back matches
+  users by the id memory alone and the page says so. The settings write runs off the event loop
+  (`write_env` runs icacls on Windows).
+- **Live, in a sandbox copy against the owner's Plex and the test Jellyfin, all from the page:**
+  - Plex -> Jellyfin: 2,332 titles moved, 133 plays marked played on Jellyfin, first sync, no
+    twin rows.
+  - An episode watched on Jellyfin came in as a live-session play.
+  - Jellyfin -> Plex in 26 s: 2,336 titles, 0 unmatched, 0 collisions, every anime row back on
+    a Plex key. The episode came along as its one row and was marked played on Plex
+    (viewCount 1). The next Plex sync left that mark out ("1 played mark(s) the move back from
+    Jellyfin set, not viewings").
+
+Tests: `tests/test_media_server_keys.py`, `tests/test_jellyfin_live_findings.py`, `tests/test_rebind.py`,
+`tests/test_jellyfin_connect.py`, `tests/test_media_switch.py`.
 
 **Wrap-Up: every household member's own period in review (the Curation Report folded in).**
 A new Wrap-Up view for everyone, not only the owner: last 30 days, 6 months, a calendar year

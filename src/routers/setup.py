@@ -645,3 +645,66 @@ async def jellyfin_save(req: JellyfinSaveRequest, _admin=Depends(require_admin))
     release(req.ticket)
     logger.info("[setup] Jellyfin address and key saved by admin")
     return {"ok": True, "url": url}
+
+
+# ── the media server switch (src/services/media_server/switch.py) ───────────
+# Settings -> Media server: check, switch, undo - Plex to Jellyfin and back.
+
+class MediaServerSwitchRequest(BaseModel):
+    target: str
+    # {"map_user": {old name: new name}, "skip_users": [name],
+    #  "map_library": {old library key: new library key},
+    #  "accept_suggestions": bool, "sync_state": bool}
+    options: dict = Field(default_factory=dict)
+
+    @field_validator("target")
+    @classmethod
+    def _known_target(cls, v):
+        v = (v or "").strip().lower()
+        if v not in ("plex", "jellyfin"):
+            raise ValueError("target must be plex or jellyfin")
+        return v
+
+
+async def _switch_call(fn, *args):
+    """Awaited on the event loop: the switch starts its background task there."""
+    try:
+        return await fn(*args)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.get("/media-server")
+def media_server_status(_admin=Depends(require_admin)):
+    from src.services.media_server import switch
+    return switch.status()
+
+
+@router.post("/media-server/check")
+async def media_server_check(req: MediaServerSwitchRequest, _admin=Depends(require_admin)):
+    """The dry run, in the background: GET /media-server carries its report."""
+    from src.services.media_server import switch
+    return await _switch_call(switch.start_check, req.target, req.options)
+
+
+@router.post("/media-server/switch")
+async def media_server_switch(req: MediaServerSwitchRequest, _admin=Depends(require_admin)):
+    from src.services.media_server import switch
+    logger.info("[setup] media server switch to %s started by admin", req.target)
+    return await _switch_call(switch.start_switch, req.target, req.options)
+
+
+@router.post("/media-server/undo")
+async def media_server_undo(_admin=Depends(require_admin)):
+    from src.services.media_server import switch
+    logger.info("[setup] media server switch undo started by admin")
+    return await _switch_call(switch.start_undo)
+
+
+@router.post("/media-server/forget")
+def media_server_forget(_admin=Depends(require_admin)):
+    from src.services.media_server import switch
+    try:
+        return switch.forget()
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))

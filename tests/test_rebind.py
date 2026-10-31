@@ -264,6 +264,21 @@ check("the way back matches every Jellyfin key (the double episode to its first 
       back_plan.items.get(DOUBLE) == "2004" and back_plan.items.get(HEAT) == "1001" and not back_plan.unmatched
       and not back_plan.blocking
       and {u: (t, h) for u, (_, t, h) in back_plan.users.items()} == {1: ("12345678", "id_memory"), 2: ("87654321", "id_memory")})
+
+
+async def _refused_by_plextv():
+    raise RuntimeError("plex.tv /api/v2/user: HTTP 401")
+
+
+_saved_acc = plex.account_users
+plex.account_users = _refused_by_plextv
+try:
+    no_list = run(rebind.build_plan("jellyfin", "plex", plex, source_adapter=jf, skip_users=["carol"]))
+finally:
+    plex.account_users = _saved_acc
+check("plex.tv refusing the server token: the way back still matches every user by the id memory, and says so",
+      {u: (t, h) for u, (_, t, h) in no_list.users.items()} == {1: ("12345678", "id_memory"), 2: ("87654321", "id_memory")}
+      and no_list.report()["users_listed"] is False and not no_list.blocking)
 run(rebind.apply_plan(back_plan, target_adapter=plex, chroma=chroma, backup_root=_TMP / "b3", settings_writer=flips.append))
 end = columns()
 merged_row = dict(end["watch_history.plex_item_id"])[5]
@@ -280,7 +295,91 @@ print("\n-- --sync-state --")
 st = run(rebind.sync_watched_state(plan, jf))
 check("towards Jellyfin: finished plays marked, Plex 10/10 liked",
       "marked_played" in st and st["failed"] == 0)
-check("towards Plex it says why it does not", run(rebind.sync_watched_state(back_plan, plex)) == {"skipped": "only towards Jellyfin"})
+from src.services.media_server.jellyfin_history import SWITCH_MARKS  # noqa: E402
+from src.services.app_state import get_state as _gs  # noqa: E402
+
+
+class _MarkingJellyfin:
+    def __init__(self):
+        self.marked = []
+
+    async def user_states(self, who):
+        return []
+
+    async def mark_played(self, who, key):
+        self.marked.append(key)
+
+    async def set_like(self, who, key):
+        pass
+
+
+with conn_mod.engine.begin() as c:
+    c.execute(text("INSERT INTO watch_history (id, user_id, plex_user_id, plex_item_id, title, media_type, "
+                   "viewed_at, source, completed) VALUES (41, 1, :u, :k, 'Heat', 'movie', :t, NULL, 1)"),
+              {"u": JANE, "k": HEAT, "t": T})
+to_jf = rebind.Plan(source="plex", target="jellyfin")
+to_jf.users = {1: ("12345678", JANE, "name")}
+mj = _MarkingJellyfin()
+st_jf = run(rebind.sync_watched_state(to_jf, mj))
+_note = json.loads(_gs(SWITCH_MARKS) or "{}")
+check("...and the marks are noted, so Jellyfin's history tiers do not read them as plays",
+      mj.marked == [HEAT] and st_jf["marked_played"] == 1 and _note.get("keys") == [HEAT]
+      and _note["from"] <= _note["to"])
+with conn_mod.engine.begin() as c:
+    c.execute(text("DELETE FROM watch_history WHERE id = 41"))
+
+# Towards Plex: the Jellyfin period's finished plays become played marks,
+# per account; the next Plex sync does not read them as viewings.
+now = datetime.utcnow().isoformat(sep=" ")
+with conn_mod.engine.begin() as c:
+    c.execute(text("UPDATE users SET plex_token = 'tok-sam' WHERE id = 2"))
+    c.execute(text("INSERT INTO watch_history (id, user_id, plex_user_id, plex_item_id, title, media_type, "
+                   "viewed_at, source, completed) VALUES "
+                   "(31, 2, '87654321', '1002', 'Home Movie', 'movie', :now, 'jellyfin_session', 1), "
+                   "(32, 2, '87654321', '1001', 'Heat', 'movie', '2020-01-01 20:00:00', 'jellyfin_session', 1), "
+                   "(33, 1, '12345678', '1001', 'Heat', 'movie', :now, 'jellyfin_poll', 1), "
+                   "(34, 2, '87654321', '2003', 'Secrets', 'show', :now, 'jellyfin_session', 0)"), {"now": now})
+scrobbled = []
+
+
+async def _fake_scrobble(url, token, key, *, transport=None):
+    scrobbled.append((token, key))
+
+
+saved_scrobble = rebind._plex_scrobble
+rebind._plex_scrobble = _fake_scrobble
+try:
+    st = run(rebind.sync_watched_state(back_plan, plex, backup_root=_TMP / "b2"))
+finally:
+    rebind._plex_scrobble = saved_scrobble
+check("towards Plex: a finished Jellyfin-period play is marked played with its member's own token",
+      ("tok-sam", "1002") in scrobbled and st["marked_played"] == len(scrobbled))
+check("...not a play from before the move to Jellyfin, not an unfinished one",
+      not any(k in ("2003",) for _t, k in scrobbled) and scrobbled.count(("tok-sam", "1001")) == 0)
+check("...and a member without a Plex sign-in is counted, not marked", st["no_plex_sign_in"] == 1)
+from src.services.app_state import get_state  # noqa: E402
+from src.services.plex_sync import drop_switch_marks  # noqa: E402
+note = get_state(rebind.PLEX_SWITCH_MARKS)
+ts = json.loads(note)["from"]
+entries = [{"ratingKey": "1002", "lastViewedAt": int(ts)}, {"ratingKey": "1002", "lastViewedAt": int(ts) - 86400},
+           {"ratingKey": "2001", "lastViewedAt": int(ts)}]
+check("the next Plex sync drops the marks the switch set, and nothing else",
+      drop_switch_marks(entries, note) == 1 and [e["ratingKey"] for e in entries] == ["1002", "2001"]
+      and drop_switch_marks(entries, None) == 0)
+
+print("\n-- the web page's picks --")
+with conn_mod.engine.begin() as c:
+    c.execute(text("INSERT INTO library_config (id, plex_section_key, plex_section_title, plex_section_type, "
+                   "media_category) VALUES (9, '9', 'Old Films', 'photo', 'movie')"))
+p2 = run(rebind.build_plan("plex", "jellyfin", jf, source_adapter=plex, skip_users=["carol"]))
+check("a library with no counterpart by kind or name is a gap the page offers a dropdown for",
+      ("9", "Old Films", "photo") in p2.library_gaps and any(k == LIB_MOV for k, _t, _kd in p2.target_libraries)
+      and p2.target_users)
+p3 = run(rebind.build_plan("plex", "jellyfin", jf, source_adapter=plex, skip_users=["carol"],
+                           map_library={"9": LIB_MOV}))
+check("...and the admin's pick maps it", p3.libraries.get("9", (None,))[0] == LIB_MOV and not p3.library_gaps)
+with conn_mod.engine.begin() as c:
+    c.execute(text("DELETE FROM library_config WHERE id = 9"))
 
 print("\n-- towards Plex: plex.tv accounts --")
 acc = run(plex.account_users())

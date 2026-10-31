@@ -9,6 +9,7 @@ import { showView } from './nav.js';
 import { serverLabel, state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { loadNodes } from './nodes.js';
+import { loadMediaServer } from './media_switch.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, 'Re-attributing…');
@@ -108,6 +109,8 @@ export function openSettingsPane(name, btn) {
     loadLibrarySettings();
   } else if (name === 'integrations') {
     loadIntegrations();
+  } else if (name === 'media-server') {
+    loadMediaServer();
   } else if (name === 'users') {
     loadUsers();
   } else if (name === 'maintenance') {

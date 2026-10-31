@@ -11,6 +11,7 @@ import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJ
 import { correctChatAnchor, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { jellyfinConnectStart, jellyfinPasswordConnect, jellyfinPick, jellyfinShowPassword } from './jellyfin_connect.js';
+import { loadMediaServer, mediaServerCheck, mediaServerForget, mediaServerReconnect, mediaServerSwitch, mediaServerUndo } from './media_switch.js';
 import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzoneOver, dropzoneLeave, openSpotifyPicker, onSpotifyFile } from './spotify_import.js';
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
@@ -302,6 +303,12 @@ const actions = {
   jellyfinPasswordConnect,
   jellyfinPick,
   jellyfinShowPassword,
+  loadMediaServer,
+  mediaServerCheck,
+  mediaServerForget,
+  mediaServerReconnect,
+  mediaServerSwitch,
+  mediaServerUndo,
   showKbTab,
   showJellyfinWebhook,
   showLibrariesForce,

@@ -726,6 +726,7 @@
             <button class="settings-tab admin-action-row" hidden data-pane="plex-libraries" data-action="openSettingsPane" data-args='["plex-libraries","$el"]'>Plex libraries</button>
             <button class="settings-tab admin-action-row" hidden data-pane="library" data-action="openSettingsPane" data-args='["library","$el"]'>Arr apps</button>
             <button class="settings-tab admin-action-row" hidden data-pane="integrations" data-action="openSettingsPane" data-args='["integrations","$el"]'>Integrations</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="media-server" data-action="openSettingsPane" data-args='["media-server","$el"]'>Media server</button>
             <button class="settings-tab admin-action-row" hidden data-pane="users" data-action="openSettingsPane" data-args='["users","$el"]'>Users</button>
             <button class="settings-tab admin-action-row" hidden data-pane="maintenance" data-action="openSettingsPane" data-args='["maintenance","$el"]'>Maintenance</button>
           </nav>
@@ -868,6 +869,13 @@
                 Sonarr, Radarr and Lidarr live under <em>Library</em>.
               </p>
               <div id="integrations-shell"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
+            </section>
+
+            <!-- Media server pane (admin only): which server this install runs
+                 on, connecting the other one, and moving over with everything
+                 curated - Plex to Jellyfin and back (media_switch.js). -->
+            <section class="settings-pane" data-pane="media-server" hidden>
+              <div id="media-server-shell"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
             </section>
 
             <!-- Users pane (admin only) — the one user-management surface: the

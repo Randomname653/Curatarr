@@ -27,9 +27,11 @@ and are fetched again.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import time
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -96,14 +98,23 @@ class Plan:
     source_walked: bool = False
     target_rows: list = field(default_factory=list)    # the target walk's id-map rows, filed on --write
     source_rows: list = field(default_factory=list)
+    # What the web page offers for the gaps: the new server's users and
+    # libraries, and each source library without a match (key, title, kind).
+    target_users: list = field(default_factory=list)
+    user_names: dict = field(default_factory=dict)        # curatarr id -> name, for the report
+    # Both library walks, for a second build with other picks (the web
+    # page's switch after its check): {"target": (libs, items), "source": ...}.
+    walks: dict = field(default_factory=dict, repr=False)
+    users_listed: bool = True                             # False: the target's account list failed
+    target_libraries: list = field(default_factory=list)  # (key, title, kind)
+    library_gaps: list = field(default_factory=list)
 
     @property
     def blocking(self) -> list:
         out = []
         if self.users_unmatched:
             out.append("users without a match on the new server: "
-                       + ", ".join(n for _, n in self.users_unmatched)
-                       + " (use --map-user or --skip-user)")
+                       + ", ".join(n for _, n in self.users_unmatched))
         return out
 
     def report(self) -> dict:
@@ -113,7 +124,8 @@ class Plan:
                       "conflicts": len(self.conflicts), "suggestions": len(self.suggestions),
                       "by_method": dict(self.methods)},
             "tables": self.tables,
-            "users": {str(u): {"from": s, "to": t, "how": h} for u, (s, t, h) in self.users.items()},
+            "users": {str(u): {"name": self.user_names.get(u, ""), "from": s, "to": t, "how": h}
+                      for u, (s, t, h) in self.users.items()},
             "users_unmatched": [n for _, n in self.users_unmatched],
             "users_skipped": self.users_skipped,
             "libraries": {k: v[1] for k, v in self.libraries.items()},
@@ -122,6 +134,10 @@ class Plan:
             "conflicts": [{"target": t, "sources": s} for t, s in self.conflicts[:25]],
             "suggestions": [{"key": k, "title": t, "target": g} for k, t, g in self.suggestions[:25]],
             "blocking": self.blocking,
+            "target_users": self.target_users,
+            "users_listed": self.users_listed,
+            "target_libraries": [{"key": k, "title": t, "kind": kd} for k, t, kd in self.target_libraries],
+            "library_gaps": [{"key": k, "title": t, "kind": kd} for k, t, kd in self.library_gaps],
         }
 
 
@@ -208,13 +224,16 @@ _LIB_KIND = {"movie": "movie", "show": "show", "artist": "music", "music": "musi
 
 
 async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, source_adapter=None,
-                     map_user: Optional[dict] = None, skip_users=(), accept_suggestions: bool = False) -> Plan:
+                     map_user: Optional[dict] = None, skip_users=(), accept_suggestions: bool = False,
+                     map_library: Optional[dict] = None, walks: Optional[dict] = None) -> Plan:
     from src.database.runner import run_read
     plan = Plan(source=source, target=target)
     keys, titles, per_col = await run_read(_source_keys, source)
 
     # The target side: its walk, as canonical keys.
-    t_libs, t_items = await _walk(target_adapter)
+    walks = walks or {}
+    t_libs, t_items = walks.get("target") or await _walk(target_adapter)
+    plan.walks["target"] = (t_libs, t_items)
     t_roots = {lib.key: lib.roots for lib in t_libs}
     plan.target_rows = item_rows(t_items, t_roots) + library_rows(t_libs)
     tgt_by_ck = {}
@@ -231,7 +250,8 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
     s_libs = []
     if source_adapter is not None:
         try:
-            s_libs, s_items = await _walk(source_adapter)
+            s_libs, s_items = walks.get("source") or await _walk(source_adapter)
+            plan.walks["source"] = (s_libs, s_items)
             plan.source_rows = item_rows(s_items, {lib.key: lib.roots for lib in s_libs}) + library_rows(s_libs)
             for etype, ck, sid in plan.source_rows:
                 src_cks[sid].add((etype, ck))
@@ -280,8 +300,16 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
 
     # Users. Curatarr's Plex users are plex.tv accounts (the PIN login), not
     # the server's local account ids: towards Plex, the plex.tv list.
-    t_users = (await target_adapter.account_users() if hasattr(target_adapter, "account_users")
-               else await target_adapter.users())
+    try:
+        t_users = (await target_adapter.account_users() if hasattr(target_adapter, "account_users")
+                   else await target_adapter.users())
+    except Exception as e:  # noqa: BLE001 - the id memory still matches; the report says the list is missing
+        # plex.tv refused a server token that the server itself takes
+        # (2026-10-31, HTTP 401 on the way back from Jellyfin).
+        logger.warning("[rebind] %s listed no accounts (%s): users match by the id memory alone", target, e)
+        t_users = []
+        plan.users_listed = False
+    plan.target_users = sorted({u.name for u in t_users if u.name}, key=str.casefold)
     by_name = {"".join(u.name.casefold().split()): u for u in t_users}
     by_key = {u.key: u for u in t_users}
     explicit = {"".join(a.casefold().split()): "".join(b.casefold().split()) for a, b in (map_user or {}).items()}
@@ -289,6 +317,7 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
     for uid, sid, name, remembered in await run_read(_curatarr_users):
         if not is_key_of(source, sid):
             continue
+        plan.user_names[uid] = name or ""
         nm = "".join((name or "").casefold().split())
         hit, how = None, None
         if nm in explicit and explicit[nm] in by_name:
@@ -307,13 +336,17 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
         else:
             plan.users_unmatched.append((uid, name))
 
-    # Libraries.
+    # Libraries: the admin's pick first (the web page's dropdown), then kind
+    # and name, then the one library of that kind.
+    plan.target_libraries = [(lib.key, lib.title, lib.kind) for lib in t_libs]
+    t_by_key = {lib.key: lib for lib in t_libs}
+    picked = {str(k): str(v) for k, v in (map_library or {}).items()}
     t_by_lib = {(lib.kind, _norm_name(lib.title)): lib for lib in t_libs}
     for skey, stitle, stype in await run_read(_library_configs):
         if not is_key_of(source, skey):
             continue
         kind = _LIB_KIND.get(stype or "", stype)
-        lib = t_by_lib.get((kind, _norm_name(stitle)))
+        lib = t_by_key.get(picked.get(str(skey), "")) or t_by_lib.get((kind, _norm_name(stitle)))
         same_kind = [l for l in t_libs if l.kind == kind]
         if lib is None and len(same_kind) == 1:
             lib = same_kind[0]
@@ -321,6 +354,7 @@ async def build_plan(source: ServerKind, target: ServerKind, target_adapter, *, 
             plan.libraries[skey] = (lib.key, lib.title)
         else:
             plan.libraries_unmatched.append(stitle)
+            plan.library_gaps.append((skey, stitle, kind))
     return plan
 
 
@@ -518,7 +552,9 @@ async def apply_plan(plan: Plan, *, target_adapter, chroma=None, backup_root: Op
     manifest["facets"] = await _on_chroma(chroma.rekey_facets, vec_pairs)
     await _on_chroma(chroma.delete, [o for o, _ in manifest["chroma"]])
     manifest["cache"] = await run_write(_rename_prefetch, pairs)
-    manifest["settings"] = settings_writer(plan.target)
+    # Off the loop: write_env does file I/O and, on Windows, icacls runs -
+    # the web page's switch runs inside the live server.
+    manifest["settings"] = await asyncio.to_thread(settings_writer, plan.target)
     manifest["status"] = "completed"
     manifest["finished"] = datetime.utcnow().isoformat()
     _save(mpath, manifest)
@@ -543,14 +579,93 @@ def _rename_prefetch(pairs: dict) -> list:
     return done
 
 
-async def sync_watched_state(plan: Plan, target_adapter) -> dict:
+# The plays a Jellyfin period recorded (jellyfin_history.RANK, without the
+# first poll's "marked": those are Jellyfin's state before Curatarr looked).
+JELLYFIN_PLAY_SOURCES = ("jellyfin_hook", "jellyfin_session", "jellyfin_report", "jellyfin_poll")
+PLEX_SWITCH_MARKS = "switch_plex_marks"    # app_state: what the way back marked played on Plex
+
+
+def _last_switch_to(kind: ServerKind, root: Optional[Path] = None) -> Optional[str]:
+    """When the newest completed rebind towards ``kind`` started (ISO), or None."""
+    best = None
+    for m in (root or default_backup_root()).glob("rebind-*/manifest.json"):
+        try:
+            man = json.loads(m.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if man.get("to") == kind and man.get("status") == "completed":
+            best = max(best or "", str(man.get("created") or "")) or None
+    return best
+
+
+async def _plex_scrobble(url: str, token: str, key: str, *, transport=None) -> None:
+    """Plex's "mark as played" for the account behind ``token``."""
+    import httpx
+    from src.services.http_client import tls_context
+    async with httpx.AsyncClient(verify=tls_context(), timeout=15, transport=transport) as c:
+        r = await c.get(f"{url.rstrip('/')}/:/scrobble",
+                        params={"identifier": "com.plexapp.plugins.library", "key": key},
+                        headers={"X-Plex-Token": token, "Accept": "application/json"})
+    if r.status_code != 200:
+        raise RuntimeError(f"Plex scrobble: HTTP {r.status_code}")
+
+
+async def _sync_to_plex(plan: Plan, *, since: Optional[str], transport=None) -> dict:
+    """The way back: what was watched to the end on Jellyfin since the move
+    there becomes played on Plex, per account (each member's own plex.tv
+    token from their sign-in; the owner's from the settings). A member who
+    never signed in with Plex has no token and is counted, not marked.
+    The keys and the time are noted (PLEX_SWITCH_MARKS) so the next Plex
+    sync does not read these marks as new viewings."""
+    from src.config import settings
+    from src.database.runner import run_read, run_write
+    from src.services.app_state import set_state
+
+    def _load():
+        with _engine().connect() as c:
+            q = ("SELECT DISTINCT w.user_id, w.plex_item_id, u.plex_token, u.is_admin FROM watch_history w "
+                 "JOIN users u ON u.id = w.user_id WHERE w.completed = 1 AND w.orphaned_at IS NULL "
+                 "AND w.source IN (" + ", ".join(f"'{x}'" for x in JELLYFIN_PLAY_SOURCES) + ")")
+            params = {}
+            if since:
+                q += " AND w.viewed_at >= :since"
+                params["since"] = since.replace("T", " ")
+            return c.execute(text(q), params).fetchall()   # nosec B608 - the sources are a constant tuple
+    rows = await run_read(_load)
+    url, owner = settings.effective_plex_url, settings.effective_plex_token
+    started = time.time()
+    marked = failed = no_token = 0
+    keys, seen = [], set()
+    for uid, key, token, is_admin in rows:
+        if uid not in plan.users or not is_plex_key(key) or (uid, key) in seen:
+            continue
+        seen.add((uid, key))
+        tok = owner if is_admin and owner else token
+        if not tok:
+            no_token += 1
+            continue
+        try:
+            await _plex_scrobble(url, tok, key, transport=transport)
+            marked += 1
+            keys.append(key)
+        except Exception as e:  # noqa: BLE001 - one item's failure must not stop the rest; counted
+            failed += 1
+            logger.warning("[rebind] %s not marked played on Plex: %s", key, e)
+    if keys:
+        await run_write(set_state, PLEX_SWITCH_MARKS, json.dumps({
+            "from": started, "to": time.time(), "keys": sorted(set(keys))}))
+    return {"marked_played": marked, "failed": failed, "no_plex_sign_in": no_token}
+
+
+async def sync_watched_state(plan: Plan, target_adapter, *, backup_root: Optional[Path] = None,
+                             transport=None) -> dict:
     """``--sync-state``: Curatarr's finished plays become played marks on the
-    target, Plex ratings of 8/10 and up become Jellyfin likes. Only towards
-    Jellyfin: Plex marks per account token, which Curatarr does not hold
-    for every member."""
+    target, so its own "unwatched" agrees with the curation. Towards
+    Jellyfin every finished play, and Plex ratings of 8/10 and up become
+    likes; towards Plex the plays of the Jellyfin period (_sync_to_plex)."""
     from src.database.runner import run_read
-    if plan.target != "jellyfin":
-        return {"skipped": "only towards Jellyfin"}
+    if plan.target == "plex":
+        return await _sync_to_plex(plan, since=_last_switch_to("jellyfin", backup_root), transport=transport)
 
     def _load():
         with _engine().connect() as c:
@@ -560,6 +675,7 @@ async def sync_watched_state(plan: Plan, target_adapter) -> dict:
         return watched, liked
     watched, liked = await run_read(_load)
     marked = likes = failed = 0
+    started, keys = time.time(), set()   # epoch seconds, as Plex and the plays compare
     for uid, (_, tid, _) in plan.users.items():
         who = ServerUser(key=tid, name="")
         already = {s.item_key for s in await target_adapter.user_states(who)}
@@ -568,6 +684,7 @@ async def sync_watched_state(plan: Plan, target_adapter) -> dict:
                 try:
                     await target_adapter.mark_played(who, key)
                     marked += 1
+                    keys.add(key)
                 except Exception as e:  # noqa: BLE001 - one item's failure must not stop the rest; counted
                     failed += 1
                     logger.warning("[rebind] %s not marked played: %s", key, e)
@@ -579,6 +696,13 @@ async def sync_watched_state(plan: Plan, target_adapter) -> dict:
                 except Exception as e:  # noqa: BLE001 - counted, the rest goes on
                     failed += 1
                     logger.warning("[rebind] %s not liked: %s", key, e)
+    if keys:
+        # Jellyfin's history tiers leave these marks out (jellyfin_history.drop_switch_marks).
+        from src.database.runner import run_write
+        from src.services.app_state import set_state
+        from src.services.media_server.jellyfin_history import SWITCH_MARKS
+        await run_write(set_state, SWITCH_MARKS, json.dumps({
+            "from": started, "to": time.time(), "keys": sorted(keys)}))
     return {"marked_played": marked, "liked": likes, "failed": failed}
 
 
@@ -657,7 +781,7 @@ async def undo(mpath: Path, *, chroma=None, settings_writer=None) -> dict:
     await run_write(_rename_prefetch, back)
     if settings_writer is None:
         settings_writer = _write_settings
-    settings_writer(manifest["from"])
+    await asyncio.to_thread(settings_writer, manifest["from"])
     manifest["status"] = "undone"
     manifest["undone"] = datetime.utcnow().isoformat()
     _save(Path(mpath), manifest)
