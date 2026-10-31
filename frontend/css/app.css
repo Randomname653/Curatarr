@@ -499,40 +499,89 @@ html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon
    The curator's badge itself thinks. The mark's four segments run, one
    after another, onto the first; then the stack spins once, fast, and
    unfolds back into the C. The diamond twinkles like an AI sparkle: it
-   shrinks while they gather, flares and turns a quarter while they spin,
-   glowing ruby. The mark is the one this device chose (modern or classic,
-   each turns about its own circle's centre in its user space).
-   Reduced motion (the global block below) leaves it at rest. */
+   shrinks while they gather, flares ruby and turns once with them while
+   they spin, then cools back. The mark is the one this device chose
+   (modern or classic). Reduced motion (the global block below) leaves it
+   at rest.
+
+   One 2.8 s clock drives every piece:
+     0–36 %  gather   segments fold onto the first, staggered
+     36–45 % hold     the stack waits; the diamond is at its smallest (40 %)
+     45–80 % spin     one turn while unfolding, a soft overshoot into the C
+     40–62 % flare    diamond grows to 1.5× and turns ruby
+     62–80 % settle   diamond back to 1×, its turn ends with the C's
+     80–100% rest     ruby fades back to diamond
+
+   Pivots. Segments use transform-box: view-box, so transform-origin is in
+   the SVG's user units: it scales with the icon at any rendered size and
+   is not thrown off by the segment's own bounding box. The values are the
+   measured circle centres (modern C: r 692.7 about 1029.04/1000; classic
+   ring: r 719.1 about 1000/989.62). The diamond pivots on its own fill-box
+   centre (classic: deliberately 7 units left of the ring centre).
+   Motion is rotate/scale only (individual transform properties, so scale
+   and turn can ease independently) plus one fill; contain keeps the
+   repaint inside the 20 px badge. */
 .thinking { display: inline-flex; align-items: center; min-height: 20px; }
 .thinking-mark { position: absolute; left: -28px; top: 4px; width: 20px; height: 20px; border-radius: 50%;
-  display: grid; place-items: center; background: var(--amber-dim); border: 1px solid var(--amber); }
+  display: grid; place-items: center; background: var(--amber-dim); border: 1px solid var(--amber);
+  contain: layout paint; }
 .thinking-mark .brand-logo { width: 14px; height: 14px; display: block; overflow: visible; }
 .thinking-mark .brand-ring { fill: var(--brand-amber); }
-.thinking-mark .brand-seg { transform-box: view-box; transform-origin: 1029px 1000px;
-  animation-duration: 2.8s; animation-iteration-count: infinite; animation-timing-function: cubic-bezier(.45, 0, .25, 1); }
+/* Easing lives in the keyframes, per phase; linear here is a placeholder. */
+.thinking-mark .brand-seg { transform-box: view-box; transform-origin: 1029.04px 1000px;
+  animation: 2.8s linear infinite; }
+.thinking-mark .brand-ring.brand-seg { transform-origin: 1000px 989.62px; }
 .thinking-mark .brand-seg-1 { animation-name: brand-seg-1; }
 .thinking-mark .brand-seg-2 { animation-name: brand-seg-2; --fold: -65.8deg; }
 .thinking-mark .brand-seg-3 { animation-name: brand-seg-3; --fold: -177.7deg; }
 .thinking-mark .brand-seg-4 { animation-name: brand-seg-4; --fold: -268.5deg; }
-.thinking-mark .brand-ring.brand-seg { transform-origin: 1000px 990px; }
 .thinking-mark .brand-ring.brand-seg-2 { --fold: -90deg; }
 .thinking-mark .brand-ring.brand-seg-3 { --fold: -180deg; }
 .thinking-mark .brand-ring.brand-seg-4 { --fold: -270deg; }
-@keyframes brand-seg-1 { 0%, 45% { transform: rotate(0deg); } 80%, 100% { transform: rotate(360deg); } }
-@keyframes brand-seg-2 { 0%, 5% { transform: rotate(0deg); } 20%, 45% { transform: rotate(var(--fold)); } 80%, 100% { transform: rotate(360deg); } }
-@keyframes brand-seg-3 { 0%, 13% { transform: rotate(0deg); } 28%, 45% { transform: rotate(var(--fold)); } 80%, 100% { transform: rotate(360deg); } }
-@keyframes brand-seg-4 { 0%, 21% { transform: rotate(0deg); } 36%, 45% { transform: rotate(var(--fold)); } 80%, 100% { transform: rotate(360deg); } }
-.thinking-mark .brand-sparkle { transform-box: fill-box; transform-origin: center; animation: brand-twinkle 2.8s ease-in-out infinite; }
-.thinking-mark .brand-sparkle > * { animation: brand-sparkle-glow 2.8s ease-in-out infinite; }
+/* gather: quick pick-up, long magnetic settle onto the stack.
+   spin:   slow wind-up, fast middle, ~1 % overshoot that settles into the C.
+   360deg equals 0deg, so the loop restarts without a seam. */
+@keyframes brand-seg-1 {
+  0%, 45%   { rotate: 0deg; animation-timing-function: cubic-bezier(.65, 0, .25, 1.1); }
+  80%, 100% { rotate: 360deg; }
+}
+@keyframes brand-seg-2 {
+  0%, 5%    { rotate: 0deg; animation-timing-function: cubic-bezier(.5, 0, .15, 1); }
+  20%, 45%  { rotate: var(--fold); animation-timing-function: cubic-bezier(.65, 0, .25, 1.1); }
+  80%, 100% { rotate: 360deg; }
+}
+@keyframes brand-seg-3 {
+  0%, 13%   { rotate: 0deg; animation-timing-function: cubic-bezier(.5, 0, .15, 1); }
+  28%, 45%  { rotate: var(--fold); animation-timing-function: cubic-bezier(.65, 0, .25, 1.1); }
+  80%, 100% { rotate: 360deg; }
+}
+@keyframes brand-seg-4 {
+  0%, 21%   { rotate: 0deg; animation-timing-function: cubic-bezier(.5, 0, .15, 1); }
+  36%, 45%  { rotate: var(--fold); animation-timing-function: cubic-bezier(.65, 0, .25, 1.1); }
+  80%, 100% { rotate: 360deg; }
+}
+/* The diamond: scale and turn are separate animations so each phase keeps
+   its own easing. It turns a full 360deg (the modern diamond is not
+   quarter-turn symmetric, so stopping at 90deg would snap back on every
+   loop). The glow shares the scale's keyframes and easing, so ruby peaks
+   exactly with the flare. */
+.thinking-mark .brand-sparkle { transform-box: fill-box; transform-origin: center;
+  animation: brand-twinkle 2.8s linear infinite, brand-sparkle-turn 2.8s linear infinite; }
+.thinking-mark .brand-sparkle > * { animation: brand-sparkle-glow 2.8s linear infinite; }
 @keyframes brand-twinkle {
-  0%       { transform: scale(1) rotate(0deg); }
-  40%      { transform: scale(.65) rotate(0deg); }
-  62%      { transform: scale(1.5) rotate(90deg); }
-  80%, 100% { transform: scale(1) rotate(90deg); }
+  0%        { scale: 1;   animation-timing-function: cubic-bezier(.45, 0, .55, 1); }
+  40%       { scale: .65; animation-timing-function: cubic-bezier(.2, 0, .2, 1); }
+  62%       { scale: 1.5; animation-timing-function: cubic-bezier(.45, 0, .55, 1); }
+  80%, 100% { scale: 1; }
+}
+@keyframes brand-sparkle-turn {
+  0%, 40%   { rotate: 0deg; animation-timing-function: cubic-bezier(.55, 0, .25, 1); }
+  80%, 100% { rotate: 360deg; }
 }
 @keyframes brand-sparkle-glow {
-  0%, 30%, 100% { fill: var(--brand-diamond); }
-  62%           { fill: var(--brand-ruby); }
+  0%, 40%   { fill: var(--brand-diamond); animation-timing-function: cubic-bezier(.2, 0, .2, 1); }
+  62%, 80%  { fill: var(--brand-ruby); animation-timing-function: cubic-bezier(.45, 0, .55, 1); }
+  100%      { fill: var(--brand-diamond); }
 }
 .thinking-label, .thinking-status {
   background: linear-gradient(90deg, var(--text3) 0%, var(--text) 45%, var(--text3) 90%);
