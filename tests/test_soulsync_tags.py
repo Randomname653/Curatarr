@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.cache.metadata_cache as mc
 import src.services.album_dossier as ad
 import src.services.discogs_offline as do

@@ -37,6 +37,7 @@ def check(name, cond, info=None):
 
 import httpx
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 from src.config import settings
 from src.services import llm_utils, pillars
 from src.services import prompt_budget as pb

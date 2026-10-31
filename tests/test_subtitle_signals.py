@@ -20,9 +20,14 @@ before the code was written:
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import app_db  # noqa: E402  (first: temp stores, not the live data/)
 
-from src.services.subtitle_signals import (
+# The OpenSubtitles budget and block flags live in app_state: a real, migrated
+# temp database, not whatever the developer's data/curatarr.db happens to hold.
+app_db()
+
+from src.services.subtitle_signals import (  # noqa: E402
     count_sdh_markers, format_dialogue_line, looks_forced, mattr, parse_cues,
     script_of, strip_non_dialogue, subtitle_metrics, tokenize,
 )

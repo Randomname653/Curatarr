@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn_mod  # noqa: E402
 from src.database import loop_guard  # noqa: E402
 from src.database.models import (  # noqa: E402

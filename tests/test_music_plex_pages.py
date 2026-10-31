@@ -11,6 +11,7 @@ import tempfile
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 from src.config import settings  # noqa: E402
 from src.services import lyrics as ly  # noqa: E402
 

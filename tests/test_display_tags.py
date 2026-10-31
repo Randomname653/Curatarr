@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 from src.cache.metadata_cache import MetadataCache  # noqa: E402
 from src.services import display_tags as dt  # noqa: E402
 

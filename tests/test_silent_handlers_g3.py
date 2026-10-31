@@ -31,6 +31,7 @@ def check(name, cond, info=None):
         print(f"  FAIL  {name}" + (f"  [{info}]" if info is not None else ""))
 
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.cache.metadata_cache as mcache  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.episodic_memory as em  # noqa: E402
