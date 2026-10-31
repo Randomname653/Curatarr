@@ -50,6 +50,12 @@ def check(name, cond):
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                        poolclass=StaticPool)
 Base.metadata.create_all(engine)
+# Bind the app's own session factory too: app_state and the other modules
+# that import get_db_session directly would otherwise reach the live
+# data/curatarr.db (they only passed while that file happened to exist).
+import src.database.connection as _conn  # noqa: E402
+_conn.engine = engine
+_conn.SessionLocal.configure(bind=engine)
 Session = sessionmaker(bind=engine, autoflush=False)
 session_threads: list = []
 

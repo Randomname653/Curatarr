@@ -41,9 +41,9 @@ try:
 except Exception:
     pass
 
-# The vector store admits one process at a time; suites that open it fail
-# together while the app is running. Recognised so the summary can say that
-# instead of printing seven identical tracebacks.
+# The vector store admits one process at a time. Every suite now gets its own
+# temp store (suite_env), so this should never fire; if it does, a suite
+# bypassed the redirect and opened data/chromadb while the app holds it.
 LOCK_HINT = "in use by another process"
 
 _BARE_MARKERS = re.compile(r"unittest\.main|sys\.exit|__main__")
@@ -95,6 +95,44 @@ def run_bare(path: Path) -> int:
     return 1 if failed else 0
 
 
+DATA = ROOT / "data"
+
+
+def data_snapshot() -> dict:
+    """{path: (mtime_ns, size)} for every file under the developer's data/
+    (logs excepted: the test log lives there on purpose)."""
+    if not DATA.exists():
+        return {}
+    out = {}
+    for p in DATA.rglob("*"):
+        if p.is_file() and "logs" not in p.relative_to(DATA).parts:
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            out[str(p.relative_to(DATA))] = (st.st_mtime_ns, st.st_size)
+    return out
+
+
+def data_changes(before: dict, after: dict) -> list:
+    return sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+
+
+def suite_env(base: dict) -> dict:
+    """Every store the app opens, pointed at a private temp dir per suite —
+    the live curatarr.db, chromadb, enrichment cache (and plex_music.db next
+    to it) and the developer's .env never reach a test. A suite that sets its
+    own paths still wins: it overrides these in-process."""
+    tmp = Path(tempfile.mkdtemp(prefix="curatarr-suite-"))
+    (tmp / "cache").mkdir()
+    return {**base,
+            "CURATARR_SUITE_TMP": str(tmp),
+            "DATABASE_URL": f"sqlite:///{(tmp / 'curatarr.db').as_posix()}",
+            "CHROMADB_PATH": str(tmp / "chromadb"),
+            "ENRICHMENT_CACHE": str(tmp / "cache" / "enrichment.db"),
+            "CURATARR_ENV_FILE": str(tmp / ".env")}
+
+
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--bare":
         return run_bare(Path(sys.argv[2]))
@@ -108,12 +146,16 @@ def main() -> int:
     env = {**__import__("os").environ,
            "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8",
            "CURATARR_LOOP_GUARD_DUMP": dump_dir}
-    failures, locked = [], []
+    failures, locked, touched = [], [], {}
     for f in files:
         cmd = ([sys.executable, __file__, "--bare", str(f)] if is_bare(f)
                else [sys.executable, str(f)])
-        r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
+        before = data_snapshot()
+        r = subprocess.run(cmd, cwd=ROOT, env=suite_env(env), capture_output=True,
                            text=True, encoding="utf-8", errors="replace")
+        changed = data_changes(before, data_snapshot())
+        if changed:
+            touched[f.name] = changed
         out = (r.stdout or "") + (r.stderr or "")
         summary = re.search(r"(\d+) passed, (\d+) failed", out)
         bad = r.returncode != 0 or (summary and summary.group(2) != "0")
@@ -135,12 +177,17 @@ def main() -> int:
         print(f"{len(on_loop)} event-loop database site(s): move them to "
               "run_read/run_write/run_chroma or asyncio.to_thread")
         failures.append("loop guard")
+    for name, paths in sorted(touched.items()):
+        print(f"FAIL  {name} wrote to the live data/: {', '.join(paths[:5])}")
+    if touched:
+        print(f"{len(touched)} suite(s) touched data/: route the store through "
+              "tests/_harness.py or a temp path")
+        failures.append("data/ guard")
     if locked:
-        # Worth saying plainly. Several suites open the vector store, which
-        # admits one process at a time, so with the app running they all fail
-        # at once and read like a code regression — which they are not.
-        print(f"\n{len(locked)} of those never ran: the vector store is held "
-              f"by another process.\nStop the app and re-run.")
+        # Worth saying plainly: not a code regression, a suite that reached
+        # the live data/chromadb (the data/ guard above names it too).
+        print(f"\n{len(locked)} of those hit a vector store held by another "
+              f"process: they opened the live data/chromadb instead of their temp one.")
     return 1 if failures else 0
 
 

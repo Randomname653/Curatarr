@@ -20,6 +20,7 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 import src.services.spotify_import as si  # noqa: E402
 from src.database.models import Base, MusicSkip, User, WatchHistoryEntry  # noqa: E402

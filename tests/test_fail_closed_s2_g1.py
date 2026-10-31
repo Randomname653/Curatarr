@@ -32,6 +32,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import httpx  # noqa: E402

@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.vector_store.chromadb_wrapper as cw
 
 PASS = FAIL = 0
@@ -25,10 +26,10 @@ def check(name, cond):
         print(f"  FAIL  {name}")
 
 
-# ── init runs quick_check + takes the lock (live store) ──────────────────────
+# ── init runs quick_check + takes the lock (a temp store, never data/) ──────
 
 w = cw.ChromaDBWrapper()
-check("wrapper init passes quick_check on the live store", w is not None)
+check("wrapper init passes quick_check on a fresh store", w is not None)
 check("process lock held", cw._lock_handle is not None)
 check("re-init in the SAME process is fine (lock is per-process)",
       cw.ChromaDBWrapper() is not None)

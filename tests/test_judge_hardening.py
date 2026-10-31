@@ -34,6 +34,7 @@ def check(name, cond, info=None):
         print(f"  FAIL  {name}" + (f"  [{info}]" if info is not None else ""))
 
 
+import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn
 import src.services.episodic_memory as em
 import src.services.media_enricher as me
