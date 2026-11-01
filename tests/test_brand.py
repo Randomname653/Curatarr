@@ -144,8 +144,22 @@ check("...both marks carry four numbered segments and a sparkle group",
               for i in range(1, 5)))
 check("the modern mark is square on its circle's centre (the C opens right, its box does not)",
       'viewBox="322.6 293.6 1413.0 1413.0"' in svgs["curatarr-mark"] and 'viewBox="322.6 293.6 1413.0 1413.0"' in mark_t)
+_badge = re.fullmatch(r"(\d+)px", _decl(":root", "--chat-badge"))
+_mark_px = re.fullmatch(r"(\d+)px", _decl(":root", "--chat-badge-mark"))
 check("the avatar's mark has whole-pixel size, so it sits centred in the badge",
-      _decl(".msg.assistant::before", "background-size") == "14px 14px")
+      _badge and _mark_px and int(_badge[1]) > int(_mark_px[1])
+      and _decl(".msg.assistant::before", "background-size") == "var(--chat-badge-mark) var(--chat-badge-mark)")
+# 2026-11-01: the thinking mark sat in the bubble at 24 px, the badge beside
+# the finished reply at 14 px - two sizes in two places for one mark.
+_slot = {p: _decl(".msg.assistant::before", p) for p in ("left", "top", "width", "height", "border")}
+check("the thinking mark is the badge: same slot, size and circle, so the reply lands without a jump",
+      all(_slot.values()) and {p: _decl(".thinking-mark", p) for p in _slot} == _slot
+      and "padding-left" not in rules.get(".msg.assistant:has(> .thinking)", {}))
+check("the user's badge mirrors it on the right: initial, or their picture once it loaded",
+      _decl(".msg.user::after", "right") == _slot["left"]
+      and _decl(".msg.user::after", "width") == _slot["width"]
+      and _decl(".msg.user::after", "content") == "var(--me-initial, '')"
+      and _decl("html.me-avatar .msg.user::after", "background-image") == "var(--me-avatar)")
 check("the waiting text shimmers until the server's status lines take over, on the C's clock",
       _decl(".msg.assistant:has(.thinking-status) .thinking-label", "display") == "none"
       and _decl(".thinking-label", "animation") == "thinking-shimmer var(--think-cycle) linear infinite"

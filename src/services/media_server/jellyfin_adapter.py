@@ -230,6 +230,21 @@ class JellyfinAdapter:
                 if not page or (total is not None and start >= total) or len(page) < _PAGE:
                     break
 
+    async def user_image(self, user_key: str) -> Optional[tuple[bytes, str]]:
+        """A user's own picture (the one Jellyfin's user menu shows), small:
+        (bytes, content type), or None when they set none (Jellyfin: 404)."""
+        async with self._client() as c:
+            try:
+                r = await c.get(f"{self._base}/Users/{user_key}/Images/Primary",
+                                params={"maxHeight": 96, "quality": 90}, headers=self._headers())
+            except httpx.HTTPError as e:
+                raise JellyfinError(f"Jellyfin user image: {type(e).__name__}") from e
+        if r.status_code == 404:
+            return None
+        if r.status_code != 200:
+            raise JellyfinError(f"Jellyfin user image: HTTP {r.status_code}")
+        return r.content, r.headers.get("content-type", "")
+
     # ── facts ───────────────────────────────────────────────────────────────
     def capabilities(self) -> Capabilities:
         return _CAPABILITIES
