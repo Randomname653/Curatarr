@@ -1,6 +1,6 @@
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 import { api } from './api.js';
-import { _errMsg, btnDone, setLocale, toast } from './ui.js';
+import { API, _errMsg, btnDone, setLocale, toast } from './ui.js';
 import { state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
@@ -208,12 +208,34 @@ function syncTimezone(u) {
     .catch(e => console.warn('[tz] time zone not stored - the server clock stands in', tz, e));
 }
 
+// The badge beside the user's own chat bubbles and in the sidebar: their
+// initial at once, their Plex/Jellyfin picture once the server has fetched
+// it (src/services/user_avatar.py). A 404 is the normal "no picture". The
+// picture comes as a blob: an <img> or CSS url() cannot send the token.
+let _myPictureUrl = '';
+async function showMyPicture(u) {
+  const root = document.documentElement;
+  root.style.setProperty('--me-initial', JSON.stringify((u.username || '?')[0].toUpperCase()));
+  root.classList.remove('me-avatar');
+  if (_myPictureUrl) { URL.revokeObjectURL(_myPictureUrl); _myPictureUrl = ''; }
+  try {
+    const r = await fetch(API + '/api/users/me/avatar', {headers: {Authorization: 'Bearer ' + state.token}});
+    if (!r.ok) return;
+    _myPictureUrl = URL.createObjectURL(await r.blob());
+    root.style.setProperty('--me-avatar', `url("${_myPictureUrl}")`);
+    root.classList.add('me-avatar');
+  } catch (e) {
+    console.warn('[avatar] picture not loaded - the initial stands in', e);
+  }
+}
+
 export function setUser(u) {
   state.currentUser = u;
   setLocale(u.locale);
   syncTimezone(u);
   document.getElementById('user-name').textContent = u.username || 'User';
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
+  showMyPicture(u);
   if (u.server === 'jellyfin') {
     const lib = document.getElementById('libraries-btn');
     if (lib) lib.textContent = 'Jellyfin libraries';

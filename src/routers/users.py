@@ -140,6 +140,21 @@ def get_me(user: User = Depends(get_current_user)):
     return UserResponse.from_orm(user)
 
 
+@router.get("/me/avatar")
+async def get_my_avatar(user: User = Depends(get_current_user)):
+    """The caller's own Plex or Jellyfin picture (services/user_avatar), or
+    404: the page then keeps their initial. Only ever the caller's own."""
+    from fastapi import Response
+    from src.services.user_avatar import picture
+    found = await picture(user.id)
+    if not found:
+        raise HTTPException(status_code=404, detail="No picture")
+    body, content_type = found
+    return Response(body, media_type=content_type,
+                    headers={"Cache-Control": "private, max-age=3600",
+                             "Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"})
+
+
 class TimezoneUpdate(BaseModel):
     timezone: str
 

@@ -523,6 +523,13 @@ Tests: `tests/test_brand.py`.
   "Thinking…" line shimmers until the server's status lines take over, and they shimmer too. A
   first cut lit the classic ring's segments in place, one by one; that read as choppy and put a
   third logo on screen.
+- **One badge size, and you on the right (2026-11-01):** the thinking mark sat inside the bubble at
+  24 px while the badge beside the finished reply showed it at 14 px, so the mark jumped and shrank
+  when the reply landed. Now the badge itself thinks: same 24 px circle, same slot, 18 px mark
+  either way. Your own messages get the matching badge on the right: your Plex account picture
+  (asked from plex.tv with your own sign-in token) or your Jellyfin user image, fetched by Curatarr
+  so the browser never contacts plex.tv or Gravatar, and your initial when there is none. The
+  sidebar shows the same picture. Tests: `tests/test_user_avatar.py`, `tests/test_brand.py`.
 - **Busy pulse:** while a model works, the diamond in the top-bar logo breathes ruby. That covers a
   reply streaming in this tab, or the server reporting a curator call or an enrichment run
   (`model_busy` in `/api/processes/status`, the 30 s poll).

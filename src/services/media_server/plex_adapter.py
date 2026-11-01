@@ -50,6 +50,25 @@ class PlexError(RuntimeError):
     """Plex did not answer, or answered with an error."""
 
 
+async def account_thumb(user_token: str, *, transport=None) -> Optional[str]:
+    """The picture URL plex.tv names for the account behind a user's OWN
+    sign-in token (services/user_avatar fetches it), or None when plex.tv
+    refuses the token. Not the server token: plex.tv answers that one 401
+    while the server itself accepts it."""
+    from src.config import settings
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, transport=transport) as c:
+        try:
+            r = await c.get("https://plex.tv/api/v2/user", headers={
+                "Accept": "application/json", "X-Plex-Product": "Curatarr",
+                "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID, "X-Plex-Token": user_token})
+        except httpx.HTTPError as e:
+            raise PlexError(f"plex.tv /api/v2/user: {type(e).__name__}") from e
+    if r.status_code != 200:
+        logger.info("[plex] plex.tv /api/v2/user: HTTP %s", r.status_code)
+        return None
+    return str(r.json().get("thumb") or "") or None
+
+
 def _ts(value) -> Optional[datetime]:
     try:
         return datetime.fromtimestamp(int(value), tz=timezone.utc).replace(tzinfo=None) if value else None
