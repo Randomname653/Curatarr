@@ -9,7 +9,7 @@ import logging
 import re
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -906,6 +906,102 @@ async def get_redundancy(_user: User = Depends(require_admin)):
     return rep
 
 
+# One page of the Deletions view.
+PROPOSAL_PAGE = 10
+
+
+def _proposal_page(user_id: int, category: Optional[str], recent_only: bool,
+                   recent_days: int, offset: int, limit: int) -> dict:
+    """One page of the open proposals, and what the whole filter holds.
+
+    The limit used to be 30 across ALL categories with the tab slicing that
+    in the browser, so the Anime tab showed the anime among the top 30 of
+    everything (9 of the 50 in its pool, 2026-11-01). Each category is
+    queried for itself now, and protected titles are left out before the
+    page is cut, not after (a page came back short)."""
+    from datetime import timedelta
+    from sqlalchemy import func, select
+    from src.database.models import ProtectedMedia
+    with get_db_session() as db:
+        q = db.query(DeletionProposal).filter(
+            DeletionProposal.user_id == user_id,
+            DeletionProposal.status.in_(["pending", "limbo"]),  # show limbo for retry
+            DeletionProposal.title.not_in(select(ProtectedMedia.identifier).where(
+                ProtectedMedia.user_id == user_id)),
+        )
+        # Pass 17: "Just-arrived" filter + sort by activity descending
+        if recent_only:
+            cutoff = datetime.utcnow() - timedelta(days=recent_days)
+            q = q.filter(DeletionProposal.latest_activity_at.isnot(None),
+                         DeletionProposal.latest_activity_at >= cutoff)
+        counts = {c: n for c, n in q.with_entities(DeletionProposal.category, func.count())
+                  .group_by(DeletionProposal.category) if c}
+        if category and category in _CATEGORY_TO_SERVICE:
+            # Filter by stored category first, fall back to service for old rows
+            q = q.filter(
+                (DeletionProposal.category == category) |
+                (
+                    (DeletionProposal.category.is_(None)) &
+                    (DeletionProposal.service == _CATEGORY_TO_SERVICE[category])
+                )
+            )
+        total, total_mb, oldest = q.with_entities(
+            func.count(), func.coalesce(func.sum(DeletionProposal.storage_mb), 0.0),
+            func.min(DeletionProposal.created_at)).one()
+        order = (DeletionProposal.latest_activity_at.desc() if recent_only
+                 else DeletionProposal.confidence.desc())
+        rows = q.order_by(order, DeletionProposal.id).offset(offset).limit(limit).all()
+        return {"proposals": [_proposal_dict(p) for p in rows], "total": total,
+                "total_mb": total_mb or 0.0, "oldest": oldest, "counts": counts}
+
+
+async def _serve_proposals(user_id: int, category: Optional[str], recent_only: bool,
+                           recent_days: int, offset: int = 0, limit: int = PROPOSAL_PAGE,
+                           **extra) -> dict:
+    """The Deletions view's answer: one page of the stored proposals."""
+    from src.services.recommendations_engine import deletion_run_summary
+    from src.services import deletion_queue
+    page = await run_read(_proposal_page, user_id, category, recent_only, recent_days,
+                          offset, limit)
+    cached = page["proposals"]
+
+    # Mark cache as stale (but still serve) when the underlying data has
+    # changed since the oldest pending proposal was written. UI can offer
+    # a "Refresh" button; we DON'T auto-regenerate because that's a heavy
+    # ARR scan + LLM run.
+    from src.services.app_state import get_datetime as _get_dt
+    invalidate_at = await run_read(_get_dt, "recs_invalidate_at")
+    cache_stale = bool(page["oldest"] and invalidate_at and page["oldest"] < invalidate_at)
+
+    # An empty result just shows the "Analyse library" prompt; it never
+    # triggers a network call that can fail and wipe the loading state.
+    # Rows whose arr history was unreadable at the last analysis carry
+    # no stamp; the Just-arrived filter above drops them, so say why.
+    unavailable = await _load_activity_unavailable(category) if recent_only else []
+    message = None
+    if not page["total"]:
+        message = (_activity_unavailable_message(unavailable) if unavailable
+                   else "No proposals yet. Select 'Run analysis' to generate them.")
+    from src.services.display_tags import attach_tags
+    return {
+        "proposals": await asyncio.to_thread(attach_tags, cached),
+        "total": page["total"],
+        "offset": offset,
+        "limit": limit,
+        "counts": page["counts"],
+        "total_gb": round(page["total_mb"] / 1024, 1),
+        "enrichment_coverage": await run_read(_arr_enrichment_coverage, category),
+        "stale": cache_stale,
+        "last_run": deletion_run_summary(category),
+        **({"queued_note": deletion_queue.note(_queued)} if (_queued := await deletion_queue.pending()) else {}),
+        **({"message": message} if message else {}),
+        **({"activity_unavailable": unavailable,
+            "activity_note": _activity_unavailable_message(unavailable)}
+           if unavailable else {}),
+        **extra,
+    }
+
+
 @router.get("/deletions")
 async def get_deletion_proposals(
     category: Optional[str] = Query(None),
@@ -916,10 +1012,13 @@ async def get_deletion_proposals(
     # newest activity bubbles to the top.
     recent_only: bool = Query(False),
     recent_days: int = Query(7, ge=1, le=90),
+    # The pool is paged: ten at a time, "Show more" asks for the next ten.
+    # Annotated, so a direct call (the tests, deletion_queue) gets plain ints.
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=50)] = PROPOSAL_PAGE,
     user: User = Depends(require_admin),   # deletions = admin curation only
 ):
     from src.services.recommendations_engine import generate_deletion_proposals, deletion_run_summary
-    from src.database.models import ProtectedMedia
     from src.services import deletion_queue
 
     # Split install: verdicts come from the node only. An analysis asked for
@@ -933,73 +1032,8 @@ async def get_deletion_proposals(
             refresh = False
 
     if not refresh:
-        def _load_cached() -> tuple:
-            with get_db_session() as db:
-                protected = {
-                    p.identifier
-                    for p in db.query(ProtectedMedia).filter(ProtectedMedia.user_id == user.id).all()
-                }
-                q = db.query(DeletionProposal).filter(
-                    DeletionProposal.user_id == user.id,
-                    DeletionProposal.status.in_(["pending", "limbo"]),  # show limbo for retry
-                )
-                if category and category in _CATEGORY_TO_SERVICE:
-                    # Filter by stored category first, fall back to service for old rows
-                    q = q.filter(
-                        (DeletionProposal.category == category) |
-                        (
-                            (DeletionProposal.category.is_(None)) &
-                            (DeletionProposal.service == _CATEGORY_TO_SERVICE[category])
-                        )
-                    )
-                # Pass 17: "🆕 Just-arrived" filter + sort by activity descending
-                if recent_only:
-                    from datetime import timedelta
-                    cutoff = datetime.utcnow() - timedelta(days=recent_days)
-                    q = q.filter(DeletionProposal.latest_activity_at != None,
-                                 DeletionProposal.latest_activity_at >= cutoff)
-                    cached = q.order_by(DeletionProposal.latest_activity_at.desc()).limit(30).all()
-                else:
-                    cached = q.order_by(DeletionProposal.confidence.desc()).limit(30).all()
-                cached = [p for p in cached if p.title not in protected]
-                return ([_proposal_dict(p) for p in cached],
-                        sum(p.storage_mb for p in cached),
-                        [p.created_at for p in cached if p.created_at])
-        cached, total_mb, created = await run_read(_load_cached)
-
-        # Mark cache as stale (but still serve) when the underlying data has
-        # changed since the oldest pending proposal was written. UI can offer
-        # a "Refresh" button; we DON'T auto-regenerate because that's a heavy
-        # ARR scan + LLM run.
-        from src.services.app_state import get_datetime as _get_dt
-        invalidate_at = await run_read(_get_dt, "recs_invalidate_at")
-        cache_stale = bool(
-            cached and invalidate_at
-            and min(created) < invalidate_at
-        )
-
         # Always return on non-refresh — never fall through to a live ARR fetch.
-        # An empty result just shows the "Analyse library" prompt; it never
-        # triggers a network call that can fail and wipe the loading state.
-        # Rows whose arr history was unreadable at the last analysis carry
-        # no stamp; the Just-arrived filter above drops them, so say why.
-        unavailable = await _load_activity_unavailable(category) if recent_only else []
-        if not cached:
-            message = (_activity_unavailable_message(unavailable) if unavailable
-                       else "No proposals yet. Select 'Run analysis' to generate them.")
-        from src.services.display_tags import attach_tags
-        return {
-            "proposals": await asyncio.to_thread(attach_tags, cached),
-            "total_gb": round(total_mb / 1024, 1),
-            "enrichment_coverage": await run_read(_arr_enrichment_coverage, category),
-            "stale": cache_stale,
-            "last_run": deletion_run_summary(category),
-            **({"queued_note": deletion_queue.note(_queued)} if (_queued := await deletion_queue.pending()) else {}),
-            **({"message": message} if not cached else {}),
-            **({"activity_unavailable": unavailable,
-                "activity_note": _activity_unavailable_message(unavailable)}
-               if unavailable else {}),
-        }
+        return await _serve_proposals(user.id, category, recent_only, recent_days, offset, limit)
 
     arr_items = await _fetch_arr_candidates(category)
     if not arr_items:
@@ -1154,9 +1188,12 @@ async def get_deletion_proposals(
         enriched = await asyncio.gather(*[
             _enrich_proposal(p, item_map, category) for p in proposals])
 
-        if not enriched:
+        from src.services.recommendations_engine import pool_kept
+        if not enriched and not any(pool_kept(_c) is not None for _c in _run_cats):
             # Generation produced nothing — keep whatever is in the DB rather than
-            # wiping it, so the user still sees the last known proposals.
+            # wiping it, so the user still sees the last known proposals. A
+            # pool run that judged nothing new still saves: it retires the
+            # proposals that are no longer candidates.
             task_monitor.done(mtask, "No candidates — previous proposals retained")
             return {"proposals": [], "total_gb": 0,
                     "last_run": deletion_run_summary(category),
@@ -1166,38 +1203,20 @@ async def get_deletion_proposals(
             with get_db_session() as dbs:
                 # Only now — after successful generation — remove the stale proposals.
                 # This prevents the "wiped cache with no replacement" failure mode.
-                from sqlalchemy import or_, and_
-
-                from sqlalchemy import false
-                from src.services.recommendations_engine import run_judged_everything
+                from sqlalchemy import false, or_
 
                 old_q = dbs.query(DeletionProposal).filter(
                     DeletionProposal.user_id == user.id,
                     DeletionProposal.status == "pending",
                 )
-                # Replace only what this run judged. A category judged to the
-                # end replaces its stored proposals wholesale - matched by the
-                # category column OR, for legacy NULL-category rows, by service
-                # (so refreshing "anime" never touches "show": both are sonarr).
-                # A category that waited for its node or stopped early replaces
-                # only the titles it proposed again; the rest of its stored
-                # proposals stay. "Run analysis" for all categories used to
-                # wipe every category, deferred ones included (2026-10-23).
-                conds = []
-                for _c in _run_cats:
-                    if run_judged_everything(_c):
-                        svc = _CATEGORY_TO_SERVICE.get(_c)
-                        conds.append(or_(
-                            DeletionProposal.category == _c,
-                            and_(DeletionProposal.category.is_(None),
-                                 DeletionProposal.service == svc)) if svc
-                            else DeletionProposal.category == _c)
-                    else:
-                        ids = {str(p.get("arr_id", "")) for p in enriched
-                               if p.get("category") == _c}
-                        if ids:
-                            conds.append(and_(DeletionProposal.category == _c,
-                                              DeletionProposal.media_id.in_(ids)))
+                # Retire only what this run may (_replace_scope): a pool run
+                # what it did not keep, a stopped one what it proposed again.
+                # "Run analysis" for all categories used to wipe every
+                # category, deferred ones included (2026-10-23).
+                conds = [c for c in (
+                    _replace_scope(_c, _CATEGORY_TO_SERVICE.get(_c, ""),
+                                   [p.get("arr_id") for p in enriched if p.get("category") == _c])
+                    for _c in _run_cats) if c is not None]
                 old_q = old_q.filter(or_(*conds) if conds else false())
                 prev_activity = {}
                 if activity_unavailable:
@@ -1277,54 +1296,15 @@ async def get_deletion_proposals(
     finally:
         await run_write(release_state_lock, "deletion_run")
     task_monitor.done(mtask, f"{len(proposals_with_ids)} proposal(s) saved")
+    logger.info("[deletions] regeneration done — wrote %d new proposals", len(proposals_with_ids))
 
-    # Pass 24: apply the same recent_only filter+sort the read path uses,
-    # so an Analyse run with the "🆕 Just-arrived" toggle ON returns the
-    # SAME shape of data the user will see when they leave the view and
-    # come back. Without this, refresh=true ignored recent_only entirely,
-    # frontend rendered all proposals (the "pretty list"), and the next
-    # reload (refresh=false applies the filter) silently culled most rows
-    # → impression that the list "got lost" between turns.
-    pre_filter_count = len(proposals_with_ids)
-    if recent_only:
-        from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(days=recent_days)
-
-        def _within_recent(p):
-            la = p.get("latest_activity_at")
-            if not la:
-                return False
-            try:
-                dt = datetime.fromisoformat(str(la).replace("Z", "+00:00"))
-                if dt.tzinfo is not None:
-                    dt = dt.replace(tzinfo=None)
-                return dt >= cutoff
-            except (TypeError, ValueError):
-                return False
-
-        proposals_with_ids = sorted(
-            [p for p in proposals_with_ids if _within_recent(p)],
-            key=lambda p: p.get("latest_activity_at") or "",
-            reverse=True,
-        )
-    # Pass 25b: final-count visibility. If pre==post, recent_only was off
-    # (or every proposal had a recent timestamp). If post << pre and toggle
-    # was on, the filter is what's culling — not a bug, just visibility.
-    logger.info(
-        "[deletions] regeneration done — wrote %d proposals (recent_only=%s, returning %d after filter)",
-        pre_filter_count, recent_only, len(proposals_with_ids),
-    )
-
-    from src.services.display_tags import attach_tags
-    return {
-        "proposals":           await asyncio.to_thread(attach_tags, proposals_with_ids),
-        "total_gb":            round(sum(p.get("size_mb", 0) for p in proposals_with_ids) / 1024, 1),
-        "enrichment_coverage": await run_read(_arr_enrichment_coverage, category),
-        "last_run":            deletion_run_summary(category),
-        **({"activity_unavailable": activity_unavailable,
-            "activity_note": _activity_unavailable_message(activity_unavailable)}
-           if recent_only and activity_unavailable else {}),
-    }
+    # The run's answer is the view's first page, read like every other load
+    # (Pass 24: the same filter and order, so nothing "gets lost" when the
+    # owner leaves the view and comes back). It used to return every row
+    # the run wrote, which is why a fresh run showed a full tab that a
+    # reload then cut to the global top 30.
+    return await _serve_proposals(user.id, category, recent_only, recent_days, offset, limit,
+                                  added=len(proposals_with_ids))
 
 
 @router.post("/deletions/{proposal_id}/comment")
@@ -1473,6 +1453,34 @@ def _switched_off_message(service: str) -> str:
                 "Nothing was deleted; the next deletion scan proposes music from the Plex index.")
     return (f"{name} is switched off, so this proposal cannot be carried out. "
             f"Nothing was deleted; it comes back once {name} is connected again.")
+
+
+def _replace_scope(category: str, service: str, proposed_ids):
+    """Which open (pending) proposals of ``category`` a saved run retires, as
+    a filter, or None for none. Shared by the manual Analyze and the
+    scheduled scan.
+
+    - A run that ran to its end as a pool (recommendations_engine.pool_kept)
+      retires every proposal of the category it did not keep. The new ones
+      it judged are inserted after this, so they are never touched.
+    - One that ran to its end without a pool (the legacy pitch path)
+      replaces the category wholesale.
+    - One that stopped (the node got busy, a game) retires only the titles
+      it proposed again; the rest stay (2026-10-23).
+    Rows are matched by the category column or, for legacy NULL-category
+    rows, by service: "anime" never touches "show", though both are sonarr."""
+    from sqlalchemy import and_, or_
+    from src.services.recommendations_engine import pool_kept, run_judged_everything
+    whole = (or_(DeletionProposal.category == category,
+                 and_(DeletionProposal.category.is_(None), DeletionProposal.service == service))
+             if service else DeletionProposal.category == category)
+    kept = pool_kept(category)
+    if kept is not None:
+        return and_(whole, DeletionProposal.media_id.not_in(sorted(kept))) if kept else whole
+    if run_judged_everything(category):
+        return whole
+    ids = sorted({str(i) for i in proposed_ids if i not in (None, "")})
+    return and_(DeletionProposal.category == category, DeletionProposal.media_id.in_(ids)) if ids else None
 
 
 def _retire_switched_off(db: Session, user_id: int) -> int:

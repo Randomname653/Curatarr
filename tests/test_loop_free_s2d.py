@@ -295,9 +295,11 @@ _saved_mods = {k: sys.modules.get(k) for k in
                ("src.routers.recommendations", "src.services.recommendations_engine")}
 sys.modules["src.routers.recommendations"] = types.SimpleNamespace(
     _fetch_arr_candidates=_candidates, _enrich_proposal=_enrich,
-    build_proposal_item_map=lambda items: {}, _retire_switched_off=lambda db, uid: 0)
+    build_proposal_item_map=lambda items: {}, _retire_switched_off=lambda db, uid: 0,
+    _replace_scope=lambda cat, svc, ids: None)
 sys.modules["src.services.recommendations_engine"] = types.SimpleNamespace(
-    generate_deletion_proposals=_gen, run_judged_everything=lambda cat: True)
+    generate_deletion_proposals=_gen, run_judged_everything=lambda cat: True,
+    pool_kept=lambda cat: None)
 import src.services.music_source as ms  # noqa: E402
 
 _music = []

@@ -110,7 +110,7 @@
   "test_nanogenres.py": 1,
   "test_navigation.py": 7,
   "test_netflix_import.py": 7,
-  "test_node_names.py": 24,
+  "test_node_names.py": 23,
   "test_ollama_hosts.py": 3,
   "test_ollama_mmap.py": 3,
   "test_osv_config.py": 2,

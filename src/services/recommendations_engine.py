@@ -284,24 +284,70 @@ NO_TASTE_MISMATCH = (SHORTLIST_SCORE - 5) / 80.0
 # blanket log1p fallback was not (a 2 TB series scored 38).
 SIZE_PTS_CAP = 25.0
 
-# The pillar judge stops after TARGET_CUTS proposals or JUDGE_CAP judged
-# titles. Learned keep-considerations are scored for the same JUDGE_CAP
-# slice — they used to stop at 30, so ranks 31-60 were judged without them.
+# The pillar judge stops after enough proposals or a cap of judged titles:
+# JUDGE_CAP per TARGET_CUTS proposals (a clean library flags few). Learned
+# keep-considerations are scored for the slice the judge can reach - they
+# used to stop at 30, so ranks 31-60 were judged without them. Stored
+# verdicts (services/verdict_cache) cost no model call and do not count
+# against the cap, up to REUSE_FACTOR x the cap per run.
 TARGET_CUTS, JUDGE_CAP = 10, 60
-# Split install (server + node): a run happens only while the PC is free,
-# so it builds a RESERVE - this many times deeper - that lasts while the PC
-# is off. Stored verdicts (services/verdict_cache) cost no model call and do
-# not count against the cap, up to REUSE_FACTOR x the cap per run.
-RESERVE_FACTOR = 3
+JUDGE_PER_CUT = JUDGE_CAP // TARGET_CUTS
 REUSE_FACTOR = 2
 
+# The proposal POOL (2026-11-01). Each category keeps up to
+# DELETION_POOL_SIZE open proposals (50 by default) and the Deletions view
+# pages through them ten at a time, so there is work to show while no model
+# can judge (the PC away). A run keeps every stored proposal that is still a
+# candidate and judges only as many new titles as the pool lacks: a full
+# pool costs no model call, three resolved cards cost three. A proposal
+# older than POOL_MAX_AGE_DAYS is judged afresh (the verdict cache keeps a
+# verdict as long). One run judges at most RUN_JUDGE_MAX titles, so an
+# empty pool fills over a few runs instead of holding the card for hours.
+# It replaces the 2026-10-23 split-install reserve (3 x 10 per run, every
+# run re-judging the whole category).
+POOL_MAX_AGE_DAYS = 30
+RUN_JUDGE_MAX = 180
 
-def _run_caps() -> tuple:
-    """(target cuts, judge cap) for this run: the reserve on a split install."""
-    from src.services.ollama_hosts import split
-    if split():
-        return TARGET_CUTS * RESERVE_FACTOR, JUDGE_CAP * RESERVE_FACTOR
-    return TARGET_CUTS, JUDGE_CAP
+
+def pool_size() -> int:
+    """Open proposals a category keeps (DELETION_POOL_SIZE, 10-200)."""
+    try:
+        n = int(getattr(settings, "DELETION_POOL_SIZE", 50))
+    except (TypeError, ValueError):
+        n = 50
+    return max(TARGET_CUTS, min(200, n))
+
+
+def _run_caps(open_slots: int) -> tuple:
+    """(target cuts, judge cap) for a run with ``open_slots`` to fill."""
+    return open_slots, min(open_slots * JUDGE_PER_CUT, RUN_JUDGE_MAX)
+
+
+def _pooled(user_id: int, category: str) -> set:
+    """media_ids of the category's open proposals young enough to stand."""
+    from datetime import timedelta
+    from src.database.models import DeletionProposal
+    cutoff = datetime.utcnow() - timedelta(days=POOL_MAX_AGE_DAYS)
+    with get_db_session() as db:
+        return {m for (m,) in db.query(DeletionProposal.media_id).filter(
+            DeletionProposal.user_id == user_id,
+            DeletionProposal.status == "pending",
+            DeletionProposal.category == category,
+            DeletionProposal.created_at >= cutoff)}
+
+
+def _pool_plan(scored: list, pooled: set) -> tuple:
+    """(kept, the candidates left to judge, target cuts, judge cap): a stored
+    proposal still among the scored candidates stands unjudged; the run
+    judges for the slots the pool lacks."""
+    kept = {str(c["item"].get("arr_id")) for c in scored} & set(pooled)
+    rest = [c for c in scored if str(c["item"].get("arr_id")) not in kept]
+    return (kept, rest, *_run_caps(max(0, pool_size() - len(kept))))
+
+
+# The stored proposals each category's last finished run kept (see
+# pool_kept); in-memory like the summary below, which counts them.
+_POOL_KEPT: dict[str, set] = {}
 
 # The last pillar-judging run per category, for the Deletions view's run
 # banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
@@ -528,7 +574,8 @@ def _failure_sentence(kinds: dict) -> str:
 
 def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
                          deferred: int = 0, fail_kinds: dict | None = None,
-                         stopped: str = "", degraded: str = "") -> dict:
+                         stopped: str = "", degraded: str = "",
+                         kept: set | None = None) -> dict:
     """Store one category's run for the Deletions banner. ``failed`` keeps
     its old meaning (titles that got no verdict because something broke);
     ``failed_by_kind`` / ``failed_reason`` say what broke, ``stopped``
@@ -546,9 +593,25 @@ def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
         "failed_reason": _failure_sentence(kinds),
         "stopped": stopped,
         "degraded": degraded,
+        "kept": len(kept or ()),
     }
     DELETION_RUN_SUMMARY[category] = run
+    if kept is None:
+        _POOL_KEPT.pop(category, None)
+    else:
+        _POOL_KEPT[category] = set(kept)
     return run
+
+
+def pool_kept(category: str) -> set | None:
+    """The stored proposals the last run of ``category`` kept, when it ran
+    to its end as a pool: saving it retires every other open proposal of
+    the category (no longer a candidate: watched, kept, protected, gone).
+    None when the run stopped or did not pool - see run_judged_everything."""
+    run = DELETION_RUN_SUMMARY.get(category)
+    if not run or run.get("stopped") or category not in _POOL_KEPT:
+        return None
+    return set(_POOL_KEPT[category])
 
 
 def run_judged_everything(category: str) -> bool:
@@ -569,7 +632,7 @@ def deletion_run_summary(category: str | None = None) -> dict | None:
     runs = list(DELETION_RUN_SUMMARY.values())
     if not runs:
         return None
-    out = {k: sum(r.get(k, 0) for r in runs) for k in ("judged", "flagged", "deferred", "failed")}
+    out = {k: sum(r.get(k, 0) for r in runs) for k in ("judged", "flagged", "deferred", "failed", "kept")}
     out["at"] = max(r.get("at") or "" for r in runs)
     kinds: dict = {}
     for r in runs:
@@ -1558,8 +1621,10 @@ async def generate_deletion_proposals(
 
     import math
 
-    # The reserve on a split install, the classic 10 / 60 otherwise.
-    target_cuts, judge_cap = _run_caps()
+    # The pool's open proposals, and the most this run could have to fill:
+    # what it really fills is known once the candidates are scored (below).
+    pooled = await run_read(_pooled, user_id, category)
+    target_cuts, judge_cap = _run_caps(pool_size())
 
     # Plex user-rating hard-protect line (Pass 82c, see the music preload below).
     HARD_PROTECT_THRESHOLD = 8.0      # Plex 0-10 scale; 8.0 = 4 stars
@@ -2416,7 +2481,9 @@ async def generate_deletion_proposals(
     # The run's REACH: reused verdicts let it walk past judge_cap (up to
     # REUSE_FACTOR x more), and every title it can reach gets its
     # keep-value scored - the same slice bug the comment above describes.
-    _reach = judge_cap * (1 + REUSE_FACTOR)
+    # The pool's stored proposals sit somewhere in the ranking too, and a new
+    # keep-consideration may retire one, so the slice reaches past them.
+    _reach = judge_cap * (1 + REUSE_FACTOR) + len(pooled)
     _consider_slice = scored_candidates[:_reach]
     _profiles = []
     for cand in _consider_slice:
@@ -2471,6 +2538,25 @@ async def generate_deletion_proposals(
             "the bar (soft-kept). Protected: %s",
             len(_protected), _dropped, _protected[:8],
         )
+
+    # The pool: a stored proposal that is still a candidate stands, unjudged;
+    # one that is not (watched, kept, protected, below the bar, gone) is
+    # retired when the run is saved (pool_kept). Only the open slots are
+    # judged. The legacy pitch path below has no pool.
+    kept: set = set()
+    pooling = bool(getattr(settings, "PILLARS_ENABLED", False))
+    if pooling:
+        kept, scored_candidates, target_cuts, judge_cap = _pool_plan(scored_candidates, pooled)
+        _reach = judge_cap * (1 + REUSE_FACTOR)
+        if not target_cuts:
+            _msg(f"{category}: the pool is full - {len(kept)} open proposals still stand, "
+                 f"nothing to judge")
+            logger.info("[deletions] %s: pool full (%d kept, %d retired), no judging",
+                        category, len(kept), len(pooled - kept))
+            _record_deletion_run(category, degraded=taste_degraded, kept=kept)
+            return []
+        logger.info("[deletions] %s: pool keeps %d, retires %d, judges for %d open slot(s)",
+                    category, len(kept), len(pooled - kept), target_cuts)
 
     final_proposals = []
 
@@ -2980,7 +3066,8 @@ async def generate_deletion_proposals(
             category, judged=judged, flagged=len(final_proposals),
             deferred=(thin_skipped + misfiled_skipped + unchecked_skipped
                       + signal_unknown_skipped + watch_unknown_skipped),
-            fail_kinds=dict(fail_kinds), stopped=stopped, degraded=taste_degraded)
+            fail_kinds=dict(fail_kinds), stopped=stopped, degraded=taste_degraded,
+            kept=kept)
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────

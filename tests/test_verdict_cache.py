@@ -92,14 +92,12 @@ finally:
 
 # ── the run ─────────────────────────────────────────────────────────────────
 from src.services import recommendations_engine as re_  # noqa: E402
-saved = settings.OLLAMA_PC_ENDPOINT
-try:
-    settings.OLLAMA_PC_ENDPOINT = ""
-    check("not split: the classic 10 proposals / 60 verdicts", re_._run_caps() == (10, 60))
-    settings.OLLAMA_PC_ENDPOINT = "http://pc:11434"
-    check("split: three times deeper while the PC is free - the reserve", re_._run_caps() == (30, 180))
-finally:
-    settings.OLLAMA_PC_ENDPOINT = saved
+check.table("a run judges for the pool's open slots, six verdicts a slot, 180 at most", [
+    ("three cards resolved", 3, (3, 18)),
+    ("the classic ten", 10, (10, 60)),
+    ("an empty pool of 50", 50, (50, 180)),
+    ("a full pool", 0, (0, 0)),
+], re_._run_caps)
 
 src = (ROOT / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
 loop = src[src.index("async def generate_deletion_proposals("):]

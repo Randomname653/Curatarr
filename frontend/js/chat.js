@@ -401,7 +401,7 @@ export async function loadGlancePanel() {
   }
 
   if (isAdmin && dels.status === 'fulfilled' && dels.value) {
-    const n = (dels.value.proposals || []).length;
+    const n = dels.value.total ?? (dels.value.proposals || []).length;   // the pool, not one page
     tiles.push({num: n, lbl: n === 1 ? 'Deletion proposal' : 'Deletion proposals', view: 'deletions'});
   }
 

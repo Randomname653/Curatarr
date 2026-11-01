@@ -105,23 +105,76 @@ export function _whyEscape(ev) {
 }
 if (typeof document !== 'undefined') document.addEventListener('keydown', _whyEscape);
 
-export function _renderDeletionProposals(proposals) {
+// The pool behind the list is paged (routers/recommendations._proposal_page):
+// `page` is the server's {total, total_gb} for the whole tab, so the header
+// counts the pool, not the ten on screen, and "Show more" appends the next ten.
+function _delSummaryHtml(shown, page) {
+  const gb = page?.total_gb ?? shown.reduce((s, p) => s + (p.size_gb || 0), 0);
+  const count = page && page.total > shown.length ? `${shown.length} of ${page.total}` : `${shown.length}`;
+  return `Potential savings: <b class="t-amber">${Number(gb).toFixed(1)} GB</b> · ${count} proposals`;
+}
+function _delMoreHtml(shown, page) {
+  const left = page ? page.total - shown.length : 0;
+  return left > 0
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('loadMoreDeletions', EL)}>Show ${Math.min(left, _DEL_PAGE)} more</button>`
+    : '';
+}
+const _DEL_PAGE = 10;
+
+export function _renderDeletionProposals(proposals, page = null) {
   const el = document.getElementById('del-content');
+  state._delProposalsAll = proposals?.length ? [...proposals] : null;
+  state._delPage = page;
   if (!proposals?.length) {
     el.innerHTML = emptyHtml('No proposals yet — <b>Run analysis</b> asks the curator for deletion candidates.', 'Run analysis', act('loadDeletions', state.currentDelCategory || null, null, true));
     updateDelBulkCount();
     return;
   }
-  const totalGb = proposals.reduce((s, p) => s + (p.size_gb || 0), 0).toFixed(1);
-  // Card anatomy: poster (click = select for bulk) · head (title + badges,
-  // three visible actions, the rest behind More) · facts · pitch · the note,
-  // which saves itself when you click away. Actions run safe → destructive:
-  // Keep, Discuss, then Delete set apart — the leftmost slot is the habitual
-  // click and belongs to the safe choice. More holds the rarer actions (and
-  // is where Unmonitor will go).
   el.innerHTML = `
-    <div class="fs-13 t2 mb-12">Potential savings: <b class="t-amber">${totalGb} GB</b> · ${proposals.length} proposals</div>` +
-    proposals.map(p => {
+    <div class="fs-13 t2 mb-12" id="del-summary">${_delSummaryHtml(proposals, page)}</div>
+    <div id="del-cards">${proposals.map(_delCardHtml).join('')}</div>
+    <div id="del-more" class="mt-12">${_delMoreHtml(proposals, page)}</div>`;
+  // Fresh render = fresh selection: reset the bulk bar + master checkbox.
+  const master = document.getElementById('del-select-all');
+  if (master) master.checked = false;
+  updateDelBulkCount();
+  prefetchDeleteTargets(proposals.map(p => p.service));
+}
+
+// The next ten of the tab's pool, appended: the selection and the notes
+// being typed above stay as they are.
+export async function loadMoreDeletions(btn) {
+  const shown = state._delProposalsAll || [];
+  const category = state.currentDelCategory;
+  btnBusy(btn, 'Loading…');
+  try {
+    const r = await api(`/api/recommendations/deletions?refresh=false&offset=${shown.length}&limit=${_DEL_PAGE}`
+                        + (category ? `&category=${category}` : '') + _delRecentParams());
+    if (category !== state.currentDelCategory) return;
+    const seen = new Set(shown.map(p => String(p.id)));
+    const fresh = (r.proposals || []).filter(p => !seen.has(String(p.id)));
+    state._delProposalsAll = [...shown, ...fresh];
+    state._delPage = r;
+    document.getElementById('del-cards')?.insertAdjacentHTML('beforeend', fresh.map(_delCardHtml).join(''));
+    const sum = document.getElementById('del-summary');
+    if (sum) sum.innerHTML = _delSummaryHtml(state._delProposalsAll, r);
+    const more = document.getElementById('del-more');
+    if (more) more.innerHTML = _delMoreHtml(state._delProposalsAll, r);
+    updateDelBulkCount();
+    prefetchDeleteTargets(fresh.map(p => p.service));
+  } catch (e) {
+    toast(_errMsg(e), 'danger');
+    btnDone(btn);
+  }
+}
+
+// Card anatomy: poster (click = select for bulk) · head (title + badges,
+// three visible actions, the rest behind More) · facts · pitch · the note,
+// which saves itself when you click away. Actions run safe → destructive:
+// Keep, Discuss, then Delete set apart — the leftmost slot is the habitual
+// click and belongs to the safe choice. More holds the rarer actions (and
+// is where Unmonitor will go).
+function _delCardHtml(p) {
       // The server's pick (display_tags.py): genres minus what the tab already
       // says, rarest first, then up to two themes. Plain genres for a list
       // that came without them.
@@ -176,12 +229,6 @@ export function _renderDeletionProposals(proposals) {
           </div>
         </div>
       </div>`;
-    }).join('');
-  // Fresh render = fresh selection: reset the bulk bar + master checkbox.
-  const master = document.getElementById('del-select-all');
-  if (master) master.checked = false;
-  updateDelBulkCount();
-  prefetchDeleteTargets(proposals.map(p => p.service));
 }
 
 // ── Fix match: owner-pinned entity resolution (same-named-twins repair) ──────
@@ -268,8 +315,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
       _renderRunBanner(r.last_run);
       _renderQueuedBanner(r.queued_note);
       _renderActivityBanner(r.activity_note);
-      if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
-      _renderDeletionProposals(r.proposals || []);
+      _renderDeletionProposals(r.proposals || [], r);
     } catch(e) {
       // Was the raw {"detail":…} body in grey "loading" type, with no way back in.
       if (seq === _delLoadSeq) el.innerHTML = _errHtml(e, act('loadDeletions', category || null, null, true));
@@ -277,24 +323,9 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     return;
   }
 
-  // ── Client-side fast path ────────────────────────────────────────────────
-  // Tab clicks (btn !== null) reuse the in-memory "All" cache so we never
-  // make a redundant API call just to slice data we already have.
-  // "Analyse" (refresh=true), "Show cached" (btn=null), and the recent-only
-  // filter always go to the backend — the latter because it's a server-side
-  // filter, the cached "All" snapshot doesn't carry that filter state.
-  if (btn !== null && !refresh && !recentActive && state._delProposalsAll) {
-    const filtered = category
-      ? state._delProposalsAll.filter(p => p.category === category)
-      : state._delProposalsAll;
-    _renderDeletionProposals(filtered);
-    return;
-  }
-
-  // A targeted single-category refresh makes the stored "All" cache stale for
-  // that slice — drop it so the next tab switch re-fetches correctly.
-  if (refresh && category) state._delProposalsAll = null;
-
+  // Every tab asks the server for its own first page. Tab clicks used to
+  // slice the "All" list in the browser, which held the top 30 of every
+  // category together: the Anime tab showed the anime among them (9 of 50).
   el.innerHTML = '<p class="loading" role="status" aria-live="polite">' + (refresh ? 'Analysing library with AI…' : 'Loading cached proposals…') + '</p>';
   try {
     const url = `/api/recommendations/deletions?refresh=${refresh}`
@@ -335,12 +366,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     // Show enrichment coverage banner when data quality is low
     _renderEnrichmentCoverageBanner(r.enrichment_coverage);
 
-    // Cache the full result whenever we fetched the unfiltered "All" view.
-    // The recent-only branch is intentionally NOT cached here — the cache
-    // is meant to slice an unfiltered snapshot, not a server-filtered subset.
-    if (!category && !recentActive && r.proposals) state._delProposalsAll = r.proposals;
-
-    _renderDeletionProposals(r.proposals || []);
+    _renderDeletionProposals(r.proposals || [], r);
   } catch(e) { if (seq === _delLoadSeq) el.innerHTML = _errHtml(e); }
 }
 

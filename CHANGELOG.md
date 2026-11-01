@@ -1309,6 +1309,19 @@ instead of deleted.**
 - Adopting a learned principle that contradicts an existing one retires the old rule,
   so the judge is no longer told to apply two opposite rules.
 
+**A pool of deletion proposals, ten at a time (2026-11-01).** After a restart the Anime tab
+showed 9 proposals where a run had written 30: the list was read as the top 30 across all
+categories and each tab sliced that in the browser. Each tab now reads its own proposals from
+the server, ten at a time, with "Show more" for the next ten and the header counting the whole
+tab. Protected titles are left out before a page is cut, so a page is never short.
+- Each category keeps a pool of up to `DELETION_POOL_SIZE` open proposals (50 by default). A
+  run keeps every stored proposal that is still a candidate and judges only as many new titles
+  as the pool lacks: a full pool costs no model call, three resolved cards cost three. What is
+  no longer a candidate (watched, kept, protected, gone) is retired. A proposal older than 30
+  days is judged afresh. One run judges at most 180 titles, so an empty pool fills over a few
+  runs. This replaces the split install's reserve of 30, which every run re-judged in full.
+- Tests: `tests/test_deletion_pool.py`, `tests/test_scoring_numerics.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

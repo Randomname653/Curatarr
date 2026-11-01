@@ -239,11 +239,12 @@ check("NaN corpus mean no longer shortlists a fitting title", "Fit" not in got)
 check("…and a far title still scores as far", "Far" in got)
 
 # keep-considerations reach the judge's whole range: the cap, plus the
-# titles reused verdicts let the run walk past (2026-10-22, verdict cache)
-_reach = eng.JUDGE_CAP * (1 + eng.REUSE_FACTOR)
+# titles reused verdicts let the run walk past (2026-10-22, verdict cache);
+# an empty pool (2026-11-01) runs at the per-run cap
+_reach = eng.RUN_JUDGE_MAX * (1 + eng.REUSE_FACTOR)
 got = run([item(f"Far {i}", 4, FAR) for i in range(_reach + 20)])
-check(f"considerations scored for the run's reach, {_reach} candidates (was 30, then 60)",
-      len(considered) == _reach == 180)
+check(f"considerations scored for the run's reach, {_reach} candidates (was 30, then 60, then 180)",
+      len(considered) == _reach == 540)
 
 # genre fallback band [0.3, 0.6]
 seed_taste(genres={"Drama": 1.0})
@@ -305,5 +306,43 @@ check("a deleted SHOW does not block a same-named movie", "Shared Name" in title
 check("a genuinely new title survives", "Fresh Pick" in titles)
 check("partition labels the bucket",
       lm.partition([{"title": "Gone Girl"}], {}, {}, lm.removed_index(1, "movie"))["removed"])
+
+# ── the pool (2026-11-01): a full pool judges nothing ───────────────────────
+# Twelve far titles, ten of them already open proposals in a pool of ten:
+# the run keeps the ten and never reaches the judge (the stub lane would
+# have stopped it), so no node or model is needed to keep the pool current.
+seed_taste(blob={"embedding": TASTE, "cal_p10": 0.0, "cal_p90": 0.9})
+_pool_items = []
+for _i in range(12):
+    _it = item(f"Pooled {_i}", 4, FAR)
+    _it["arr_id"] = 500 + _i
+    _pool_items.append(_it)
+with _session() as db:
+    db.query(DeletionProposal).delete()
+    for _i in range(10):
+        db.add(DeletionProposal(user_id=1, media_id=str(500 + _i), title=f"Pooled {_i}",
+                                service="radarr", category="movie", status="pending"))
+    db.add(DeletionProposal(user_id=1, media_id="999", title="No longer a candidate",
+                            service="radarr", category="movie", status="pending"))
+_saved_pool = settings.DELETION_POOL_SIZE
+settings.DELETION_POOL_SIZE = 10
+try:
+    eng.DELETION_RUN_SUMMARY.clear()
+    run(_pool_items)
+    _r = eng.DELETION_RUN_SUMMARY.get("movie") or {}
+    check("a full pool: the run ends without judging or stopping, its ten stand",
+          not _r.get("stopped") and _r.get("judged") == 0 and _r.get("kept") == 10)
+    check("...and saving it retires only the proposal that is no longer a candidate",
+          eng.pool_kept("movie") == {str(500 + i) for i in range(10)})
+    with _session() as db:
+        db.query(DeletionProposal).filter(DeletionProposal.media_id.in_(["507", "508", "509"])).delete()
+    run(_pool_items)
+    _r = eng.DELETION_RUN_SUMMARY.get("movie") or {}
+    check("three resolved: the run goes on to judge (here the stub lane stops it, so "
+          "nothing stored is retired)",
+          "test stops before the judge" in (_r.get("stopped") or "") and eng.pool_kept("movie") is None)
+finally:
+    settings.DELETION_POOL_SIZE = _saved_pool
+    eng.DELETION_RUN_SUMMARY.clear()
 
 check.done()
