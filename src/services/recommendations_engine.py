@@ -323,24 +323,39 @@ def _run_caps(open_slots: int) -> tuple:
     return open_slots, min(open_slots * JUDGE_PER_CUT, RUN_JUDGE_MAX)
 
 
-def _pooled(user_id: int, category: str) -> set:
-    """media_ids of the category's open proposals young enough to stand."""
+def _pooled(user_id: int, category: str) -> dict:
+    """{media_id: the profile that judged it} for the category's open
+    proposals young enough to stand."""
     from datetime import timedelta
     from src.database.models import DeletionProposal
     cutoff = datetime.utcnow() - timedelta(days=POOL_MAX_AGE_DAYS)
     with get_db_session() as db:
-        return {m for (m,) in db.query(DeletionProposal.media_id).filter(
+        return dict(db.query(DeletionProposal.media_id, DeletionProposal.judged_on).filter(
             DeletionProposal.user_id == user_id,
             DeletionProposal.status == "pending",
             DeletionProposal.category == category,
-            DeletionProposal.created_at >= cutoff)}
+            DeletionProposal.created_at >= cutoff).all())
 
 
-def _pool_plan(scored: list, pooled: set) -> tuple:
+# A verdict from a weaker profile than the run's host does not stand: the
+# PC, back from abroad, re-judges what the NAS judged without it. Unknown
+# profiles (NULL on older rows) rank as the current one, so they stand.
+_PROFILE_RANK = {"small": 0, "large": 1}
+
+
+def _outranked(judged_on, profile) -> bool:
+    if not judged_on or not profile:
+        return False
+    return _PROFILE_RANK.get(judged_on, 1) < _PROFILE_RANK.get(profile, 1)
+
+
+def _pool_plan(scored: list, pooled: dict, profile: str | None = None) -> tuple:
     """(kept, the candidates left to judge, target cuts, judge cap): a stored
-    proposal still among the scored candidates stands unjudged; the run
+    proposal still among the scored candidates stands unjudged, unless a
+    weaker profile than ``profile`` (this run's host) judged it; the run
     judges for the slots the pool lacks."""
-    kept = {str(c["item"].get("arr_id")) for c in scored} & set(pooled)
+    standing = {m for m, on in pooled.items() if not _outranked(on, profile)}
+    kept = {str(c["item"].get("arr_id")) for c in scored} & standing
     rest = [c for c in scored if str(c["item"].get("arr_id")) not in kept]
     return (kept, rest, *_run_caps(max(0, pool_size() - len(kept))))
 
@@ -575,13 +590,14 @@ def _failure_sentence(kinds: dict) -> str:
 def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
                          deferred: int = 0, fail_kinds: dict | None = None,
                          stopped: str = "", degraded: str = "",
-                         kept: set | None = None) -> dict:
+                         kept: set | None = None, fallback: str = "") -> dict:
     """Store one category's run for the Deletions banner. ``failed`` keeps
     its old meaning (titles that got no verdict because something broke);
     ``failed_by_kind`` / ``failed_reason`` say what broke, ``stopped``
     why the run ended before its cap — a game, or an Ollama outage — and
     ``degraded`` which signal the run had to score without (an unreadable
-    taste profile)."""
+    taste profile). ``fallback`` names the node the server judged without
+    (ollama_hosts.judge_fallback)."""
     kinds = {k: n for k, n in (fail_kinds or {}).items() if n}
     run = {
         "at": datetime.utcnow().isoformat(),
@@ -594,6 +610,7 @@ def _record_deletion_run(category: str, *, judged: int = 0, flagged: int = 0,
         "stopped": stopped,
         "degraded": degraded,
         "kept": len(kept or ()),
+        "fallback": fallback,
     }
     DELETION_RUN_SUMMARY[category] = run
     if kept is None:
@@ -642,6 +659,7 @@ def deletion_run_summary(category: str | None = None) -> dict | None:
     out["failed_reason"] = _failure_sentence(kinds)
     out["stopped"] = "; ".join(dict.fromkeys(r["stopped"] for r in runs if r.get("stopped")))
     out["degraded"] = "; ".join(dict.fromkeys(r["degraded"] for r in runs if r.get("degraded")))
+    out["fallback"] = next((r["fallback"] for r in runs if r.get("fallback")), "")
     return out
 
 
@@ -2546,17 +2564,20 @@ async def generate_deletion_proposals(
     kept: set = set()
     pooling = bool(getattr(settings, "PILLARS_ENABLED", False))
     if pooling:
-        kept, scored_candidates, target_cuts, judge_cap = _pool_plan(scored_candidates, pooled)
+        from src.services.ollama_hosts import routed_host
+        _host_now = routed_host("judge")
+        kept, scored_candidates, target_cuts, judge_cap = _pool_plan(
+            scored_candidates, pooled, getattr(_host_now, "profile", None))
         _reach = judge_cap * (1 + REUSE_FACTOR)
         if not target_cuts:
             _msg(f"{category}: the pool is full - {len(kept)} open proposals still stand, "
                  f"nothing to judge")
             logger.info("[deletions] %s: pool full (%d kept, %d retired), no judging",
-                        category, len(kept), len(pooled - kept))
+                        category, len(kept), len(pooled.keys() - kept))
             _record_deletion_run(category, degraded=taste_degraded, kept=kept)
             return []
         logger.info("[deletions] %s: pool keeps %d, retires %d, judges for %d open slot(s)",
-                    category, len(kept), len(pooled - kept), target_cuts)
+                    category, len(kept), len(pooled.keys() - kept), target_cuts)
 
     final_proposals = []
 
@@ -2598,6 +2619,14 @@ async def generate_deletion_proposals(
         # callers supersede only what a run actually judged).
         _record_deletion_run(category, stopped=f"waiting for {node_name()}")
         return []
+    # The node away for JUDGE_FALLBACK_HOURS: the server judges with its own
+    # model, and the banner says so.
+    from src.services.ollama_hosts import judge_fallback
+    _fallback = ""
+    if judge_fallback():
+        from src.services.pc_host import node_name
+        _fallback = node_name()
+        _msg(f"{category}: judged on this server's model while {_fallback} is away")
     pitch_model = await resolve_pitcher_model(judge_host.url)
     from src.services import verdict_cache
     # Stored verdicts are valid only for these exact weights.
@@ -3006,6 +3035,7 @@ async def generate_deletion_proposals(
                         "tmdb_id": item.get("tmdb_id"),
                         "latest_activity_at": item.get("latest_activity_at"),
                         "stagnant": (v == "STAGNANT"),
+                        "judged_on": judge_host.profile,
                         # The scheduler groups proposals by this key before
                         # writing rows; without it every nightly-scan proposal
                         # fell into the "movie" bucket (wrong tab + wrong
@@ -3067,7 +3097,7 @@ async def generate_deletion_proposals(
             deferred=(thin_skipped + misfiled_skipped + unchecked_skipped
                       + signal_unknown_skipped + watch_unknown_skipped),
             fail_kinds=dict(fail_kinds), stopped=stopped, degraded=taste_degraded,
-            kept=kept)
+            kept=kept, fallback=_fallback)
         return final_proposals
 
     # ── LEGACY taste-mismatch pitch path (PILLARS_ENABLED off) ────────────────
@@ -3404,6 +3434,7 @@ CRITICAL RULES AND GUARDRAILS:
                 "score_factors": _with_guard(_score_factors(cand), cand, _floor),
                 # A member asked to keep it: "Your call", never a plain cut.
                 "stagnant": bool(_keepers),
+                "judged_on": judge_host.profile,
                 "size_mb": size_mb,
                 "size_gb": round(size_mb / 1024, 1),
                 "arr_id": item.get("arr_id"),

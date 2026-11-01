@@ -391,7 +391,7 @@ export function _renderQueuedBanner(note) {
 
 export function _renderRunBanner(run) {
   document.getElementById('del-run-banner')?.remove();
-  if (!run || !(run.failed || run.deferred || run.stopped || run.degraded)) return;
+  if (!run || !(run.failed || run.deferred || run.stopped || run.degraded || run.fallback)) return;
   const banner = document.createElement('div');
   banner.id = 'del-run-banner';
   banner.setAttribute('role', 'status');
@@ -406,21 +406,24 @@ export function _renderRunBanner(run) {
   const stopped = run.stopped ? ` Stopped early: ${esc(run.stopped)}.` : '';
   // An unreadable taste profile: the run went on, but its ranking is weaker.
   const degraded = run.degraded ? ` Note: ${esc(run.degraded)}.` : '';
+  // The node away for JUDGE_FALLBACK_HOURS: this server's smaller model judged,
+  // and the node re-judges those proposals once it is back.
+  const fallback = run.fallback ? ` Judged on this server's model while ${esc(run.fallback)} is away; ${esc(run.fallback)} checks these again once it is back.` : '';
   if (run.failed && run.failed >= run.judged) {
     banner.className = 'banner danger';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.failed) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.stopped) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.degraded) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${degraded}${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${degraded}${fallback}${deferred}</div>${again}`;
   } else {
     banner.className = 'banner';
-    banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${deferred}</div>`;
+    banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${fallback}${deferred}</div>`;
   }
   const delContent = document.getElementById('del-content');
   delContent.parentNode.insertBefore(banner, delContent);

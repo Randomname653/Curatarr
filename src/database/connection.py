@@ -272,6 +272,8 @@ def _migrate_columns() -> None:
         ("deletion_proposals",    "soulsync_ban", "TEXT"),
         ("deletion_proposals",    "returned_at", "DATETIME"),
         ("deletion_proposals",    "returned_info", "TEXT"),
+        # Which profile's model judged it: the PC re-judges the NAS's verdicts.
+        ("deletion_proposals",    "judged_on", "VARCHAR(16)"),
         # A wish sent to SoulSync's wishlist, and what SoulSync said.
         ("music_wishes",          "soulsync", "TEXT"),
         # Redundant-version (duplicate) tracking on the tech profile.

@@ -329,6 +329,11 @@ class Settings(BaseSettings):
     # Enrichment (the summariser) stays on OLLAMA_ENDPOINT's card so both
     # cards work at once; true sends it to the PC while that one is free.
     ENRICH_ON_PC: bool = False
+    # Deletion runs wait for the PC, but not forever: once it has not been
+    # free for this many hours, the server judges with its own model, and
+    # the PC re-judges those proposals when it is back. Negative: always
+    # wait; 0: never wait.
+    JUDGE_FALLBACK_HOURS: int = 72
     # use_mmap on every call to OLLAMA_ENDPOINT / to the node's Ollama
     # (ollama_hosts.OllamaHost.runner). Unset: Ollama decides. Ollama on
     # Linux loaded the summariser without mmap and kept a 4.5 GB copy in RAM

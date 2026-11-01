@@ -34,12 +34,12 @@ def seed(rows):
         db.commit()
 
 
-def prop(mid, cat, conf, status="pending", title=None, age_days=0, svc=None):
+def prop(mid, cat, conf, status="pending", title=None, age_days=0, svc=None, on=None):
     return DeletionProposal(
         user_id=1, media_id=str(mid), title=title or f"{cat} {mid}", category=cat,
         service=svc or {"movie": "radarr", "music": "lidarr"}.get(cat, "sonarr"),
         confidence=conf, status=status, storage_mb=1024.0,
-        created_at=NOW - timedelta(days=age_days))
+        created_at=NOW - timedelta(days=age_days), judged_on=on)
 
 
 # ── the page ────────────────────────────────────────────────────────────────
@@ -79,10 +79,11 @@ check("protected titles are left out before the page is cut, so it is still full
       and not any(p["title"] in {f"anime {i}" for i in range(40, 50)} for p in p_prot["proposals"]))
 
 # ── what a run keeps ────────────────────────────────────────────────────────
-seed([prop(1, "anime", 0.5), prop(2, "anime", 0.5), prop(3, "anime", 0.5, age_days=31),
-      prop(4, "show", 0.5), prop(5, "anime", 0.5, status="rejected")])
-check("the pool is the category's pending proposals younger than 30 days",
-      eng._pooled(1, "anime") == {"1", "2"})
+seed([prop(1, "anime", 0.5, on="large"), prop(2, "anime", 0.5, on="small"),
+      prop(3, "anime", 0.5, age_days=31), prop(4, "show", 0.5),
+      prop(5, "anime", 0.5, status="rejected")])
+check("the pool is the category's pending proposals younger than 30 days, with the "
+      "profile that judged each", eng._pooled(1, "anime") == {"1": "large", "2": "small"})
 
 
 def cand(arr_id):
@@ -92,13 +93,29 @@ def cand(arr_id):
 saved = settings.DELETION_POOL_SIZE
 try:
     settings.DELETION_POOL_SIZE = 12
-    kept, rest, cuts, cap = eng._pool_plan([cand(1), cand(7), cand(8)], {"1", "2"})
+    kept, rest, cuts, cap = eng._pool_plan([cand(1), cand(7), cand(8)], {"1": None, "2": None})
     check("a stored proposal that is still a candidate stands; one that is not is not kept",
           kept == {"1"})
     check("...the run judges only the others, for the open slots, six verdicts a slot",
           [c["item"]["arr_id"] for c in rest] == [7, 8] and (cuts, cap) == (11, 66))
-    kept, rest, cuts, cap = eng._pool_plan([cand(i) for i in range(1, 15)], {str(i) for i in range(1, 13)})
+    kept, rest, cuts, cap = eng._pool_plan([cand(i) for i in range(1, 15)],
+                                           dict.fromkeys(map(str, range(1, 13))))
     check("a full pool judges nothing", (cuts, cap) == (0, 0) and len(kept) == 12)
+
+    # The node back from abroad: what the server's smaller model judged
+    # while it was away is judged again; its own verdicts and older rows
+    # (no profile) stand. The server keeps the node's verdicts.
+    pool = {"1": "small", "2": "large", "3": None, "4": "small"}
+    scored = [cand(i) for i in range(1, 6)]
+    kept, rest, cuts, cap = eng._pool_plan(scored, pool, "large")
+    check("the node re-judges the server's verdicts; its own and unknown ones stand",
+          kept == {"2", "3"} and [c["item"]["arr_id"] for c in rest] == [1, 4, 5]
+          and cuts == 10)
+    kept, *_ = eng._pool_plan(scored, pool, "small")
+    check("...the server keeps every verdict, the node's included", kept == {"1", "2", "3", "4"})
+    kept, *_ = eng._pool_plan(scored, pool, None)
+    check("...and with no judge host at all (the node away, no fallback yet) all stand",
+          kept == {"1", "2", "3", "4"})
     settings.DELETION_POOL_SIZE = 5000
     check("the pool size is clamped (10-200)", eng.pool_size() == 200)
 finally:

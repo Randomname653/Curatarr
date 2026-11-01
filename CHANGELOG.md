@@ -1335,6 +1335,18 @@ calls the download trigger.
   on the music server's index, and the Lidarr-cache warning is gone.
 - Tests: `tests/test_soulsync_wishlist.py`.
 
+**Deletion runs no longer wait for the node forever (2026-11-01).** On a split install the
+deletion verdicts came only from the node's large model; with the node away for weeks there
+were no new proposals at all. Once the node has not been free for `JUDGE_FALLBACK_HOURS`
+(72 by default; -1 always waits, 0 never does), the server judges with its own model.
+- The server keeps the time the node last took work, so a restart does not reset the clock.
+  A queued Analyze starts by itself once the server takes over, and its note says when that
+  will be.
+- Each proposal records which profile judged it (`judged_on`). When the node is back, its run
+  re-judges the proposals the server's smaller model made; the node's own verdicts and older
+  rows stand. The run banner says when the server judged without the node.
+- Tests: `tests/test_judge_fallback.py`, `tests/test_deletion_pool.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

@@ -284,6 +284,10 @@ class DeletionProposal(Base):
     # or deletes it again.
     returned_at = Column(DateTime, nullable=True)
     returned_info = Column(Text, nullable=True)
+    # The profile of the host whose model judged it ("large" / "small",
+    # ollama_hosts.OllamaHost.profile). A split install's PC re-judges what
+    # the NAS judged while it was away. NULL on older rows: they stand.
+    judged_on = Column(String(16), nullable=True)
 
     __table_args__ = (
         Index("idx_dp_user_status", "user_id", "status"),

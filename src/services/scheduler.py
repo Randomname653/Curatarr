@@ -812,6 +812,7 @@ async def job_arr_sync():
                             stagnant=p.get("stagnant", False),
                             score_factors=(json.dumps(p["score_factors"])
                                            if p.get("score_factors") else None),
+                            judged_on=p.get("judged_on"),
                         ))
                         added += 1
                 db.commit()
