@@ -184,6 +184,10 @@ const INTEGRATION_CARDS = [
     {id: 'embedding_model', label: 'Embedding model (changing it means re-embedding the library)'},
     {id: 'enable_pitcher', label: 'Dedicated deletion judge (two-bake split)', toggle: true},
     {id: 'base_pitcher_model', label: 'Judge model'},
+    {id: 'llm_profile', label: 'Curator profile', options: [
+      ['large', 'large: the full rules, 16k window'], ['small', 'small: a checklist, 8k window']]},
+    {id: 'curator_num_ctx', label: "Curator context window in tokens (0 = the profile's)", number: true},
+    {id: 'curator_num_gpu', label: 'Curator layers on the graphics card (-1 = Ollama decides, 99 = all)', number: true},
   ]},
   {key: 'gpu', title: 'Sharing the graphics card',
    hint: 'What happens while another program holds the card. Applies live, no restart.',
@@ -249,6 +253,12 @@ export function renderIntegrationCard(card, cfg) {
       return `<div class="my-8 form-group">
         <label for="int-${f.id}">${esc(f.label)} ${chip}</label>
         <div class="row"><input id="int-${f.id}" class="grow" type="password" autocomplete="new-password" placeholder="${isSet ? 'type to replace' : 'not set'}">${clear}</div></div>`;
+    }
+    if (f.options) {
+      const opts = f.options.map(([v, text]) => `<option value="${esc(v)}"${String(cur) === v ? ' selected' : ''}>${esc(text)}</option>`).join('');
+      return `<div class="my-8 form-group">
+      <label for="int-${f.id}">${esc(f.label)}</label>
+      <select class="w-auto" id="int-${f.id}">${opts}</select></div>`;
     }
     const type = f.number ? 'number' : 'text';
     return `<div class="my-8 form-group">

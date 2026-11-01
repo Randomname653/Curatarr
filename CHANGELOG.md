@@ -1353,6 +1353,17 @@ were no new proposals at all. Once the node has not been free for `JUDGE_FALLBAC
   and the card says why. An RT score or a count of minor wins does not count.
 - Tests: `tests/test_judge_fallback.py`, `tests/test_deletion_pool.py`.
 
+**The setup saves the curator profile (2026-11-01).** The wizard showed the bench's package
+for the card (`LLM_PROFILE`, `CURATOR_NUM_CTX`, `CURATOR_NUM_GPU`) only as lines to copy into
+`.env` by hand; an install that missed them ran with a 24 GB card's defaults. The wizard
+now fills a "Curator profile" section from the package and saves it, and the first bake
+uses that window. Settings > Integrations > Ollama & models shows and changes the same three
+values (validated: large or small, 0 or 4096-131072 tokens, -1 to 999 layers). A change asks
+for Rebuild models and a restart, and the rebuild bakes the new window, not the one the
+running process started with. The Ollama server's own settings (KV cache, flash attention)
+are still shown as lines to set on that server.
+- Tests: `tests/test_setup_coverage.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:
