@@ -14,7 +14,7 @@
   "test_backfill_pool.py": 1,
   "test_backup_retention.py": 3,
   "test_blob_integrity.py": 9,
-  "test_brand.py": 43,
+  "test_brand.py": 33,
   "test_bulk_delete.py": 3,
   "test_catalog_sync.py": 14,
   "test_cf_access.py": 2,
