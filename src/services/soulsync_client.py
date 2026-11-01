@@ -1,5 +1,6 @@
 """
-Curatarr — SoulSync client (LAN neighbour; read-only but for the blocklist).
+Curatarr — SoulSync client (LAN neighbour; read-only but for the blocklist
+and the owner's wishes).
 
 SoulSync (github.com/Nezreka/SoulSync) runs on the owner's server and
 aggregates music metadata through 10 background enrichment workers
@@ -11,10 +12,14 @@ Curatarr CONSUMES this as an extra metadata source: we never call
 /api/v1/request (download trigger); acquisition stays the owner's /
 SoulSync's domain. Every reader degrades to None when SoulSync is
 unconfigured or unreachable, so callers can treat it as a best-effort bonus.
-The one write is block_artist (owner decision 2026-10-09): an artist
-Curatarr deleted goes on SoulSync's blocklist, so its playlist sync,
-watchlist and backfill cannot fetch it again. It blocks downloads, never
-starts one, and never runs from a test process (writes_allowed).
+Two writes, neither from a test process (writes_allowed):
+- block_artist (owner decision 2026-10-09): an artist Curatarr deleted goes
+  on SoulSync's blocklist, so its playlist sync, watchlist and backfill
+  cannot fetch it again. It blocks downloads, never starts one.
+- wishlist_tracks (owner decision 2026-11-01): the owner's "Wish" puts the
+  tracks they streamed on Spotify onto SoulSync's wishlist, which SoulSync's
+  own Auto-Process Wishlist fetches. Still never /api/v1/request; the
+  blocklist gate on SoulSync's side refuses a banned artist.
 
 Field notes (probed live 2026-07-11): ``genres`` arrives as a list of
 JSON-ENCODED strings (['["Electronic"]']); per-album ``lastfm_tags`` arrives
@@ -364,3 +369,68 @@ async def block_artist(name: str, musicbrainz_id: Optional[str] = None, *,
     finally:
         if own:
             await c.aclose()
+
+
+def spotify_track_data(uri: str, name: str, artist: str, album: Optional[str] = None) -> Optional[dict]:
+    """SoulSync's wishlist entry for one streamed Spotify track, or None
+    without a track id. The id is the row's key; SoulSync searches by track,
+    artist and album name, and its blocklist gate reads the artist."""
+    track_id = (uri or "").rsplit(":", 1)[-1] if (uri or "").startswith("spotify:track:") else ""
+    if not track_id or not name:
+        return None
+    data = {"id": track_id, "name": name, "artists": [{"name": artist}], "uri": uri,
+            "provider": "spotify"}
+    if album:
+        data["album"] = {"name": album}
+    return data
+
+
+async def wishlist_tracks(tracks: list, *, client: Optional[httpx.AsyncClient] = None) -> dict:
+    """Put tracks on SoulSync's wishlist (POST /api/v1/wishlist, one per
+    track; measured from SoulSync's source 2026-11-01, commit 1d1e383).
+
+    201 is a new row, 200 one SoulSync already had (refreshed), 409 one its
+    gate refused - the blocklist, the ignore list or a duplicate - and 400
+    one it rejected. The first track SoulSync does not answer, or answers
+    403 (a read-only API key), ends the batch. Returns counts and a fixed
+    error sentence (the browser sees it, never an exception's text)."""
+    out = {"ok": False, "sent": 0, "added": 0, "already": 0, "refused": 0, "rejected": 0,
+           "error": None}
+    tracks = [t for t in tracks if t]
+    if not tracks:
+        out["error"] = "no Spotify tracks to send"
+        return out
+    if client is None and not writes_allowed():
+        out.update(error="SoulSync writes are off here", skipped=True)
+        return out
+    own = client is None
+    c = client or httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT)
+    try:
+        for t in tracks:
+            r = await c.post(_base() + "/wishlist", headers=_headers(), json={
+                "track_data": t, "source_type": "curatarr",
+                "failure_reason": "Wished in Curatarr (Spotify backlog)"})
+            if r.status_code in (401, 403):
+                out["error"] = (f"SoulSync refused the API key (HTTP {r.status_code}): "
+                                "adding to the wishlist needs an admin key")
+                break
+            out["sent"] += 1
+            if r.status_code == 201:
+                out["added"] += 1
+            elif r.status_code == 200:
+                out["already"] += 1
+            elif r.status_code == 409:
+                out["refused"] += 1
+            else:
+                out["rejected"] += 1
+                logger.info("[soulsync] wishlist: %r rejected (HTTP %s)", t.get("name"), r.status_code)
+    except httpx.HTTPError as e:
+        logger.info("[soulsync] wishlist: no answer (%s)", e)
+        out["error"] = "SoulSync could not be reached"
+    finally:
+        if own:
+            await c.aclose()
+    out["ok"] = out["sent"] > 0 and out["error"] is None
+    logger.info("[soulsync] wishlist: %d sent - %d new, %d already there, %d refused, %d rejected",
+                out["sent"], out["added"], out["already"], out["refused"], out["rejected"])
+    return out

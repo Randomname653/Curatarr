@@ -20,6 +20,7 @@ setup_wizard write_env helper (re-using the file format the wizard owns).
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -1111,9 +1112,10 @@ def list_wishes(user: User = Depends(get_current_user)):
                    # the one who asked may take a wish back.
                    "wished_by": names.get(w.user_id, f"user {w.user_id}"),
                    "own": w.user_id == user.id,
-                   "can_remove": bool(user.is_admin) or w.user_id == user.id}
+                   "can_remove": bool(user.is_admin) or w.user_id == user.id,
+                   "soulsync": _json_or_none(w.soulsync)}
                   for w in rows]
-    return {"wishes": wishes, "total": len(wishes)}
+    return {"wishes": wishes, "total": len(wishes), "soulsync_ready": _soulsync_ready()}
 
 
 @router.post("/wish")
@@ -1167,6 +1169,79 @@ def remove_wish(wish_id: int, user: User = Depends(get_current_user)):
             raise HTTPException(404, "no such wish")
         w.resolved_at = datetime.utcnow()
     return {"ok": True}
+
+
+def _soulsync_ready() -> bool:
+    """SoulSync is set up, so the owner's wishes can go to its wishlist."""
+    from src.services.soulsync_client import _configured
+    return _configured()
+
+
+def _json_or_none(raw):
+    try:
+        return json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
+# A wish sends at most this many of the artist's streamed tracks.
+_WISH_TRACKS_MAX = 100
+
+
+def _wish_spotify_tracks(user_id: int, artist: str) -> list:
+    """What ``user_id`` streamed on Spotify by ``artist`` and the music
+    server does not have, as SoulSync wishlist entries, most played first."""
+    from sqlalchemy import func
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    from src.services.soulsync_client import spotify_track_data
+    with get_db_session() as db:
+        rows = (db.query(W.spotify_uri, func.max(W.title), func.max(W.album))
+                .filter(W.user_id == user_id, W.media_type == "music", W.source == "spotify",
+                        W.plex_item_id.like("spotify%"), W.spotify_uri.like("spotify:track:%"),
+                        func.lower(W.series_title) == (artist or "").strip().lower())
+                .group_by(W.spotify_uri)
+                .order_by(func.count(W.id).desc(), func.max(W.title))
+                .limit(_WISH_TRACKS_MAX).all())
+    return [d for d in (spotify_track_data(u, t, artist, a) for u, t, a in rows) if d]
+
+
+@router.post("/wish/{wish_id}/soulsync")
+async def send_wish_to_soulsync(wish_id: int, user: User = Depends(require_admin)):
+    """The owner sends a wish to SoulSync's wishlist (owner decision
+    2026-11-01): the tracks the wisher streamed on Spotify by that artist,
+    which SoulSync's Auto-Process Wishlist then fetches. Owner only - a
+    member's wish waits for the owner's click, so nothing is downloaded on a
+    member's say. A banned artist is refused by SoulSync's own gate."""
+    from src.database.connection import get_db_session
+    from src.database.models import MusicWish
+    from src.database.runner import run_read, run_write
+    from src.services.soulsync_client import wishlist_tracks
+
+    def _load():
+        with get_db_session() as db:
+            w = (db.query(MusicWish)
+                 .filter(MusicWish.id == wish_id, MusicWish.resolved_at.is_(None)).first())
+            return (w.user_id, w.title) if w else None
+
+    found = await run_read(_load)
+    if not found:
+        raise HTTPException(404, "No open wish with that id")
+    if not _soulsync_ready():
+        raise HTTPException(409, "SoulSync is not set up (SOULSYNC_URL and SOULSYNC_API_KEY)")
+    tracks = await run_read(_wish_spotify_tracks, *found)
+    res = await wishlist_tracks(tracks)
+    if res.get("sent"):
+        note = {k: res[k] for k in ("sent", "added", "already", "refused", "rejected")}
+        note["at"] = datetime.utcnow().isoformat()
+
+        def _store():
+            with get_db_session() as db:
+                w = db.get(MusicWish, wish_id)
+                if w:
+                    w.soulsync = json.dumps(note)
+        await run_write(_store)
+    return res
 
 
 class ReEnrichRequest(BaseModel):
@@ -1658,6 +1733,7 @@ def spotify_backlog(
     # add button stays clickable; Lidarr will return 400 if it's truly
     # already there, which we already surface to the user).
     in_lidarr: set[str] = set()
+    library_checked = False
     lidarr_hit = _LIB_CACHE.get("lidarr") if all(_get_arr_url_key("lidarr")) else None
     if lidarr_hit:
         for raw in lidarr_hit.get("items_raw", []):
@@ -1668,6 +1744,7 @@ def spotify_backlog(
     try:
         from src.services.lyrics import plex_artists
         in_lidarr.update(a["mbid"] for a in plex_artists() if a.get("mbid"))
+        library_checked = True
     except Exception as e:
         logger.warning("[backlog] plex index unavailable: %s", e)
 
@@ -1778,8 +1855,11 @@ def spotify_backlog(
             # 16o: only counts artists in the current visible page (matches
             # the per-card "in_lidarr" flags). Lidarr cache absent → 0.
             "lidarr_cache_loaded":    bool(lidarr_hit),
+            # Without Lidarr the music server's index is the library (2026-11-01).
+            "library_checked":        bool(lidarr_hit) or library_checked,
             "in_lidarr_visible":      in_lidarr_count,
         },
+        "soulsync_ready":  _soulsync_ready(),
     }
 
 

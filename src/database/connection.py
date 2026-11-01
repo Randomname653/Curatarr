@@ -272,6 +272,8 @@ def _migrate_columns() -> None:
         ("deletion_proposals",    "soulsync_ban", "TEXT"),
         ("deletion_proposals",    "returned_at", "DATETIME"),
         ("deletion_proposals",    "returned_info", "TEXT"),
+        # A wish sent to SoulSync's wishlist, and what SoulSync said.
+        ("music_wishes",          "soulsync", "TEXT"),
         # Redundant-version (duplicate) tracking on the tech profile.
         ("media_tech_profiles",   "versions", "INTEGER DEFAULT 1"),
         ("media_tech_profiles",   "redundant_mb", "FLOAT DEFAULT 0"),

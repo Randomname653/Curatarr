@@ -517,11 +517,21 @@ export async function renderSpotifyBacklog(svc) {
   // Pass 16o: stats also tell us whether the Lidarr cache cross-check ran.
   const inLidarrVisible = stats.in_lidarr_visible || 0;
   const lidarrCacheLoaded = !!stats.lidarr_cache_loaded;
+  // Without Lidarr the music server's index is the library, and a wish is
+  // what the button makes - sent on to SoulSync when it is set up.
+  const viaPlex = _arrMusicSource === 'plex';
+  const libChecked = viaPlex ? !!stats.library_checked : lidarrCacheLoaded;
+  const libName = viaPlex ? 'the library' : 'Lidarr';
+  const hint = !viaPlex
+    ? "artists you stream on Spotify but don't own locally — one click adds them to Lidarr with your saved defaults and the <code>curatarr</code> tag"
+    : data.soulsync_ready && state.currentUser?.is_admin
+      ? "artists you stream on Spotify but don't own — Wish puts the tracks you played on SoulSync's wishlist, and SoulSync fetches them"
+      : "artists you stream on Spotify but don't own — Wish adds them to Wanted";
 
   const header = `
     <section class="section">
       <div class="section-head"><h3>Spotify backlog</h3>
-        <span class="section-hint">artists you stream on Spotify but don't own locally — one click adds them to Lidarr with your saved defaults and the <code>curatarr</code> tag</span>
+        <span class="section-hint">${hint}</span>
         <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderSpotifyBacklog', svc)}>Refresh</button></div>
       </div>
       <div class="section-body">
@@ -529,17 +539,19 @@ export async function renderSpotifyBacklog(svc) {
           <span><b>${total}</b> <span class="t3">unique artists</span></span>
           <span><b class="t-success">${resolved}</b> <span class="t3">MBID resolved (${pct}%)</span></span>
           <span><b class="t-amber">${pending}</b> <span class="t3">pending lookup</span></span>
-          ${lidarrCacheLoaded ? `<span><b class="t-success">${inLidarrVisible}</b> <span class="t3">already in Lidarr (this page)</span></span>` : ''}
+          ${libChecked ? `<span><b class="t-success">${inLidarrVisible}</b> <span class="t3">already in ${libName} (this page)</span></span>` : ''}
           <div class="row row-end">
             <label class="chip${st.only_resolved ? ' active' : ''}" title="Only artists whose MusicBrainz ID has been resolved by Phase 1.4 of the music pipeline — the ones with a clickable Add button.">
               <input type="checkbox" ${st.only_resolved ? 'checked' : ''} ${actOn('change', 'onBacklogOnlyResolved', svc, EL)}> Resolved only</label>
-            <label class="chip${st.not_added_only ? ' active' : ''}${lidarrCacheLoaded ? '' : ' dim'}"
-                   title="${lidarrCacheLoaded ? 'Hide artists already in your Lidarr library. Combines with the resolved filter so you see exactly the queue you have not added yet.' : 'Lidarr cache not loaded — this filter is inactive until the Lidarr tab is opened once.'}">
-              <input type="checkbox" ${st.not_added_only ? 'checked' : ''} ${actOn('change', 'onBacklogNotAddedOnly', svc, EL)} ${lidarrCacheLoaded ? '' : 'disabled'}> Not in Lidarr yet</label>
+            <label class="chip${st.not_added_only ? ' active' : ''}${libChecked ? '' : ' dim'}"
+                   title="${libChecked ? `Hide artists already in ${libName}. Combines with the resolved filter so you see exactly the queue you have not added yet.` : (viaPlex ? 'The music index could not be read — this filter is inactive.' : 'Lidarr cache not loaded — this filter is inactive until the Lidarr tab is opened once.')}">
+              <input type="checkbox" ${st.not_added_only ? 'checked' : ''} ${actOn('change', 'onBacklogNotAddedOnly', svc, EL)} ${libChecked ? '' : 'disabled'}> Not in ${libName} yet</label>
           </div>
         </div>
         ${pending > 0 && !st.only_resolved ? '<p class="italic fs-11 t3 mt-8">Pending artists are still being looked up by Phase 1.4 of the music pipeline; they become addable once their MusicBrainz ID is resolved.</p>' : ''}
-        ${!lidarrCacheLoaded ? '<p class="italic fs-11 t-amber mt-8" title="The Lidarr library cache has not been loaded yet — the already-in-Lidarr badges appear after the next refresh.">Lidarr cache not loaded yet — duplicates are not flagged. Open the Lidarr tab once or wait for the next 30-min refresh.</p>' : ''}
+        ${libChecked ? '' : viaPlex
+          ? '<p class="italic fs-11 t-amber mt-8">The music index could not be read — artists you already have are not flagged.</p>'
+          : '<p class="italic fs-11 t-amber mt-8" title="The Lidarr library cache has not been loaded yet — the already-in-Lidarr badges appear after the next refresh.">Lidarr cache not loaded yet — duplicates are not flagged. Open the Lidarr tab once or wait for the next 30-min refresh.</p>'}
       </div>
     </section>
   `;
@@ -547,7 +559,7 @@ export async function renderSpotifyBacklog(svc) {
   const artists = data.artists || [];
   if (artists.length === 0) {
     const reason = st.not_added_only
-      ? 'No Spotify-only artists are missing from Lidarr — either every top artist is added already, or loosen a filter to see more.'
+      ? `No Spotify-only artists are missing from ${libName} — either every top artist is there already, or loosen a filter to see more.`
       : st.only_resolved
         ? 'No resolved artists yet — run the music pipeline, or loosen the "Resolved only" filter.'
         : 'No Spotify-only plays found — import your Spotify history first (Users → Spotify history import).';
@@ -649,11 +661,52 @@ export async function wishArtist(svc, idx, btn) {
   btnBusy(btn, 'Wishing…');
   try {
     const w = await api('/api/library/wish', 'POST', { title: a.artist_name, mbid: a.mbid || null, source: 'backlog' });
-    btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
+    if (w.in_library) { btnDone(btn, 'In library', {keepDisabled: true}); return; }
+    // The owner's wish goes straight on to SoulSync's wishlist (2026-11-01).
+    if (st.data?.soulsync_ready && state.currentUser?.is_admin) {
+      btnBusy(btn, 'Sending…');
+      const r = await sendWishToSoulSync(w.id, a.artist_name);
+      btnDone(btn, r?.ok ? 'On SoulSync' : 'Wished', {keepDisabled: true});
+      return;
+    }
+    btnDone(btn, 'Wished', {keepDisabled: true});
   } catch (e) {
     toast(_errMsg(e), 'danger', {ms: 8000});
     btnDone(btn);
   }
+}
+
+// One wish onto SoulSync's wishlist: the tracks the wisher streamed by that
+// artist (routers/library.send_wish_to_soulsync). Says what SoulSync did.
+async function sendWishToSoulSync(id, title) {
+  try {
+    const r = await api(`/api/library/wish/${encodeURIComponent(id)}/soulsync`, 'POST');
+    if (r.ok) {
+      const parts = [`${r.added} new`, r.already ? `${r.already} already there` : '',
+                     r.refused ? `${r.refused} refused (blocklist or ignore list)` : ''].filter(Boolean);
+      toast(`"${title}" on SoulSync's wishlist: ${parts.join(', ')}`, r.added || r.already ? 'success' : 'amber');
+    } else {
+      toast(`"${title}" is wished, but not on SoulSync: ${r.error || 'nothing was sent'}`, 'amber', {ms: 8000});
+    }
+    return r;
+  } catch (e) {
+    toast(`"${title}" is wished, but not on SoulSync: ${_errMsg(e)}`, 'amber', {ms: 8000});
+    return null;
+  }
+}
+
+export async function sendWantedToSoulSync(id, btn) {
+  const title = btn?.closest('.panel-item')?.dataset.title || 'The wish';
+  btnBusy(btn, 'Sending…');
+  await sendWishToSoulSync(id, title);
+  renderWanted('lidarr');
+}
+
+function _soulsyncBadge(s) {
+  if (!s) return '';
+  const when = s.at ? _fmtRel(s.at) : '';
+  const tip = `Sent to SoulSync's wishlist ${when}: ${s.added || 0} new, ${s.already || 0} already there, ${s.refused || 0} refused`;
+  return `<span class="badge muted badge-sm" title="${escAttr(tip)}">SoulSync: ${(s.added || 0) + (s.already || 0)} tracks</span>`;
 }
 
 export async function renderWanted(svc) {
@@ -667,11 +720,12 @@ export async function renderWanted(svc) {
     return;
   }
   const rows = data.wishes || [];
+  const canSend = !!data.soulsync_ready && !!state.currentUser?.is_admin;
   const body = rows.length ? rows.map(w => `
-    <div class="panel-item">
+    <div class="panel-item" data-title="${escAttr(w.title)}">
       <div class="panel-item-head">
-        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? `<span class="badge success badge-sm" title="${serverLabel()} has the artist now">in library</span>` : ''}${w.deleted ? DELETED_BADGE : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}</div>
-        <div class="panel-actions">${w.can_remove ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>${w.own ? 'Take back' : 'Remove'}</button>` : ''}</div>
+        <div class="panel-item-title">${esc(w.title)} ${w.in_library ? `<span class="badge success badge-sm" title="${serverLabel()} has the artist now">in library</span>` : ''}${w.deleted ? DELETED_BADGE : ''}<span class="badge muted badge-sm">${esc(w.source)}</span>${w.mbid ? '<span class="badge muted badge-sm" title="MusicBrainz id known">MBID</span>' : ''}${_soulsyncBadge(w.soulsync)}</div>
+        <div class="panel-actions">${canSend && !w.in_library ? `<button type="button" class="btn btn-secondary btn-sm" ${act('sendWantedToSoulSync', w.id, EL)} title="Put the tracks this artist was streamed with on SoulSync's wishlist">${w.soulsync ? 'Send again' : 'Send to SoulSync'}</button>` : ''}${w.can_remove ? `<button type="button" class="btn btn-secondary btn-sm" ${act('removeWish', w.id, EL)}>${w.own ? 'Take back' : 'Remove'}</button>` : ''}</div>
       </div>
       <div class="panel-item-meta">wished by ${w.own ? 'you' : esc(w.wished_by || 'someone')} ${w.created_at ? _fmtRel(w.created_at) : ''}${w.note ? ` · ${esc(w.note)}` : ''}</div>
     </div>`).join('')
@@ -679,7 +733,7 @@ export async function renderWanted(svc) {
   contentEl.innerHTML = `<section class="section">
     <div class="section-head">
       <h3>Wanted <span class="badge muted badge-sm">${rows.length}</span></h3>
-      <span class="section-hint">Artists anyone in the household asked for while no arr is configured. The owner fulfils them in SoulSync; the badge turns green once ${serverLabel()} has them.</span>
+      <span class="section-hint">Artists anyone in the household asked for while no arr is configured. ${canSend ? "Send to SoulSync puts the tracks they streamed on SoulSync's wishlist" : 'The owner fulfils them in SoulSync'}; the badge turns green once ${serverLabel()} has them.</span>
       <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('renderWanted', svc)}>Refresh</button></div>
     </div>
     <div class="section-body">${body}</div></section>`;

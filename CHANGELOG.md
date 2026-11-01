@@ -1322,6 +1322,19 @@ tab. Protected titles are left out before a page is cut, so a page is never shor
   runs. This replaces the split install's reserve of 30, which every run re-judged in full.
 - Tests: `tests/test_deletion_pool.py`, `tests/test_scoring_numerics.py`.
 
+**A wish goes to SoulSync's wishlist (2026-11-01).** Without Lidarr, "Wish" on the Spotify
+backlog only filed a wish the owner then fulfilled by hand in SoulSync. The owner's wish now
+puts the tracks they streamed by that artist on SoulSync's wishlist, most played first, at
+most 100 (`POST /api/v1/wishlist`, one entry per track). SoulSync's Auto-Process Wishlist then
+fetches them. A banned artist is refused by SoulSync's own blocklist gate. Curatarr still never
+calls the download trigger.
+- A household member's wish still waits: the Wanted list gives the owner "Send to SoulSync" for
+  it and shows what SoulSync did (new, already there, refused).
+- The SoulSync API key needs the admin scope; a read-only key is reported as such.
+- Without Lidarr the backlog page no longer talks about Lidarr: "Not in the library yet" filters
+  on the music server's index, and the Lidarr-cache warning is gone.
+- Tests: `tests/test_soulsync_wishlist.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:
