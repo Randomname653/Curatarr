@@ -705,11 +705,13 @@ async def job_arr_sync():
                             message=f"Analysing {len(arr_items)} items "
                                     f"(across movie/show/anime/music)")
         all_proposals = []
+        ran_cats: list = []
         processed = 0
         for cat in ["movie", "show", "anime", "music"]:
             cat_items = [i for i in arr_items if i.get("category") == cat]
             if not cat_items:
                 continue
+            ran_cats.append(cat)
             task_monitor.update(
                 task,
                 message=f"Analysing {cat}: {len(cat_items)} candidates "
@@ -738,24 +740,24 @@ async def job_arr_sync():
                         f"{processed:,}/{len(arr_items):,}",
             )
 
-        if not all_proposals:
+        # A pool run that judged nothing new still saves: it retires the
+        # proposals that are no longer candidates (_replace_scope).
+        from src.services.recommendations_engine import pool_kept
+        if not all_proposals and not any(pool_kept(c) is not None for c in ran_cats):
             await run_write(release_state_lock, "deletion_run")
             _dr_locked = False
             task_monitor.done(task, "No deletion proposals generated")
             return
 
-        # Group proposals by category and replace them wholesale — same logic as
-        # the manual refresh in the recommendations router.  This ensures:
-        #   • old proposals (including NULL-category legacy rows) are wiped
-        #   • every new row gets the correct category column set
-        #   • no stale duplicates survive across scheduler runs
-        from sqlalchemy import or_, and_
+        # Per category: retire what the run may (the same rule as the manual
+        # Analyze, routers/recommendations._replace_scope), then insert the
+        # new rows with their category column set.
         from src.services.music_source import music_service
         # music_service opens a SQLite file - keep it off the loop.
         _music_svc = await asyncio.to_thread(music_service)
         _CAT_TO_SVC = {"movie": "radarr", "show": "sonarr", "anime": "sonarr",
                        "music": _music_svc or "lidarr"}
-        by_cat: dict[str, list] = {}
+        by_cat: dict[str, list] = {c: [] for c in ran_cats}
         for p in all_proposals:
             by_cat.setdefault(p.get("category", "movie"), []).append(p)
 
@@ -767,46 +769,28 @@ async def job_arr_sync():
                 # Proposals of an arr switched off since (Lidarr, 2026-10-06) can
                 # never be carried out; the step below only supersedes pending
                 # rows of re-proposed categories, so limbo ones stayed for good.
-                from src.routers.recommendations import _retire_switched_off
+                from src.routers.recommendations import _replace_scope, _retire_switched_off
                 _retire_switched_off(db, user_id)
                 for cat, cat_proposals in by_cat.items():
-                    svc = _CAT_TO_SVC.get(cat, "")
                     # Pass 90b: SUPERSEDE stale pending rows instead of
-                    # hard-DELETE (handles both category-column match AND
-                    # legacy NULL-category rows by service). The earlier
-                    # hard-delete freed ROWIDs that SQLite (without
-                    # AUTOINCREMENT) reused for the new INSERTs below; stale
-                    # frontend caches holding old proposal_ids then resolved
-                    # to the WRONG title on follow-up requests (see Pass 90a's
-                    # commentary in chat.py). Soft-delete preserves IDs (no
-                    # reuse possible for these rows), gives us a superseded-
-                    # audit-trail, and is silently ignored by every status
-                    # filter elsewhere in the codebase (all look for
-                    # ``pending`` / ``limbo`` / ``rejected`` / ``deleted``).
-                    # A category the run stopped in (the node got busy) replaces
-                    # only the titles it proposed again; one judged to the end
-                    # replaces all of its stored proposals (same rule as the
-                    # manual Analyze, recommendations_engine.run_judged_everything).
-                    from src.services.recommendations_engine import run_judged_everything
-                    whole = or_(
-                        DeletionProposal.category == cat,
-                        and_(
-                            DeletionProposal.category.is_(None),
-                            DeletionProposal.service == svc,
-                        ),
-                    )
-                    mine = (whole if run_judged_everything(cat) else and_(
-                        DeletionProposal.category == cat,
-                        DeletionProposal.media_id.in_(
-                            [str(p.get("arr_id", "")) for p in cat_proposals])))
-                    db.query(DeletionProposal).filter(
-                        DeletionProposal.user_id == user_id,
-                        DeletionProposal.status == "pending",
-                        mine,
-                    ).update(
-                        {"status": "superseded", "resolved_at": datetime.utcnow()},
-                        synchronize_session=False,
-                    )
+                    # hard-DELETE. The earlier hard-delete freed ROWIDs that
+                    # SQLite (without AUTOINCREMENT) reused for the new INSERTs
+                    # below; stale frontend caches holding old proposal_ids
+                    # then resolved to the WRONG title on follow-up requests
+                    # (see Pass 90a's commentary in chat.py). Soft-delete
+                    # preserves IDs, gives us a superseded-audit-trail, and is
+                    # silently ignored by every status filter elsewhere.
+                    mine = _replace_scope(cat, _CAT_TO_SVC.get(cat, ""),
+                                          [p.get("arr_id") for p in cat_proposals])
+                    if mine is not None:
+                        db.query(DeletionProposal).filter(
+                            DeletionProposal.user_id == user_id,
+                            DeletionProposal.status == "pending",
+                            mine,
+                        ).update(
+                            {"status": "superseded", "resolved_at": datetime.utcnow()},
+                            synchronize_session=False,
+                        )
 
                     for p in cat_proposals:
                         db.add(DeletionProposal(

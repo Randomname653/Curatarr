@@ -181,9 +181,8 @@ sch_src = (ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
 check("a run that waits for its node records itself as stopped",
       '_record_deletion_run(category, stopped=f"waiting for {node_name()}")' in eng_src)
 check("Analyze (all categories) supersedes per category, by what each run judged",
-      "if run_judged_everything(_c):" in rec_src and "DeletionProposal.media_id.in_(ids)" in rec_src
-      and "old_q.filter(or_(*conds) if conds else false())" in rec_src)
-check("...and so does the scheduled scan", "run_judged_everything(cat)" in sch_src)
+      "_replace_scope(_c," in rec_src and "old_q.filter(or_(*conds) if conds else false())" in rec_src)
+check("...and so does the scheduled scan", "_replace_scope(cat," in sch_src)
 
 # ── music credits do not trip the outage breaker ────────────────────────────
 from src.routers.enrichment import _looks_like_credit  # noqa: E402

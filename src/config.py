@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     # fallback for constrained setups (the wizard's write_env doesn't emit
     # this key, so a fresh install gets THIS value, not .env.example's).
     PILLARS_ENABLED: bool = True
+    # Open deletion proposals each category keeps (recommendations_engine's
+    # pool): the Deletions view pages through them ten at a time, and a run
+    # judges only as many new titles as the pool lacks. Clamped to 10-200.
+    DELETION_POOL_SIZE: int = 50
     # Autonomous self-learning: capture generalizable curation principles from
     # the owner's DEBATES with the curator (shadow), novelty-check them, and
     # inject the ACTIVE ones into the judge. On by default — a captured

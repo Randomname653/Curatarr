@@ -108,8 +108,8 @@ cache.close()
 
 # ── wiring ───────────────────────────────────────────────────────────────────
 router = (ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
-check("both deletion-list paths attach tags off the event loop",
-      router.count("await asyncio.to_thread(attach_tags,") == 2)
+check("the deletion list attaches tags off the event loop (one path serves load and run)",
+      router.count("await asyncio.to_thread(attach_tags,") == 1)
 js = (ROOT / "frontend/js/deletions.js").read_text(encoding="utf-8")
 check("the card renders the server's tags, themes in their own style",
       "Array.isArray(p.tags)" in js and "badge theme badge-sm" in js)
