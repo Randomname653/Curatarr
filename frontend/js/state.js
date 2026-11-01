@@ -6,7 +6,9 @@ export const state = {
   taskEventSource: null,
   currentDelCategory: null,
   _delProposalsAll: null,   // the Deletions cards on screen (pages loaded so far)
-  _delPage: null,           // the server's {total, total_gb, counts} for that tab
+  _delPage: null,
+  // The wizard's last bench package (setup.js onSetupCuratorChange).
+  setupPackage: null,           // the server's {total, total_gb, counts} for that tab
   _kbTab: 'overview',
   discoverSections: [],
   currentRecsLane: 'all',

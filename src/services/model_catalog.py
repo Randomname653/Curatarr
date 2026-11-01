@@ -313,6 +313,20 @@ def tier_for(vram_gb: float | None, tiers) -> str | None:
     return str(max(fits)) if fits else None
 
 
+def profiles_by_model(entries: list) -> dict:
+    """{model: {"profile", "num_ctx", "num_gpu"}} for every package the bench
+    measured at one card size: the wizard and Settings fill the curator
+    profile for the model actually chosen, not only for the recommended one
+    (on 16 GB gemma4:e4b runs small / 8192 / 99, the MoE large / 16384 / -1)."""
+    out = {}
+    for e in entries:
+        model = (e or {}).get("model")
+        if model and model not in out and e.get("profile"):
+            out[model] = {"profile": e["profile"], "num_ctx": e.get("num_ctx"),
+                          "num_gpu": e.get("num_gpu")}
+    return out
+
+
 def hardware_package(vram_gb: float | None, gpu_name: str | None = None,
                      installed: set[str] | None = None,
                      matrix: dict | None = None,
@@ -352,6 +366,7 @@ def hardware_package(vram_gb: float | None, gpu_name: str | None = None,
             ram_fallback = {"instead_of": None, "needs_gb": need, "host_gb": ram_gb}
     out = {"tier_gb": int(tier), "recommended": dict(rec),
            "alternatives": alts, "ram_fallback": ram_fallback,
+           "by_model": profiles_by_model([rec, *alts]),
            "bench": {"generated": matrix.get("generated"),
                      "bench_version": matrix.get("bench_version")}}
     measured_on = (rec.get("measured_on") or {}).get("gpu")

@@ -1362,7 +1362,13 @@ values (validated: large or small, 0 or 4096-131072 tokens, -1 to 999 layers). A
 for Rebuild models and a restart, and the rebuild bakes the new window, not the one the
 running process started with. The Ollama server's own settings (KV cache, flash attention)
 are still shown as lines to set on that server.
-- Tests: `tests/test_setup_coverage.py`.
+- The values follow the curator actually chosen. The bench measured several packages per card
+  size (on 16 GB the MoE runs large / 16384 / -1, gemma4:e4b small / 8192 / 99), and picking
+  another curator in the wizard takes that model's values. A model the bench has not measured
+  at that size keeps the fields and says so.
+- Settings fills the three from the bench too: "Use the bench's values" takes the card size
+  you pick, or this host's card, and fills them for the configured curator, ready to save.
+- Tests: `tests/test_setup_coverage.py`, `tests/test_model_catalog.py`.
 
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
