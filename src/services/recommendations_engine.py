@@ -2992,15 +2992,17 @@ async def generate_deletion_proposals(
                                "_guard": "household_floor",
                                "_guard_detail": _claim}
                     v = "STAGNANT"
-                # STATURE FLOOR: the server judging without the node. Its
-                # smaller model argued away a major honour the node keeps a
-                # title for (frozen evidence, 2026-11-01); a CUT on such a
-                # title is the owner's call until the node judges it again.
+                # STATURE FLOOR: a major honour in the evidence (Emmy, Grammy,
+                # Oscar, ...) never ends in a CUT. Replayed over 20 benchmarked
+                # judges on the frozen 2026-10-16 evidence, nearly every such
+                # CUT was a title gemma4:31b keeps (SpongeBob's Emmys, a Grammy
+                # winner, Watchmen, Vikings); the 31b itself cut one (Star Wars
+                # Rebels). Not a keep either: the owner decides.
                 _honours = (ev.get("flags") or {}).get("major_honours")
-                if v == "CUT" and _fallback and _honours:
+                if v == "CUT" and _honours:
                     stature_floored += 1
-                    logger.info("[deletions] %s: CUT on %r from the server's model "
-                                "turned into the owner's call - %s (stature floor)",
+                    logger.info("[deletions] %s: CUT on %r turned into the owner's "
+                                "call - %s (stature floor)",
                                 category, item.get("title"), ", ".join(_honours))
                     verdict = {**verdict, "verdict": "STAGNANT",
                                "_guard": "stature_floor",
@@ -3101,8 +3103,8 @@ async def generate_deletion_proposals(
                 if signal_unknown_skipped else "")
              + (f" ({household_floored} turned into 'Your call': another "
                 f"household member engaged)" if household_floored else "")
-             + (f" ({stature_floored} turned into 'Your call': major honours, "
-                f"judged without {_fallback})" if stature_floored else "")
+             + (f" ({stature_floored} turned into 'Your call': major honours)"
+                if stature_floored else "")
              + (f" ({sum(fail_kinds.values())} failed: "
                 f"{_failure_sentence(dict(fail_kinds))})" if fail_kinds else "")
              + (f" — stopped early: {stopped}" if stopped else "")

@@ -347,8 +347,8 @@ console.log(JSON.stringify(out));
     check("Why? renders for a guard-only row", "btn-why" in out.get("btn", ""))
     check("...its panel carries the household-floor sentence", "someone else in your household" in out.get("panel", ""))
     check("no factors and no guard: still no button", out.get("none") == "")
-    check("the stature floor says the server's model leaned to a cut of an honoured title",
-          "major honours" in out.get("stature", "") and "main curator was away" in out.get("stature", ""))
+    check("the stature floor says the curator leaned to a cut of an honoured title",
+          "leaned toward cutting it, but it carries major honours" in out.get("stature", ""))
     check("Escape inside an open panel closes it and returns focus", out.get("closed") is True)
 
 

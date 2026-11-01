@@ -154,10 +154,10 @@ check("the run records the node the server judged without",
 eng.DELETION_RUN_SUMMARY.clear()
 
 # ── the stature floor ───────────────────────────────────────────────────────
-# The server's model argued away SpongeBob's Emmys and a Grammy winner's
-# stature (frozen evidence, 2026-11-01); its CUT on a title with a major
-# honour becomes the owner's call. Narrow: an RT score or "63 wins" is no
-# major honour - two thirds of the right CUTs carry those.
+# Judges below the large model argued away SpongeBob's Emmys and a Grammy
+# winner's stature (frozen evidence, 2026-11-01); any judge's CUT on a title
+# with a major honour becomes the owner's call. Narrow: an RT score or "63
+# wins" is no major honour - two thirds of the right CUTs carry those.
 from src.services import pillars  # noqa: E402
 
 check.table("major honours come from the Significance and Awards lines only", [

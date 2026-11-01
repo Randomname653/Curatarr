@@ -1290,9 +1290,9 @@ _MONOLOGUE_STANCE = {
 
 # Honours that make a title's stature a fact rather than an opinion. Narrow
 # on purpose: acclaim_present (any RT score, any "wins") marks two thirds of
-# the CUTs a judge gets right, these marked only the ones the server's
-# smaller model argued away (SpongeBob's Emmys, a Grammy winner's "0.1 GB
-# entry"; frozen evidence, 2026-11-01).
+# the CUTs a judge gets right, these marked almost only the ones a judge
+# argued away (SpongeBob's Emmys, a Grammy winner's "0.1 GB entry"; 20
+# judges over the frozen evidence, 2026-11-01).
 _MAJOR_HONOURS = re.compile(
     r"\b(Emmy|Grammy|Oscar|Academy Award|BAFTA|Golden Globe|Palme d.Or|Peabody|"
     r"National Film Registry|Golden Lion|Golden Bear|Pulitzer|Hall of Fame)", re.I)
@@ -1315,10 +1315,9 @@ _GUARD_STANCE = {
                        "call, not a cut — make the honest case on what the "
                        "title itself is, and say plainly that someone in the "
                        "house holds it",
-    "stature_floor": "This title carries major honours and was judged while the "
-                     "main curator was away, so it is the owner's call, not a cut "
-                     "- make the honest case on what the title itself is, its "
-                     "honours included",
+    "stature_floor": "This title carries major honours, so it is the owner's "
+                     "call, not a cut - make the honest case on what the title "
+                     "itself is, its honours included",
 }
 
 
