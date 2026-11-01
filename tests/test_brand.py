@@ -90,27 +90,50 @@ check("one logo in the chat: the avatar is the favicon file (classic when chosen
       and 'html.icon-classic .msg.assistant::before { background-image: url("/icons/favicon-classic.svg"); }' in css
       and "data:image/svg+xml" not in css.split(".msg.assistant::before {")[1][:600]
       and "classList.toggle('icon-classic'" in brand_js)
+
+
+def _css_rules(text: str) -> dict:
+    """{selector: {property: value}} for the stylesheet's plain rules, later
+    rules winning like the cascade. CSS has no runtime in CI, so the badge
+    checks read the file, but per rule: what a selector declares, not how
+    a line happens to be spelled or where a brace falls."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    rules: dict = {}
+    for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", text):
+        for sel in m.group(1).split(","):
+            decls = rules.setdefault(" ".join(sel.split()), {})
+            for d in m.group(2).split(";"):
+                prop, sep, val = d.partition(":")
+                if sep:
+                    decls[prop.strip()] = " ".join(val.split())
+    return rules
+
+
+rules = _css_rules(css)
+keyframes = set(re.findall(r"@keyframes\s+([\w-]+)", css))
+
+
+def _decl(selector: str, prop: str) -> str:
+    return rules.get(selector, {}).get(prop, "")
+
+
 check("the badge itself thinks: the C turns while its arcs breathe out, the ring folds and spins",
-      ".msg.assistant:has(> .thinking)::before { display: none; }" in css
-      and "@keyframes brand-turn" in css and "@keyframes brand-step" in css
-      and all(f"@keyframes brand-fold-{i}" in css for i in range(1, 5))
-      and "transform-origin: 1029.04px 1000px" in css and "transform-origin: 1000px 989.62px" in css
-      and "@keyframes brand-twinkle" in css and "thinking-orbit" not in css
+      _decl(".msg.assistant:has(> .thinking)::before", "display") == "none"
+      and {"brand-turn", "brand-step", "brand-twinkle", *(f"brand-fold-{i}" for i in range(1, 5))} <= keyframes
+      and _decl(".thinking-mark .brand-arcs", "transform-origin") == "1029.04px 1000px"
+      and _decl(".thinking-mark .brand-ring.brand-seg", "transform-origin") == "1000px 989.62px"
+      and "thinking-orbit" not in css
       and "thinkingIndicator()" in chat_js
       and "iconStyle() === 'classic' ? 'brand-ring' : 'brand-mark'" in brand_js)
 # The Claude app's webview dropped a rotate animation while a transform
 # animation ran on the same element: the turn lives on the arcs' group,
 # the step on each arc. And paint containment clipped the stepped arcs.
-_arcs = css[css.index(".thinking-mark .brand-arcs {"):]
-_arcs = _arcs[:_arcs.index("}")]
-_step = css[css.index(".thinking-mark .brand-arcs .brand-seg {"):]
-_step = _step[:_step.index("}")]
-_mark = css[css.index(".thinking-mark { position: absolute;"):]
-_mark = _mark[:_mark.index("}")]
+_turn = _decl(".thinking-mark .brand-arcs", "animation")
+_step = _decl(".thinking-mark .brand-arcs .brand-seg", "animation")
 check("...turn and step run on different elements, and nothing clips the arcs",
-      "brand-turn" in _arcs and "brand-step" not in _arcs
-      and "brand-step" in _step and "brand-turn" not in _step
-      and "paint" not in _mark)
+      _turn.startswith("brand-turn ") and "brand-step" not in _turn
+      and _step.startswith("brand-step ") and "brand-turn" not in _step
+      and "paint" not in _decl(".thinking-mark", "contain"))
 mark_t = html[html.index('<template id="brand-mark">'):]
 mark_t = mark_t[:mark_t.index("</template>")]
 check("...both marks carry four numbered segments and a sparkle group",
@@ -122,14 +145,15 @@ check("...both marks carry four numbered segments and a sparkle group",
 check("the modern mark is square on its circle's centre (the C opens right, its box does not)",
       'viewBox="322.6 293.6 1413.0 1413.0"' in svgs["curatarr-mark"] and 'viewBox="322.6 293.6 1413.0 1413.0"' in mark_t)
 check("the avatar's mark has whole-pixel size, so it sits centred in the badge",
-      "background-size: 14px 14px;" in css)
-check("the waiting text shimmers until the server's status lines take over",
-      ".msg.assistant:has(.thinking-status) .thinking-label { display: none; }" in css
-      and "thinking-shimmer var(--think-cycle) linear infinite" in css
-      and "brand-turn var(--think-cycle)" in css)
+      _decl(".msg.assistant::before", "background-size") == "14px 14px")
+check("the waiting text shimmers until the server's status lines take over, on the C's clock",
+      _decl(".msg.assistant:has(.thinking-status) .thinking-label", "display") == "none"
+      and _decl(".thinking-label", "animation") == "thinking-shimmer var(--think-cycle) linear infinite"
+      and _turn.startswith("brand-turn var(--think-cycle) "))
 check("the busy pulse breathes slowly and holds still under reduced motion",
-      "body.model-busy #logo .brand-spark { animation: brand-breathe 3.2s ease-in-out infinite; }" in css
-      and "body.model-busy #logo .brand-diamond, body.model-busy #logo .brand-spark { fill: var(--brand-ruby); }" in css)
+      _decl("body.model-busy #logo .brand-spark", "animation") == "brand-breathe 3.2s ease-in-out infinite"
+      and _decl("body.model-busy #logo .brand-diamond", "fill") == "var(--brand-ruby)"
+      and _decl("body.model-busy #logo .brand-spark", "fill") == "var(--brand-ruby)")
 check("the wrap-up carries the mark: the summary card and every story slide",
       "brandMarkHtml('wu-mark')" in (ROOT / "frontend/js/wrapup.js").read_text(encoding="utf-8")
       and "brandMark('wus-mark')" in (ROOT / "frontend/js/wrapup_story.js").read_text(encoding="utf-8"))

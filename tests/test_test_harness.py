@@ -39,7 +39,7 @@ check.table("settings point at the temp dir", [
     ("the .env file", os.environ["CURATARR_ENV_FILE"], True),
 ], outside_data)
 check("they all live under this suite's temp dir",
-      str(TMP) in settings.DATABASE_URL and str(TMP) in str(settings.CHROMADB_PATH))
+      TMP.as_posix() in settings.DATABASE_URL and str(TMP) in str(settings.CHROMADB_PATH))
 
 # ── 2. app_db is the app's real engine, migrated ────────────────────────────
 conn = app_db()
