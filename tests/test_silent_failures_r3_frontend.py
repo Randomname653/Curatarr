@@ -328,6 +328,7 @@ const guardOnly = {id: 7, score_factors: {factors: [], guard: 'household_floor'}
 out.btn = _whyButton(guardOnly);
 out.panel = _whyPanel(guardOnly);
 out.none = _whyButton({id: 8, score_factors: {factors: []}});
+out.stature = _yourCallWhy({score_factors: {guard: 'stature_floor'}});
 // Escape from inside the open panel closes it and focuses the button
 const attrs = {'aria-expanded': 'true', 'aria-controls': 'why-7'};
 let focused = false;
@@ -346,6 +347,8 @@ console.log(JSON.stringify(out));
     check("Why? renders for a guard-only row", "btn-why" in out.get("btn", ""))
     check("...its panel carries the household-floor sentence", "someone else in your household" in out.get("panel", ""))
     check("no factors and no guard: still no button", out.get("none") == "")
+    check("the stature floor says the server's model leaned to a cut of an honoured title",
+          "major honours" in out.get("stature", "") and "main curator was away" in out.get("stature", ""))
     check("Escape inside an open panel closes it and returns focus", out.get("closed") is True)
 
 

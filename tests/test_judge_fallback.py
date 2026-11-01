@@ -153,4 +153,25 @@ check("the run records the node the server judged without",
       run["fallback"] == "Big Rig" and eng.deletion_run_summary(None)["fallback"] == "Big Rig")
 eng.DELETION_RUN_SUMMARY.clear()
 
+# ── the stature floor ───────────────────────────────────────────────────────
+# The server's model argued away SpongeBob's Emmys and a Grammy winner's
+# stature (frozen evidence, 2026-11-01); its CUT on a title with a major
+# honour becomes the owner's call. Narrow: an RT score or "63 wins" is no
+# major honour - two thirds of the right CUTs carry those.
+from src.services import pillars  # noqa: E402
+
+check.table("major honours come from the Significance and Awards lines only", [
+    ("Emmys and a BAFTA", "  Awards: Nominated for 10 Primetime Emmys. 63 wins & 70 nominations total\n"
+     "  Significance: four Emmy Awards, two BAFTA Children's Awards", ["Bafta", "Emmy"]),
+    ("a Grammy", "  Significance: won the 2015 Grammy Award for Best Rock Song", ["Grammy"]),
+    ("the Film Registry", "  Significance: Selected for the US National Film Registry",
+     ["National Film Registry"]),
+    ("scores and plain wins are no major honour",
+     "  RT: 91%  METACRITIC: 80\n  Awards: 3 wins & 12 nominations", []),
+    ("an Oscar in the plot is no honour", "  Plot: a washed-up actor dreams of the Oscar he never won", []),
+    ("no facts", "", []),
+], pillars.major_honours)
+check("the monologue argues the owner's call, honours included, not the cut",
+      "major honours" in pillars._GUARD_STANCE["stature_floor"])
+
 check.done()

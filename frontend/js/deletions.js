@@ -72,14 +72,17 @@ export function _whyPanel(p) {
     <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>` : ''}
   </div>`;
 }
-// "Your call" has two causes: the curator found the title merely fine, or it
-// wanted a cut that the household floor overruled (score_factors.guard, set
-// by recommendations_engine._with_guard) — someone else in the household
-// engaged with it. Different reasons, different tooltips.
+// "Your call" has three causes: the curator found the title merely fine, or
+// it wanted a cut that a floor overruled (score_factors.guard, set by
+// recommendations_engine._with_guard) — someone else in the household engaged
+// with it, or the server's model judged an honoured title while the node was
+// away. Different reasons, different tooltips.
 export function _yourCallWhy(p) {
-  return p.score_factors?.guard === 'household_floor'
-    ? 'The curator leaned toward cutting it, but someone else in your household has watched or played it, or asked to keep it — so the decision is yours'
-    : 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
+  if (p.score_factors?.guard === 'household_floor') return 'The curator leaned toward cutting it, but someone else in your household has watched or played it, or asked to keep it — so the decision is yours';
+  // The server judged without the node, and its smaller model wanted to cut
+  // a title with major honours (recommendations_engine's stature floor).
+  if (p.score_factors?.guard === 'stature_floor') return "This server's model leaned toward cutting it while your main curator was away, but it carries major honours — so the decision is yours";
+  return 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
 }
 export function toggleWhy(btn) {
   const panel = document.getElementById(btn.getAttribute('aria-controls'));

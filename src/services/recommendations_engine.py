@@ -2663,7 +2663,7 @@ async def generate_deletion_proposals(
         # EVALUATE is not in here: the model looked and could not decide.
         fail_kinds: Counter = Counter()
         consecutive_outages = 0
-        household_floored = 0
+        household_floored = stature_floored = 0
         stopped = ""
         _msg(f"{category}: scoring done ({len(scored_candidates):,} above threshold) "
              f"— pillar-judging the ranking…")
@@ -2992,6 +2992,20 @@ async def generate_deletion_proposals(
                                "_guard": "household_floor",
                                "_guard_detail": _claim}
                     v = "STAGNANT"
+                # STATURE FLOOR: the server judging without the node. Its
+                # smaller model argued away a major honour the node keeps a
+                # title for (frozen evidence, 2026-11-01); a CUT on such a
+                # title is the owner's call until the node judges it again.
+                _honours = (ev.get("flags") or {}).get("major_honours")
+                if v == "CUT" and _fallback and _honours:
+                    stature_floored += 1
+                    logger.info("[deletions] %s: CUT on %r from the server's model "
+                                "turned into the owner's call - %s (stature floor)",
+                                category, item.get("title"), ", ".join(_honours))
+                    verdict = {**verdict, "verdict": "STAGNANT",
+                               "_guard": "stature_floor",
+                               "_guard_detail": ", ".join(_honours)}
+                    v = "STAGNANT"
                 # Kept past the verdict cache's 30 days (services/judge_record):
                 # the Wrap-Up's court record reads the whole year.
                 await judge_record.keep_verdict(
@@ -3087,6 +3101,8 @@ async def generate_deletion_proposals(
                 if signal_unknown_skipped else "")
              + (f" ({household_floored} turned into 'Your call': another "
                 f"household member engaged)" if household_floored else "")
+             + (f" ({stature_floored} turned into 'Your call': major honours, "
+                f"judged without {_fallback})" if stature_floored else "")
              + (f" ({sum(fail_kinds.values())} failed: "
                 f"{_failure_sentence(dict(fail_kinds))})" if fail_kinds else "")
              + (f" — stopped early: {stopped}" if stopped else "")

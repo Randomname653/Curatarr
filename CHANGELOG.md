@@ -1345,6 +1345,11 @@ were no new proposals at all. Once the node has not been free for `JUDGE_FALLBAC
 - Each proposal records which profile judged it (`judged_on`). When the node is back, its run
   re-judges the proposals the server's smaller model made; the node's own verdicts and older
   rows stand. The run banner says when the server judged without the node.
+- On the NAS (16 GB, the large profile) the server's model found 7 of the node's 8 cuts
+  on the same evidence, but argued two titles out of their stature (four Emmys, a Grammy).
+  So while the node is away, a cut of a title with a major honour (Emmy, Grammy, Oscar,
+  BAFTA, Golden Globe, the National Film Registry and the like) becomes "Your call", and
+  the card says why. An RT score or a count of minor wins does not count.
 - Tests: `tests/test_judge_fallback.py`, `tests/test_deletion_pool.py`.
 
 **Card tags that tell titles apart.** A deletion card showed the arr's first

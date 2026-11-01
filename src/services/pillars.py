@@ -749,6 +749,7 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None,
     if verified_text:
         if any(m in verified_text for m in ("RT:", "METACRITIC", "Awards:", " wins", "Significance:")):
             flags["acclaim_present"] = True
+        flags["major_honours"] = major_honours(verified_text)
         if flags["significance_unchecked"]:
             verified_text += ("\n  Significance: NOT YET CHECKED — missing "
                               "data, not evidence of absence; no verdict may "
@@ -1287,6 +1288,25 @@ _MONOLOGUE_STANCE = {
     "EVALUATE": "Assess this title from what little is known",
 }
 
+# Honours that make a title's stature a fact rather than an opinion. Narrow
+# on purpose: acclaim_present (any RT score, any "wins") marks two thirds of
+# the CUTs a judge gets right, these marked only the ones the server's
+# smaller model argued away (SpongeBob's Emmys, a Grammy winner's "0.1 GB
+# entry"; frozen evidence, 2026-11-01).
+_MAJOR_HONOURS = re.compile(
+    r"\b(Emmy|Grammy|Oscar|Academy Award|BAFTA|Golden Globe|Palme d.Or|Peabody|"
+    r"National Film Registry|Golden Lion|Golden Bear|Pulitzer|Hall of Fame)", re.I)
+
+
+def major_honours(facts: str) -> list:
+    """The major honours the Significance and Awards lines of ``facts`` name,
+    e.g. ["Bafta", "Emmy"]: what the stature floor (recommendations_engine)
+    reads."""
+    lines = [ln for ln in (facts or "").splitlines()
+             if "Significance:" in ln or "Awards:" in ln]
+    return sorted({m.group(1).title() for ln in lines for m in _MAJOR_HONOURS.finditer(ln)})
+
+
 # A verdict the deletion loop changed after the judge spoke. The judge's own
 # stance would argue the CUT it no longer is.
 _GUARD_STANCE = {
@@ -1295,6 +1315,10 @@ _GUARD_STANCE = {
                        "call, not a cut — make the honest case on what the "
                        "title itself is, and say plainly that someone in the "
                        "house holds it",
+    "stature_floor": "This title carries major honours and was judged while the "
+                     "main curator was away, so it is the owner's call, not a cut "
+                     "- make the honest case on what the title itself is, its "
+                     "honours included",
 }
 
 
