@@ -1279,6 +1279,7 @@ async def get_deletion_proposals(
                         latest_activity_at=la_dt,
                         stagnant=p.get("stagnant", False),
                         score_factors=_dump_score_factors(p.get("score_factors")),
+                        judged_on=p.get("judged_on"),
                     )
                     dbs.add(row)
                     saved.append((p, row))

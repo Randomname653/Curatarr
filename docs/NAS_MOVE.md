@@ -4,7 +4,9 @@ The end state: Curatarr runs around the clock in a container on the NAS.
 The gaming PC's card does the heavy work while the PC is on and nobody is
 playing; the PC's tray only reports, it no longer runs Curatarr itself.
 Without the PC, chat and enrichment run on the NAS's own Ollama, and
-deletion runs wait (their verdicts never come from the smaller model).
+deletion runs wait for it. After `JUDGE_FALLBACK_HOURS` (72) without the PC
+free, the NAS judges with its smaller model, and the PC re-judges those
+proposals once it is back.
 
 Placeholders: `<nas>` and `<pc>` are LAN addresses, `<nas-ollama>` the NAS
 Ollama's port (TrueNAS apps live in 30xxx), `<port>` the container's host

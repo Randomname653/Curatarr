@@ -205,10 +205,14 @@ Apps → Custom App → Install via YAML.
     (`ENRICH_ON_PC=true` moves it to the free node).
   - **Otherwise:** everything runs on `OLLAMA_ENDPOINT`, typically the NAS
     with `LLM_PROFILE=small`.
-  - **Deletion runs wait for the node.** Their verdicts never come from the
-    small model. "Run analysis" while the node is busy is queued and starts
-    by itself once it is free; the existing proposals stay meanwhile, and
-    approving or rejecting them needs no model.
+  - **Deletion runs wait for the node.** "Run analysis" while the node is
+    busy is queued and starts by itself once it is free; the existing
+    proposals stay meanwhile, and approving or rejecting them needs no model.
+  - **Not forever:** once the node has not been free for
+    `JUDGE_FALLBACK_HOURS` (default 72; -1 always waits, 0 never does), the
+    server judges with its own model. Each proposal remembers which model
+    judged it, and the node re-judges the server's proposals when it is
+    back.
   - **Embeddings always stay on `OLLAMA_ENDPOINT`.** Every vector comes from
     one host.
   - **Without the agent the node is never used,** because nobody could say

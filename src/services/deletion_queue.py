@@ -76,10 +76,23 @@ def note(req: Optional[dict]) -> Optional[str]:
     """The banner text for a queued request."""
     if not req:
         return None
-    from src.services.pc_host import node_name
+    import time
+    from src.services.ollama_hosts import fallback_hours
+    from src.services.pc_host import last_free, node_name
     what = req.get("category") or "all categories"
+    hours = fallback_hours()
+    # Not forever: past JUDGE_FALLBACK_HOURS the server judges itself.
+    left = hours * 3600 - (time.time() - last_free()) if hours >= 0 else None
+    later = ("" if left is None else
+             f" If it is still away in {_span(left)}, this server judges with its own model."
+             if left > 0 else "")
     return (f"Analysis of {what} is queued: it starts by itself as soon as {node_name()} "
-            f"is free. The proposals below stay until then.")
+            f"is free.{later} The proposals below stay until then.")
+
+
+def _span(seconds: float) -> str:
+    h = max(1, round(seconds / 3600))
+    return f"{h} hour{'s' if h != 1 else ''}" if h < 48 else f"{round(h / 24)} days"
 
 
 async def kick() -> bool:

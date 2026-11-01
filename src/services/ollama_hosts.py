@@ -13,7 +13,9 @@ what the routing decides on:
     role       PC on and free     PC off, asleep, shutting down or gaming
     chat       PC                 OLLAMA_ENDPOINT (the NAS)
     curator    PC                 NAS
-    judge      PC                 raises PcUnavailable - deletion runs wait
+    judge      PC                 raises PcUnavailable - deletion runs wait;
+                                  NAS once the PC has not been free for
+                                  JUDGE_FALLBACK_HOURS (judge_fallback)
     enrich     NAS, always (ENRICH_ON_PC=true: PC when free, else NAS)
     embed      NAS, always - one host for every vector, so stored and new compare
 
@@ -41,8 +43,12 @@ updates, the model check) still reads the endpoint directly.
 tests/test_ollama_hosts.py keeps that list closed.
 """
 
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -70,7 +76,8 @@ def _mmap(key: str) -> dict:
 
 class PcUnavailable(RuntimeError):
     """A role that waits for the PC (the deletion run) asked while the PC is
-    off, asleep, shutting down or gaming. Callers defer, they do not fall back."""
+    off, asleep, shutting down or gaming, and not yet for long enough to
+    fall back (judge_fallback). Callers defer."""
 
 
 ROLES = {
@@ -84,7 +91,10 @@ ROLES = {
     "embed": "embeddings: one host for every vector, so stored and new ones compare",
 }
 # Roles that wait for the PC instead of falling back to the NAS: a wrong
-# deletion verdict from the small model costs more than a day's delay.
+# deletion verdict from the small model costs more than a day's delay. Not
+# more than weeks of no verdicts, though (the PC abroad, 2026-11-01): after
+# JUDGE_FALLBACK_HOURS the NAS judges, and the PC re-judges those proposals
+# once it is back (recommendations_engine._pool_plan).
 PC_ONLY = frozenset({"judge"})
 # Roles that never leave the main host.
 MAIN_ONLY = frozenset({"embed"})
@@ -155,10 +165,43 @@ def host_for(role: str) -> OllamaHost:
         return main_host()
     if pc_usable():
         return pc
-    if role in PC_ONLY:
+    if role in PC_ONLY and not judge_fallback():
         from src.services.pc_host import node_name
         raise PcUnavailable(f"'{role}' waits for {node_name()} (off, busy or shutting down)")
     return main_host()
+
+
+def fallback_hours() -> float:
+    """JUDGE_FALLBACK_HOURS: how long deletion runs wait for the PC
+    (negative: always)."""
+    from src.config import settings
+    try:
+        return float(getattr(settings, "JUDGE_FALLBACK_HOURS", 72))
+    except (TypeError, ValueError):
+        return 72.0
+
+
+_FALLBACK_LOGGED = [False]
+
+
+def judge_fallback() -> bool:
+    """Split, the PC not free now, and not free for JUDGE_FALLBACK_HOURS:
+    the deletion run judges on the NAS with the NAS's own profile."""
+    if not split() or pc_usable():
+        _FALLBACK_LOGGED[0] = False
+        return False
+    hours = fallback_hours()
+    if hours < 0:
+        return False
+    from src.services import pc_host as pc
+    away = time.time() - pc.last_free()
+    on = away >= hours * 3600
+    if on and not _FALLBACK_LOGGED[0]:
+        _FALLBACK_LOGGED[0] = True
+        logger.info(
+            "[deletions] %s not free for %.0f h (JUDGE_FALLBACK_HOURS=%g): the server "
+            "judges with its own model until it is back", pc.node_name(), away / 3600, hours)
+    return on
 
 
 def routed_host(role: str) -> Optional[OllamaHost]:
@@ -172,8 +215,9 @@ def routed_host(role: str) -> Optional[OllamaHost]:
 
 
 def judge_ready() -> bool:
-    """A deletion run can start now: not split, or the PC is free."""
-    return not split() or pc_usable()
+    """A deletion run can start now: not split, the PC is free, or it has
+    been away long enough for the NAS to judge (judge_fallback)."""
+    return not split() or pc_usable() or judge_fallback()
 
 
 def ollama_for(role: str) -> str:

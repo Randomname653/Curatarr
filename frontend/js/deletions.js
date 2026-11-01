@@ -72,14 +72,17 @@ export function _whyPanel(p) {
     <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>` : ''}
   </div>`;
 }
-// "Your call" has two causes: the curator found the title merely fine, or it
-// wanted a cut that the household floor overruled (score_factors.guard, set
-// by recommendations_engine._with_guard) — someone else in the household
-// engaged with it. Different reasons, different tooltips.
+// "Your call" has three causes: the curator found the title merely fine, or
+// it wanted a cut that a floor overruled (score_factors.guard, set by
+// recommendations_engine._with_guard) — someone else in the household engaged
+// with it, or the server's model judged an honoured title while the node was
+// away. Different reasons, different tooltips.
 export function _yourCallWhy(p) {
-  return p.score_factors?.guard === 'household_floor'
-    ? 'The curator leaned toward cutting it, but someone else in your household has watched or played it, or asked to keep it — so the decision is yours'
-    : 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
+  if (p.score_factors?.guard === 'household_floor') return 'The curator leaned toward cutting it, but someone else in your household has watched or played it, or asked to keep it — so the decision is yours';
+  // The server judged without the node, and its smaller model wanted to cut
+  // a title with major honours (recommendations_engine's stature floor).
+  if (p.score_factors?.guard === 'stature_floor') return "This server's model leaned toward cutting it while your main curator was away, but it carries major honours — so the decision is yours";
+  return 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
 }
 export function toggleWhy(btn) {
   const panel = document.getElementById(btn.getAttribute('aria-controls'));
@@ -391,7 +394,7 @@ export function _renderQueuedBanner(note) {
 
 export function _renderRunBanner(run) {
   document.getElementById('del-run-banner')?.remove();
-  if (!run || !(run.failed || run.deferred || run.stopped || run.degraded)) return;
+  if (!run || !(run.failed || run.deferred || run.stopped || run.degraded || run.fallback)) return;
   const banner = document.createElement('div');
   banner.id = 'del-run-banner';
   banner.setAttribute('role', 'status');
@@ -406,21 +409,24 @@ export function _renderRunBanner(run) {
   const stopped = run.stopped ? ` Stopped early: ${esc(run.stopped)}.` : '';
   // An unreadable taste profile: the run went on, but its ranking is weaker.
   const degraded = run.degraded ? ` Note: ${esc(run.degraded)}.` : '';
+  // The node away for JUDGE_FALLBACK_HOURS: this server's smaller model judged,
+  // and the node re-judges those proposals once it is back.
+  const fallback = run.fallback ? ` Judged on this server's model while ${esc(run.fallback)} is away; ${esc(run.fallback)} checks these again once it is back.` : '';
   if (run.failed && run.failed >= run.judged) {
     banner.className = 'banner danger';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.failed) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.stopped) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.degraded) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${degraded}${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${degraded}${fallback}${deferred}</div>${again}`;
   } else {
     banner.className = 'banner';
-    banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${deferred}</div>`;
+    banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${fallback}${deferred}</div>`;
   }
   const delContent = document.getElementById('del-content');
   delContent.parentNode.insertBefore(banner, delContent);

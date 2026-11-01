@@ -154,10 +154,55 @@ def _note_reported(report: dict) -> None:
         _names["dirty"] = True
 
 
+# ── when the node last took work (2026-11-01) ────────────────────────────────
+# Deletion runs wait for the node (ollama_hosts.PC_ONLY), but not forever:
+# once it has not been free for JUDGE_FALLBACK_HOURS the server judges with
+# its own model. The moment is kept in app_state, so a restart of the server
+# does not reset the clock; written at most every FREE_WRITE_S.
+_FREE_KEY = "node_last_free"
+FREE_WRITE_S = 600
+_free: dict = {"at": 0.0, "stored": 0.0, "loaded": False, "start": time.time()}
+
+
+def last_free() -> float:
+    """When the node last took work (epoch seconds). Before it was ever
+    seen: when this server started, so a node that never answers counts as
+    away since then."""
+    return _free["at"] or _free["start"]
+
+
+async def _load_free() -> None:
+    if _free["loaded"]:
+        return
+    from src.services.app_state import aget_state
+    try:
+        stored = float(await aget_state(_FREE_KEY) or 0)
+    except (TypeError, ValueError):
+        stored = 0.0
+    except Exception as e:  # noqa: BLE001 - unreadable: the clock starts now
+        logger.debug("[node] last-free time not read: %s", e)
+        stored = 0.0
+    _free.update(at=max(_free["at"], stored), stored=stored, loaded=True)
+
+
+async def _note_free() -> None:
+    """The node takes work now: move the clock, store it now and then."""
+    now = time.time()
+    _free["at"] = now
+    if now - _free["stored"] < FREE_WRITE_S:
+        return
+    from src.services.app_state import aset_state
+    try:
+        await aset_state(_FREE_KEY, str(int(now)))
+        _free["stored"] = now
+    except Exception as e:  # noqa: BLE001 - kept in memory, written next time
+        logger.debug("[node] last-free time not stored: %s", e)
+
+
 def status() -> dict:
     """For the UI and the logs: available / draining / since when / why."""
     return {k: _state[k] for k in ("available", "draining", "busy", "busy_reason", "seen_at",
-                                   "changed_at", "reason")} | {
+                                   "changed_at", "reason")} | {"last_free": last_free()} | {
         "configured": configured(), "build": build(), "name": node_name(),
         "name_custom": _names["custom"], "name_reported": _names["reported"]}
 
@@ -225,6 +270,7 @@ async def poll_once(fetch=None) -> None:
     if not configured():
         return
     await load_names()
+    await _load_free()
     url = _settings().PC_AGENT_URL.rstrip("/") + "/status"
     try:
         report = await (fetch or _fetch)(url, token())
@@ -234,6 +280,9 @@ async def poll_once(fetch=None) -> None:
         return
     except Exception as e:  # noqa: BLE001 - every failure is one missed poll
         record(None, f"{type(e).__name__}: {e}"[:200])
+        # Away long enough, the server judges itself: a queued Analyze
+        # starts then, without the node.
+        await _kick_queue()
         return
     record(report)
     if _names["dirty"]:
@@ -254,13 +303,19 @@ async def poll_once(fetch=None) -> None:
             logger.warning("[node] %s busy check failed: %s", node_name(), e)
             value, why = True, "busy check failed"
         set_busy(value, why)
-    if available() and not busy():
-        # An Analyze queued while the node was away starts now.
-        from src.services import deletion_queue
-        try:
-            await deletion_queue.kick()
-        except Exception as e:  # noqa: BLE001 - the next poll tries again
-            logger.warning("[node] queued analysis not started: %s", e)
+    if _taking_work():
+        await _note_free()
+    # An Analyze queued while the node was away starts now (deletion_queue
+    # asks judge_ready: the node free, or away long enough).
+    await _kick_queue()
+
+
+async def _kick_queue() -> None:
+    from src.services import deletion_queue
+    try:
+        await deletion_queue.kick()
+    except Exception as e:  # noqa: BLE001 - the next poll tries again
+        logger.warning("[node] queued analysis not started: %s", e)
 
 
 async def _fetch(url: str, tok: str) -> dict:
