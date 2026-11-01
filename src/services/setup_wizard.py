@@ -415,6 +415,9 @@ def current_env_config() -> dict:
         "embedding_model":       s.EMBEDDING_MODEL,
         "pitcher_model":         s.PITCHER_MODEL or "",
         "base_pitcher_model":    s.BASE_PITCHER_MODEL,
+        "llm_profile":           str(getattr(s, "LLM_PROFILE", "large") or "large"),
+        "curator_num_ctx":       int(getattr(s, "CURATOR_NUM_CTX", 0) or 0),
+        "curator_num_gpu":       int(getattr(s, "CURATOR_NUM_GPU", 99)),
         "radarr_url":            s.RADARR_URL or "",
         "radarr_api_key":        s.RADARR_API_KEY or "",
         "sonarr_url":            s.SONARR_URL or "",
@@ -516,6 +519,13 @@ def _plex_client_id(config: dict) -> str:
     return f"curatarr-{secrets.token_hex(16)}"
 
 
+def _given(config: dict, key: str, live_key: str, default):
+    """``config[key]`` when the caller set it, else the live setting: a
+    request that leaves a field out (None) keeps what the install has."""
+    value = config.get(key)
+    return value if value is not None else getattr(_live_settings(), live_key, default)
+
+
 def write_env(config: dict) -> None:
     """Write a validated config dict to .env file."""
     # Carry the live secret forward: the wizard's request never includes it,
@@ -557,6 +567,13 @@ def write_env(config: dict) -> None:
         # separate follow-up.)
         f"PITCHER_MODEL={config.get('pitcher_model', _live_settings().PITCHER_MODEL)}",
         f"BASE_PITCHER_MODEL={config.get('base_pitcher_model', _live_settings().BASE_PITCHER_MODEL)}",
+        # The curator package for this card (the bench's pick in the wizard,
+        # Settings afterwards): which constitution and window, how many layers
+        # on the card. They were only shown as lines to copy by hand, so a
+        # 16 GB install that missed them ran a 24 GB card's defaults.
+        f"LLM_PROFILE={_given(config, 'llm_profile', 'LLM_PROFILE', 'large')}",
+        f"CURATOR_NUM_CTX={_given(config, 'curator_num_ctx', 'CURATOR_NUM_CTX', 0)}",
+        f"CURATOR_NUM_GPU={_given(config, 'curator_num_gpu', 'CURATOR_NUM_GPU', 99)}",
         "",
         "# ARR Services",
         f"RADARR_URL={config.get('radarr_url', '')}",

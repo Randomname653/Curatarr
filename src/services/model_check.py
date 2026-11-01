@@ -142,7 +142,11 @@ def host_plan(which: str = "main") -> dict:
                 "embedding": None}
     else:
         main = ollama_hosts.main_host()
-        plan = {"url": main.url, "num_ctx": main.num_ctx,
+        # The window as the settings hold it now, not as this process
+        # resolved it at import: Settings -> Rebuild models right after a
+        # profile change must bake the new window.
+        from src.services.llm_utils import _resolve_num_ctx
+        plan = {"url": main.url, "num_ctx": _resolve_num_ctx(),
                 "curator": settings.BASE_CURATOR_MODEL,
                 "summarizer": settings.BASE_SUMMARIZER_MODEL,
                 "pitcher": settings.BASE_PITCHER_MODEL if (pitcher_on and not split) else None,

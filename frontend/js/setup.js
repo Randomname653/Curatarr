@@ -97,6 +97,26 @@ const SETUP_CONTENT = {
       <div class="hint">Detection runs on the Curatarr host. If Ollama runs on a different machine, pick that machine's VRAM manually — the model recommendations below follow it.</div>
     </div>
     <div class="my-8" id="model-recs"></div>
+    <details class="mt-12" id="s-profile-wrap">
+      <summary>Curator profile (filled in from the bench result)</summary>
+      <div class="form-group mt-8">
+        <label for="s-llm-profile">Profile</label>
+        <select class="w-auto" id="s-llm-profile">
+          <option value="large"${state.setupData.llm_profile === 'small' ? '' : ' selected'}>large: the full rules, 16k window</option>
+          <option value="small"${state.setupData.llm_profile === 'small' ? ' selected' : ''}>small: a checklist, 8k window</option>
+        </select>
+        <div class="hint">Which rules the deletion judge gets and how much evidence fits. On 16 GB and more the bench measured large as clearly better, also for the smaller models.</div>
+      </div>
+      <div class="form-group">
+        <label for="s-num-ctx">Context window in tokens (0 = the profile's)</label>
+        <input id="s-num-ctx" type="number" min="0" max="131072" step="1024" value="${state.setupData.curator_num_ctx ?? 0}">
+      </div>
+      <div class="form-group">
+        <label for="s-num-gpu">Curator layers on the graphics card (-1 = Ollama decides, 99 = all)</label>
+        <input id="s-num-gpu" type="number" min="-1" max="999" value="${state.setupData.curator_num_gpu ?? 99}">
+        <div class="hint">-1 lets Ollama keep part of the model in system memory when the card is too small for it.</div>
+      </div>
+    </details>
     <div class="mt-12 form-group">
       <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
       <select id="s-curator-model"><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
@@ -281,6 +301,12 @@ export function collectStep() {
     state.setupData.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || state.setupData.vram_gb || null;
     state.setupData.llm_cpu_lane = !!document.getElementById('s-cpu-lane')?.checked;
     state.setupData.llm_cpu_threads = parseInt(document.getElementById('s-cpu-threads')?.value, 10) || 6;
+    const profile = document.getElementById('s-llm-profile')?.value;
+    if (profile) state.setupData.llm_profile = profile;
+    const ctx = parseInt(document.getElementById('s-num-ctx')?.value, 10);
+    if (Number.isFinite(ctx)) state.setupData.curator_num_ctx = ctx;
+    const gpu = parseInt(document.getElementById('s-num-gpu')?.value, 10);
+    if (Number.isFinite(gpu)) state.setupData.curator_num_gpu = gpu;
   } else if (key === 'metadata') {
     state.setupData.listenbrainz_token = document.getElementById('s-listenbrainz')?.value?.trim() || '';
     state.setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
@@ -405,14 +431,31 @@ export async function refreshModelRecs() {
     if (panel) panel.innerHTML = (r.floor_note
       ? `<div class="t-amber test-status">${SVG_WARN} ${esc(r.floor_note)}</div>`
       : '') + renderHardwarePackage(r.package);
+    _applyPackageProfile(r.package?.recommended);
   } catch(e) {
     if (panel) panel.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
 }
 
+// The bench package's curator profile goes into the wizard's profile fields,
+// which the setup saves (LLM_PROFILE / CURATOR_NUM_CTX / CURATOR_NUM_GPU).
+// Until 2026-11-01 they were only shown as .env lines to copy by hand.
+export function _applyPackageProfile(rec) {
+  if (!rec) return;
+  const values = {'s-llm-profile': rec.profile, 's-num-ctx': rec.num_ctx, 's-num-gpu': rec.num_gpu};
+  for (const [id, v] of Object.entries(values)) {
+    const el = document.getElementById(id);
+    if (el && v !== undefined && v !== null) el.value = String(v);
+  }
+  if (rec.profile) state.setupData.llm_profile = rec.profile;
+  if (Number.isFinite(rec.num_ctx)) state.setupData.curator_num_ctx = rec.num_ctx;
+  if (Number.isFinite(rec.num_gpu)) state.setupData.curator_num_gpu = rec.num_gpu;
+}
+
 // The hardware-matrix bench's measured package for this card: which curator,
-// with which profile / context / GPU layers, and how fast it ran. Settings it
-// names but the wizard does not write yet are shown as the .env lines to set.
+// with which profile / context / GPU layers, and how fast it ran. The profile
+// is saved with the setup; the Ollama server settings it names are not
+// Curatarr's to write and are shown as lines to set there.
 export function renderHardwarePackage(pkg) {
   if (!pkg) return '';
   const r = pkg.recommended;
@@ -446,8 +489,8 @@ export function renderHardwarePackage(pkg) {
   return ramNote + `<div class="test-status">Bench result for ${pkg.tier_gb} GB: <b>${esc(r.model)}</b>`
     + `${r.installed ? ' (installed)' : ''} — ${speed}; judge ~${ex.judge_s ?? '?'} s per title;`
     + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${ex.gpu_share_pct} % on the GPU, rest in RAM` : ''}.</div>`
-    + `<div class="t3 fs-12">Curatarr .env: ${esc(env.join(' · '))}`
-    + (srv.length ? ` — Ollama server: ${esc(srv.join(' · '))}` : '') + `</div>` + example;
+    + `<div class="t3 fs-12">Saved with the setup (Curator profile below): ${esc(env.join(' · '))}`
+    + (srv.length ? ` — set on the Ollama server: ${esc(srv.join(' · '))}` : '') + `</div>` + example;
 }
 
 export function renderRecSelect(id, entries, installed) {

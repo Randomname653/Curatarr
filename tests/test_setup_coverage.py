@@ -92,8 +92,8 @@ def test_complete_setup_builds_the_pitcher_when_enabled():
     calls = {}
 
     class _BG:
-        def add_task(self, fn, *args):
-            calls["fn"], calls["args"] = fn, args
+        def add_task(self, fn, *args, **kwargs):
+            calls["fn"], calls["args"], calls["kwargs"] = fn, args, kwargs
 
     real_write = st.write_env
     st.write_env = lambda cfg: calls.setdefault("cfg", cfg)
@@ -108,8 +108,88 @@ def test_complete_setup_builds_the_pitcher_when_enabled():
         asyncio.run(st.complete_setup(req, _BG(), _gate=None))
         assert calls["args"][-1] is None, "pitcher off -> no pitcher bake"
         assert calls["cfg"]["pitcher_model"] == ""
+        # The first bake carries the window the wizard chose, not the one
+        # this process started with (it holds the defaults until a restart).
+        assert calls["kwargs"]["num_ctx"] == 16384, calls["kwargs"]
+        for profile, ctx, want in (("small", None, 8192), ("small", 12000, 12000),
+                                   ("large", None, 16384)):
+            calls.clear()
+            req = st.SetupCompleteRequest(plex_url="http://p", plex_token="t",
+                                          llm_profile=profile, curator_num_ctx=ctx)
+            asyncio.run(st.complete_setup(req, _BG(), _gate=None))
+            assert calls["kwargs"]["num_ctx"] == want, (profile, ctx, calls["kwargs"])
+            assert calls["cfg"]["llm_profile"] == profile
     finally:
         st.write_env = real_write
+
+
+def test_the_curator_profile_is_written_and_kept():
+    """LLM_PROFILE / CURATOR_NUM_CTX / CURATOR_NUM_GPU: the bench package's
+    values reach the .env (they were only shown as lines to copy), and a
+    write that does not name them keeps what the install has."""
+    tmp = pathlib.Path(tempfile.mkdtemp()) / ".env"
+    old_path = sw.ENV_PATH
+    sw.ENV_PATH = tmp
+    try:
+        cfg = sw.merge_env_config(sw.current_env_config(), {
+            "llm_profile": "small", "curator_num_ctx": 12288, "curator_num_gpu": -1})
+        sw.write_env(cfg)
+        keys = ("LLM_PROFILE", "CURATOR_NUM_CTX", "CURATOR_NUM_GPU")
+        assert _env_values(tmp, keys) == {"LLM_PROFILE": ["small"], "CURATOR_NUM_CTX": ["12288"],
+                                          "CURATOR_NUM_GPU": ["-1"]}, _env_values(tmp, keys)
+        cfg.pop("llm_profile")
+        cfg["curator_num_ctx"] = None
+        saved = (sw._live_settings().LLM_PROFILE, sw._live_settings().CURATOR_NUM_CTX)
+        sw._live_settings().LLM_PROFILE, sw._live_settings().CURATOR_NUM_CTX = "small", 9000
+        try:
+            sw.write_env(cfg)
+        finally:
+            sw._live_settings().LLM_PROFILE, sw._live_settings().CURATOR_NUM_CTX = saved
+        assert _env_values(tmp, ("LLM_PROFILE", "CURATOR_NUM_CTX")) == {
+            "LLM_PROFILE": ["small"], "CURATOR_NUM_CTX": ["9000"]}, "a field left out keeps the live value"
+    finally:
+        sw.ENV_PATH = old_path
+
+
+def _env_values(path, keys):
+    """{key: [every value the written .env gives it]} for ``keys``."""
+    out = {k: [] for k in keys}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            k, _, v = line.strip().partition("=")
+            if k in out:
+                out[k].append(v)
+    return out
+
+
+def test_the_curator_profile_is_validated_and_needs_a_rebuild():
+    ok = st.ReconfigureRequest(llm_profile=" Small ", curator_num_ctx=0, curator_num_gpu=-1)
+    assert (ok.llm_profile, ok.curator_num_ctx, ok.curator_num_gpu) == ("small", 0, -1)
+    for bad in ({"llm_profile": "huge"}, {"curator_num_ctx": 2048},
+                {"curator_num_ctx": 500000}, {"curator_num_gpu": -2}):
+        try:
+            st.ReconfigureRequest(**bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    assert {"llm_profile", "curator_num_ctx", "curator_num_gpu"} <= set(st._MODEL_KEYS), \
+        "a profile change must say: rebuild models, then restart"
+
+
+def test_rebuild_bakes_the_window_the_settings_hold_now():
+    """Settings -> Rebuild models right after a profile change: this process
+    resolved CURATOR_NUM_CTX at import, the plan must not."""
+    from src.services import model_check
+    s = sw._live_settings()
+    saved = (s.LLM_PROFILE, s.CURATOR_NUM_CTX, s.OLLAMA_PC_ENDPOINT)
+    try:
+        s.OLLAMA_PC_ENDPOINT = ""
+        s.LLM_PROFILE, s.CURATOR_NUM_CTX = "small", 0
+        assert model_check.host_plan("main")["num_ctx"] == 8192
+        s.CURATOR_NUM_CTX = 12000
+        assert model_check.host_plan("main")["num_ctx"] == 12000
+    finally:
+        s.LLM_PROFILE, s.CURATOR_NUM_CTX, s.OLLAMA_PC_ENDPOINT = saved
 
 
 def test_reconfigure_model_exists_with_every_wizard_key_optional():

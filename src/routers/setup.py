@@ -256,6 +256,30 @@ async def minibench(req: MinibenchRequest,
     return result
 
 
+def _check_profile(v):
+    """LLM_PROFILE: "large" (the full constitution) or "small" (the checklist)."""
+    if v is None:
+        return v
+    v = str(v).strip().lower()
+    if v not in ("large", "small"):
+        raise ValueError("llm_profile must be large or small")
+    return v
+
+
+def _check_num_ctx(v):
+    """CURATOR_NUM_CTX: 0 (the profile's window) or 4096-131072 tokens."""
+    if v is not None and v != 0 and not 4096 <= v <= 131072:
+        raise ValueError("curator_num_ctx must be 0 (the profile's window) or 4096-131072")
+    return v
+
+
+def _check_num_gpu(v):
+    """CURATOR_NUM_GPU: -1 (Ollama splits the layers) or 0-999."""
+    if v is not None and not -1 <= v <= 999:
+        raise ValueError("curator_num_gpu must be -1 (Ollama decides) or 0-999")
+    return v
+
+
 class SetupCompleteRequest(BaseModel):
     # One media server per install: Plex (the default) or Jellyfin. The
     # chosen one's address and key are required; the other's may stay blank.
@@ -299,9 +323,17 @@ class SetupCompleteRequest(BaseModel):
     llm_cpu_lane: bool = True
     llm_cpu_threads: int = 6
     llm_cpu_min_free_mb: int = 12000
+    # The bench's package for this card (None: the defaults, large / 16k / all
+    # layers on the card).
+    llm_profile: Optional[str] = None
+    curator_num_ctx: Optional[int] = None
+    curator_num_gpu: Optional[int] = None
 
     _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
                            "lidarr_url", "soulsync_url")(validate_service_url)
+    _profile = field_validator("llm_profile")(_check_profile)
+    _ctx = field_validator("curator_num_ctx")(_check_num_ctx)
+    _gpu = field_validator("curator_num_gpu")(_check_num_gpu)
 
     @field_validator("media_server_type")
     @classmethod
@@ -348,9 +380,15 @@ class ReconfigureRequest(BaseModel):
     llm_cpu_lane: Optional[bool] = None
     llm_cpu_threads: Optional[int] = None
     llm_cpu_min_free_mb: Optional[int] = None
+    llm_profile: Optional[str] = None
+    curator_num_ctx: Optional[int] = None
+    curator_num_gpu: Optional[int] = None
 
     _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
                            "lidarr_url", "soulsync_url")(validate_service_url)
+    _profile = field_validator("llm_profile")(_check_profile)
+    _ctx = field_validator("curator_num_ctx")(_check_num_ctx)
+    _gpu = field_validator("curator_num_gpu")(_check_num_gpu)
 
 
 @router.post("/complete")
@@ -396,12 +434,15 @@ async def complete_setup(
 
     # Build Ollama models in background (takes a moment). The pitcher bake
     # used to be unreachable from here - only the post-setup rebuild built it.
+    from src.services.llm_utils import _PROFILE_NUM_CTX
+    window = req.curator_num_ctx or _PROFILE_NUM_CTX.get(req.llm_profile or "large", 16384)
     background_tasks.add_task(
         build_ollama_models,
         req.ollama_endpoint,
         req.base_curator_model,
         req.base_summarizer_model,
         req.base_pitcher_model if req.enable_pitcher else None,
+        num_ctx=max(4096, window),
     )
 
     return {
@@ -436,8 +477,11 @@ async def build_models_endpoint(
 
 # ── post-setup: see and change what the wizard configured ───────────────────
 
+# A change to any of these needs a rebuild (the curator bake carries its
+# window) and a restart (the window is resolved once at import).
 _MODEL_KEYS = ("base_curator_model", "base_summarizer_model", "embedding_model",
-               "pitcher_model", "base_pitcher_model")
+               "pitcher_model", "base_pitcher_model",
+               "llm_profile", "curator_num_ctx", "curator_num_gpu")
 
 
 @router.get("/integrations")
