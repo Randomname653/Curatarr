@@ -39,7 +39,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from src.services.media_server.base import (
     ServerKind, ServerUser, _norm_name, is_jellyfin_key, is_plex_key,
@@ -623,14 +623,12 @@ async def _sync_to_plex(plan: Plan, *, since: Optional[str], transport=None) -> 
 
     def _load():
         with _engine().connect() as c:
-            q = ("SELECT DISTINCT w.user_id, w.plex_item_id, u.plex_token, u.is_admin FROM watch_history w "
-                 "JOIN users u ON u.id = w.user_id WHERE w.completed = 1 AND w.orphaned_at IS NULL "
-                 "AND w.source IN (" + ", ".join(f"'{x}'" for x in JELLYFIN_PLAY_SOURCES) + ")")
-            params = {}
-            if since:
-                q += " AND w.viewed_at >= :since"
-                params["since"] = since.replace("T", " ")
-            return c.execute(text(q), params).fetchall()   # nosec B608 - the sources are a constant tuple
+            q = text("SELECT DISTINCT w.user_id, w.plex_item_id, u.plex_token, u.is_admin FROM watch_history w "
+                     "JOIN users u ON u.id = w.user_id WHERE w.completed = 1 AND w.orphaned_at IS NULL "
+                     "AND w.source IN :sources AND (:since IS NULL OR w.viewed_at >= :since)"
+                     ).bindparams(bindparam("sources", expanding=True))
+            return c.execute(q, {"sources": list(JELLYFIN_PLAY_SOURCES),
+                                 "since": since.replace("T", " ") if since else None}).fetchall()
     rows = await run_read(_load)
     url, owner = settings.effective_plex_url, settings.effective_plex_token
     started = time.time()

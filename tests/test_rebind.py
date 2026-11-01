@@ -328,7 +328,8 @@ with conn_mod.engine.begin() as c:
                    "(31, 2, '87654321', '1002', 'Home Movie', 'movie', :now, 'jellyfin_session', 1), "
                    "(32, 2, '87654321', '1001', 'Heat', 'movie', '2020-01-01 20:00:00', 'jellyfin_session', 1), "
                    "(33, 1, '12345678', '1001', 'Heat', 'movie', :now, 'jellyfin_poll', 1), "
-                   "(34, 2, '87654321', '2003', 'Secrets', 'show', :now, 'jellyfin_session', 0)"), {"now": now})
+                   "(34, 2, '87654321', '2003', 'Secrets', 'show', :now, 'jellyfin_session', 0), "
+                   "(35, 2, '87654321', '1003', 'Ronin', 'movie', :now, 'plex', 1)"), {"now": now})
 scrobbled = []
 
 
@@ -347,6 +348,7 @@ check("towards Plex: a finished Jellyfin-period play is marked played with its m
 check("...not a play from before the move to Jellyfin, not an unfinished one",
       not any(k in ("2003",) for _t, k in scrobbled) and scrobbled.count(("tok-sam", "1001")) == 0)
 check("...and a member without a Plex sign-in is counted, not marked", st["no_plex_sign_in"] == 1)
+check("...and a play Plex itself recorded is not marked again", not any(k == "1003" for _t, k in scrobbled))
 from src.services.app_state import get_state  # noqa: E402
 from src.services.plex_sync import drop_switch_marks  # noqa: E402
 note = get_state(rebind.PLEX_SWITCH_MARKS)
