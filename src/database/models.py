@@ -356,6 +356,9 @@ class MusicWish(Base):
     note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
+    # JSON {at, sent, added, already, refused, rejected}: the last time the
+    # owner sent this wish to SoulSync's wishlist (2026-11-01); NULL = never.
+    soulsync = Column(Text, nullable=True)
 
 
 class ProtectedMedia(Base):

@@ -224,11 +224,14 @@ dc = (root / "src/services/data_custodian.py").read_text(encoding="utf-8")
 check("nightly catalog-sync task registered (24h, no LLM)",
       '"music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0' in dc)
 ss = (root / "src/services/soulsync_client.py").read_text(encoding="utf-8")
-# Read-only but for one write the owner agreed to on 2026-10-09: a deleted
-# artist goes on SoulSync's blocklist. Never the download trigger.
-check("soulsync: the one POST is the blocklist ban, never the download trigger",
-      ss.count(".post(") == 1 and 'c.post(_root() + "/api/blocklist"' in ss
+# Read-only but for two writes the owner agreed to: a deleted artist goes on
+# SoulSync's blocklist (2026-10-09), the owner's wish on its wishlist
+# (2026-11-01). Never the download trigger.
+import re  # noqa: E402
+_posts = sorted(re.findall(r'\.post\((_\w+\(\) \+ "[^"]+")', ss))
+check("soulsync: two POSTs, the blocklist ban and the owner's wishlist, never the download trigger",
+      _posts == ['_base() + "/wishlist"', '_root() + "/api/blocklist"']
       and '"/request"' not in ss and "'/request'" not in ss
-      and ".put(" not in ss and ".patch(" not in ss and ".delete(" not in ss)
+      and ".put(" not in ss and ".patch(" not in ss and ".delete(" not in ss, _posts)
 
 check.done()
