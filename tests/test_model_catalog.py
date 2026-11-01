@@ -151,6 +151,24 @@ check("package: below every tier the note names the floor",
 check("package: no matrix -> None, the wizard keeps the fit verdicts",
       hardware_package(24.0, None, set(), matrix={}) is None)
 
+# The bench's profile per model at one card size: the wizard and Settings
+# fill the curator profile for the model actually chosen (2026-11-01).
+_shipped = load_matrix()
+if _shipped:
+    _b16 = hardware_package(16.0, None, set(), matrix=_shipped)["by_model"]
+    check("by_model: every measured package at 16 GB, the recommended one first",
+          list(_b16)[0] == hardware_package(16.0, None, set(), matrix=_shipped)["recommended"]["model"]
+          and len(_b16) == 1 + len(_shipped["tiers"]["16"].get("alternatives") or []), _b16)
+    check("by_model: on 16 GB the MoE runs large / 16384 / -1, e4b small / 8192 / 99",
+          _b16.get("gemma4:26b-a4b-it-qat") == {"profile": "large", "num_ctx": 16384, "num_gpu": -1}
+          and _b16.get("gemma4:e4b-it-qat") == {"profile": "small", "num_ctx": 8192, "num_gpu": 99}, _b16)
+from src.services.model_catalog import profiles_by_model  # noqa: E402
+check("by_model: the first entry per model wins, entries without a profile are left out",
+      profiles_by_model([{"model": "a", "profile": "small", "num_ctx": 8192, "num_gpu": 99},
+                         {"model": "a", "profile": "large", "num_ctx": 16384, "num_gpu": -1},
+                         {"model": "b"}, None])
+      == {"a": {"profile": "small", "num_ctx": 8192, "num_gpu": 99}})
+
 # System RAM: an offloaded package keeps most of its model in host RAM.
 _mx4 = {"tiers": {"4": {
     "recommended": {"model": "gemma4:26b-a4b-it-qat", "server": {},

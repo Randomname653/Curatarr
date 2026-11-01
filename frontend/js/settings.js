@@ -265,6 +265,17 @@ export function renderIntegrationCard(card, cfg) {
       <label for="int-${f.id}">${esc(f.label)}</label>
       <input id="int-${f.id}" type="${type}" value="${esc(cur === undefined || cur === null ? '' : String(cur))}" placeholder="${esc(f.placeholder || '')}"></div>`;
   }).join('');
+  // The models card can fill the curator profile from the bench: pick (or
+  // detect) the card size, and the configured curator's measured values go
+  // into the three fields, ready to save.
+  const bench = card.key === 'models' ? `<div class="row mt-8">
+      <select class="w-auto" id="int-bench-vram" aria-label="Graphics card memory">
+        <option value="">Card memory…</option>
+        ${[4, 6, 8, 10, 12, 16, 20, 24].map(g => `<option value="${g}">${g} GB</option>`).join('')}
+      </select>
+      <button type="button" class="btn btn-secondary btn-sm" ${act('benchFillProfile', EL)}>Use the bench's values</button>
+      <span id="int-bench-note" class="status"></span>
+    </div>` : '';
   const testBtn = card.test
     ? `<button type="button" class="btn btn-secondary btn-sm" ${act('testIntegration', card.key, EL)}>Test connection</button>` : '';
   const rebuild = card.key === 'models'
@@ -274,7 +285,7 @@ export function renderIntegrationCard(card, cfg) {
   el.innerHTML = `
     <div class="section-head"><h3>${esc(card.title)}</h3>${card.hint ? `<span class="section-hint">${esc(card.hint)}</span>` : ''}</div>
     <div class="section-body">
-      <div id="int-form-${card.key}">${rows}</div>
+      <div id="int-form-${card.key}">${rows}</div>${bench}
       <div class="row mt-8">
         <button type="button" class="btn btn-primary btn-sm" id="int-save-${card.key}" ${act('saveIntegrations', card.key, EL)}>Save</button>
         ${testBtn}${rebuild}
@@ -298,6 +309,45 @@ export function _integrationChanges(card) {
     if (v !== String(cur === undefined || cur === null ? '' : cur)) changes[f.id] = v;
   }
   return changes;
+}
+
+// The bench's profile for the configured curator at the chosen card size.
+// Without a size picked, the card of this host (nvidia-smi) is asked first;
+// a curator the bench has not measured there fills nothing and says so.
+export async function benchFillProfile(btn) {
+  const note = document.getElementById('int-bench-note');
+  const sel = document.getElementById('int-bench-vram');
+  let vram = parseFloat(sel?.value);
+  let gpuName = null;
+  btnBusy(btn, 'Looking…');
+  try {
+    if (!Number.isFinite(vram)) {
+      const g = await api('/api/setup/gpu');
+      if (!g.ok) { setStatus(note, 'pick the card memory (no card found on this host)', 'err'); return; }
+      vram = g.vram_gb; gpuName = g.name || null;
+    }
+    const r = await api('/api/setup/recommend', 'POST', {vram_gb: vram, gpu_name: gpuName});
+    const pkg = r.package;
+    const model = document.getElementById('int-base_curator_model')?.value?.trim() || '';
+    const found = pkg?.by_model?.[model] || pkg?.by_model?.[model.replace(/:latest$/, '')];
+    if (!found) {
+      const rec = pkg?.recommended;
+      setStatus(note, rec
+        ? `the bench has no run of ${model} on ${pkg.tier_gb} GB; it recommends ${rec.model} (${rec.profile} / ${rec.num_ctx} / ${rec.num_gpu})`
+        : 'the bench has no package for this card size', 'err');
+      return;
+    }
+    for (const [id, v] of [['int-llm_profile', found.profile], ['int-curator_num_ctx', found.num_ctx],
+                           ['int-curator_num_gpu', found.num_gpu]]) {
+      const el = document.getElementById(id);
+      if (!el || v === undefined || v === null) continue;
+      el.value = String(v);
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+    setStatus(note, `filled in for ${model} on ${pkg.tier_gb} GB - Save to keep it`, 'ok');
+  } catch (e) { setStatus(note, _errMsg(e), 'err'); }
+  finally { btnDone(btn); }
 }
 
 export async function saveIntegrations(cardKey, btn) {

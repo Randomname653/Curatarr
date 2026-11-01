@@ -99,6 +99,7 @@ const SETUP_CONTENT = {
     <div class="my-8" id="model-recs"></div>
     <details class="mt-12" id="s-profile-wrap">
       <summary>Curator profile (filled in from the bench result)</summary>
+      <div class="hint" id="s-profile-note"></div>
       <div class="form-group mt-8">
         <label for="s-llm-profile">Profile</label>
         <select class="w-auto" id="s-llm-profile">
@@ -119,7 +120,7 @@ const SETUP_CONTENT = {
     </details>
     <div class="mt-12 form-group">
       <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
-      <select id="s-curator-model"><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
+      <select id="s-curator-model" ${actOn('change', 'onSetupCuratorChange')}><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
       <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
     </div>
     <div class="form-group">
@@ -431,7 +432,8 @@ export async function refreshModelRecs() {
     if (panel) panel.innerHTML = (r.floor_note
       ? `<div class="t-amber test-status">${SVG_WARN} ${esc(r.floor_note)}</div>`
       : '') + renderHardwarePackage(r.package);
-    _applyPackageProfile(r.package?.recommended);
+    state.setupPackage = r.package || null;
+    onSetupCuratorChange();
   } catch(e) {
     if (panel) panel.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
@@ -440,6 +442,22 @@ export async function refreshModelRecs() {
 // The bench package's curator profile goes into the wizard's profile fields,
 // which the setup saves (LLM_PROFILE / CURATOR_NUM_CTX / CURATOR_NUM_GPU).
 // Until 2026-11-01 they were only shown as .env lines to copy by hand.
+// The bench's values for the curator the select shows now: a model it measured
+// at this card size gets its own profile, any other keeps what the fields say.
+export function onSetupCuratorChange() {
+  const pkg = state.setupPackage;
+  const model = document.getElementById('s-curator-model')?.value || '';
+  const note = document.getElementById('s-profile-note');
+  if (!pkg?.by_model) { if (note) note.textContent = ''; return; }
+  const found = pkg.by_model[model] || pkg.by_model[model.replace(/:latest$/, '')];
+  if (found) _applyPackageProfile(found);
+  if (note) {
+    note.textContent = found
+      ? `The bench's values for ${model} on ${pkg.tier_gb} GB.`
+      : `The bench has not measured ${model || 'this model'} on ${pkg.tier_gb} GB; check these values yourself.`;
+  }
+}
+
 export function _applyPackageProfile(rec) {
   if (!rec) return;
   const values = {'s-llm-profile': rec.profile, 's-num-ctx': rec.num_ctx, 's-num-gpu': rec.num_gpu};
