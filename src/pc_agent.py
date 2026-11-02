@@ -28,7 +28,10 @@ being sent before the poll would notice. A hard power-off sends nothing;
 Curatarr then sees two missed polls.
 
 Every request carries PC_AGENT_TOKEN in X-Agent-Token (compared in constant
-time); without a token configured the agent does not start. The readings are
+time); without a token configured the agent does not start. A poll may say
+``X-Curatarr-Working: 1`` - Curatarr has work on this card right now - and the
+tray turns the diamond of its icon ruby, like the web logo while a model is
+at work (2026-11-02); "0", or no poll for WORKING_TTL_S, turns it back. The readings are
 process names and GPU memory - no paths, no command lines, no user data.
 Allow its port in the firewall for the NAS address only.
 
@@ -50,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 AGENT_VERSION = 1
 TOKEN_HEADER = "X-Agent-Token"
+# Curatarr's work on this card, said with each poll (the tray's ruby diamond).
+WORKING_HEADER = "X-Curatarr-Working"
+# Polls come every 5 s; three missed ones and the icon is back to normal.
+WORKING_TTL_S = 15.0
 DEFAULT_PORT = 11435
 # Programs smaller than this are never games and never worth asking about;
 # leaving them out keeps the report small (a desktop runs 300+ processes).
@@ -137,6 +144,17 @@ class Agent:
         self._post = post or _post_json
         self.shutting_down = False
         self.server: Optional[ThreadingHTTPServer] = None
+        self._working_at = 0.0
+
+    def note_working(self, on: bool) -> None:
+        """What the last poll said about Curatarr's work on this card."""
+        self._working_at = time.monotonic() if on else 0.0
+
+    def working(self) -> bool:
+        """Curatarr has work on this card: the last poll said so, recently
+        (a NAS that stops polling leaves the icon ruby no longer than
+        WORKING_TTL_S)."""
+        return bool(self._working_at) and time.monotonic() - self._working_at < WORKING_TTL_S
 
     def authorized(self, given: Optional[str]) -> bool:
         return bool(given) and hmac.compare_digest(given.encode(), self.token.encode())
@@ -218,6 +236,9 @@ class Agent:
                     return self._send(404, {"error": "not found"})
                 if not agent.authorized(self.headers.get(TOKEN_HEADER)):
                     return self._send(401, {"error": "token required"})
+                working = self.headers.get(WORKING_HEADER)
+                if working is not None:   # an older Curatarr says nothing
+                    agent.note_working(working.strip() == "1")
                 return self._send(200, agent.snapshot())
 
             def do_POST(self):  # noqa: N802 - http.server's naming

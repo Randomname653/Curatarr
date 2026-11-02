@@ -362,11 +362,24 @@ async def _kick_queue() -> None:
         logger.warning("[node] queued analysis not started: %s", e)
 
 
+def card_working() -> bool:
+    """Curatarr has a model call on the node's card right now (its lane in
+    llm_priority): each poll tells the agent, whose tray shows it."""
+    try:
+        from src.services.llm_priority import lane
+        from src.services.ollama_hosts import pc_host as pc_ollama
+        h = pc_ollama()
+        return bool(h and lane(h.url).active)
+    except Exception:  # noqa: BLE001 - a tray colour; never a reason to miss a poll
+        return False
+
+
 async def _fetch(url: str, tok: str) -> dict:
     import httpx
-    from src.pc_agent import TOKEN_HEADER
+    from src.pc_agent import TOKEN_HEADER, WORKING_HEADER
     from src.services.http_client import tls_context
     async with httpx.AsyncClient(verify=tls_context(), timeout=TIMEOUT_S) as client:
-        r = await client.get(url, headers={TOKEN_HEADER: tok})
+        r = await client.get(url, headers={TOKEN_HEADER: tok,
+                                           WORKING_HEADER: "1" if card_working() else "0"})
     r.raise_for_status()
     return r.json()
