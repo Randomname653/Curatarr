@@ -169,6 +169,29 @@ Befunde:
 - **Grenzen der Aussagekraft:** n = 9 Fälle, je ein Lauf bei Temperatur 0,7, ein einzelner Scorer. Ein Fall verschiebt den Schnitt um bis zu 1,2 Punkte; die Abstände von 0,6–2,1 Punkten sind also kein belastbares Ranking. Mit AB08 nicht direkt vergleichbar: andere Persona (#150), anderer Scorer, andere Fallauswahl.
 - Für die Swap-Regel bedeutet das: Keiner der drei Kandidaten schlägt die gepinnte 31b im Chat-Gesamtwert. Die 31b-qat gewinnt nur bei Haltung und Multi-Turn. Die Matrix bleibt davon unberührt, weil sie nur `claude-judge` und `claude` liest.
 
+**Blinder Re-Score der Urteils-Begründungen 2026-11-02 (P0b)**
+
+Vorgehen: Die drei Matrix-Läufe wurden zusammen mit gemischten Labels bewertet, jeweils 40 Titel.
+- **Rubrik:** `judge-argument-2026-11r`. Das „r“ steht für rekonstruiert: Die Rubrik-Dateien vom 2026-10-20 sind nicht mehr vorhanden. Die Achsen sind wie damals faith, law, logic, judgment und clarity mit je 0–5, plus `rule_hits`. Die Definitionen sind aus der Verfassung in `pillars.PILLAR_CONSTITUTION` abgeleitet: Priorität der Pillars, Stature statt Popularität, OWNER SIGNAL stuft nur auf STAGNANT, Bitrate löscht nie.
+- **Grundlage:** nur die Judge-Artefakte, nicht der Evidence-Snapshot. Faith misst daher innere Stimmigkeit und erkennbar erfundene Fakten, nicht den Abgleich mit der Evidenz.
+- **Eintrag:** scorer `claude-judge-blind`, die Matrix liest weiter `claude-judge`. Sicherung: `bench_ledger_before_judge_blind.json`.
+
+| Modell (Lauf) | J /25 blind | J /25 vom 2026-10-20 | Differenz | ≥ 22 | ≤ 15 | rule_hits | anime / movie / music / show |
+|---|---|---|---|---|---|---|---|
+| gemma4:31b (`L:da07456d7ca29141-7`) | **24,25** | 23,18 | +1,07 | 37 | 0 | 0 | 23,5 / 24,2 / 24,7 / 24,6 |
+| gemma4:31b-it-qat (`L:2888e45f148d8044-87`) | 24,18 | 23,05 | +1,13 | 38 | 0 | 0 | 23,3 / 24,8 / 24,1 / 24,5 |
+| gemma4:26b-a4b-it-qat (`L:3babfda515b82be5-510`) | 21,75 | 21,88 (nicht blind) | −0,13 | 33 | 4 | 4 | 19,0 / 23,8 / 21,8 / 22,4 |
+
+Befunde:
+- **Die rekonstruierte Rubrik bewertet ~1,1 Punkte großzügiger** als die vom 2026-10-20, gemessen an den beiden 31b-Ankern, die gleichmäßig steigen. Absolute Werte aus beiden Rubriken dürfen deshalb nicht gemischt werden.
+- **Das MoE fällt relativ weiter zurück.** Sein absoluter Wert bleibt fast gleich, der Abstand zur 31b wächst aber von 1,3 auf 2,5 Punkte. Die alte, nicht blinde 21,88 war also im Verhältnis zu den Ankern eher zu gnädig. Für die Matrix ändert das nichts: Auf 6–20 GB entscheidet das Komfortkriterium, auf 24 GB gewinnt die 31b-qat ohnehin.
+- **Die vier Regelbrüche des MoE folgen einem Muster.**
+  - Zweimal benennt es einen Schutz und urteilt dann dagegen: Es nennt große Preise und vergibt dennoch STAGNANT bzw. CUT; das ist genau der Fall, für den der Stature-Floor in #288 eingeführt wurde.
+  - Einmal schreibt es „Resonance besteht“, vergibt aber STAGNANT mit Pillar NONE.
+  - Einmal kommt eine leere Schema-Antwort (der bekannte 97,5-%-Ausfall).
+  - Schwach ist es bei anime (19,0) und bei clarity (3,70: Bitrate-Notizen wie „N/A“ oder „None“, vage Stature-Zeilen).
+- **Die 31b-Zwillinge sind im Judge praktisch gleich** (24,25 / 24,18). Beide lassen in Einzelfällen ein OWNER SIGNAL allein den Keep tragen; die Verfassung sieht dafür nur STAGNANT vor. Das MoE befolgt diese Regel in denselben Fällen korrekt.
+
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
 - Die Qualität stammt aus `tournament_bench.py` und `validate_top4.py` (2026-05/06) und ist seit der Gemma-4-/Granite-4.2-Generation nicht neu gemessen.
@@ -300,7 +323,7 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 | Prio | Was | Phase / Befehl (Besitzer startet) | geschätzte GPU-Zeit 4090 | Warum |
 |---|---|---|---|---|
 | ~~P0a~~ | **Erledigt am 2026-11-02:** Chat-Decider der Katalog-Curator (31b, 31b-qat, 26b-a4b, e4b) blind gescort, scorer `claude-chat` | kein GPU | 0 | Ergebnis in §1.5; keiner der Kandidaten schlägt die gepinnte 31b im Chat-Gesamtwert |
-| **P0b** | Blinder Re-Score der MoE-Begründungen zusammen mit 31b-qat | kein GPU | 0 | Die 21,88 ist nicht blind |
+| ~~P0b~~ | **Erledigt am 2026-11-02:** Blinder Re-Score der Judge-Begründungen (MoE, 31b-qat, 31b), scorer `claude-judge-blind` | kein GPU | 0 | MoE 21,75 bestätigt, Abstand zur 31b blind 2,5 Punkte (§1.5). Offen: ob `claude-judge` für alle Modelle blind neu gescort wird |
 | **P1** | MoE 26b-a4b über alle 103 Titel auf der 4090 (ins Ledger) | `run run --only gemma4:26b-a4b-it-qat --phases quality --items full` | ~10–15 min pro Profil (large reicht) | Der NAS-Lauf liegt außerhalb des Ledgers; das ist der Vergleich zwischen 4090 und NAS mit gleichem Bestand |
 | **P1** | KV-Quality für gemma4:31b-it-qat (q8/q4) | `run run --only gemma4:31b-it-qat --phases quality --kv-quality --repull-for-kv` | ~12 min plus Re-Pull von 19 GB | Der 20-GB-Kandidat mit q4 (32,7 tok/s) braucht Selbstkonsistenz ≥ 90 %; heute nur f16 |
 | **P1** | Untere Stufen gemma4:26b und gemma4:12b mit Layer-Anteil nachmessen | `run run --only gemma4:12b,gemma4:26b --phases perf --force` | ~30–45 min | Ihre Zellen sind vor a0acb77 entstanden (ps unplausibel) |
