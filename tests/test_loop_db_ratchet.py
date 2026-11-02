@@ -19,6 +19,8 @@ src/ also opens its other SQLite files only through
     python tests/test_loop_db_ratchet.py            # check
     python tests/test_loop_db_ratchet.py --update   # rewrite the baseline (only ever lower)
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import ast
 import json
 import sys

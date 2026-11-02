@@ -1,3 +1,5 @@
+import _harness  # noqa: F401,I001 - first: temp stores
+
 from src.schemas.chat import ChatMessage, DiscussContext
 def test_discuss_context():
     dc = DiscussContext(title="Test", pitch="Because.")

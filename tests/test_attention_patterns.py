@@ -16,21 +16,19 @@ Measured on the owner's data:
 
     python tests/test_attention_patterns.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.cache.metadata_cache import MetadataCache  # noqa: E402
 from src.routers import enrichment as en  # noqa: E402
 from src.services import anime_offline as ao  # noqa: E402
 from src.services import archive_backfill as ab  # noqa: E402
 from src.services import wikidata as wd  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 TMP = Path(tempfile.mkdtemp(prefix="curatarr-attention-"))

@@ -8,13 +8,12 @@ document into durable tables.
 
     python tests/test_credits_index.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -22,8 +21,6 @@ import src.services.credits_index as ci  # noqa: E402
 import src.services.media_enricher as me  # noqa: E402
 from src.cache.metadata_cache import MetadataCache  # noqa: E402
 from src.database.models import Base, MediaCompany, MediaCredit, MediaWork  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the TMDB fetch keeps what it used to drop ───────────────────────────────

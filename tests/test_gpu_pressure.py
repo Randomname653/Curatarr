@@ -9,11 +9,12 @@ left alone.
 
     python tests/test_gpu_pressure.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.config import settings  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402

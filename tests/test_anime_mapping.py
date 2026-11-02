@@ -1,3 +1,5 @@
+import _harness  # noqa: F401,I001 - first: temp stores
+
 from src.services.anime_mapping import AnimeMapping
 
 def test_lookup_tvdb_missing():

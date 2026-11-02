@@ -2,13 +2,14 @@
 
     python tests/test_music_source.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import pathlib
 import sys
 import tempfile
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.config import settings  # noqa: E402
 from src.services import lyrics as ly  # noqa: E402

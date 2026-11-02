@@ -1,4 +1,6 @@
 """Test cache miss and error handling in studio_notes."""
+import _harness  # noqa: F401,I001 - first: temp stores
+
 from unittest.mock import Mock
 
 from src.services.studio_notes import get_studio_note_cached, get_director_note_cached

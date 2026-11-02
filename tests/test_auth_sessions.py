@@ -8,14 +8,14 @@ token older than a day gets a fresh one in the
 ``x-curatarr-refreshed-token`` response header. Clients that ignore the
 header keep a fixed 7-day expiry; nothing about 401 handling changes.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 
 import asyncio
 import datetime as dt
-import sys
 import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 import jwt as jose_jwt  # PyJWT
 

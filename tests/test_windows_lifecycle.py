@@ -14,6 +14,8 @@ Runs on any OS: the Win32 parts are exercised through their pure logic.
 
     python tests/test_windows_lifecycle.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import importlib
 import re
 import subprocess
@@ -24,9 +26,7 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-from _checks import check  # noqa: E402
 
 
 # ── no console windows ───────────────────────────────────────────────────────

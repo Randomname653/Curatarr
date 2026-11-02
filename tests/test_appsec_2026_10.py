@@ -14,14 +14,14 @@ Pins:
 
     python tests/test_appsec_2026_10.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import inspect
 import pathlib
-import sys
 import tempfile
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 import httpx  # noqa: E402
 from fastapi import HTTPException  # noqa: E402
@@ -37,7 +37,6 @@ import src.services.setup_wizard as sw  # noqa: E402
 from src.services.endpoint_policy import (  # noqa: E402
     NEW_ADDRESS_NEEDS_KEY, same_origin, secret_for_target, validate_service_url)
 
-from _checks import check  # noqa: E402
 
 
 _RealClient = httpx.AsyncClient

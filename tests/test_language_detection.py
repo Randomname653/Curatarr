@@ -16,11 +16,9 @@ does not read as English around them. The confabulation gets a prompt
 guard: the directive now says what the default is based on, so the model
 has a true answer available when asked.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
 
-import sys
-import pathlib
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from src.services.llm_utils import detect_user_language, language_directive
 

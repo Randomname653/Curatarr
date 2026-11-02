@@ -19,6 +19,8 @@ Four things had to fail together, and each gets a test here:
 
 No network, no DB: these read the source and exercise the pure predicates.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 
 import pathlib
 
@@ -127,8 +129,6 @@ def test_a_misfiled_profile_is_detected_but_romanisations_are_not():
     this library that are simply alternate romanisations or English release
     names; title AND year together flagged 8, and all 8 really were another
     work."""
-    import sys
-    sys.path.insert(0, str(_SRC.parent))
     from src.services.pillars import _profile_is_another_work
 
     # the real case

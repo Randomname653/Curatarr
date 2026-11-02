@@ -10,6 +10,8 @@ list sizes are capped.
 
     python tests/test_security_angle2.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import io
 import pathlib
@@ -18,7 +20,6 @@ import tempfile
 import zipfile
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 
 def _src(rel: str) -> str:

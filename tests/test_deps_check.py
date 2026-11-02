@@ -7,12 +7,13 @@ install ran pip on every start. src/deps_check.py replaces both.
 
     python tests/test_deps_check.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sys
 import tempfile
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src import deps_check as dc  # noqa: E402
 

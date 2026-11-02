@@ -3,6 +3,8 @@ artist universe, the settings hint and the docs.
 
     python tests/test_lidarr_optional.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import pathlib
 import sys
@@ -10,7 +12,6 @@ import tempfile
 from contextlib import contextmanager
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 

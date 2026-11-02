@@ -19,12 +19,12 @@ quotes trap the 3b review found.
 
     python tests/test_frontend_hygiene.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import json
 import re
 import sys
 
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # `tests` is a package only from the repo root
 from tests.frontend_files import markup, modules, script, styles
 
 # Ceilings, not targets. Step 1 of the UI-grammar work pinned the numbers as

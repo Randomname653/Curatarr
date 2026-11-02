@@ -14,12 +14,12 @@ Contract pins:
 * no deletion machinery: the discussion UI block and verdict framing stay
   out unless the user raises deletion themselves.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
 
-import sys
+
 import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.routers.chat import _thread_id_for
 from src.schemas.chat import DiscussContext

@@ -9,6 +9,8 @@ trigger, and never runs from a test process against the real SoulSync.
 
     python tests/test_soulsync_blocklist.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import pathlib
 import sys
@@ -16,7 +18,6 @@ import sys
 import httpx
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.config import settings  # noqa: E402
 from src.services import soulsync_client as ss  # noqa: E402

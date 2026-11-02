@@ -12,12 +12,13 @@ the structure that run relies on.
 
     python tests/test_navigation.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import re
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import markup  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]

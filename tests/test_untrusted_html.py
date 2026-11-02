@@ -14,12 +14,13 @@ it inside title="..." / value="...".
 
     python tests/test_untrusted_html.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))   # `tests` is a package only from the repo root
 from tests.frontend_files import modules
 
 _UI = pathlib.Path(__file__).resolve().parents[1] / "frontend" / "js" / "ui.js"

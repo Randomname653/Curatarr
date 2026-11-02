@@ -7,13 +7,14 @@ the app was down, reading like traffic.
 
     python tests/test_log_setup.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import logging
 import pathlib
 import sys
 from logging.handlers import RotatingFileHandler
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src import log_setup  # noqa: E402
 from src.paths import LOG_DIR  # noqa: E402

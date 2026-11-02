@@ -11,19 +11,18 @@ hand-written frontend forms). OMDb sat in two of the three from the start —
 pydantic silently dropped the value, so the wizard never actually saved an
 OMDb key, and nothing anywhere errored.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import io
 import json
 import shutil
-import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 ROOT = Path(__file__).resolve().parents[1]
-from _checks import check  # noqa: E402
 
 
 from src.services import spotify_import as si  # noqa: E402

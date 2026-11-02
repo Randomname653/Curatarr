@@ -9,11 +9,12 @@ ended the lane while 2,000 movies waited behind them.
 
     python tests/test_anime_routing.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.routers.enrichment import _counts_toward_abort  # noqa: E402
 from src.services import media_enricher as me  # noqa: E402

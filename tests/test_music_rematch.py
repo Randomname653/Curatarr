@@ -5,6 +5,8 @@ and no network.
 
     python tests/test_music_rematch.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sqlite3
 import sys
@@ -13,7 +15,6 @@ from contextlib import contextmanager
 from datetime import datetime
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from sqlalchemy import create_engine                       # noqa: E402
 from sqlalchemy.orm import sessionmaker                    # noqa: E402

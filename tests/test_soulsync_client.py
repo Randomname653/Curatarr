@@ -1,3 +1,5 @@
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 from unittest.mock import patch
 

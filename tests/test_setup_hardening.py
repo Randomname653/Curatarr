@@ -17,6 +17,8 @@ Pins:
 
     python tests/test_setup_hardening.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import os
 import pathlib
@@ -24,7 +26,6 @@ import sys
 import tempfile
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from pydantic import SecretStr
 

@@ -1,11 +1,8 @@
-import sys
-from pathlib import Path
+import _harness  # noqa: F401,I001 - first: temp stores
+
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-
-# Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.main import app
 from src.routers.auth import get_current_user

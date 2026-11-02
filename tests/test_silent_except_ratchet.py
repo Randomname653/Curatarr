@@ -17,6 +17,8 @@ guards a decision - fails closed.
 
     python tests/test_silent_except_ratchet.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import ast
 import re
 import sys

@@ -8,12 +8,13 @@ writer that rewrites or hides it.
 
     python tests/test_netflix_import.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import io
 import json
 import shutil
 import subprocess
-import sys
 import tempfile
 import zipfile
 from contextlib import contextmanager
@@ -21,7 +22,6 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -29,8 +29,6 @@ import src.database.connection as conn  # noqa: E402
 from src.database.models import (ArrEnrichmentStatus as AES, Base, User,  # noqa: E402
                                  WatchHistoryEntry as W)
 from src.services import netflix_import as ni, netflix_match as nm  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the title ───────────────────────────────────────────────────────────────

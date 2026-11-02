@@ -7,12 +7,11 @@ digest (not its tag), a known measurement is never repeated, the matrix
 K.O. rules and tier derivation, the KV-cache inheritance rule, the nested
 manifest walk, and the reproducible item subset.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
-import sys
 import tempfile
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.benchmarks.hwbench import matrix, registry  # noqa: E402
 from tests.benchmarks.hwbench.ledger import Ledger, fingerprint, model_key  # noqa: E402
@@ -20,8 +19,6 @@ from tests.benchmarks.hwbench.quality import buzzwords, sentences  # noqa: E402
 from tests.benchmarks.hwbench.run import tightest_tier  # noqa: E402
 from tests.benchmarks.hwbench.server import ServerConfig  # noqa: E402
 from tests.benchmarks.hwbench.snapshot_items import select_subset  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp(prefix="hwbench-test-"))

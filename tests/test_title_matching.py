@@ -1,3 +1,5 @@
+import _harness  # noqa: F401,I001 - first: temp stores
+
 from src.services.media_enricher import _titles_close_enough, _candidate_matches
 
 def test_titles_close_enough_exact():

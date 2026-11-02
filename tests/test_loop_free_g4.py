@@ -18,10 +18,11 @@ the loop guard in raise mode, then checks the side effect is unchanged:
 
     python tests/test_loop_free_g4.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import os
-import sys
 import tempfile
 import threading
 import types
@@ -29,7 +30,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 
@@ -41,7 +41,6 @@ from src.database.models import (Base, CuratorResolutionLog, DeletionProposal,  
 from src.services import app_state  # noqa: E402
 
 from _checks import loop_guarded  # noqa: E402
-from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())
