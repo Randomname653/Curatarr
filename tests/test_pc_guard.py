@@ -11,23 +11,21 @@ Real HTTP: a local server that hangs mid-answer plays the PC.
 
     python tests/test_pc_guard.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import httpx  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.services import pc_guard, pc_host  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 class Hanging(BaseHTTPRequestHandler):

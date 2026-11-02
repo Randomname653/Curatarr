@@ -10,17 +10,15 @@ Fakes only: no Ollama is called.
 
     python tests/test_summarizer_echo_fields.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import media_enricher as me  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 check("a year is a number, a missing or odd one is None",

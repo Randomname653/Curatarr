@@ -2,14 +2,10 @@
 
     python tests/test_rec_watch_hits.py
 """
-import sys
-from pathlib import Path
+from _harness import check  # noqa: I001 - first: temp stores
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.plex_sync import _match_hits_to_recs  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 RECS = [

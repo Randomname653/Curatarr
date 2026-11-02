@@ -14,24 +14,22 @@ Found in the 2026-10 vector/memory audit:
 
     python tests/test_memory_hygiene.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import math
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import src.database.connection as conn  # noqa: E402
 import src.services.episodic_memory as em  # noqa: E402
 from src.database.models import Base, EpisodicMemory  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

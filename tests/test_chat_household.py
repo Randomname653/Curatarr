@@ -9,19 +9,17 @@ stays opt-in).
 
     python tests/test_chat_household.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.routers.chat import _household_use_block  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

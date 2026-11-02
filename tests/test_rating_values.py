@@ -8,18 +8,16 @@ profiles carry "N/A". One such profile stopped the whole deletion scan.
 
     python tests/test_rating_values.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import src.services.media_enricher as me  # noqa: E402
 import src.services.recommendations_engine as eng  # noqa: E402
 from src.services.rating_value import count_number, prompt_rating, rating_number  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the parser, on the values the live cache holds ───────────────────────────

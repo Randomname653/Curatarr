@@ -4,18 +4,16 @@ genre fallback for missing embeddings, cosine-space assertion.
 
     python tests/test_score_sanity.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.vector_store.chromadb_wrapper as cw
 from src.services.recommendations_engine import (_cosine_anchors,
                                                  _cosine_to_mismatch)
 from src.services.taste_engine import _corpus_calibration
-
-from _checks import check  # noqa: E402
 
 
 # ── mismatch mapping still sane ──────────────────────────────────────────────

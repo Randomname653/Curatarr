@@ -2,17 +2,14 @@
 
     python tests/test_embed_service.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state
 import src.services.embed_service as es
-
-from _checks import check  # noqa: E402
 
 
 # ── profile: default, flip, cache invalidation ───────────────────────────────

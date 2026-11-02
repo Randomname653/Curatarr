@@ -4,20 +4,17 @@ own "Request limit reached!" marks the day spent at once (2026-09-25).
 
     python tests/test_omdb_quota.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import pathlib
-import sys
 import types
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.media_enricher as me  # noqa: E402
 from src.config import settings  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import real_state  # noqa: E402

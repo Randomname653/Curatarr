@@ -8,18 +8,17 @@ before the watcher's first tick.
 
     python tests/test_game_status_endpoint.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.routers.process_monitor as pmr  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.process_monitor as pm  # noqa: E402
 
-from _checks import check, real_state  # noqa: E402
+from _checks import real_state  # noqa: E402
 
 
 # The handler sits behind ttl_response; call the undecorated function.

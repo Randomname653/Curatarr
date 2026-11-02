@@ -6,12 +6,12 @@ no network, no Ollama, no real data touched.
 
     python tests/test_bulk_delete.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from sqlalchemy.orm import sessionmaker
@@ -20,8 +20,6 @@ from sqlalchemy.pool import StaticPool
 import src.routers.recommendations as recs
 import src.services.episodic_memory as em
 from src.database.models import Base, CuratorResolutionLog, DeletionProposal
-
-from _checks import check  # noqa: E402
 
 
 # ── throwaway DB + patched boundaries ────────────────────────────────────────

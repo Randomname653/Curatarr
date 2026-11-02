@@ -3,19 +3,17 @@ server's task names, not the LAN addresses (audit residual, closed 2026-09-25).
 
     python tests/test_member_visibility.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import pathlib
-import sys
 from types import SimpleNamespace
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 import src.routers.library as lib  # noqa: E402
 import src.routers.tasks as tasks  # noqa: E402
 from src.services.task_monitor import task_monitor  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 ADMIN = SimpleNamespace(id=1, is_admin=True)

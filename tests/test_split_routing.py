@@ -15,19 +15,17 @@ OLLAMA_PC_ENDPOINT nothing changes.
 
     python tests/test_split_routing.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.config import settings  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 from src.services import pc_host  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 TOKEN = "t" * 24

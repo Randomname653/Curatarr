@@ -4,14 +4,14 @@ behind a comment, while three pre-redesign images stood in for them.
 
     python tests/test_readme_screenshots.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-
-from _checks import check  # noqa: E402
 
 
 readme = (ROOT / "README.md").read_text(encoding="utf-8")

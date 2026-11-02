@@ -10,12 +10,7 @@ No mocking needed — the helpers are pure (numpy only).
 
     python tests/test_deletion_scoring.py
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
+from _harness import check  # noqa: I001 - first: temp stores
 
 
 import numpy as np

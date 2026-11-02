@@ -7,22 +7,20 @@ login (/api/auth/status "locale") and used by every toLocale* call (ui.loc).
 
     python tests/test_user_locale.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import re
 import shutil
 import subprocess
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from src.database.models import Base, ConversationMessage as M, User  # noqa: E402
 import src.services.user_language as ul  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

@@ -8,16 +8,14 @@ the owner's cache. A music pick names "Artist - Track".
 
     python tests/test_rec_posters.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import src.routers.recommendations as recs  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 q = recs.poster_query

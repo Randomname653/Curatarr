@@ -2,15 +2,13 @@
 
     python tests/test_weighted_feedback.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import inspect
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.taste_vectors import merge_feedback_into_vector  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── merge_feedback_into_vector: entry fields ─────────────────────────────────

@@ -4,16 +4,14 @@ every redirect hop (DNS rebinding, 2026-09-25).
 
     python tests/test_image_proxy_dns.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import pathlib
-import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 import src.routers.image_proxy as ip  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 def resolves(host, resolver):

@@ -12,20 +12,18 @@ In-memory SQLite and a fake Plex; no network, no real data touched.
 
     python tests/test_plex_history_safety.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 import types
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
 import src.services.plex_sync as ps
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

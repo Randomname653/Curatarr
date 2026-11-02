@@ -11,10 +11,8 @@ Runs against an in-memory SQLite DB swapped in for the app engine.
 
     python tests/test_dp_rebuild_columns.py
 """
-import sys
-from pathlib import Path
+from _harness import check  # noqa: I001 - first: temp stores
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
@@ -22,8 +20,6 @@ from sqlalchemy.orm import sessionmaker
 from _checks import memory_engine  # noqa: E402
 import src.database.connection as conn_mod
 from src.database.models import Base, DeletionProposal
-
-from _checks import check  # noqa: E402
 
 
 MODEL_COLS = {c.name for c in DeletionProposal.__table__.columns}

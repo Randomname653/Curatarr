@@ -7,13 +7,9 @@ counts its GB ONCE while bumping both type counters.
 
     python tests/test_lidarr_discography_secondary_types.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 import src.services.lidarr_discography as ld

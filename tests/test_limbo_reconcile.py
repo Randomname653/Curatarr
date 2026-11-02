@@ -10,13 +10,13 @@ re-deleted.
 
     python tests/test_limbo_reconcile.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx
 from sqlalchemy.orm import sessionmaker
@@ -29,8 +29,6 @@ import src.services.lyrics as lyrics
 from src.config import settings
 from src.database.models import (Base, CuratorResolutionLog, DeletionProposal,
                                  ProactiveMessage)
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

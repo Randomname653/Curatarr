@@ -2,17 +2,15 @@
 
     python tests/test_semantic_search.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 import src.services.semantic_search as ss
 from src.services.semantic_search import format_rag_context
-
-from _checks import check  # noqa: E402
 
 
 # ── format parity with the historical chat injection ─────────────────────────

@@ -12,12 +12,9 @@ recognises declarations, the flag it writes is profile-driven and
 verdict-gated into the work list, and the watchlist write goes to the
 DISCUSSING user's own plex.tv account — backend code, never the chat LLM.
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 # ── the Discover matcher: unambiguous or nothing ───────────────────────────

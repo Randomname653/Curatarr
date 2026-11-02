@@ -9,13 +9,13 @@
 
     python tests/test_judge_record.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.orm import aliased, sessionmaker  # noqa: E402
@@ -28,7 +28,6 @@ from src.database.models import (Base, JudgeVerdict, ProtectedMedia,  # noqa: E4
                                  ProtectionHistory, User, WatchHistoryEntry as W)
 
 ROOT = Path(__file__).resolve().parents[1]
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

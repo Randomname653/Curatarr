@@ -15,15 +15,13 @@
 
     python tests/test_media_server_seam.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services.media_server import base as b  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 GUID = "a1b2c3d4e5f60718293a4b5c6d7e8f90"

@@ -4,26 +4,23 @@ Functional against faked Plex/SoulSync/app_state boundaries — no network.
 
     python tests/test_music_playlist.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as dbc
 import src.services.app_state as app_state
 import src.services.plex_playlists as pp
 import src.services.recommendations_engine as eng
 import src.services.soulsync_client as ss
 from src.database.models import Base, CachedRecommendation, LibraryConfig
-
-from _checks import check  # noqa: E402
 
 
 # ── neighbours: union minus favourites, cap, cache ───────────────────────────

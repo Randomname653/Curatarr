@@ -2,18 +2,16 @@
 
     python tests/test_multi_centroid.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
 import src.vector_store.chromadb_wrapper as cw
 from src.services.taste_engine import _cluster_centroids, _corpus_calibration
-
-from _checks import check  # noqa: E402
 
 
 def _unit(v):

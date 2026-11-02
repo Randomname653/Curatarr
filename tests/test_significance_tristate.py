@@ -12,13 +12,10 @@ None = TRANSIENT (do NOT stamp — walker retries).
 
     python tests/test_significance_tristate.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 import src.services.media_enricher as me

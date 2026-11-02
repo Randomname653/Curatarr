@@ -2,15 +2,12 @@
 
     python tests/test_facet_index.py
 """
-import asyncio
-import sys
-from pathlib import Path
+from _harness import check  # noqa: I001 - first: temp stores
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import asyncio
+
 
 import src.services.facet_index as fi
-
-from _checks import check  # noqa: E402
 
 
 # ── stubs ────────────────────────────────────────────────────────────────────

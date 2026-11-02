@@ -8,17 +8,15 @@ tried and missed, and the first one is logged at WARNING.
 
     python tests/test_silent_handlers_g2.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import logging
 import math
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import src.services.embedding_migration as em  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 class _Capture(logging.Handler):

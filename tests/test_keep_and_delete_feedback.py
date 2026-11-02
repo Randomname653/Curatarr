@@ -12,13 +12,13 @@ Runs against a throwaway in-memory SQLite DB; the arr is a fake client.
 
     python tests/test_keep_and_delete_feedback.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import re
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
@@ -27,8 +27,6 @@ import src.services.recommendations_engine as eng
 from src.config import settings
 from src.database.models import Base, DeletionProposal, ProtectedMedia
 from tests.frontend_files import everything
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

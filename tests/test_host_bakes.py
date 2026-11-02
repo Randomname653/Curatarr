@@ -13,6 +13,8 @@ Fakes only: no Ollama is called.
 
     python tests/test_host_bakes.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import contextlib
 import io
 import json
@@ -21,14 +23,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 from src.config import settings  # noqa: E402
 from src.services import embed_service as es  # noqa: E402
 from src.services import model_check as mc  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 KEYS = ("OLLAMA_PC_ENDPOINT", "PITCHER_MODEL", "BASE_CURATOR_MODEL", "BASE_SUMMARIZER_MODEL",

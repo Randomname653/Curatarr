@@ -10,11 +10,12 @@ tests/test_rec_why.py); the wiring is checked in the source.
 
     python tests/test_wrapup_story_mode.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,8 +23,6 @@ JS = (ROOT / "frontend/js/wrapup_story.js").read_text(encoding="utf-8")
 WRAPUP = (ROOT / "frontend/js/wrapup.js").read_text(encoding="utf-8")
 APP = (ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
 CSS = (ROOT / "frontend/css/app.css").read_text(encoding="utf-8")
-
-from _checks import check  # noqa: E402
 
 
 DATA = {

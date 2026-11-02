@@ -14,24 +14,21 @@ Runs ``sync_plex_history`` against an in-memory SQLite DB and a fake Plex.
 
     python tests/test_plex_owner_history.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import calendar
 import re
-import sys
 import types
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
 import src.services.plex_sync as ps
 import src.services.taste_engine as te
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

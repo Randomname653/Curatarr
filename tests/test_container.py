@@ -7,16 +7,14 @@ process is not root, and nothing secret or bulky is sent as build context.
 
     python tests/test_container.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.paths import env_file  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── where the .env lives ────────────────────────────────────────────────────

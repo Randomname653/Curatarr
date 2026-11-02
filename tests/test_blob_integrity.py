@@ -3,18 +3,16 @@ optimistic CAS writes, v0 decrypt fix, version gates, dead schema removal.
 
     python tests/test_blob_integrity.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
 from src.database.models import Base, EncryptedTasteVector
 from src.services.taste_vectors import cas_update_blob
-
-from _checks import check  # noqa: E402
 
 
 # ── CAS semantics against a real (in-memory) SQLite ──────────────────────────

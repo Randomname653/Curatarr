@@ -8,22 +8,20 @@ Measured on the real server:
 
     python tests/test_plex_players.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import calendar
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from src.database.models import Base, WatchHistoryEntry as W  # noqa: E402
 import src.services.plex_players as pp  # noqa: E402
 from src.services import plex_sync as ps  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 PLAYERS = {7: ("iPhone", "iOS"), 9: ("Desktop", "Windows")}

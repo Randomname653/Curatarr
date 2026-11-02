@@ -17,6 +17,8 @@ Found in the 2026-10 vector/memory audit:
 
     python tests/test_scoring_numerics.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import math
@@ -26,7 +28,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import numpy as np  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -45,8 +46,6 @@ from src.services.embed_service import _l2  # noqa: E402
 from src.services.taste_engine import (_clean_unit_rows,  # noqa: E402
                                        _corpus_calibration,
                                        weighted_mean_embedding)
-
-from _checks import check  # noqa: E402
 
 
 NAN, INF = float("nan"), float("inf")

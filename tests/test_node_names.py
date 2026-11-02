@@ -13,14 +13,14 @@ Fakes only: no agent, no database, no Ollama.
 
     python tests/test_node_names.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import socket
-import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src import pc_agent  # noqa: E402
 from src.services import app_state  # noqa: E402
@@ -28,8 +28,6 @@ from src.services import deletion_queue as dq  # noqa: E402
 from src.services import notifications as nt  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 from src.services import pc_host  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 store = {}

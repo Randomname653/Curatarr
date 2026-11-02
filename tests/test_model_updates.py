@@ -5,18 +5,17 @@
 No network, no Ollama, no GPU: the registry/Ollama calls and the app
 state are replaced by fakes, so this suite is the same on every machine.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services import model_updates as mu  # noqa: E402
 # Imported before src.config.settings is swapped for a fake further down.
 import src.routers.model_updates as rmu  # noqa: E402
 from src.services import notifications as nt  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── refs + identity ────────────────────────────────────────────────────────

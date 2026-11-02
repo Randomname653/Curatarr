@@ -7,12 +7,13 @@ filters in SQL, the classifier decides in Python.
 
     python tests/test_enrichment_backoff.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sys
 from datetime import datetime, timedelta
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from _checks import memory_engine  # noqa: E402
 from src.services import enrichment_state as es

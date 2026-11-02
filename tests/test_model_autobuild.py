@@ -11,20 +11,18 @@ Fakes only: no Ollama is called.
 
     python tests/test_model_autobuild.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import logging
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import model_autobuild as ab  # noqa: E402
 from src.services import model_check as mc  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
 from src.services import setup_wizard as sw  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 class Logs(logging.Handler):

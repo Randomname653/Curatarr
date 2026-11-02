@@ -10,26 +10,23 @@ Fakes only: an in-memory database and a scripted arr, no network.
 
     python tests/test_arr_ledger.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import calendar
 import json
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.arr_ledger as al  # noqa: E402
 import src.services.library_ledger as ll  # noqa: E402
 from src.database.models import Base, LibraryEvent, LibraryItem  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

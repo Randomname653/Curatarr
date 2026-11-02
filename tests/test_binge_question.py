@@ -11,20 +11,18 @@ Throwaway in-memory DB.
 
     python tests/test_binge_question.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import src.services.verification_session as vs  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

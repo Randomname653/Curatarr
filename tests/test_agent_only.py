@@ -7,16 +7,15 @@ server refuses to start. docs/NAS_MOVE.md walks the move.
 
     python tests/test_agent_only.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.config import settings  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 check("off by default: every install that is not the PC of a split runs as before",

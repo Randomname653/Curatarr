@@ -13,19 +13,17 @@ Each behaviour check fails on the code before this change.
 
     python tests/test_loop_free_probes.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import ast
 import asyncio
-import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import src.services.process_monitor as pm  # noqa: E402
 from src.config import settings  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── 1. probes ───────────────────────────────────────────────────────────────

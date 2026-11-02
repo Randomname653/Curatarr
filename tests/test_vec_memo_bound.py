@@ -8,18 +8,15 @@ resident for _evidence_scores.
 
     python tests/test_vec_memo_bound.py
 """
-import asyncio
-import sys
-from contextlib import contextmanager
-from pathlib import Path
+from _harness import check  # noqa: I001 - first: temp stores
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import asyncio
+from contextlib import contextmanager
+
 
 import src.cache.metadata_cache as mcache
 import src.services.embed_service as es
 import src.services.semantic_search as ss
-
-from _checks import check  # noqa: E402
 
 
 @contextmanager

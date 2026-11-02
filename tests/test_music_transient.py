@@ -12,19 +12,18 @@ Fake cache and fake upstreams; the script's worker runs on in-memory SQLite.
 
     python tests/test_music_transient.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sys
 import types
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.services.music_metadata as mm
 import src.services.soulsync_client as ssc
 from src.services.enrichment_state import TRANSIENT
-
-from _checks import check  # noqa: E402
 
 
 writes: list = []          # (key, value, days)

@@ -3,19 +3,17 @@ so a title with a pipe in it is protected as one title (2026-09-25).
 
     python tests/test_protection_line_parse.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
 import src.services.episodic_memory as em
 from src.database.models import Base, ProtectedMedia
-
-from _checks import check  # noqa: E402
 
 
 TITLE = "Cowboy Bebop | Knockin' on Heaven's Door"

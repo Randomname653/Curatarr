@@ -6,20 +6,18 @@ while chat kept working on the PC. Fakes only: nothing is called.
 
     python tests/test_host_watch.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import logging
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import host_watch as hw  # noqa: E402
 from src.services import notifications as nf  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 class Logs(logging.Handler):

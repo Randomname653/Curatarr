@@ -10,12 +10,12 @@ not worth saying.
 
     python tests/test_wrapup_insights.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -25,8 +25,6 @@ from src.database.models import (Base, CuratorResolutionLog, LibraryEvent, Libra
                                  MediaCompany, MediaCredit, MediaWork, WatchHistoryEntry)
 from src.services.wrapup_facts import resolve_period  # noqa: E402
 from src.services.wrapup_story import numbers_in, render_fact_sheet  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── renderings ───────────────────────────────────────────────────────────────

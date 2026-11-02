@@ -9,22 +9,20 @@ adoption marks the contradicted rule 'superseded'.
 
     python tests/test_principle_supersede.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import src.services.curator_principles as cp  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.database.models import Base, CuratorPrinciple  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

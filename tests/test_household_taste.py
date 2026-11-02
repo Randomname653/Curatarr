@@ -9,22 +9,20 @@ as a household argument. An actual watch stays the only floor.
 
     python tests/test_household_taste.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import src.services.recommendations_engine as eng  # noqa: E402
 from src.database.models import Base, EncryptedTasteVector, User  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the Why? line ────────────────────────────────────────────────────────────

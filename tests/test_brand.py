@@ -3,17 +3,15 @@ from it, the UI drawing the mark from the same paths.
 
     python tests/test_brand.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
-import sys
 from pathlib import Path
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from _checks import check  # noqa: E402
 
 
 BRAND = ROOT / "assets" / "brand"

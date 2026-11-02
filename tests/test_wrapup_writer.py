@@ -10,14 +10,14 @@ style instead of rejecting it, and repairs slide by slide.
 
     python tests/test_wrapup_writer.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -28,8 +28,6 @@ import src.services.wrapup_insights as wi  # noqa: E402
 import src.services.wrapup_writer as ww  # noqa: E402
 from src.database.models import Base, ConversationMessage, DeletionProposal  # noqa: E402
 from src.services.wrapup_story import render_fact_sheet  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── style: fixed, never fatal ───────────────────────────────────────────────

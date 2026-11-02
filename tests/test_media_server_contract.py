@@ -17,20 +17,18 @@ reads, ticks and ISO dates, dashed GUIDs, /Sessions.
 
     python tests/test_media_server_contract.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from media_server_fixtures import jellyfin_transport, plex_transport  # noqa: E402
 from src.services.media_server import base as b, id_map  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
 from src.services.media_server.plex_adapter import PlexAdapter  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 def run(coro):

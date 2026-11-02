@@ -6,14 +6,12 @@ ordering and the disabled-toggle path.
 
     python tests/test_recommendation_followup.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
-import sys
 from datetime import datetime
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.proactive_messages as pm  # noqa: E402
 
@@ -21,7 +19,7 @@ import src.services.proactive_messages as pm  # noqa: E402
 # (series_progress variant — keeps apostrophes, unlike library_memory's).
 normalize_title = pm.normalize_title
 
-from _checks import check, real_state  # noqa: E402
+from _checks import real_state  # noqa: E402
 
 
 QUEUE = [

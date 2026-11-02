@@ -11,12 +11,12 @@ trip through the database, and that existing databases gain the column.
 
     python tests/test_score_factors.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
@@ -28,7 +28,6 @@ from src.database.models import Base, DeletionProposal
 from tests.frontend_files import everything
 
 ROOT = Path(__file__).resolve().parents[1]
-from _checks import check  # noqa: E402
 
 
 TERMS = dict(mismatch=0.82, taste_src="embedding", size_pts=9.4, size_gb=45.0,

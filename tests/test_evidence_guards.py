@@ -13,12 +13,9 @@ Each of these exists because a specific false statement reached the owner:
 * a documentary judged as if it were a drama ("zero narrative subversion").
 * LaTeX markup rendered verbatim in a pillar breakdown.
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 import src.services.size_norms as sn

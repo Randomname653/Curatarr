@@ -2,15 +2,13 @@
 
     python tests/test_upgrade_candidates.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from src.services.upgrade_curation import _judge
-
-from _checks import check  # noqa: E402
 
 
 LOVE = {"reason": "rewatched (3 plays)"}

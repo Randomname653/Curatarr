@@ -7,15 +7,13 @@ fixed titles (src/services/setup_minibench.py). The verdict rules are pure
 and pinned here; the fixtures must belong to the FICTIONAL owner Jane Doe
 and never to a real user; the route and the wizard must actually use it.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services import setup_minibench as mb  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 ok_warm = {"ok": True, "verdict": "ok", "cpu_percent": 0}
