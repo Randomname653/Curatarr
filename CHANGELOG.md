@@ -1366,9 +1366,21 @@ are still shown as lines to set on that server.
   size (on 16 GB the MoE runs large / 16384 / -1, gemma4:e4b small / 8192 / 99), and picking
   another curator in the wizard takes that model's values. A model the bench has not measured
   at that size keeps the fields and says so.
-- Settings fills the three from the bench too: "Use the bench's values" takes the card size
-  you pick, or this host's card, and fills them for the configured curator, ready to save.
-- Tests: `tests/test_setup_coverage.py`, `tests/test_model_catalog.py`.
+- Settings > Integrations > Ollama & models shows the bench's advice per machine (2026-11-02).
+  It reads the card itself: this server's through nvidia-smi, the node's from its agent, and
+  the node's last reported size while it is away. A size can still be picked by hand when
+  nothing reads it.
+  - The bench's package for that card stands next to what is set: curator, profile, window
+    and layers. A badge marks each value that differs, and "Use the bench's values" fills
+    them in, ready to save. The speed and quality the bench measured and the Ollama server's
+    own settings (KV cache) are named too.
+  - The model fields are lists of the catalog's choices for that card, marked installed,
+    too big or the bench's pick. The value set now always stays selected. Picking a curator
+    the bench measured there brings its own profile along, as in the wizard.
+  - A split install gets a second card for the node's own models and profile (`PC_BASE_*`,
+    `PC_LLM_PROFILE`, `PC_CURATOR_NUM_CTX`, `PC_CURATOR_NUM_GPU`), which were `.env` only
+    before. Rebuild models there bakes on the node while it is free.
+- Tests: `tests/test_setup_coverage.py`, `tests/test_model_catalog.py`, `tests/test_host_advice.py`.
 
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".

@@ -199,6 +199,48 @@ async def _note_free() -> None:
         logger.debug("[node] last-free time not stored: %s", e)
 
 
+# The node's card size from its last report, kept like the clock above:
+# Settings shows the bench's advice for the node while it is away too.
+_VRAM_KEY = "node_vram_mb"
+_card: dict = {"vram_mb": 0, "stored": 0, "loaded": False}
+
+
+def last_vram_mb() -> int:
+    """The total memory of the node's card as it last reported it (0: never)."""
+    return int(_card["vram_mb"])
+
+
+async def _load_card() -> None:
+    if _card["loaded"]:
+        return
+    from src.services.app_state import aget_state
+    try:
+        _card["stored"] = _card["vram_mb"] = int(float(await aget_state(_VRAM_KEY) or 0))
+    except Exception as e:  # noqa: BLE001 - unreadable: the next report sets it
+        logger.debug("[node] card size not read: %s", e)
+    _card["loaded"] = True
+
+
+async def _note_card(report: dict) -> None:
+    from src.services.app_state import aset_state
+    gpu = report.get("gpu") if isinstance(report, dict) else None
+    if not (isinstance(gpu, (list, tuple)) and len(gpu) >= 2):
+        return
+    try:
+        total = int(float(gpu[1]))
+    except (TypeError, ValueError):
+        return
+    if total <= 0:
+        return
+    _card["vram_mb"] = total
+    if total != _card["stored"]:
+        try:
+            await aset_state(_VRAM_KEY, str(total))
+            _card["stored"] = total
+        except Exception as e:  # noqa: BLE001 - kept in memory, written next time
+            logger.debug("[node] card size not stored: %s", e)
+
+
 def status() -> dict:
     """For the UI and the logs: available / draining / since when / why."""
     return {k: _state[k] for k in ("available", "draining", "busy", "busy_reason", "seen_at",
@@ -271,6 +313,7 @@ async def poll_once(fetch=None) -> None:
         return
     await load_names()
     await _load_free()
+    await _load_card()
     url = _settings().PC_AGENT_URL.rstrip("/") + "/status"
     try:
         report = await (fetch or _fetch)(url, token())
@@ -285,6 +328,7 @@ async def poll_once(fetch=None) -> None:
         await _kick_queue()
         return
     record(report)
+    await _note_card(report)
     if _names["dirty"]:
         from src.services.app_state import aset_state
         try:
