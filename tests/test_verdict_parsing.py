@@ -13,24 +13,11 @@ From the 2026-10 pipeline audit:
 * every failure — Ollama down, a model that could not load, a cut-off
   answer, bad JSON — became the same anonymous EVALUATE.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-PASS = FAIL = 0
-
-
-def check(name, cond, info=None):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}" + (f"  [{info}]" if info is not None else ""))
 
 
 import httpx
@@ -298,5 +285,4 @@ check("every kind has a sentence for the UI",
       all(k in le.DESCRIPTIONS for k in LLMFailure))
 check("infra kinds are never repaired", not (le.INFRA & le.REPAIRABLE))
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

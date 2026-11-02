@@ -6,27 +6,14 @@ No Ollama, no network: eviction and /api/ps are stubbed.
 
     python tests/test_llm_gating.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import pathlib
-import sys
-
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 import src.services.llm_priority as lp                   # noqa: E402
 from src.config import settings                          # noqa: E402
-
-PASS = FAIL = 0
-
-
-def check(name, cond, detail=""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}  {detail}")
 
 
 def _src(rel: str) -> str:
@@ -337,5 +324,4 @@ check("the chat turn takes the gate as INTERACTIVE",
 check("the warm-up loads with the shared curator payload",
       "curator_payload([], temperature=0.7, num_predict=1, host=host)" in chat_src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -11,24 +11,11 @@ From the 2026-10 pipeline audit:
 * Pillar III lived only in the prompt: a model that missed it could CUT a
   show another household member had watched.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-PASS = FAIL = 0
-
-
-def check(name, cond, info=None):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}" + (f"  [{info}]" if info is not None else ""))
 
 
 import httpx
@@ -163,5 +150,4 @@ check("...and why a run stopped early", "esc(run.stopped)" in banner)
 check("a run that only stopped early still gets a banner",
       "run.failed || run.deferred || run.stopped" in banner)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

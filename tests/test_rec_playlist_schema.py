@@ -5,24 +5,11 @@ Creates a throwaway sqlite DB, runs create_all + the column migration TWICE
 
     python tests/test_rec_playlist_schema.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import sqlite3
-import sys
 import tempfile
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 def main():
@@ -56,8 +43,7 @@ def main():
               f'("{tbl}"' in src.replace(" ", "").replace("'", '"')
               and f'"{col}"' in src)
 
-    print(f"\n{PASS} passed, {FAIL} failed")
-    sys.exit(1 if FAIL else 0)
+    check.done()
 
 
 if __name__ == "__main__":

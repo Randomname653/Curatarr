@@ -11,14 +11,14 @@ Runs against a temp file database bound to the app's session factory.
 
     python tests/test_loop_guard.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 
@@ -28,10 +28,8 @@ from src.database.models import Base  # noqa: E402
 from src.database.runner import run_read, run_write  # noqa: E402
 from src.services import app_state  # noqa: E402
 
-from _checks import check  # noqa: E402
 
-
-tmp = Path(tempfile.mkdtemp())
+tmp = TMP      # the harness's temp dir (this suite's own guard.db goes there too)
 eng = create_engine(f"sqlite:///{(tmp / 'guard.db').as_posix()}",
                     connect_args={"check_same_thread": False})
 Base.metadata.create_all(eng)
