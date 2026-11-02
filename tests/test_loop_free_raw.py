@@ -20,9 +20,10 @@ Each check fails on the code before this change.
 
     python tests/test_loop_free_raw.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import os
 import sqlite3
 import sys
 import tempfile
@@ -30,9 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 from src.config import settings  # noqa: E402
 settings.ENRICHMENT_CACHE = _TMP / "enrichment.db"
@@ -41,9 +40,7 @@ import src.database.connection as conn_mod  # noqa: E402
 from src.database import loop_guard  # noqa: E402
 from src.database.models import Base  # noqa: E402
 
-Base.metadata.create_all(conn_mod.engine)
-
-from _checks import check  # noqa: E402
+app_db()
 
 
 def _sites(fragment: str) -> list:

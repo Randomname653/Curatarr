@@ -17,25 +17,21 @@ Media server runs it in the live process, both ways:
 
     python tests/test_media_switch.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base  # noqa: E402
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from src.services.app_state import get_state, set_state  # noqa: E402
 from src.services.media_server import jellyfin_history as jh, rebind, switch  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 calls = {"build": [], "apply": [], "sync": [], "reset": [], "poller": []}

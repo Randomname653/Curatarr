@@ -12,23 +12,21 @@
 
     python tests/test_jellyfin_setup.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
-import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import httpx  # noqa: E402
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base  # noqa: E402
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from fastapi import BackgroundTasks, HTTPException  # noqa: E402
 from pydantic import SecretStr  # noqa: E402
@@ -39,8 +37,6 @@ from src.routers import libraries, setup as st  # noqa: E402
 import src.services.media_server as ms  # noqa: E402
 import src.services.media_server.jellyfin_adapter as jfa  # noqa: E402
 import src.services.setup_wizard as sw  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 URL = "http://192.168.1.50:8096"

@@ -8,24 +8,19 @@ which stays on the server under a ticket.
 
     python tests/test_jellyfin_connect.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
-import sys
-import tempfile
 from pathlib import Path
 
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
+_TMP = TMP      # the harness's temp dir: its database and caches live here
 
 from src.services.media_server import jellyfin_connect as jc  # noqa: E402
 from src.services.media_server.jellyfin_auth import (JellyfinAuth, JellyfinAuthRefused,  # noqa: E402
                                                      KEY_APP_NAME)
-
-from _checks import check  # noqa: E402
 
 
 SID = "f" * 32

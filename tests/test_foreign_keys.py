@@ -17,29 +17,22 @@ imported).
 
     python tests/test_foreign_keys.py
 """
+from _harness import TMP, app_db, check  # noqa: I001 - first: temp stores
+
 import json
-import os
 import sqlite3
-import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-_DB = (_TMP / "curatarr.db").resolve()
-os.environ["DATABASE_URL"] = f"sqlite:///{_DB.as_posix()}"
+_DB = (TMP / "curatarr.db").resolve()     # the harness's database file
 
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, LibraryConfig, User, WatchHistoryEntry  # noqa: E402
 
-from _checks import check  # noqa: E402
-
-
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 # The unenforced past: rows written through a connection with the keys off.
 raw = sqlite3.connect(str(_DB))

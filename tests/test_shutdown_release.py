@@ -8,19 +8,16 @@ database — the corruption case Pass 100 exists to prevent.
 
     python tests/test_shutdown_release.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
 import sqlite3
-import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-_tmp = Path(tempfile.mkdtemp())
+_tmp = TMP      # the harness's temp dir: its database and caches live here
 DB_FILE = (_tmp / "curatarr.db").resolve()
-os.environ["DATABASE_URL"] = f"sqlite:///{DB_FILE.as_posix()}"
 
 from sqlalchemy import text  # noqa: E402
 
@@ -28,8 +25,6 @@ from src.database import connection as conn_mod  # noqa: E402
 from src.database.runner import run_write, shutdown_writer  # noqa: E402
 from src.services import bg_tasks  # noqa: E402
 from src.services import scheduler as sched  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── drain(): cancels both trackers' tasks and lets their finally run ────────

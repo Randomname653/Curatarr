@@ -19,19 +19,17 @@ Each "off the loop" check fails on the code before this change.
 
     python tests/test_loop_free_s2a.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import os
-import sys
 import tempfile
 import threading
 import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 from src.config import settings  # noqa: E402
 settings.ENRICHMENT_CACHE = _TMP / "enrichment.db"
@@ -48,15 +46,13 @@ from src.database.models import (ArrEnrichmentStatus, Base, EnrichmentStatus,  #
                                  LibraryConfig, User)
 from src.services import app_state  # noqa: E402
 
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 import src.routers.enrichment as en  # noqa: E402
 import src.routers.image_proxy as ip  # noqa: E402
 import src.routers.library as lib  # noqa: E402
 import src.services.arr_client as ac  # noqa: E402
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 def _on_loop() -> bool:

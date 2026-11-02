@@ -23,17 +23,15 @@ Netflix refs, ext-script keys and a TMDB-only doc id beside them):
 
     python tests/test_rebind.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import os
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 from datetime import datetime  # noqa: E402
 
@@ -41,14 +39,12 @@ from sqlalchemy import text  # noqa: E402
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base  # noqa: E402
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from media_server_fixtures import JellyfinWriteServer, plex_transport  # noqa: E402
 from src.services.media_server import rebind  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
 from src.services.media_server.plex_adapter import PlexAdapter  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 JANE, SAM = "b0c1d2e3f405162738495a6b7c8d9e0f", "c1d2e3f405162738495a6b7c8d9e0fa1"

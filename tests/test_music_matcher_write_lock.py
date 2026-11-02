@@ -12,29 +12,25 @@ concurrent coroutine writes synchronously on the loop with a short timeout.
 
     python tests/test_music_matcher_write_lock.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import os
 import sqlite3
-import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-_tmp = Path(tempfile.mkdtemp())
+_tmp = TMP      # the harness's temp dir: its database and caches live here
 DB_FILE = (_tmp / "curatarr.db").resolve()
-os.environ["DATABASE_URL"] = f"sqlite:///{DB_FILE.as_posix()}"
 
 from src.database.connection import get_db_session, init_db  # noqa: E402
 from src.database.models import LibraryConfig, User, WatchHistoryEntry  # noqa: E402
 from src.services import music_matcher as mm  # noqa: E402
 from src.services.app_state import get_state, set_state  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 check("test DB is the temp file, not the real one",
