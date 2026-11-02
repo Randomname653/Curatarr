@@ -188,7 +188,7 @@ Speicherbedarf: Gewichte plus 16k-KV, gerechnet mit q8_0 und der Ledger-Formel �
 | Anbieter | Flaggschiffe laut Recherche | Rolle in Curatarr |
 |---|---|---|
 | OpenAI | GPT-5.6 (Sol / Terra / Luna), 06/2026 | keine |
-| Anthropic | Claude-5-Familie (Opus 5 im Juli; aktuell Opus/Sonnet/Haiku 5.5) | nur als **Scorer** der Rubriken in Entwicklungssitzungen (siehe Unklarheit U1) |
+| Anthropic | Claude-5-Familie (Opus 5 im Juli; aktuell Opus/Sonnet/Haiku 5.5) | nur als **Scorer** der Rubriken in Entwicklungssitzungen (freigegeben, siehe U1) |
 | Google | Gemini 3.5 / 3.6 Flash; Pro-Stand unklar | keine |
 | xAI | Grok 4.5 | keine |
 
@@ -277,7 +277,7 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 
 | Prio | Was | Phase / Befehl (Besitzer startet) | geschätzte GPU-Zeit 4090 | Warum |
 |---|---|---|---|---|
-| **P0a** | Chat-Decider scoren für die Katalog-Curator (31b, 31b-qat, 26b-a4b, e4b) | kein GPU: `run score-sheets --refs gemma4:31b,gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,gemma4:e4b-it-qat --kind chat` | 0 | Die Swap-Regel des Runbooks verlangt einen Chat-Sieg; die Matrix ignoriert Chat ganz. Vorher U1 klären. |
+| **P0a** | Chat-Decider scoren für die Katalog-Curator (31b, 31b-qat, 26b-a4b, e4b) | kein GPU: `run score-sheets --refs gemma4:31b,gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,gemma4:e4b-it-qat --kind chat` | 0 | Die Swap-Regel des Runbooks verlangt einen Chat-Sieg; die Matrix ignoriert Chat ganz. U1 freigegeben. |
 | **P0b** | Blinder Re-Score der MoE-Begründungen zusammen mit 31b-qat | kein GPU | 0 | Die 21,88 ist nicht blind |
 | **P1** | MoE 26b-a4b über alle 103 Titel auf der 4090 (ins Ledger) | `run run --only gemma4:26b-a4b-it-qat --phases quality --items full` | ~10–15 min pro Profil (large reicht) | Der NAS-Lauf liegt außerhalb des Ledgers; das ist der Vergleich zwischen 4090 und NAS mit gleichem Bestand |
 | **P1** | KV-Quality für gemma4:31b-it-qat (q8/q4) | `run run --only gemma4:31b-it-qat --phases quality --kv-quality --repull-for-kv` | ~12 min plus Re-Pull von 19 GB | Der 20-GB-Kandidat mit q4 (32,7 tok/s) braucht Selbstkonsistenz ≥ 90 %; heute nur f16 |
@@ -326,7 +326,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
    - `run score-sheets --refs gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,⟨tag⟩ --kind mono`, dann `run record-scores --csv … --scorer claude`.
    - `--kind chat` für die 9 Decider-Fälle.
    - Für die Judge-Rubrik (judge-argument-2026-10, scorer `claude-judge`) gibt es **keinen** CLI-Pfad. `record-scores` schreibt fest `5-axis-2026-08` (CODE `run.cmd_record_scores`). Vorschlag in §6, L6.
-   - Vorher U1 klären.
+   - Scoring in der Claude-Session ist freigegeben (U1); Sheets und CSVs bleiben lokal.
 7. **CSV-Zeile.** `model_baselines.csv` bekommt eine Zeile mit `verdict_role` ohne „DISQUALIFIED“. Für die Pitcher-Rolle muss „pipeline“ darin stehen (`tests/test_model_catalog.py`).
 8. **Katalog-Eintrag.** `src/services/model_catalog.py` → `CURATOR_MODELS` bzw. `PITCHER_MODELS`, mit `verified: True` nur bei vorhandener CSV-Zeile. `test_model_catalog` verlangt, dass jedes Matrix-Modell im Katalog steht und jedes empfohlene ein Jane-Doe-Beispiel hat.
 9. **Matrix-Export.** `run matrix --export` (gefiltert auf `CURATOR_MODELS`), dann `run examples --only ⟨tag⟩` (Jane Doe → `curator_examples.json`, `docs/CURATOR_EXAMPLES.md`), dann `python tests/run_all.py --for src/services/model_catalog.py`.
@@ -361,7 +361,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 
 ## 7. Unklarheiten (bitte entscheiden statt raten)
 
-- **U1 – Scoring und Datenschutz.** Die bisherigen Rubrik-Scores (`scorer: claude`, `claude-judge`) entstanden, indem eine Claude-Session die Judge- und Kartentext-Artefakte las. Diese Artefakte sind aus den Evidence-Snapshots abgeleitet und enthalten Titel und begründete Geschmacksbezüge des echten Besitzers. Die Grenze „nie an eine API außerhalb dieses Rechners“ ist wörtlich für die Snapshots formuliert. Gilt sie auch für die Artefakte? Wenn ja, braucht der Score-Durchgang eine Alternative, etwa Jane-Doe-Fixtures in Bench-Größe oder einen lokalen Scorer. Diese Entscheidung blockiert P0a, P0b und Schritt 6.
+- **U1 – Scoring und Datenschutz. Entschieden am 2026-11-02 vom Besitzer: „wie bisher“.** Die Judge-, Kartentext- und Chat-Artefakte (`runs/*/*.jsonl`, Score-Sheets) dürfen zum Scoren in einer Claude-Entwicklungssession gelesen werden, so wie bei den Scores vom 2026-10-19/20. Die Grenze gilt unverändert für die Evidence-Snapshots selbst: nie committen, nie zitieren, nie verschicken. Score-Sheets und Score-CSVs bleiben lokal unter `hwbench_data/scoring/` (gitignored), Titel kommen in kein committetes Dokument. P0a, P0b und Schritt 6 sind damit frei.
 - **U2 – Filter für degenerierte Urteile.** Soll „keine einzige CUT-Klasse auf 40“ ein K.O. sein oder nur ein Flag? Das betrifft jedes small-Profil der gemma4-MoE.
 - **U3 – qwen3.6:35b-a3b.** Darf ein Modell aus `DISQUALIFIED` neu gemessen werden? Der Grund von damals war die KV-Starvation bei f16 ohne q8/q4.
 - **U4 – Qwen 4.** Es gibt keine bestätigten Open Weights und kein Datum. Der 27B-Tier ist nur aus Drittberichten bekannt. Der Slot bleibt leer, bis eine Modellkarte existiert.
