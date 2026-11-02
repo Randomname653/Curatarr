@@ -383,12 +383,19 @@ class ReconfigureRequest(BaseModel):
     llm_profile: Optional[str] = None
     curator_num_ctx: Optional[int] = None
     curator_num_gpu: Optional[int] = None
+    # The node's own package (Settings > Ollama & models, the node's part).
+    pc_base_curator_model: Optional[str] = None
+    pc_base_summarizer_model: Optional[str] = None
+    pc_base_pitcher_model: Optional[str] = None
+    pc_llm_profile: Optional[str] = None
+    pc_curator_num_ctx: Optional[int] = None
+    pc_curator_num_gpu: Optional[int] = None
 
     _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
                            "lidarr_url", "soulsync_url")(validate_service_url)
-    _profile = field_validator("llm_profile")(_check_profile)
-    _ctx = field_validator("curator_num_ctx")(_check_num_ctx)
-    _gpu = field_validator("curator_num_gpu")(_check_num_gpu)
+    _profile = field_validator("llm_profile", "pc_llm_profile")(_check_profile)
+    _ctx = field_validator("curator_num_ctx", "pc_curator_num_ctx")(_check_num_ctx)
+    _gpu = field_validator("curator_num_gpu", "pc_curator_num_gpu")(_check_num_gpu)
 
 
 @router.post("/complete")
@@ -455,15 +462,25 @@ async def complete_setup(
 @router.post("/build-models")
 async def build_models_endpoint(
     background_tasks: BackgroundTasks,
+    host: str = "main",
     _gate=Depends(require_admin_or_first_run),
 ):
     """Build curatarr-curator and curatarr-summarizer Ollama models
     (plus curatarr-pitcher when the two-bake split is enabled) on THIS
     install's Ollama - the plan build_models.py --host main follows: on a
     split install no pitcher here (it lives on the gaming PC), and the
-    host's own curator window."""
+    host's own curator window. ``host=pc``: the node's Ollama, with its
+    own bases and window (build_models.py --host pc), while it is free."""
     from src.services.model_check import host_plan
-    plan = await asyncio.to_thread(host_plan, "main")
+    if host not in ("main", "pc"):
+        raise HTTPException(status_code=422, detail="host must be main or pc")
+    if host == "pc":
+        from src.services.ollama_hosts import pc_host, pc_usable
+        if pc_host() is None:
+            raise HTTPException(status_code=409, detail="No node is set up (OLLAMA_PC_ENDPOINT)")
+        if not pc_usable():
+            raise HTTPException(status_code=409, detail="The node is away or busy - build when it is free")
+    plan = await asyncio.to_thread(host_plan, host)
     results = await build_ollama_models(
         plan["url"], plan["curator"], plan["summarizer"],
         base_pitcher=plan["pitcher"], num_ctx=plan["num_ctx"],
@@ -477,11 +494,27 @@ async def build_models_endpoint(
 
 # ── post-setup: see and change what the wizard configured ───────────────────
 
+@router.get("/hosts-advice")
+async def hosts_advice(server_vram_gb: Optional[float] = None,
+                       node_vram_gb: Optional[float] = None,
+                       _admin=Depends(require_admin)):
+    """Per Ollama host: its card (detected, or the size passed in), the
+    values set now and the bench's advice for that card - what Settings >
+    Ollama & models compares and offers (services/host_advice)."""
+    from src.services.host_advice import host_advice
+    for v in (server_vram_gb, node_vram_gb):
+        if v is not None and not 1 <= v <= 512:
+            raise HTTPException(status_code=422, detail="card memory must be 1-512 GB")
+    return await host_advice(server_vram_gb, node_vram_gb)
+
+
 # A change to any of these needs a rebuild (the curator bake carries its
 # window) and a restart (the window is resolved once at import).
 _MODEL_KEYS = ("base_curator_model", "base_summarizer_model", "embedding_model",
                "pitcher_model", "base_pitcher_model",
-               "llm_profile", "curator_num_ctx", "curator_num_gpu")
+               "llm_profile", "curator_num_ctx", "curator_num_gpu",
+               "pc_base_curator_model", "pc_base_summarizer_model", "pc_base_pitcher_model",
+               "pc_llm_profile", "pc_curator_num_ctx", "pc_curator_num_gpu")
 
 
 @router.get("/integrations")
@@ -491,7 +524,9 @@ def integrations_status(_admin=Depends(require_admin)):
     JWT secret not at all. This is what Settings -> Integrations renders."""
     from src.services.setup_wizard import current_env_config, mask_secrets
     return {"config": mask_secrets(current_env_config()),
-            "pitcher_enabled": bool(settings.PITCHER_MODEL)}
+            "pitcher_enabled": bool(settings.PITCHER_MODEL),
+            # A second machine is set up: Settings shows its models card.
+            "node": bool((getattr(settings, "OLLAMA_PC_ENDPOINT", "") or "").strip())}
 
 
 @router.post("/reconfigure")

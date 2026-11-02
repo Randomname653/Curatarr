@@ -197,7 +197,7 @@ check("on in the container", "AUTO_BUILD_MODELS=1" in (ROOT / "Dockerfile").read
 setup_src = (ROOT / "src/routers/setup.py").read_text(encoding="utf-8")
 ep = setup_src[setup_src.index("async def build_models_endpoint("):setup_src.index("# ── post-setup")]
 check("the Settings 'build models' button follows the host plan (no pitcher on a split NAS)",
-      'host_plan, "main"' in ep and "base_pitcher=plan[\"pitcher\"]" in ep
+      'host_plan, host' in ep and "base_pitcher=plan[\"pitcher\"]" in ep
       and "settings.BASE_PITCHER_MODEL" not in ep)
 
 check.done()

@@ -10,6 +10,7 @@ import { serverLabel, state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { loadNodes } from './nodes.js';
 import { loadMediaServer } from './media_switch.js';
+import { loadHostAdvice } from './host_advice.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, 'Re-attributing…');
@@ -167,6 +168,8 @@ export async function loadDepsStatus(btn) {
 // {set: bool} for secrets; POST /api/setup/reconfigure takes only the fields
 // the admin touched. Secrets are typed to replace, cleared via the × button,
 // and never travel back to the browser.
+const PROFILE_OPTIONS = [['large', 'large: the full rules, 16k window'],
+                         ['small', 'small: a checklist, 8k window']];
 const INTEGRATION_CARDS = [
   {key: 'plex', title: 'Plex', test: 'plex', fields: [
     {id: 'plex_url', label: 'Server URL', placeholder: 'http://192.168.1.100:32400'},
@@ -177,17 +180,30 @@ const INTEGRATION_CARDS = [
     {id: 'jellyfin_url', label: 'Server URL', placeholder: 'http://192.168.1.100:8096'},
     {id: 'jellyfin_api_key', label: 'API key', secret: true},
   ]},
-  {key: 'models', title: 'Ollama & models', test: 'ollama', fields: [
+  // advice: the host whose card the bench's advice is for (host_advice.js);
+  // rec: the role whose catalog choices the field lists.
+  {key: 'models', title: 'Ollama & models', test: 'ollama', advice: 'server', fields: [
     {id: 'ollama_endpoint', label: 'Ollama endpoint', placeholder: 'http://localhost:11434'},
-    {id: 'base_curator_model', label: 'Curator model (chat & recommendations)'},
-    {id: 'base_summarizer_model', label: 'Summarizer model (enrichment)'},
-    {id: 'embedding_model', label: 'Embedding model (changing it means re-embedding the library)'},
+    {id: 'base_curator_model', label: 'Curator model (chat & recommendations)', rec: 'curator'},
+    {id: 'base_summarizer_model', label: 'Summarizer model (enrichment)', rec: 'summarizer'},
+    {id: 'embedding_model', label: 'Embedding model (changing it means re-embedding the library)', rec: 'embedding'},
     {id: 'enable_pitcher', label: 'Dedicated deletion judge (two-bake split)', toggle: true},
-    {id: 'base_pitcher_model', label: 'Judge model'},
-    {id: 'llm_profile', label: 'Curator profile', options: [
-      ['large', 'large: the full rules, 16k window'], ['small', 'small: a checklist, 8k window']]},
+    {id: 'base_pitcher_model', label: 'Judge model', rec: 'pitcher'},
+    {id: 'llm_profile', label: 'Curator profile', options: PROFILE_OPTIONS},
     {id: 'curator_num_ctx', label: "Curator context window in tokens (0 = the profile's)", number: true},
     {id: 'curator_num_gpu', label: 'Curator layers on the graphics card (-1 = Ollama decides, 99 = all)', number: true},
+  ]},
+  // A split install's second machine (OLLAMA_PC_ENDPOINT): its bakes are
+  // built from its own bases, with its own profile. Shown only with a node.
+  {key: 'node', title: "The node's models", node: true, advice: 'node',
+   hint: 'The second machine builds its bakes from these (python build_models.py --host pc, or Rebuild models here while it is free).',
+   fields: [
+    {id: 'pc_base_curator_model', label: 'Curator model', rec: 'curator'},
+    {id: 'pc_base_summarizer_model', label: 'Summarizer model (when enrichment runs there)', rec: 'summarizer'},
+    {id: 'pc_base_pitcher_model', label: 'Judge model (two-bake split)', rec: 'pitcher'},
+    {id: 'pc_llm_profile', label: 'Curator profile', options: PROFILE_OPTIONS},
+    {id: 'pc_curator_num_ctx', label: "Curator context window in tokens (0 = the profile's)", number: true},
+    {id: 'pc_curator_num_gpu', label: 'Curator layers on the graphics card (-1 = Ollama decides, 99 = all)', number: true},
   ]},
   {key: 'gpu', title: 'Sharing the graphics card',
    hint: 'What happens while another program holds the card. Applies live, no restart.',
@@ -229,7 +245,11 @@ export async function loadIntegrations() {
     _integrationsCfg = r.config || {};
     if (r.pitcher_enabled !== undefined) _integrationsCfg.enable_pitcher = !!r.pitcher_enabled;
     shell.innerHTML = '';
-    for (const card of INTEGRATION_CARDS) shell.appendChild(renderIntegrationCard(card, _integrationsCfg));
+    for (const card of INTEGRATION_CARDS) {
+      if (card.node && !r.node) continue;
+      shell.appendChild(renderIntegrationCard(card, _integrationsCfg));
+    }
+    loadHostAdvice();
   } catch (e) {
     shell.innerHTML = _errHtml(e, act('loadIntegrations'));
   }
@@ -254,6 +274,14 @@ export function renderIntegrationCard(card, cfg) {
         <label for="int-${f.id}">${esc(f.label)} ${chip}</label>
         <div class="row"><input id="int-${f.id}" class="grow" type="password" autocomplete="new-password" placeholder="${isSet ? 'type to replace' : 'not set'}">${clear}</div></div>`;
     }
+    if (f.rec) {
+      // Filled with the catalog's choices for this host's card by
+      // host_advice.js; until then (or without an answer) the value set now.
+      const v = cur === undefined || cur === null ? '' : String(cur);
+      return `<div class="my-8 form-group">
+      <label for="int-${f.id}">${esc(f.label)}</label>
+      <select class="w-auto" id="int-${f.id}" ${actOn('change', 'onAdviceModelChange', card.advice, f.rec)}><option value="${esc(v)}" selected>${esc(v || 'not set')}</option></select></div>`;
+    }
     if (f.options) {
       const opts = f.options.map(([v, text]) => `<option value="${esc(v)}"${String(cur) === v ? ' selected' : ''}>${esc(text)}</option>`).join('');
       return `<div class="my-8 form-group">
@@ -265,27 +293,20 @@ export function renderIntegrationCard(card, cfg) {
       <label for="int-${f.id}">${esc(f.label)}</label>
       <input id="int-${f.id}" type="${type}" value="${esc(cur === undefined || cur === null ? '' : String(cur))}" placeholder="${esc(f.placeholder || '')}"></div>`;
   }).join('');
-  // The models card can fill the curator profile from the bench: pick (or
-  // detect) the card size, and the configured curator's measured values go
-  // into the three fields, ready to save.
-  const bench = card.key === 'models' ? `<div class="row mt-8">
-      <select class="w-auto" id="int-bench-vram" aria-label="Graphics card memory">
-        <option value="">Card memory…</option>
-        ${[4, 6, 8, 10, 12, 16, 20, 24].map(g => `<option value="${g}">${g} GB</option>`).join('')}
-      </select>
-      <button type="button" class="btn btn-secondary btn-sm" ${act('benchFillProfile', EL)}>Use the bench's values</button>
-      <span id="int-bench-note" class="status"></span>
-    </div>` : '';
+  // The bench's advice for this host's card (host_advice.js), outside the
+  // form: picking a card size is no change to save.
+  const advice = card.advice
+    ? `<div class="panel-item my-8" id="int-advice-${card.advice}"><p class="fs-12 t3" role="status">Reading the card…</p></div>` : '';
   const testBtn = card.test
     ? `<button type="button" class="btn btn-secondary btn-sm" ${act('testIntegration', card.key, EL)}>Test connection</button>` : '';
-  const rebuild = card.key === 'models'
-    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, EL)} title="Bake the chosen models via ollama create">Rebuild models</button>`
+  const rebuild = card.key === 'models' || card.key === 'node'
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('rebuildModels', card.key, card.key === 'node' ? 'pc' : 'main', EL)} title="Bake the chosen models via ollama create">Rebuild models</button>`
     : card.key === 'jellyfin' && state.currentUser?.server === 'jellyfin'
       ? `<button type="button" class="btn btn-secondary btn-sm" ${act('showJellyfinWebhook')}>Webhook setup</button>` : '';
   el.innerHTML = `
     <div class="section-head"><h3>${esc(card.title)}</h3>${card.hint ? `<span class="section-hint">${esc(card.hint)}</span>` : ''}</div>
     <div class="section-body">
-      <div id="int-form-${card.key}">${rows}</div>${bench}
+      ${advice}<div id="int-form-${card.key}">${rows}</div>
       <div class="row mt-8">
         <button type="button" class="btn btn-primary btn-sm" id="int-save-${card.key}" ${act('saveIntegrations', card.key, EL)}>Save</button>
         ${testBtn}${rebuild}
@@ -309,45 +330,6 @@ export function _integrationChanges(card) {
     if (v !== String(cur === undefined || cur === null ? '' : cur)) changes[f.id] = v;
   }
   return changes;
-}
-
-// The bench's profile for the configured curator at the chosen card size.
-// Without a size picked, the card of this host (nvidia-smi) is asked first;
-// a curator the bench has not measured there fills nothing and says so.
-export async function benchFillProfile(btn) {
-  const note = document.getElementById('int-bench-note');
-  const sel = document.getElementById('int-bench-vram');
-  let vram = parseFloat(sel?.value);
-  let gpuName = null;
-  btnBusy(btn, 'Looking…');
-  try {
-    if (!Number.isFinite(vram)) {
-      const g = await api('/api/setup/gpu');
-      if (!g.ok) { setStatus(note, 'pick the card memory (no card found on this host)', 'err'); return; }
-      vram = g.vram_gb; gpuName = g.name || null;
-    }
-    const r = await api('/api/setup/recommend', 'POST', {vram_gb: vram, gpu_name: gpuName});
-    const pkg = r.package;
-    const model = document.getElementById('int-base_curator_model')?.value?.trim() || '';
-    const found = pkg?.by_model?.[model] || pkg?.by_model?.[model.replace(/:latest$/, '')];
-    if (!found) {
-      const rec = pkg?.recommended;
-      setStatus(note, rec
-        ? `the bench has no run of ${model} on ${pkg.tier_gb} GB; it recommends ${rec.model} (${rec.profile} / ${rec.num_ctx} / ${rec.num_gpu})`
-        : 'the bench has no package for this card size', 'err');
-      return;
-    }
-    for (const [id, v] of [['int-llm_profile', found.profile], ['int-curator_num_ctx', found.num_ctx],
-                           ['int-curator_num_gpu', found.num_gpu]]) {
-      const el = document.getElementById(id);
-      if (!el || v === undefined || v === null) continue;
-      el.value = String(v);
-      el.dispatchEvent(new Event('input', {bubbles: true}));
-      el.dispatchEvent(new Event('change', {bubbles: true}));
-    }
-    setStatus(note, `filled in for ${model} on ${pkg.tier_gb} GB - Save to keep it`, 'ok');
-  } catch (e) { setStatus(note, _errMsg(e), 'err'); }
-  finally { btnDone(btn); }
 }
 
 export async function saveIntegrations(cardKey, btn) {
@@ -428,15 +410,17 @@ export async function testIntegration(cardKey, btn) {
   btnDone(btn);
 }
 
-export async function rebuildModels(cardKey, btn) {
+// host: "main" (this install's Ollama) or "pc" (the node's, while it is free).
+export async function rebuildModels(cardKey, host, btn) {
   const msg = document.getElementById(`int-msg-${cardKey}`);
+  const where = host === 'pc' ? "the node's Ollama" : 'this Ollama';
   const res = await confirmDialog({title: 'Rebuild the model bakes', confirmLabel: 'Rebuild',
-    body: '<p>Pulls missing base models and re-creates the Curatarr bakes; the app keeps running. This can take minutes.</p>'});
+    body: `<p>Pulls missing base models and re-creates the Curatarr bakes on ${where}; the app keeps running. This can take minutes.</p>`});
   if (!res.ok) return;
   btnBusy(btn, 'Building…');
   setStatus(msg, 'building… this can take minutes', 'busy');
   try {
-    const r = await api('/api/setup/build-models', 'POST');
+    const r = await api(`/api/setup/build-models?host=${host === 'pc' ? 'pc' : 'main'}`, 'POST');
     const ok = r.curator && r.summarizer;
     setStatus(msg, ok ? 'models rebuilt — restart Curatarr to load them' : 'build failed — see the Activity log', ok ? 'ok' : 'err');
     toast(ok ? 'Models rebuilt — restart Curatarr to load them' : 'Model build failed — see Activity', ok ? 'success' : 'danger', {ms: 8000});
