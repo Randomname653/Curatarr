@@ -33,6 +33,7 @@ import json
 import logging
 import re
 import sqlite3
+from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -1135,14 +1136,10 @@ async def run_lyrics_sync(task=None) -> bool:
                     return out
                 start += _PAGE
 
+        causes: Counter = Counter()
+
         async def fetch_text(stream_key: str):
-            try:
-                r = await client.get(f"{base}{stream_key}", headers={"X-Plex-Token": token})
-            except Exception as e:
-                from src.services.enrichment_state import log_topup_failure
-                log_topup_failure(logger, "[lyrics] stream", stream_key, e)
-                return None
-            return r.content if r.status_code == 200 else None
+            return await fetch_stream(client, f"{base}{stream_key}", token, causes, stream_key)
 
         async def list_artists(sec_key: str):
             out, start = [], 0
@@ -1166,5 +1163,27 @@ async def run_lyrics_sync(task=None) -> bool:
                 start += _PAGE
 
         res = await sync_lyrics(sections, list_tracks, fetch_text, list_artists=list_artists, task=task)
+    if causes:
+        res["failed_by"] = dict(causes.most_common())
     logger.info("[lyrics] run: %s", res)
     return bool(res.get("done"))
+
+
+async def fetch_stream(client, url: str, token: str, causes: Counter,
+                       stream_key: str = "") -> Optional[bytes]:
+    """One lyric stream from Plex, or None, with why it failed counted in
+    ``causes`` ("HTTP 404", "ReadTimeout", ...). The run line used to carry
+    a bare failed count - 1265 failed beside 1912 fetched on 2026-11-01, 3390
+    beside 320 on 10-30 - with no way to tell a stale stream key from a
+    busy or restarting server. Failed streams are tried again next run."""
+    try:
+        r = await client.get(url, headers={"X-Plex-Token": token})
+    except Exception as e:  # noqa: BLE001 - counted and logged; the stream waits for the next run
+        causes[type(e).__name__] += 1
+        from src.services.enrichment_state import log_topup_failure
+        log_topup_failure(logger, "[lyrics] stream", stream_key or url, e)
+        return None
+    if r.status_code != 200:
+        causes[f"HTTP {r.status_code}"] += 1
+        return None
+    return r.content

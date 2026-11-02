@@ -1392,6 +1392,13 @@ holds the card is still known for NVIDIA only. Not tried on AMD hardware yet; th
 checked against the drivers' and amd-smi's documented output.
 - Tests: `tests/test_amd_gpu.py`.
 
+**The lyrics run says why a text did not come (2026-11-02).** The nightly run logged a bare
+failed count: 1265 failed beside 1912 fetched on 2026-11-01, 3390 beside 320 on 10-30. A stale
+stream key, a busy server and a Plex restart all read the same. Each failure is now counted by
+its cause (HTTP status or the error), and the run line carries them as `failed_by`. Failed
+texts are tried again on the next run, as before.
+- Tests: `tests/test_lyrics_fetch_causes.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:
