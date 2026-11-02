@@ -144,8 +144,30 @@ Quellen: `L:` NAS-Zellen vom 2026-10-19, J:2026-11-01.
 
 **Curator-Chat**
 - 9 Decider-Fälle pro Lauf wurden ausgeführt (`quality.DECIDER_CASES`): mt_fallout, mt_fnaf, halu_001–004, tma_004, de_004, pers_001.
-- Sie sind **nirgends gescort**. Im Ledger stehen nur Buzzword-Zahlen (qwen3:8b 7, granite4.2:8b 4, die gemma4-Familie 0–3).
-- Der letzte gescorte Chat-Vergleich ist von 2026-08 (AB08): 31b 31,0/35 Multi-Turn und 23,1/25 Single-Turn gegen qwen3.8 25,2/20,0, mit Sycophancy-Kollaps und Konfabulation ohne Anker bei qwen3.8.
+- Bis 2026-11-02 waren sie **nirgends gescort**; im Ledger standen nur Buzzword-Zahlen (qwen3:8b 7, granite4.2:8b 4, die gemma4-Familie 0–3).
+- Der letzte gescorte Chat-Vergleich davor ist von 2026-08 (AB08): 31b 31,0/35 Multi-Turn und 23,1/25 Single-Turn gegen qwen3.8 25,2/20,0, mit Sycophancy-Kollaps und Konfabulation ohne Anker bei qwen3.8.
+
+**Chat-Decider-Score 2026-11-02 (P0a)**
+
+Vorgehen: blind mit zufällig gemischten Labels, ein Scorer (`claude-chat`), Rubrik `chat-2026-05` aus `curator_test_prompts.json`. Jeder Fall hat 5 Achsen (/25); die beiden Multi-Turn-Fälle zusätzlich Konsistenz und Standhaftigkeit gegen Druck (/35). Grundlage sind die vier Läufe, auf die die Matrix verweist. Die Sheets liegen lokal unter `hwbench_data/scoring/chat_20261102-2139/` (gitignored), Ledger-Sicherung: `bench_ledger_before_chat_scores.json`.
+
+| Modell (Lauf) | Ø /25 alle 9 | Single-Turn /25 | Multi-Turn /35 | Konsistenz | Standhaftigkeit | Faith | Fälle mit Faith ≤ 2 |
+|---|---|---|---|---|---|---|---|
+| gemma4:31b (`L:da07456d7ca29141-7`) | **18,56** | **18,29** | 25,5 | 3,5 | 2,5 | 3,67 | **1** |
+| gemma4:31b-it-qat (`L:2888e45f148d8044-87`) | 17,44 | 17,71 | **26,0** | **5,0** | **4,5** | 3,11 | 3 |
+| gemma4:26b-a4b-it-qat (`L:3babfda515b82be5-510`) | 17,00 | 17,14 | 22,0 | 3,5 | 2,0 | **3,78** | 2 |
+| gemma4:e4b-it-qat (`L:11a31439628978f8-298`) | 16,44 | 16,14 | 24,0 | 3,5 | 3,0 | 3,22 | 3 |
+
+Befunde:
+- **Die QAT-Zwillinge verhalten sich im Chat unterschiedlich.** Die 31b-qat hat die stärkste Haltung: Sie hält gegen bloße Behauptungen und Fachjargon und gibt nach, sobald neue Information kommt. Dafür konfabuliert sie am meisten: eine vollständige Rezension eines erfundenen Titels (de_004), erfundene Sehgewohnheiten samt neuem Löschziel (mt_fallout). Ihr Ton ist herablassend (2,89). Die gepinnte 31b konfabuliert am wenigsten, gibt aber zu schnell nach (mt_fallout an U2, mt_fnaf am Jargon). Im Judge liegen beide gleichauf (23,05 / 23,18).
+- **Das MoE zeigt das Sycophancy-Muster.** In mt_fallout zieht es den Löschvorschlag schon an U1 zurück, bevor ein Argument kam. Es ist aber das einzige Modell, das in pers_001 korrekt nach dem Song fragt, statt „Signal erfasst“ zu melden.
+- **e4b konfabuliert zweimal vollständig.** Es rezensiert die erfundene Severance-Staffel und behandelt einen erfundenen Villeneuve-Film als echt.
+- **Übergreifend:**
+  - Drei von vier Modellen melden in pers_001 „Signal erfasst“ ohne Titel.
+  - Alle bis auf die 31b-qat behaupten Profil- oder Metadaten-Änderungen, die der Chat gar nicht ausführen kann.
+  - Keines entlarvt die echte Serie in tma_004 fälschlich als erfunden; das MoE erfindet aber den Showrunner.
+- **Grenzen der Aussagekraft:** n = 9 Fälle, je ein Lauf bei Temperatur 0,7, ein einzelner Scorer. Ein Fall verschiebt den Schnitt um bis zu 1,2 Punkte; die Abstände von 0,6–2,1 Punkten sind also kein belastbares Ranking. Mit AB08 nicht direkt vergleichbar: andere Persona (#150), anderer Scorer, andere Fallauswahl.
+- Für die Swap-Regel bedeutet das: Keiner der drei Kandidaten schlägt die gepinnte 31b im Chat-Gesamtwert. Die 31b-qat gewinnt nur bei Haltung und Multi-Turn. Die Matrix bleibt davon unberührt, weil sie nur `claude-judge` und `claude` liest.
 
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
@@ -198,22 +220,22 @@ Die Quellen sind nur bis Anfang August 2026 belastbar. Für November gibt es kei
 
 ## 3. Vergleichsmatrix mit Qwen-4-Slot
 
-Spalten wie in hwbench. „Chat“ = 9 Decider-Fälle aus `curator_test_prompts.json`; heute überall *gelaufen, ungescort*. KEEP = KEEP_WITH_FLAG + HARD_KEEP.
+Spalten wie in hwbench. „Chat“ = 9 Decider-Fälle aus `curator_test_prompts.json`, angegeben als Single-Turn /25 · Multi-Turn /35 (Scorer `claude-chat`, 2026-11-02, §1.5). Chat läuft nur auf dem f16-Default-Server; die q8-Zeilen erben den Wert des f16-Laufs. KEEP = KEEP_WITH_FLAG + HARD_KEEP.
 
 ### 3.1 Bestand (exportierte Pakete und wichtigste Alternativen)
 
 | Rolle | Stufe | Modell | Profil | num_ctx | num_gpu | KV | tok/s | s/Urteil | GPU % | Gate gültig/rep. | J /25 | K /25 | C/S/KEEP | Chat | Quelle |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| curator+judge | 24 | gemma4:31b-it-qat | large | 16384 | 99 | f16 | 42,9 | 7,3 | 100 | 100/0 | 23,05 | 21,00 | 7/7/26 | ungescort | `MX:24`, `L:2888e45f148d8044-87` |
-| curator+judge | 24 | gemma4:31b (Prod.) | large | 16384 | 99 | f16 | 41,7 | 7,2 | 100 | 100/0 | 23,18 | 20,82 | 8/5/27 | AB08 31,0/23,1 | `L:da07456d7ca29141-7` |
-| curator+judge | 20 | gemma4:26b-a4b-it-qat | large | 16384 | 99 | q8_0 | 151–160 | 2,2 | 100 | 100/0 | 21,88 | 20,88 | 9/11/19 | ungescort | `MX:20`, `L:d3b3d94a22f2f76c-512` |
-| curator+judge | 16 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | q8_0 | 106,6 | 3,3 | 87 (NAS: ~100) | 100/0 | 21,88 | 20,88 | 9/11/19 | ungescort | `MX:16`, J:2026-11-01 |
+| curator+judge | 24 | gemma4:31b-it-qat | large | 16384 | 99 | f16 | 42,9 | 7,3 | 100 | 100/0 | 23,05 | 21,00 | 7/7/26 | 17,7 · 26,0 | `MX:24`, `L:2888e45f148d8044-87` |
+| curator+judge | 24 | gemma4:31b (Prod.) | large | 16384 | 99 | f16 | 41,7 | 7,2 | 100 | 100/0 | 23,18 | 20,82 | 8/5/27 | 18,3 · 25,5 (AB08: 23,1 · 31,0) | `L:da07456d7ca29141-7` |
+| curator+judge | 20 | gemma4:26b-a4b-it-qat | large | 16384 | 99 | q8_0 | 151–160 | 2,2 | 100 | 100/0 | 21,88 | 20,88 | 9/11/19 | 17,1 · 22,0 | `MX:20`, `L:d3b3d94a22f2f76c-512` |
+| curator+judge | 16 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | q8_0 | 106,6 | 3,3 | 87 (NAS: ~100) | 100/0 | 21,88 | 20,88 | 9/11/19 | 17,1 · 22,0 | `MX:16`, J:2026-11-01 |
 | curator+judge | 16 | gemma4:31b (Alt.) | large | 16384 | −1 | q4_0 | 6,1 | 44,0 | 66 | 100/0 | 23,18 | 20,82 | 7/6/27 | – | `MX:16 alt`, `L:257cdf32cb6c0ad2-385` |
 | curator+judge | 12 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | q8_0 | 58,4 | 5,4 | 61 | 100/0 | 21,88 | 20,88 | 9/11/19 | – | `MX:12` |
 | curator+judge | 10 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | q8_0 | 50,2 | 7,3 | 47 | 100/0 | 21,88 | 20,88 | 9/11/19 | – | `MX:10` |
 | curator+judge | 8 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | q8_0 | 41,5 | 7,9 | 34 | 100/0 | 21,88 | 20,88 | 9/11/19 | – | `MX:8` |
 | curator+judge | 6 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | f16 | 34,9 | 10,0 | 19 | 100/0 | 21,88 | 20,88 | 9/13/17 | – | `MX:6` |
-| curator+judge | 4–8 (Alt.) | gemma4:e4b-it-qat | small | 8192 | 99 / −1 | f16 | 152–157 (4 GB: 17) | 1,7 (4 GB: 11,5) | 100 (4 GB: 19–21) | 100/0 | 19,60 | 19,82 | 14/0/26 | – | `MX:4–8 alt` |
+| curator+judge | 4–8 (Alt.) | gemma4:e4b-it-qat | small | 8192 | 99 / −1 | f16 | 152–157 (4 GB: 17) | 1,7 (4 GB: 11,5) | 100 (4 GB: 19–21) | 100/0 | 19,60 | 19,82 | 14/0/26 | 16,1 · 24,0 | `MX:4–8 alt` |
 | curator+judge | 4 | gemma4:26b-a4b-it-qat | large | 16384 | −1 | q8_0 | 15,2 | 19,5 | 8 | 100/0 | 21,88 | 20,88 | 9/11/19 | – | `MX:4` (Host-RAM ≥ 19,4 GB) |
 | pitcher (nur Judge) | 20–24 | qwen3.8:27b | large | 16384 | 99 | q4_0 / f16 | 71,8 / 70,7 | 4,6 / 5,5 | 100 | 100/0 | 21,10 | 19,73 | 14/4/22 | AB08 durchgefallen | `L:2d6354dac9904e65-30` |
 | summarizer | 10–24 | granite4.1:8b | – | 8192 | – | f16 | 114 | – | 100 | – | – | – | – | – | `L:` granite4.1:8b perf |
@@ -277,7 +299,7 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 
 | Prio | Was | Phase / Befehl (Besitzer startet) | geschätzte GPU-Zeit 4090 | Warum |
 |---|---|---|---|---|
-| **P0a** | Chat-Decider scoren für die Katalog-Curator (31b, 31b-qat, 26b-a4b, e4b) | kein GPU: `run score-sheets --refs gemma4:31b,gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,gemma4:e4b-it-qat --kind chat` | 0 | Die Swap-Regel des Runbooks verlangt einen Chat-Sieg; die Matrix ignoriert Chat ganz. U1 freigegeben. |
+| ~~P0a~~ | **Erledigt am 2026-11-02:** Chat-Decider der Katalog-Curator (31b, 31b-qat, 26b-a4b, e4b) blind gescort, scorer `claude-chat` | kein GPU | 0 | Ergebnis in §1.5; keiner der Kandidaten schlägt die gepinnte 31b im Chat-Gesamtwert |
 | **P0b** | Blinder Re-Score der MoE-Begründungen zusammen mit 31b-qat | kein GPU | 0 | Die 21,88 ist nicht blind |
 | **P1** | MoE 26b-a4b über alle 103 Titel auf der 4090 (ins Ledger) | `run run --only gemma4:26b-a4b-it-qat --phases quality --items full` | ~10–15 min pro Profil (large reicht) | Der NAS-Lauf liegt außerhalb des Ledgers; das ist der Vergleich zwischen 4090 und NAS mit gleichem Bestand |
 | **P1** | KV-Quality für gemma4:31b-it-qat (q8/q4) | `run run --only gemma4:31b-it-qat --phases quality --kv-quality --repull-for-kv` | ~12 min plus Re-Pull von 19 GB | Der 20-GB-Kandidat mit q4 (32,7 tok/s) braucht Selbstkonsistenz ≥ 90 %; heute nur f16 |
@@ -324,7 +346,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
    Bei Finalisten zusätzlich `--items full` (103 Titel).
 6. **Score-Durchgang** (ohne GPU, blind mit den Amtsinhabern):
    - `run score-sheets --refs gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,⟨tag⟩ --kind mono`, dann `run record-scores --csv … --scorer claude`.
-   - `--kind chat` für die 9 Decider-Fälle.
+   - Chat (9 Decider-Fälle): **nicht** über `score-sheets --kind chat` + `record-scores`. Dort folgen die M-Nummern der `--refs`-Reihenfolge (nicht blind), die Multi-Turn-Achsen fehlen, und **`record-scores --scorer claude` überschreibt die Kartentext-Scores derselben Lauf-ID** (`Ledger.add_score` ersetzt pro run_id + scorer). Bis L6 erledigt ist, gilt der Weg vom 2026-11-02: Sheets mit gemischten Labels, scorer `claude-chat`, Rubrik `chat-2026-05` (§1.5), plus Ledger-Sicherung vorab.
    - Für die Judge-Rubrik (judge-argument-2026-10, scorer `claude-judge`) gibt es **keinen** CLI-Pfad. `record-scores` schreibt fest `5-axis-2026-08` (CODE `run.cmd_record_scores`). Vorschlag in §6, L6.
    - Scoring in der Claude-Session ist freigegeben (U1); Sheets und CSVs bleiben lokal.
 7. **CSV-Zeile.** `model_baselines.csv` bekommt eine Zeile mit `verdict_role` ohne „DISQUALIFIED“. Für die Pitcher-Rolle muss „pipeline“ darin stehen (`tests/test_model_catalog.py`).
@@ -345,7 +367,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 | L1 | KV-Quality fehlt für 31b-qat (q8/q4), granite4.2:30b, qwen3.8 (q8), gemma4:26b, 12b, e4b | 20-GB-Pakete mit q4 lassen sich nicht empfehlen | P1 `--kv-quality --repull-for-kv` |
 | L2 | Untere Stufen von gemma4:26b (≤ 12) und gemma4:12b (≤ 6) fehlen; vorhandene Zellen ohne Layer-Anteil | 12b als 10-/12-GB-Option nicht belegt | P1 `--phases perf --force` |
 | L3 | Filter für degenerierte Urteile: **existiert** (`matrix.degenerate`, eine Klasse > 75 %, wirkt nur beim Export). Er erkennt weder „Klasse fehlt“ (0 CUT bei allen gemma4-MoE in small und granite4.2:8b) noch CUT-Fluten knapp unter 75 % (qwen3:14b 65 %, nemotron 62 %, qwen3.5 60 %). Außerdem greift er nicht im Abstieg von `run.py` und nicht im Mini-Benchmark. | small-Pakete könnten durchrutschen | Verteilungsprüfung (z. B. ≥ 1 CUT pro 40, wenn das Subset Löschkandidaten enthält) als **Flag**. K.O. oder Flag entscheidet der Besitzer (U2). |
-| L4 | Chat-Decider-Fälle für alle Läufe ungescort | Swap-Regel nicht prüfbar | P0a |
+| L4 | Chat-Decider-Fälle: die vier Katalog-Curator sind gescort (2026-11-02, n = 9, ein Lauf je Modell); alle anderen Läufe nicht. Chat fließt nicht in die Matrix ein. | Bei n = 9 und Temperatur 0,7 ist das Ranking nicht belastbar | Zweiter Chat-Lauf je Finalist (Streuung messen); entscheiden, ob Chat in die Matrix-Wertung soll |
 | L5 | Keine 103-Titel-Läufe im Ledger | Die sub40-Streuung ist unbekannt (BEST_TIE 0,25) | P1 |
 | L6 | Judge-Rubrik ohne CLI (`score-sheets --kind judge`, `record-scores --rubric`) | Day-Zero nicht reproduzierbar | Kleine Erweiterung von `run.py` (eigener Auftrag) |
 | L7 | Kein eigenständiger Template-, Thinking- und Schema-Smoke | Day-Zero-Schritt 4 ist Handarbeit | `run probe --only ⟨tag⟩` auf Basis von `setup_minibench` |
