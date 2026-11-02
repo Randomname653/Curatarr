@@ -46,7 +46,10 @@ async def server_card() -> dict:
         logger.debug("[advice] nvidia-smi failed: %s", e)
         g = {}
     if g.get("ok"):
-        return {"vram_gb": g.get("vram_gb"), "name": g.get("name"), "source": "nvidia-smi"}
+        # The bench measured NVIDIA cards only: an AMD card's advice is by size.
+        source = ("AMD card - the bench measured NVIDIA only" if g.get("vendor") == "amd"
+                  else "nvidia-smi")
+        return {"vram_gb": g.get("vram_gb"), "name": g.get("name"), "source": source}
     return {"vram_gb": None, "name": None, "source": None}
 
 

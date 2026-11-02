@@ -90,7 +90,10 @@ def _gpu_reading():
     except subprocess.TimeoutExpired:
         return "timeout"
     except (FileNotFoundError, OSError):
-        return "missing"
+        # No NVIDIA driver: an AMD card reads from sysfs / amd-smi instead.
+        from src.amd_gpu import usage
+        amd = usage()
+        return [None if x is None else float(x) for x in amd] if amd else "missing"
     if out.returncode != 0 or not out.stdout.strip():
         return "error"
 
