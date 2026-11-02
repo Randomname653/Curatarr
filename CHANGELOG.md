@@ -1399,6 +1399,22 @@ its cause (HTTP status or the error), and the run line carries them as `failed_b
 texts are tried again on the next run, as before.
 - Tests: `tests/test_lyrics_fetch_causes.py`.
 
+**MusicBrainz finds the artists it knows under another name (2026-11-02).** 1,676 Spotify
+artists sat as "musicbrainz: no match", 1,108 of them without a genre on any play. The name
+search asked for the exact name only, did not escape special characters and took the first
+hit. Of the 40 most played misses it found 1. It now asks for each name and alias, escaped,
+including the parts of "X fka Y", "X a.k.a. Y", "X | Y" and "X (Y)", and takes only a hit whose
+name, sort name or alias matches. That found 12 of the 40: Turbonegro as Turboneger, Tim Berg
+as Tim Bergling, "Axwell /\ Ingrosso" as Axwell Λ Ingrosso, Ferdinand fka Left Boy.
+- The resolver asks the most played artists first. Artists played once wait until a second
+  play: 881 of the 1,676.
+- The misses of the old search get one fresh look, once; their attempt count is kept.
+- Plays Last.fm had nothing for (no track tags, no artist tags) take MusicBrainz's genres. That
+  happens when the MBID is found, and in a new step after Last.fm for the 7,555 such plays
+  whose artist already has one. An artist whose MusicBrainz profile has no genre either waits
+  like a miss.
+- Tests: `tests/test_music_artist_match.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

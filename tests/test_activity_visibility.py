@@ -170,9 +170,9 @@ check("catalog sync: paging + compare-loop + refresh progress",
       and "Queuing Lidarr refreshes" in mcs)
 
 mm = (root / "src/services/music_matcher.py").read_text(encoding="utf-8")
-check("music pipeline: 4-phase progress on the custodian card",
+check("music pipeline: 5-phase progress on the custodian card",
       "def run_music_pipeline(user_id: int, batch: int = 300, task=None)" in mm
-      and "processed=done, total=4" in mm)
+      and "processed=done, total=5" in mm)
 
 do = (root / "src/services/discogs_offline.py").read_text(encoding="utf-8")
 check("discogs dump: MB progress against content-length",

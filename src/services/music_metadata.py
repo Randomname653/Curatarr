@@ -127,6 +127,67 @@ async def fetch_deezer_id_via_mbid(mbid: str) -> Optional[str]:
 
 # ── MUSICBRAINZ ───────────────────────────────────────────────────────────────
 
+# The name search, 2026-11-02. It asked ``artist:"<name>"`` only: no alias (so
+# "Turbonegro" missed MusicBrainz's "Turboneger" and "Tim Berg" missed Avicii),
+# no escaping (the ``/\`` of "Axwell /\ Ingrosso" broke the Lucene query) and
+# no check of the hit (the first result won). On the owner's 40 most played
+# unmatched Spotify artists it found 1; aliases, escaping, the parts of
+# "X fka Y" / "X | Y" / "X (Y)" and a name check found 12.
+_MB_QUERY_VERSION = 2
+_LUCENE_SPECIAL = re.compile(r'([+\-&|!(){}\[\]^"~*?:\\/])')
+_SPLITS = (r"\s+f\.?k\.?a\.?\s+", r"\s+a\.?k\.?a\.?\s+", r"\s+\|\s+")
+
+
+def _lucene_escape(text: str) -> str:
+    return _LUCENE_SPECIAL.sub(r"\\\1", text)
+
+
+def _fold(text: str) -> str:
+    """Case, accents and punctuation folded away: "Adam & die Micky's" and
+    "Adam und die Micky’s" stay apart, "FiNCH" and "Finch" meet."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+def mb_name_variants(name: str) -> list:
+    """The name and the names inside it: "Ferdinand fka Left Boy" ->
+    [..., "Ferdinand", "Left Boy"], "EAV (Erste Allgemeine Verunsicherung)"
+    -> [..., "EAV", "Erste Allgemeine Verunsicherung"], "/\\" as the Λ
+    MusicBrainz writes."""
+    name = (name or "").strip()
+    out = [name]
+    for sep in _SPLITS:
+        parts = re.split(sep, name, flags=re.I)
+        if len(parts) > 1:
+            out += parts
+    m = re.match(r"^(.*?)\s*\(([^()]+)\)\s*$", name)
+    if m:
+        out += [m.group(1), m.group(2)]
+    if "/\\" in name:
+        out.append(name.replace("/\\", "Λ"))
+    return list(dict.fromkeys(v.strip() for v in out if v and v.strip()))
+
+
+def mb_artist_query(name: str) -> str:
+    """The search: every variant as a name or an alias, escaped."""
+    return " OR ".join(f'artist:"{_lucene_escape(v)}" OR alias:"{_lucene_escape(v)}"'
+                       for v in mb_name_variants(name))
+
+
+def mb_pick_artist(artists: list, name: str, rejected=()) -> Optional[dict]:
+    """The first hit whose name, sort name or one of its aliases is one of
+    the variants once folded - never just the first hit."""
+    wanted = {_fold(v) for v in mb_name_variants(name)} - {""}
+    for a in artists or []:
+        if not a.get("id") or a.get("id") in rejected:
+            continue
+        names = [a.get("name"), a.get("sort-name")] + [x.get("name") for x in a.get("aliases") or []]
+        if any(_fold(n) in wanted for n in names if n):
+            return a
+    return None
+
+
 async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
                                    rejected=None) -> Optional[dict]:
     """Search MusicBrainz for artist info: genres, tags, disambiguation.
@@ -152,8 +213,15 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
     cache_key = f"mb:artist:{mbid}" if mbid else f"mb:artist:{artist_name[:60].lower()}"
     cached = await asyncio.to_thread(_cache_get, cache_key)
     if cached:
-        _resp = cached["response"]   # may legitimately be None (neg-cached)
-        if not (rejected and isinstance(_resp, dict) and _resp.get("mbid") in rejected):
+        _resp = cached["response"]
+        if isinstance(_resp, dict) and "miss" in _resp:
+            # A miss of the current search stands; one of an older search
+            # (or the plain None the first one wrote) is searched again.
+            if _resp["miss"] == _MB_QUERY_VERSION:
+                return None
+        elif _resp is None and not mbid:
+            pass
+        elif not (rejected and isinstance(_resp, dict) and _resp.get("mbid") in rejected):
             return _resp
         # The cached hit is the one the owner just excluded — search again.
 
@@ -165,20 +233,20 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
                 # name-collision risk the negative pin exists for).
                 r = await _mb_request(
                     client, f"{MB_BASE}/artist",
-                    {"query": f'artist:"{artist_name}"', "limit": 5, "fmt": "json"},
+                    {"query": mb_artist_query(artist_name), "limit": 10, "fmt": "json"},
                 )
                 if r.status_code != 200:
                     # 429/503 is MB having a moment, not "no such artist" —
                     # neg-caching it froze a hiccup into a 7-day miss and the
                     # enrichment wrote the artist down as not found.
                     return TRANSIENT
-                artists = [a for a in (r.json().get("artists") or [])
-                           if a.get("id") and a.get("id") not in rejected]
-                if not artists:
-                    await asyncio.to_thread(_cache_set, cache_key, None, 7)
+                hit = mb_pick_artist(r.json().get("artists") or [], artist_name, rejected)
+                if hit is None:
+                    await asyncio.to_thread(_cache_set, cache_key,
+                                            {"miss": _MB_QUERY_VERSION}, 7)
                     return None
 
-                mbid = artists[0].get("id")
+                mbid = hit.get("id")
 
             # Fetch full artist details with tags — rate limited
             r2 = await _mb_request(
