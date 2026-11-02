@@ -8,12 +8,9 @@ on their own line untouched.
 
     python tests/test_verified_block_votes.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 from src.services.media_enricher import format_verified_block

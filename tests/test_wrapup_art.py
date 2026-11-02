@@ -8,18 +8,16 @@
 
     python tests/test_wrapup_art.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
 import shutil
 import subprocess
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from _checks import check  # noqa: E402
 
 
 JS = (ROOT / "frontend/js/wrapup.js").read_text(encoding="utf-8")

@@ -3,21 +3,18 @@ adds, freshness guard + mass-drift breaker in the deletion path.
 
     python tests/test_catalog_sync.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.routers.library as lib
 import src.routers.recommendations as recs
 import src.services.app_state as app_state
 import src.services.music_catalog_sync as mcs
 import src.services.soulsync_client as sc
-
-from _checks import check  # noqa: E402
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────

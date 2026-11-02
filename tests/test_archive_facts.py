@@ -11,15 +11,14 @@ film and show raised — and the exception was logged at debug level, which
 made a total failure look like a slow walker for months. An arity mismatch
 inside one function is invisible to the eye and trivial to assert.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import ast
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 ROOT = Path(__file__).resolve().parents[1]
-from _checks import check  # noqa: E402
 
 
 # ── every exit from build_reception must agree on how many values it returns ──

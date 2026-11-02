@@ -8,26 +8,23 @@ Throwaway in-memory DB, a fake vector store.
 
     python tests/test_swipe.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.swipe as sw  # noqa: E402
 import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 from src.database.models import Base, EncryptedTasteVector, SwipeRating, User, WatchHistoryEntry  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

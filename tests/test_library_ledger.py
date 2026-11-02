@@ -8,23 +8,20 @@ walk now feeds two durable tables — arrivals back-dated from Plex
 
     python tests/test_library_ledger.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import calendar
-import sys
 import types
 from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import src.services.library_ledger as ll  # noqa: E402
 import src.services.plex_sync as ps  # noqa: E402
 from src.database.models import Base, LibraryConfig, LibraryEvent, LibraryItem, MediaTechProfile  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

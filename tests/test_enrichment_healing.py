@@ -14,6 +14,8 @@ Pins the root causes found in the audit:
 
     python tests/test_enrichment_healing.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import json
 import pathlib
@@ -22,7 +24,6 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from _checks import memory_engine  # noqa: E402
 from src.services import enrichment_state as es

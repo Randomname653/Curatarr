@@ -14,19 +14,18 @@ Fakes only: no agent, no database, no Ollama.
 
     python tests/test_gpu_game_detection.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src import gpu_engine as ge  # noqa: E402
 from src import pc_agent  # noqa: E402
 from src.services import notifications as nt  # noqa: E402
 from src.services import pc_host  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the counters ────────────────────────────────────────────────────────────

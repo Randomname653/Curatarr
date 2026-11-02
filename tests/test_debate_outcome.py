@@ -11,13 +11,13 @@ debate can tell, for old rows and new alike.
 
     python tests/test_debate_outcome.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -26,8 +26,6 @@ import src.services.debate_outcome as do  # noqa: E402
 import src.services.episodic_memory as em  # noqa: E402
 from src.database.models import (Base, ConversationMessage, CuratorResolutionLog,  # noqa: E402
                                  DeletionProposal)
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

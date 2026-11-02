@@ -13,22 +13,20 @@ A real local aiohttp server stands in for the arr; no network.
 
     python tests/test_arr_resilience.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import email.utils
-import sys
 import time
 import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from aiohttp import web
 
 import src.services.arr_client as ac
 import src.services.lidarr_discography as ld
-
-from _checks import check  # noqa: E402
 
 
 # ── Retry-After ──────────────────────────────────────────────────────────────

@@ -10,19 +10,18 @@ itself failed. Each check fails on the code before this change:
 
     python tests/test_silent_handlers_g4.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import src.services.app_state as app_state  # noqa: E402
 import src.services.curator_principles as cp  # noqa: E402
 import src.services.llm_priority as llm_priority  # noqa: E402
 import src.services.subtitle_signals as subs  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── 1. OpenSubtitles: an unrecorded charge pauses the service ───────────────

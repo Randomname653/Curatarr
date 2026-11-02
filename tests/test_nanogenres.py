@@ -9,9 +9,10 @@ Fakes only: a scripted facet index, an in-memory database, no model.
 
     python tests/test_nanogenres.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -19,14 +20,11 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from src.database.models import Base, Nanogenre, TitleNanogenre, User, WatchHistoryEntry as W  # noqa: E402
 import src.services.nanogenres as ng  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the clustering ──────────────────────────────────────────────────────────

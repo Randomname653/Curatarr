@@ -9,12 +9,12 @@ started, then marked, moved to the moment of the mark and counted in full.
 
     python tests/test_single_marks.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import func, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -23,8 +23,6 @@ import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.services import plex_sync as ps  # noqa: E402
 from src.services import wrapup_facts as wf  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the sync: a finished item with no play event is a mark ─────────────────

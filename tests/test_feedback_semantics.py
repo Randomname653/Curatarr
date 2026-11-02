@@ -4,14 +4,12 @@ aversion decay/cap, mood_aversion removal, pillar scores.
 
     python tests/test_feedback_semantics.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.taste_vectors import merge_feedback_into_vector
-
-from _checks import check  # noqa: E402
 
 
 # ── the ratchet is gone: praise undoes a dislike ─────────────────────────────

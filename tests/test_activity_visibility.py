@@ -14,12 +14,9 @@ Guards the fix on three layers:
 
     python tests/test_activity_visibility.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 # ── 1. task_monitor semantics the wrapper depends on ─────────────────────────

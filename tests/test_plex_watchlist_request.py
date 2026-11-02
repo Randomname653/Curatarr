@@ -14,19 +14,16 @@ puts the title on the list. Pins:
 
     python tests/test_plex_watchlist_request.py
 """
-import asyncio
-import sys
-import types
-from pathlib import Path
+from _harness import check  # noqa: I001 - first: temp stores
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import asyncio
+import types
+
 
 import httpx
 
 import src.database.connection as conn_mod
 import src.services.plex_watchlist as pw
-
-from _checks import check  # noqa: E402
 
 
 # ── fakes ────────────────────────────────────────────────────────────────────

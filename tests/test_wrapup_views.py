@@ -8,17 +8,17 @@ there is enough to show.
 
     python tests/test_wrapup_views.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
 import shutil
 import subprocess
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -26,8 +26,6 @@ from src.database.models import (Base, JudgeVerdict, Nanogenre, TitleNanogenre, 
                                  WatchHistoryEntry as W)
 from src.services import wrapup_sections as ws  # noqa: E402
 from src.services import wrapup_facts as wf  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

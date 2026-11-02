@@ -2,17 +2,15 @@
 
     python tests/test_collections_planner.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.collection_designer import (MAX_ITEMS, MIN_ITEMS,
                                               PLEX_TYPE, map_designs)
 from src.services.library_memory import normalize_title
 from src.services.plex_collections import COLLECTION_PREFIX
-
-from _checks import check  # noqa: E402
 
 
 POOL = [{"title": f"Movie {i}", "plex_rating_key": str(1000 + i)} for i in range(20)]

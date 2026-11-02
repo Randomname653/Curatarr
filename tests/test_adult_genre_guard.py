@@ -9,12 +9,7 @@ source lists it itself or the content rating (Rx/Hentai) confirms it.
 
     python tests/test_adult_genre_guard.py
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
+from _harness import check  # noqa: I001 - first: temp stores
 
 
 from src.services.media_enricher import _merge_raw_metadata

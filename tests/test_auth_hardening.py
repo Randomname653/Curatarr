@@ -15,13 +15,13 @@ Pins:
 
     python tests/test_auth_hardening.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import pathlib
-import sys
 from datetime import datetime, timezone
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.orm import sessionmaker
@@ -37,8 +37,6 @@ import src.routers.auth as auth
 import src.routers.users as users
 from src.database.models import Base, User
 from src.services import rate_limit
-
-from _checks import check  # noqa: E402
 
 
 def status_of(fn, *a, **kw):

@@ -13,14 +13,14 @@
 
     python tests/test_server_id_map.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -30,8 +30,6 @@ from src.database.models import Base, ServerIdMap as M, User  # noqa: E402
 from src.services.media_server import base as b, id_map  # noqa: E402
 from src.services.media_server.plex_adapter import PlexAdapter  # noqa: E402
 from media_server_fixtures import plex_transport  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

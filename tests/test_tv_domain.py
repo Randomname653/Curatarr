@@ -12,12 +12,9 @@ keep the 'show'+'tv' union as a safety net.
 
     python tests/test_tv_domain.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 from src.services.media_enricher import _domain_for_write

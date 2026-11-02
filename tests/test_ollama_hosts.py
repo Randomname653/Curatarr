@@ -15,18 +15,16 @@ prompt variant and machine never come from two places.
 
     python tests/test_ollama_hosts.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.config import settings  # noqa: E402
 from src.services import llm_utils as lu  # noqa: E402
 from src.services.ollama_hosts import ROLES, OllamaHost, host_for, ollama_for  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── one endpoint: every role is it ──────────────────────────────────────────

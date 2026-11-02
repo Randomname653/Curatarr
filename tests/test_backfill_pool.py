@@ -15,14 +15,11 @@ Concurrency is where a walker quietly starts doing a title twice, or skipping
 one, or ignoring a stop. None of that shows up as an error; it shows up as a
 number being slightly wrong months later. So the semantics are pinned here.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 import time
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 from src.services import archive_backfill as ab       # noqa: E402

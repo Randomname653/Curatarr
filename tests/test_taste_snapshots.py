@@ -8,21 +8,18 @@ embedding model rebuilds, and readers centre on the corpus mean.
 
     python tests/test_taste_snapshots.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import src.services.taste_engine as te  # noqa: E402
 import src.services.taste_snapshots as ts  # noqa: E402
 from src.database.models import Base, TasteSnapshot, User, WatchHistoryEntry  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

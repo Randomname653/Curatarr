@@ -3,16 +3,14 @@ structural-only; MB/Last.fm become gap-fillers + the no-SoulSync fallback).
 
     python tests/test_soulsync_primary.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.services.music_metadata as mm
 import src.services.soulsync_client as sc
-
-from _checks import check  # noqa: E402
 
 
 # ── fakes: no network, no cache DB ───────────────────────────────────────────

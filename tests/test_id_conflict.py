@@ -9,14 +9,11 @@ re-resolution runs with today's guards plus any owner pin.
 
     python tests/test_id_conflict.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import difflib
 import re
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
 
 
 def _norm_ct(t):

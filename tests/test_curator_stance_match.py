@@ -8,15 +8,13 @@ proposed; with whole titles, emphasised when they are one word, 116.
 
     python tests/test_curator_stance_match.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services.recommendations_engine import positioned_titles  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 TEXT = ("The Big Bang Theory is a long-running sitcom; if you ask me, the other shows in 10 years "

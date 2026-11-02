@@ -15,17 +15,15 @@ Fakes only: no Ollama, no agent.
 
     python tests/test_parallel_hosts.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import llm_priority as lp  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 NAS = oh.OllamaHost(url="http://nas:30068", profile="small", num_ctx=16384)

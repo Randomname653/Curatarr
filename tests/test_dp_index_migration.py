@@ -10,17 +10,15 @@ Runs against an in-memory SQLite DB swapped in for the app engine.
 
     python tests/test_dp_index_migration.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 
 from _checks import memory_engine  # noqa: E402
 import src.database.connection as conn_mod
-
-from _checks import check  # noqa: E402
 
 
 WANT = {"idx_dp_user_status", "idx_dp_latest_activity"}

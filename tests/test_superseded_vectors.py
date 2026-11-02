@@ -9,20 +9,18 @@ principles; the text stays.
 
     python tests/test_superseded_vectors.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
 import src.services.episodic_memory as em
 from src.database.models import Base, CuratorPrinciple, EpisodicMemory
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

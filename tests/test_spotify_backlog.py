@@ -11,12 +11,7 @@ are full of tracks played exactly once, so ties sit right at the third slot
 as a matter of course. The tie-break is therefore spelled out, and these
 checks hold it in place.
 """
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from _checks import check  # noqa: E402
+from _harness import check  # noqa: I001 - first: temp stores
 
 
 from src.routers.library import _top_tracks_by_artist

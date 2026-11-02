@@ -10,18 +10,16 @@ vector into the DROP centroid.
 
     python tests/test_series_taste_aggregation.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import math
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services.taste_engine import (  # noqa: E402
     DROP_GRACE_DAYS, _is_drop, _naive_utc, _series_entries, recency_weight)
-
-from _checks import check  # noqa: E402
 
 
 NOW = datetime(2026, 10, 15, 12, 0, 0)

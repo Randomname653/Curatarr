@@ -9,20 +9,19 @@ so turning it off takes a member out of every comparison at once.
 
     python tests/test_household_compare.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
 import shutil
 import subprocess
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.household_compare as hc  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.wrapup_store as store  # noqa: E402
@@ -30,7 +29,6 @@ from src.database.models import Base, User, WatchHistoryEntry as W  # noqa: E402
 from src.services.wrapup_facts import FACTS_VERSION  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

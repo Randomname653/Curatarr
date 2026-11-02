@@ -10,23 +10,21 @@ Real HTTP on 127.0.0.1 for the agent; the NAS side with injected fetches.
 
     python tests/test_pc_agent.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src import pc_agent  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.services import pc_host  # noqa: E402
 from src.services import process_monitor as pm  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 TOKEN = "t" * 24

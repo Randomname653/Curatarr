@@ -13,18 +13,16 @@ metadata):
 
     python tests/test_media_server_keys.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from collections import Counter  # noqa: E402
 
 from src.services.media_server.base import ExternalIds as X, FileRef, MediaItem, canonical_keys  # noqa: E402
 from src.services.media_server.id_map import item_rows, key_rank  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the keys of one item ────────────────────────────────────────────────────

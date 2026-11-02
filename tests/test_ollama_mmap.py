@@ -9,17 +9,15 @@ that host's value - and none carries another host's.
 
     python tests/test_ollama_mmap.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.config import settings  # noqa: E402
 from src.services import llm_utils as lu  # noqa: E402
 from src.services import ollama_hosts as oh  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 KEYS = ("OLLAMA_USE_MMAP", "PC_OLLAMA_USE_MMAP", "OLLAMA_PC_ENDPOINT", "ENRICH_ON_PC")

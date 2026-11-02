@@ -10,23 +10,21 @@ A throwaway RSA-2048 key is generated per run (pure Python, nothing stored).
 
     python tests/test_cf_access.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import base64
 import hashlib
 import json
 import secrets
-import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import src.services.cf_access as cfa  # noqa: E402
 from src.middleware import CloudflareAccessMiddleware  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── a throwaway key ─────────────────────────────────────────────────────────

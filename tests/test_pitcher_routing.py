@@ -12,17 +12,15 @@ Covers the load-bearing guarantees:
   - curator_start(exclusive_model=...) routes eviction to the right target.
   - wiring: pillars/engine pass the model through; config has the settings.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import src.services.llm_priority as lp
 from src.config import settings
-
-from _checks import check  # noqa: E402
 
 
 # ── stubs ────────────────────────────────────────────────────────────────────

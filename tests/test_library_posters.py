@@ -5,16 +5,14 @@ tab bar: the curator in the middle, Library in the drawer.
 
     python tests/test_library_posters.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import pathlib
 import re
-import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.routers import library as lib  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 series = {"id": 1, "title": "Dark", "images": [

@@ -2,18 +2,16 @@
 
     python tests/test_seasonal_context.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.llm_utils import seasonal_context
 from src.services.taste_vectors import compute_temporal_patterns
 from src.services.recommendations_engine import _rhythm_line
-
-from _checks import check  # noqa: E402
 
 
 # ── seasonal_context windows ─────────────────────────────────────────────────

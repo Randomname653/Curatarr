@@ -8,6 +8,8 @@ commit AHEAD of ours counts. Fakes only: GitHub is never called.
 
     python tests/test_update_check.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sys
 import tempfile
@@ -15,12 +17,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import build_info as bi  # noqa: E402
 from src.services import update_check as uc  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 A = "a" * 40

@@ -16,12 +16,12 @@ request" really is another session; arr/Plex HTTP via httpx.MockTransport.
 
     python tests/test_deletion_safety.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx
 from fastapi import HTTPException
@@ -34,8 +34,6 @@ from src.config import settings
 from src.database.models import (
     Base, CuratorResolutionLog, DeletionProposal, ProtectedMedia,
 )
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine, with_users  # noqa: E402

@@ -9,6 +9,8 @@ rating and signal wins. A followed artist is never proposed for deletion.
 
     python tests/test_soulsync_taste_signal.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import json
 import math
@@ -17,9 +19,7 @@ import sys
 from datetime import datetime, timedelta
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.services.app_state as app_state  # noqa: E402
 import src.services.soulsync_client as ss  # noqa: E402
 import src.services.taste_engine as te  # noqa: E402

@@ -2,16 +2,14 @@
 
     python tests/test_curation_stats.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
 
 from src.services.curation_stats import _month_range, aggregate_resolutions
-
-from _checks import check  # noqa: E402
 
 
 now = datetime(2026, 8, 13)

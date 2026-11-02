@@ -2,15 +2,13 @@
 
     python tests/test_trending.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.services.recommendations_engine import _trending_fresh, _trending_line
-
-from _checks import check  # noqa: E402
 
 
 now = datetime(2026, 8, 13, 12, 0)

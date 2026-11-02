@@ -10,14 +10,12 @@ disqualify it, and no model the bench DISQUALIFIED may appear as a
 recommendation. A newer bench run that re-roles a model must be reflected
 in the catalog deliberately, or this suite goes red.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import csv
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.frontend_files import everything as _frontend_everything  # index.html + js/app.js
-
-from _checks import check  # noqa: E402
 
 
 from src.services.model_catalog import (

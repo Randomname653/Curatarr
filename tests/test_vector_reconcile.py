@@ -8,17 +8,17 @@ Plex ratingKeys, radarr:N, music titles) and heals what is missing.
 
     python tests/test_vector_reconcile.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.cache.metadata_cache as mcache
 import src.database.connection as conn_mod
 import src.services.media_enricher as me
@@ -26,8 +26,6 @@ import src.services.vector_reconcile as vr
 import src.vector_store.chromadb_wrapper as cw
 from src.config import settings
 from src.database.models import Base, EnrichmentStatus, ProactiveMessage, User
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

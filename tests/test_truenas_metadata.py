@@ -6,6 +6,8 @@ nothing on a NAS is touched.
 
     python tests/test_truenas_metadata.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import importlib.util
 import io
 import sys
@@ -19,8 +21,6 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("apply_metadata", ROOT / "deploy/truenas/apply_metadata.py")
 am = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(am)
-
-from _checks import check  # noqa: E402
 
 
 # The owner's file as TrueNAS wrote it after "Install via YAML".
