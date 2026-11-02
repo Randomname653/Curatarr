@@ -358,7 +358,7 @@ export function renderAddNew(svc) {
     : 'Search for a TV show…';
   contentEl.innerHTML = `
     <div class="toolbar">
-      <input type="text" id="add-search-${svc}" class="pad-9-12 fs-13 input grow" aria-label="Search title" placeholder="${esc(placeholder)}" ${actOn('input', 'debouncedAddSearch', svc)}>
+      <input type="search" id="add-search-${svc}" class="pad-9-12 fs-13 input grow" aria-label="Search title" placeholder="${esc(placeholder)}" ${actOn('input', 'debouncedAddSearch', svc)}>
       <span id="add-search-status-${svc}" class="minw-80 status"></span>
     </div>
     <div id="add-search-results-${svc}"></div>
