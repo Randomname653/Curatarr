@@ -19,30 +19,18 @@ the code before this change.
 
     python tests/test_a11y_nav.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 from tests.frontend_files import markup, styles  # noqa: E402
 
 _JS = ROOT / "frontend" / "js"
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 def _read(name: str) -> str:
@@ -373,7 +361,6 @@ if __name__ == "__main__":
             try:
                 fn()
             except Exception as e:  # noqa: BLE001 - a crashed test is a failure, not a stop
-                FAIL += 1
+                check.failed += 1
                 print(f"  FAIL  {name} crashed: {type(e).__name__}: {e}")
-    print(f"\n{PASS} passed, {FAIL} failed")
-    sys.exit(1 if FAIL else 0)
+    check.done()

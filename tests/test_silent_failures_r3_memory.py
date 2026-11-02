@@ -20,15 +20,15 @@ Behavioural checks fail on the code before this change:
 
     python tests/test_silent_failures_r3_memory.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import logging
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.exc import OperationalError  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -37,18 +37,6 @@ import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.database.models import AppState, Base, ConversationMessage  # noqa: E402
-
-PASS = FAIL = 0
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 from _checks import memory_engine, with_users  # noqa: E402
@@ -789,5 +777,4 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             print(name)
             fn()
-    print(f"\n{PASS} passed, {FAIL} failed")
-    sys.exit(1 if FAIL else 0)
+    check.done()

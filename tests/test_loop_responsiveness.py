@@ -18,37 +18,24 @@ imported); the lock holder is a separate python process.
 
     python tests/test_loop_responsiveness.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
+_TMP = TMP      # the harness's temp dir: its database lives here
 _DB = (_TMP / "curatarr.db").resolve()
-os.environ["DATABASE_URL"] = f"sqlite:///{_DB.as_posix()}"
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base  # noqa: E402
 from src.database.runner import run_write  # noqa: E402
 from src.services import app_state  # noqa: E402
 
-PASS = FAIL = 0
 HOLD_S = 0.8          # long enough to tell a stall (>0.48 s) from a tick (<0.2 s)
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 _HOLDER = f"""
@@ -148,5 +135,4 @@ check("pool: 10 connections, 10 s checkout wait, no pre-ping",
 src = (ROOT / "src" / "database" / "connection.py").read_text(encoding="utf-8")
 check("no per-checkout busy_timeout reset", '"checkout"' not in src)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()

@@ -8,13 +8,13 @@ row is converted with the offset in force at its own time.
 
     python tests/test_user_time.py
 """
-import sys
+from _harness import check  # noqa: I001 - first: temp stores
+
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi import HTTPException  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
@@ -23,18 +23,7 @@ import src.services.user_time as ut  # noqa: E402
 import src.services.wrapup_facts as wf  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry  # noqa: E402
 
-PASS = FAIL = 0
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def check(name, cond):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}")
 
 
 BERLIN, NY = ZoneInfo("Europe/Berlin"), ZoneInfo("America/New_York")
@@ -141,5 +130,4 @@ check("the app reports the browser's zone when it differs from the stored one",
 auth_py = (ROOT / "src/routers/auth.py").read_text(encoding="utf-8")
 check("the session status carries the stored zone", '"timezone": user.timezone' in auth_py)
 
-print(f"\n{PASS} passed, {FAIL} failed")
-sys.exit(1 if FAIL else 0)
+check.done()
