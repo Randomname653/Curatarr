@@ -12,21 +12,16 @@
 
     python tests/test_jellyfin_signin.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
-import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
-
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, User  # noqa: E402
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from fastapi import BackgroundTasks, HTTPException  # noqa: E402
 
@@ -35,8 +30,6 @@ from src.config import settings  # noqa: E402
 from src.routers import auth  # noqa: E402
 from src.services import rate_limit  # noqa: E402
 import src.services.media_server.jellyfin_auth as ja  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 def req(host="192.168.1.20", headers=None):

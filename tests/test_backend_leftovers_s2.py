@@ -15,33 +15,28 @@ Each check fails on the code before this change.
 
     python tests/test_backend_leftovers_s2.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import importlib.util
 import logging
 import os
 import subprocess
-import sys
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 os.environ["ALLOWED_HOSTS"] = ""          # a developer's .env must not decide the default
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base  # noqa: E402
 
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.services import app_state, state_lease  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 class _Capture(logging.Handler):

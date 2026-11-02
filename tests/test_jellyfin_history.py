@@ -24,24 +24,19 @@
 
     python tests/test_jellyfin_history.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import copy
-import os
-import sys
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
-
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import (Base, LibraryConfig, MediaIdentity, ServerPlayState, User,  # noqa: E402
                                  WatchHistoryEntry as W)
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from media_server_fixtures import jellyfin_transport, load  # noqa: E402
 from src.config import settings  # noqa: E402
@@ -49,8 +44,6 @@ from src.services.app_state import get_state, set_state  # noqa: E402
 from src.services.media_server import jellyfin_history as jh, jellyfin_hook as hook  # noqa: E402
 from src.services.media_server.base import LiveSession, Play  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 JANE, SAM = "b0c1d2e3f405162738495a6b7c8d9e0f", "c1d2e3f405162738495a6b7c8d9e0fa1"

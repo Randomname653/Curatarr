@@ -19,24 +19,19 @@
 
     python tests/test_jellyfin_writes.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import os
-import sys
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
-
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import (Base, CachedRecommendation as CR, LibraryConfig, LibraryItem,  # noqa: E402
                                  MediaTechProfile, ServerIdMap, User)
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from media_server_fixtures import JellyfinWriteServer  # noqa: E402
 from src.config import settings  # noqa: E402
@@ -44,8 +39,6 @@ from src.services.app_state import get_state  # noqa: E402
 from src.services.media_server import jellyfin_tech, jellyfin_writes as jw  # noqa: E402
 from src.services.media_server.base import ServerUser  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 JANE, SAM = "b0c1d2e3f405162738495a6b7c8d9e0f", "c1d2e3f405162738495a6b7c8d9e0fa1"

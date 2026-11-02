@@ -14,19 +14,16 @@ same answers as the per-item code they replace.
 
     python tests/test_scan_throughput.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import math
-import os
-import sys
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
+_TMP = TMP      # the harness's temp dir: its database and caches live here
 
 from src.config import settings  # noqa: E402
 settings.ENRICHMENT_CACHE = _TMP / "enrichment.db"
@@ -37,8 +34,6 @@ import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import EpisodicMemory, User, WatchHistoryEntry  # noqa: E402
 
 conn_mod.init_db()
-
-from _checks import check  # noqa: E402
 
 
 with conn_mod.get_db_session() as db:

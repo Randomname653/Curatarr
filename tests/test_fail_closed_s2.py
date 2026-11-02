@@ -13,27 +13,20 @@ Each check fails on the code before this change.
 
     python tests/test_fail_closed_s2.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
-import os
 import socket
-import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-_TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
-
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, User, WatchHistoryEntry  # noqa: E402
 from src.services import app_state  # noqa: E402
 
-Base.metadata.create_all(conn_mod.engine)
-
-from _checks import check  # noqa: E402
+app_db()
 
 
 # ── 1. game flag ────────────────────────────────────────────────────────────

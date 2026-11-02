@@ -11,23 +11,19 @@ directory moved elsewhere so a relative path would miss.
 
     python tests/test_force_set_state_path.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import os
 import sqlite3
-import sys
-import tempfile
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import create_engine
 
 import src.database.connection as conn_mod
 from src.services import app_state
 
-from _checks import check  # noqa: E402
-
-
-tmp = Path(tempfile.mkdtemp())
+# Its own engine on purpose: the subject is how the path comes out of an
+# absolute sqlite URL, so the file sits under a data/ dir of its own.
+tmp = TMP
 db_file = (tmp / "data" / "curatarr.db").resolve()
 db_file.parent.mkdir(parents=True)
 url = f"sqlite:///{db_file.as_posix()}"

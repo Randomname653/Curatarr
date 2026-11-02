@@ -23,25 +23,21 @@ Temp file databases only; the live DB and cache are never touched.
 
     python tests/test_integration_audit_2026_10.py
 """
+from _harness import TMP, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import os
 import sqlite3
-import sys
-import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-_tmp = Path(tempfile.mkdtemp(prefix="curatarr-integration-"))
+_tmp = TMP      # the harness's temp dir: its database and caches live here
 DB_FILE = (_tmp / "curatarr.db").resolve()
 CACHE_FILE = (_tmp / "cache" / "enrichment.db").resolve()
-os.environ["DATABASE_URL"] = f"sqlite:///{DB_FILE.as_posix()}"
-os.environ["ENRICHMENT_CACHE"] = str(CACHE_FILE)
 
 from src.config import settings  # noqa: E402
 
@@ -49,8 +45,6 @@ settings.ENRICHMENT_CACHE = CACHE_FILE
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.connection import get_db_session, init_db  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 check("test DB is the temp file, not the real one",

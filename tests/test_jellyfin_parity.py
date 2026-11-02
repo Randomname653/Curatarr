@@ -14,22 +14,20 @@
 
     python tests/test_jellyfin_parity.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import inspect
-import os
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, LibraryConfig, MusicTag, PlexRating, User, WatchHistoryEntry as WH  # noqa: E402
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 
 from media_server_fixtures import JellyfinWriteServer  # noqa: E402
 from src.config import settings  # noqa: E402
@@ -38,8 +36,6 @@ import src.services.media_server as ms  # noqa: E402
 from src.services.media_server import jellyfin_history, jellyfin_music  # noqa: E402
 from src.services.media_server.base import ServerUser  # noqa: E402
 from src.services.media_server.jellyfin_adapter import JellyfinAdapter  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 JANE = "b0c1d2e3f405162738495a6b7c8d9e0f"

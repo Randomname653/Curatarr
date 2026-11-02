@@ -16,12 +16,12 @@ Each "off the loop" check fails on the code before this change.
 
     python tests/test_loop_free_s2b.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import io
 import json
-import os
 import sqlite3
-import sys
 import tempfile
 import threading
 import zipfile
@@ -30,9 +30,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 from src.config import settings  # noqa: E402
 settings.ENRICHMENT_CACHE = _TMP / "enrichment.db"
@@ -42,9 +40,7 @@ import httpx  # noqa: E402
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.models import Base, LibraryConfig, SeriesEdition, User, WatchHistoryEntry  # noqa: E402
 
-Base.metadata.create_all(conn_mod.engine)
-
-from _checks import check  # noqa: E402
+app_db()
 
 
 def _on_loop_thread() -> bool:

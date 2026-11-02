@@ -16,21 +16,19 @@ cached rec and rendered through the Deletions card's Why? button.
 
     python tests/test_rec_why.py
 """
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
-os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import src.database.connection as conn_mod  # noqa: E402
 from src.database.connection import get_db_session  # noqa: E402
@@ -43,9 +41,7 @@ import src.services.recommendations_engine as eng  # noqa: E402
 import src.services.scheduler as sched  # noqa: E402
 import src.routers.recommendations as recs_router  # noqa: E402
 
-Base.metadata.create_all(conn_mod.engine)
-
-from _checks import check  # noqa: E402
+app_db()
 
 
 def _by_key(sf):

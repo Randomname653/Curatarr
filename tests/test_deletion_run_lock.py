@@ -9,18 +9,13 @@ enrichment_running / music_pipeline_running).
 
     python tests/test_deletion_run_lock.py
 """
-import os
-import sys
-import tempfile
+from _harness import app_db, check  # noqa: I001 - first: temp stores
+
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Its own database: the run reads app_state (the activity-unavailable
 # flag), and on the default path that table exists only if some earlier
 # suite or a dev install happened to create it.
-os.environ["DATABASE_URL"] = f"sqlite:///{(Path(tempfile.mkdtemp()) / 'curatarr.db').as_posix()}"
-
-from _checks import check  # noqa: E402
 
 
 root = Path(__file__).resolve().parents[1]
@@ -46,7 +41,7 @@ from src.database.models import Base  # noqa: E402
 import src.routers.recommendations as recs
 import src.services.app_state as app_state
 
-Base.metadata.create_all(conn_mod.engine)
+app_db()
 import src.services.recommendations_engine as engine
 
 _lock = {"held": False, "released": 0}
