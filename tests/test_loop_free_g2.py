@@ -19,6 +19,8 @@ External services (arrs, Ollama, SoulSync, Chroma) are stubbed.
 
     python tests/test_loop_free_g2.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import os
@@ -28,12 +30,9 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
 from sqlalchemy import create_engine  # noqa: E402
 
 from _checks import loop_guarded  # noqa: E402
-from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn_mod  # noqa: E402
 from src.database import loop_guard  # noqa: E402
 from src.database.models import (  # noqa: E402
