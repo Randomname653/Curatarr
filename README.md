@@ -140,7 +140,10 @@ drag down to close.*
   household use, custodianship, resonance) rules KEEP / CUT / STAGNANT
   from verified evidence, then writes the case. Every proposal has its
   own discussion thread; titles without enrichment data are skipped
-  rather than judged blind.
+  rather than judged blind. Each category keeps a pool of proposals, ten
+  on screen at a time, and a run judges only what the pool lacks. A title
+  with a major honour (an Emmy, a Grammy, an Oscar …) is never a cut,
+  only your call.
 - **Semantic library search** — "like *X* but darker and more mature"
   resolves the anchor title, scores each constraint against real metadata
   tags, cites its evidence per hit, and admits when nothing in your
@@ -172,7 +175,9 @@ drag down to close.*
   opt-in.
 - **Spotify and Netflix history** — import a member's Spotify listening
   and Netflix viewing; it counts like their Plex plays, matched onto the
-  library's titles.
+  library's titles. Artists you streamed but do not own show up as a
+  backlog; with [SoulSync](https://github.com/Nezreka/SoulSync) set up,
+  the owner's Wish puts their tracks on its wishlist.
 - **Swipe** — rate titles seen anywhere, one card at a time; the stars
   join the taste vector, "want to watch" goes to the Plex watchlist.
 - **Writes back to Plex** — per-user "Curatarr Recommended" playlists
@@ -199,8 +204,18 @@ drag down to close.*
   machines; nothing goes to a hosted LLM.
 - **A NAS that borrows the gaming PC** — run Curatarr around the clock in
   a container, and let a second machine lend its GPU whenever it is on and
-  nobody is playing. Deletion verdicts wait for the big card; Settings
-  shows what each card is doing right now.
+  nobody is playing. Deletion verdicts wait for the big card for up to 72
+  hours; after that the server judges with its own model, and the big card
+  checks those proposals again once it is back. Settings shows what each
+  card is doing right now, and the PC's tray icon turns its diamond red
+  while Curatarr works on that card.
+- **Fits the card you have** — a hardware bench measured more than twenty
+  models on 4 to 24 GB cards. The setup wizard and Settings read each
+  machine's card and fill in the measured package: curator model,
+  profile, context window and GPU layers. Where your settings differ,
+  Settings marks it. NVIDIA cards are read with nvidia-smi, AMD cards
+  through the amdgpu driver or amd-smi. The bench has not measured an AMD
+  card yet, so their advice goes by memory size.
 - **Game mode** — when a game starts, the models are evicted from VRAM
   and only keyless API pre-fetching continues. The pipeline resumes by
   itself afterwards.
@@ -264,7 +279,7 @@ container image does not include it.
 | **Docker** | only for the container route, which needs neither Python nor Git |
 | **Plex Media Server** or **Jellyfin 10.9+** | one per install; on Plex you sign in as the server owner, on Jellyfin as an administrator (Quick Connect or password) |
 | **[Ollama][link-ollama]** | installed and running before the first start |
-| **GPU** | 24 GB VRAM for the default curator model. Smaller card? Pick a smaller curator model ([how](docs/USAGE.md#changing-the-models)); verdicts get softer |
+| **GPU** | 24 GB VRAM for the default curator model. Smaller cards work too: the setup reads the card and fills in the model the bench measured for its size (16 GB: `gemma4:26b-a4b-it-qat`). NVIDIA, or AMD where Ollama runs on ROCm (not benchmarked yet) |
 | **Disk** | room for the models: the default curator alone is about 19 GB |
 | **Radarr / Sonarr / Lidarr** | optional — each one unlocks deletion proposals and adds for its category |
 | **Music index** | nothing to set up — without Lidarr, music runs on your Plex or Jellyfin library |
@@ -280,8 +295,9 @@ five-model benchmark on chat character and metadata faithfulness — see
 *summarizer*, and `nomic-embed-text-v2-moe` for embeddings, which runs on
 the CPU so the GPU stays free for the curator. The first start downloads
 whatever is missing. Any Ollama model can be substituted: on a card with
-less than 24 GB, pick a smaller curator in the setup wizard's Ollama step,
-or see [Changing the models](docs/USAGE.md#changing-the-models).
+less than 24 GB the setup wizard's Ollama step fills in the bench's pick
+for it, and Settings → Integrations → Ollama & models shows it next to
+what is set. See also [Changing the models](docs/USAGE.md#changing-the-models).
 
 > [!NOTE]
 > **Lidarr is optional, and the least reliable of the three.** Radarr and
@@ -450,6 +466,8 @@ These are the options most people change:
 | `OLLAMA_ENDPOINT` | Default `http://localhost:11434` |
 | `BASE_CURATOR_MODEL` | Model baked into the `curatarr-curator` tag |
 | `BASE_SUMMARIZER_MODEL` | Model baked into the `curatarr-summarizer` tag |
+| `LLM_PROFILE`, `CURATOR_NUM_CTX`, `CURATOR_NUM_GPU` | The curator's profile (`large` / `small`), context window and GPU layers; the setup writes the bench's values for your card |
+| `DELETION_POOL_SIZE` | Open deletion proposals each category keeps (default 50) |
 | `RADARR_URL` / `SONARR_URL` / `LIDARR_URL` (+ API keys) | \*arr connections |
 | `TMDB_API_KEY` | Primary metadata source |
 | `SYNC_INTERVAL_HOURS` | Plex history pull cadence (default 24) |
@@ -457,6 +475,7 @@ These are the options most people change:
 | `EXTRA_GAME_PROCESSES` | Extra `.exe` names that should pause the LLM |
 | `ALLOWED_HOSTS` | Opt-in guard against DNS rebinding: the host names Curatarr answers to ([SECURITY.md](SECURITY.md#first-run-setup)) |
 | `OLLAMA_PC_ENDPOINT`, `PC_AGENT_*` | A second machine's GPU ([how](docs/USAGE.md#running-in-a-container-nas-server)) |
+| `JUDGE_FALLBACK_HOURS` | How long deletion runs wait for that machine before the server judges itself (default 72; -1 always waits) |
 
 ## Documentation
 
