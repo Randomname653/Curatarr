@@ -192,6 +192,30 @@ Befunde:
   - Schwach ist es bei anime (19,0) und bei clarity (3,70: Bitrate-Notizen wie „N/A“ oder „None“, vage Stature-Zeilen).
 - **Die 31b-Zwillinge sind im Judge praktisch gleich** (24,25 / 24,18). Beide lassen in Einzelfällen ein OWNER SIGNAL allein den Keep tragen; die Verfassung sieht dafür nur STAGNANT vor. Das MoE befolgt diese Regel in denselben Fällen korrekt.
 
+**Private Chat-Fälle aus echten Threads (2026-11-02, noch nicht gelaufen)**
+
+Grundlage: das NAS-Backup vom 02.11. (13:00), als Kopie read-only geöffnet. Es enthält 728 Threads, davon 163 mit mindestens 6 Nachrichten. Ein heuristisches Ranking (Widerspruch, Inkonsistenz-Vorwurf, „tell me about“, persönliche Signale, Deutsch) lieferte die Kandidaten. Daraus entstanden 9 Multi-Turn-Fälle im Schema von `curator_test_prompts.json`: Die Nutzer-Turns werden wörtlich wiedergegeben, der Kontext stammt aus dem Datensatz des Löschvorschlags.
+- **Ablage (privat):** `tests/benchmarks/hwbench_data/curator_private_cases.json`, gitignored, nie committen.
+- **Öffentlich:** nur IDs, Kategorie und Scores. Die IDs benennen das Fehlermuster, nie einen Titel.
+
+| ID | Prüft | in Produktion beobachteter Fehler |
+|---|---|---|
+| `pv_mt_camp_override` | Haltung unter eskalierender Rhetorik, dann das Veto des Besitzers würdevoll akzeptieren | Spott und Belehrung nach dem Veto |
+| `pv_mt_spokenword_de` | Domänenfehler (Musik-Kriterien für deutsches Wort-Kabarett), deutsche Quelle lesen, auf Englisch antworten | hält zu lange am falschen Maßstab fest |
+| `pv_mt_documentary` | Doku nicht mit Fiktions-Kriterien messen; „gib mir die Rohdaten“ ohne vorhandene Daten | Herablassung gegenüber gelebter Erfahrung |
+| `pv_mt_false_memory` | Haushalts-Anspruch; „du hast früher gesagt …“ nicht ungeprüft bestätigen | redet über einen anderen Titel und kapituliert dann sofort |
+| `pv_mt_entity_mixup` | beim vorgeschlagenen Titel bleiben, fehlende Datei-Daten (welche Staffeln) zugeben | diskutiert eine ganz andere Serie |
+| `pv_mt_household_fidelity` | Pillar III + Bitrate für den Partner, Speicher-Rechnung, Provokation am Ende | „Philanthropie“-Framing, schnippisch |
+| `pv_mt_principle_sovereignty` | Der Besitzer entscheidet immer, der Curator berät nur | beansprucht, Löschwünsche abzublocken |
+| `pv_mt_watch_pathologizing` | keine Psychologie aus Terminproblemen, keine erfundenen Sehstatistiken | psychologisiert eine Zeitfrage |
+| `pv_mt_song_signal` | Signal am genannten Track erfassen, eingefügte Metadaten korrekt nutzen | erfundene Bibliotheks-Zahlen |
+
+So laufen sie:
+- **hwbench:** `quality.py` lädt die Datei, wenn sie existiert. Die Chat-Phase umfasst dann 9 + 9 Fälle.
+  - Bekannte Quality-Fingerprints werden übersprungen; für die Katalog-Modelle braucht es deshalb `run run --only … --phases quality --force`. Das bedeutet GPU-Zeit: ~3–11 min pro Modell und Profil laut Ledger, plus etwa das Doppelte an Chat-Turns.
+- **Ohne hwbench:** `curator_bench.py --models … --prompts-file tests/benchmarks/hwbench_data/curator_private_cases.json --output-dir tests/benchmarks/hwbench_data/`.
+- **Scoring:** blind wie P0a, Rubrik `chat-2026-05`, scorer `claude-chat`.
+
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
 - Die Qualität stammt aus `tournament_bench.py` und `validate_top4.py` (2026-05/06) und ist seit der Gemma-4-/Granite-4.2-Generation nicht neu gemessen.
