@@ -13,7 +13,7 @@ docs/screenshots/
 The README shows a demo household on a real library, not anyone's real
 viewing: Jane Doe, the fictional owner of
 [CURATOR_EXAMPLES.md](../CURATOR_EXAMPLES.md), and Sam, who lives with her.
-The 2026-10-25 set was made like this:
+The 2026-11-02 set was made like this, from the same copy:
 
 1. **A copy, never the live data.** The database, the vector store and the
    enrichment caches copied into a separate checkout. Its own `.env`: the
