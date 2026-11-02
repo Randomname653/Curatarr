@@ -32,6 +32,10 @@ from typing import Iterable, Optional
 logger = logging.getLogger(__name__)
 
 ARTIST_MBID = "artist_mbid"
+# An artist with an MBID whose MusicBrainz profile carries no genre or tag:
+# the genre fallback after Last.fm (music_matcher.fill_genres_from_musicbrainz)
+# asks again only after the same backoff.
+ARTIST_GENRES = "artist_genres"
 
 # Attempt number -> how long before we ask again. The last entry repeats.
 _BACKOFF_DAYS = (14, 30, 90)
@@ -140,6 +144,26 @@ def record_miss(name: str, *, kind: str = ARTIST_MBID, reason: str = "",
         return 0
     _write_ok()
     return days
+
+
+def reopen(reason: str, *, kind: str = ARTIST_MBID, now: Optional[datetime] = None) -> int:
+    """Make every miss recorded with ``reason`` due now, its attempt count
+    kept: the search behind those misses got better (the MusicBrainz name
+    search, 2026-11-02), so their 14-90 day wait no longer means anything.
+    Returns how many."""
+    now = now or datetime.utcnow()
+    from src.database.connection import get_db_session
+    from src.database.models import MusicLookupMiss
+    try:
+        with get_db_session() as db:
+            n = (db.query(MusicLookupMiss)
+                 .filter(MusicLookupMiss.kind == kind, MusicLookupMiss.last_reason == reason)
+                 .update({"next_retry_at": now}, synchronize_session=False))
+    except Exception as e:                                   # pragma: no cover
+        _write_failed("reopen", reason, e)
+        return 0
+    _write_ok()
+    return int(n or 0)
 
 
 def clear_miss(name: str, *, kind: str = ARTIST_MBID) -> None:

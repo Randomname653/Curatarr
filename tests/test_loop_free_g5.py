@@ -142,12 +142,13 @@ async def _fake_mb(name, mbid=None, rejected=None):
     return {"mbid": f"mbid-{name}"} if name == "Artist 1" else None
 
 
-saved_mb = mmeta.fetch_musicbrainz_artist
+saved_mb, saved_min = mmeta.fetch_musicbrainz_artist, mm.MIN_PLAYS
 mmeta.fetch_musicbrainz_artist = _fake_mb
+mm.MIN_PLAYS = 1   # one play per artist here; the threshold has its own suite
 try:
     res, err, sites = run_guarded(lambda: mm.resolve_artist_mbids(1, batch=10))
 finally:
-    mmeta.fetch_musicbrainz_artist = saved_mb
+    mmeta.fetch_musicbrainz_artist, mm.MIN_PLAYS = saved_mb, saved_min
 check(f"no statement on the loop ({err!r}, {sites})", ok(err, sites))
 with conn_mod.get_db_session() as db:
     mbid = db.query(WatchHistoryEntry.artist_mbid).filter(

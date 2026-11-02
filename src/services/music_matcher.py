@@ -313,6 +313,23 @@ async def match_spotify_to_plex(user_id: int) -> dict:
 
 # ── Phase 1.4: MusicBrainz artist-MBID pre-resolve (Pass 16f) ────────────────
 
+# An artist played once waits: on the owner's install 881 of the 1,676 names
+# MusicBrainz could not place had one play to their name (2026-11-02), and the
+# 1 request/s budget is better spent on the ones that shape a taste. A second
+# play brings the name back.
+MIN_PLAYS = 2
+# The misses written down by the old name search get one fresh look with the
+# new one (music_metadata._MB_QUERY_VERSION), once.
+_REOPEN_KEY = "music_misses_reopened_for_query"
+
+
+def _mb_genres(profile: dict | None) -> str:
+    """MusicBrainz's genres (else its tags) as the plays store them: up to
+    five, comma-joined, "" when it has none."""
+    p = profile or {}
+    names = [g for g in (p.get("genres") or p.get("tags") or []) if g]
+    return ",".join(names[:5])
+
 async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
     """
     For every Spotify-source play missing ``artist_mbid``, look up the
@@ -344,11 +361,13 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
 
     # Find unresolved unique artist names (one row per name; we update ALL
     # plays for that name once we have the MBID).
+    # Most played first, so the batch cap spends MusicBrainz's budget where
+    # it counts; one-play names wait (MIN_PLAYS).
     def _load_unresolved():
+        from sqlalchemy import func
         with get_db_session() as db:
-            from sqlalchemy import distinct
             rows = (
-                db.query(distinct(WatchHistoryEntry.series_title))
+                db.query(WatchHistoryEntry.series_title, func.count(WatchHistoryEntry.id))
                 .filter(
                     WatchHistoryEntry.user_id    == user_id,
                     WatchHistoryEntry.media_type == "music",
@@ -356,10 +375,26 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
                     WatchHistoryEntry.artist_mbid.is_(None),
                     WatchHistoryEntry.series_title.isnot(None),
                 )
+                .group_by(WatchHistoryEntry.series_title)
+                .having(func.count(WatchHistoryEntry.id) >= MIN_PLAYS)
+                .order_by(func.count(WatchHistoryEntry.id).desc())
                 .all()
             )
         return [r[0] for r in rows if r[0]]
 
+    def _reopen_once():
+        from src.services.app_state import get_state, set_state
+        from src.services.music_metadata import _MB_QUERY_VERSION
+        if get_state(_REOPEN_KEY) == str(_MB_QUERY_VERSION):
+            return 0
+        n = music_misses.reopen("musicbrainz: no match")
+        set_state(_REOPEN_KEY, str(_MB_QUERY_VERSION))
+        return n
+
+    reopened = await run_write(_reopen_once)
+    if reopened:
+        logger.info("[music_matcher] Phase 1.4: %d earlier misses get a look with the "
+                    "new name search", reopened)
     unresolved = await run_read(_load_unresolved)
     artist_names = await run_read(lambda: music_misses.due_filter(unresolved))
     parked = len(unresolved) - len(artist_names)
@@ -441,7 +476,10 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
             await run_write(lambda: music_misses.record_miss(name, reason="musicbrainz: no match"))
             continue
 
-        # Write MBID back to ALL plays for this artist
+        # Write MBID back to ALL plays for this artist, and MusicBrainz's
+        # genres to the ones Last.fm had none for (genres "").
+        genres = _mb_genres(profile)
+
         def _write_mbid():
             with get_db_session() as db:
                 count = (
@@ -454,6 +492,13 @@ async def resolve_artist_mbids(user_id: int, batch: int = 200) -> dict:
                     )
                     .update({"artist_mbid": mbid}, synchronize_session=False)
                 )
+                if genres:
+                    (db.query(WatchHistoryEntry)
+                     .filter(WatchHistoryEntry.user_id == user_id,
+                             WatchHistoryEntry.media_type == "music",
+                             WatchHistoryEntry.series_title == name,
+                             WatchHistoryEntry.genres == "")
+                     .update({"genres": genres}, synchronize_session=False))
                 db.commit()
             return count
 
@@ -998,11 +1043,81 @@ async def enrich_music_genres_lastfm(
     }
 
 
+# ── Phase 2.5: MusicBrainz genres where Last.fm had none ─────────────────────
+
+async def fill_genres_from_musicbrainz(user_id: int, batch: int = 100) -> dict:
+    """Plays Last.fm answered with nothing (genres "", for the track and the
+    artist) but whose artist has an MBID get MusicBrainz's genres or tags.
+    11,609 plays of 2,699 artists sat at "" on the owner's install
+    (2026-11-02), 7,555 of them with an MBID already. One lookup per artist,
+    most played first; MusicBrainz's 60-day cache keeps a repeat cheap, and
+    an artist whose profile has no genre either waits like a miss
+    (music_misses.ARTIST_GENRES). Returns {"artists", "filled_plays",
+    "no_genres", "failed"}."""
+    from src.services import music_misses
+    from src.services.music_metadata import fetch_musicbrainz_artist
+
+    def _load():
+        from sqlalchemy import func
+        with get_db_session() as db:
+            return [tuple(r) for r in (
+                db.query(WatchHistoryEntry.artist_mbid,
+                         func.max(WatchHistoryEntry.series_title),
+                         func.count(WatchHistoryEntry.id))
+                .filter(WatchHistoryEntry.user_id == user_id,
+                        WatchHistoryEntry.media_type == "music",
+                        WatchHistoryEntry.genres == "",
+                        WatchHistoryEntry.artist_mbid.isnot(None))
+                .group_by(WatchHistoryEntry.artist_mbid)
+                .order_by(func.count(WatchHistoryEntry.id).desc())
+                .all())]
+
+    rows = await run_read(_load)
+    due = set(await run_read(lambda: music_misses.due_filter(
+        [m for m, _n, _c in rows], kind=music_misses.ARTIST_GENRES)))
+    todo = [(m, n) for m, n, _c in rows if m in due][:batch]
+    filled = no_genres = failed = 0
+    for i, (mbid, name) in enumerate(todo):
+        if i % _STOP_CHECK == 0 and await run_read(_stop_requested):
+            break
+        try:
+            profile = await fetch_musicbrainz_artist(name or "", mbid=mbid)
+        except Exception as exc:  # noqa: BLE001 - one artist; the next run asks again
+            log_topup_failure(logger, "[music_matcher] MB genres", name, exc)
+            failed += 1
+            continue
+        if profile is TRANSIENT:
+            failed += 1
+            continue
+        genres = _mb_genres(profile)
+        if not genres:
+            no_genres += 1
+            await run_write(lambda: music_misses.record_miss(
+                mbid, kind=music_misses.ARTIST_GENRES, reason="musicbrainz: no genres"))
+            continue
+
+        def _write():
+            with get_db_session() as db:
+                n = (db.query(WatchHistoryEntry)
+                     .filter(WatchHistoryEntry.user_id == user_id,
+                             WatchHistoryEntry.artist_mbid == mbid,
+                             WatchHistoryEntry.genres == "")
+                     .update({"genres": genres}, synchronize_session=False))
+                db.commit()
+            return n
+        filled += await run_write(_write)
+    logger.info("[music_matcher] Phase 2.5 (MusicBrainz genres): %d artists asked, %d plays "
+                "filled, %d without genres there, %d failed (%d artists waiting)",
+                len(todo), filled, no_genres, failed, len(rows) - len(todo))
+    return {"artists": len(todo), "filled_plays": filled, "no_genres": no_genres,
+            "failed": failed}
+
+
 # ── Combined pipeline (used by scheduler) ────────────────────────────────────
 
 async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
     """Run Phase 1 (Plex match) → 1.4 (MBID resolve) → 1.5 (Spotify genres) →
-    Phase 2 (Last.fm genres).
+    Phase 2 (Last.fm genres) → 2.5 (MusicBrainz genres where Last.fm had none).
 
     ``batch`` caps unique items per *enrichment* phase per run. Phase 1
     (Plex match) is unaffected — it always processes every unmatched
@@ -1026,7 +1141,7 @@ async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
             return
         try:
             from src.services.task_monitor import task_monitor
-            task_monitor.update(task, message=message, processed=done, total=4)
+            task_monitor.update(task, message=message, processed=done, total=5)
         except Exception:  # noqa: BLE001 - progress card only; the work itself is unaffected
             pass
 
@@ -1055,11 +1170,18 @@ async def run_music_pipeline(user_id: int, batch: int = 300, task=None) -> dict:
     phase2     = await enrich_music_genres_lastfm(user_id, batch=batch)
     if "error" in phase2:
         logger.warning("[music_matcher] Phase 2 aborted: %s", phase2["error"])
-    _prog(f"Done: {(phase2 or {}).get('tracks_queried', 0)} tracks queried on Last.fm", 4)
+    _prog("Phase 2.5: MusicBrainz genres where Last.fm had none…", 4)
+    try:
+        phase2_5 = await fill_genres_from_musicbrainz(user_id, batch=min(batch, 100))
+    except Exception as e:
+        logger.warning("[music_matcher] Phase 2.5 (MusicBrainz genres) failed: %s", e)
+        phase2_5 = {"error": str(e)}
+    _prog(f"Done: {(phase2 or {}).get('tracks_queried', 0)} tracks queried on Last.fm", 5)
     return {
         "phase1_plex_match":    phase1,
         "phase1b_arrivals":     phase1b,
         "phase1_4_mbid":        phase_mbid,
         "phase1_5_spotify":     phase_sp,
         "phase2_lastfm_genres": phase2,
+        "phase2_5_mb_genres":   phase2_5,
     }

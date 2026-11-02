@@ -187,7 +187,9 @@ def test_musicbrainz_skips_rejected_and_replaces_a_wrong_cached_hit():
     async def mb(client, url, params):
         calls.append(url)
         if url.endswith("/artist"):
-            return _Resp(200, {"artists": [{"id": "bad"}, {"id": "good"}]})
+            # Both carry the name: a hit counts only when its name matches.
+            return _Resp(200, {"artists": [{"id": "bad", "name": "Solstice"},
+                                           {"id": "good", "name": "Solstice"}]})
         return _Resp(200, {"name": "Solstice", "tags": [], "genres": []})
     real = (mm._mb_request, mm.MetadataCache)
     mm._mb_request, mm.MetadataCache = mb, Cache
