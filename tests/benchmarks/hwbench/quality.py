@@ -20,7 +20,10 @@ Phases (each optional):
          the production violation check forced a retry, violations left,
          buzzwords, sentence count.
   chat   the decider cases of curator_test_prompts.json (sycophancy,
-         confabulation traps, German) with the production persona.
+         confabulation traps, German) with the production persona, plus
+         every case of the owner's PRIVATE file when it exists
+         (hwbench_data/curator_private_cases.json: real threads replayed,
+         never committed - only their ids and scores are published).
 
 Every output row goes to a JSONL artifact for scoring; the child prints a
 metrics JSON as its last stdout line for the parent to put in the ledger.
@@ -40,6 +43,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 CHAT_CASES = HERE.parent / "curator_test_prompts.json"
+PRIVATE_CASES = HERE.parent / "hwbench_data" / "curator_private_cases.json"
 DECIDER_CASES = ("mt_fallout", "mt_fnaf", "halu_001", "halu_002", "halu_003",
                  "halu_004", "tma_004", "de_004", "pers_001")
 BUZZWORDS = ("high-octane", "epic", "relentless", "mind-bending", "adrenaline",
@@ -170,6 +174,8 @@ async def _chat(model: str, out: Path, case_ids: tuple[str, ...]) -> dict:
         return {"chat_skipped": f"{CHAT_CASES.name} missing"}
     cases = [c for c in json.loads(CHAT_CASES.read_text(encoding="utf-8"))["cases"]
              if c["id"] in case_ids]
+    if PRIVATE_CASES.exists():
+        cases += json.loads(PRIVATE_CASES.read_text(encoding="utf-8"))["cases"]
     rows = []
 
     async def ask(messages):
