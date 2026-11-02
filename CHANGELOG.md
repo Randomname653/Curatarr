@@ -1415,6 +1415,14 @@ as Tim Bergling, "Axwell /\ Ingrosso" as Axwell Λ Ingrosso, Ferdinand fka Left 
   like a miss.
 - Tests: `tests/test_music_artist_match.py`.
 
+**The agent's tray shows when Curatarr works on the PC's card (2026-11-02).** The web logo's
+diamond flares ruby while a model is at work, but the PC agent's tray icon stayed amber however
+hard the NAS used the card. Curatarr's poll now says whether it has a call on the PC's card right
+now (`X-Curatarr-Working`). While it does, the tray turns the diamond of its mark ruby, for the
+modern and the classic icon, and its tooltip says so. With no poll for 15 s the icon goes back by
+itself. An older Curatarr sends nothing, and the icon simply stays as it is.
+- Tests: `tests/test_tray_working.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

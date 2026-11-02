@@ -71,19 +71,46 @@ def _toggle_classic_icon(icon, _item):
     icon.icon = _brand_icon(64)
 
 
-def _brand_icon(size: int = 64):
+# The brand's colours (frontend/css/app.css --brand-*): the web logo's
+# diamond flares ruby while a model is at work, and so does the tray's. The
+# modern mark's diamond is the pale one; the classic mark draws its C body
+# pale and its diamond white.
+_AMBER, _DIAMOND, _SPARK, _RUBY = (239, 176, 44), (255, 227, 164), (255, 255, 255), (230, 44, 51)
+
+
+def _ruby_diamond(img, target=_DIAMOND):
+    """The mark with its diamond in ruby: every pixel nearer ``target`` (the
+    diamond's colour) than any other brand colour, its alpha kept."""
+    def d(a, b):
+        return sum((x - y) ** 2 for x, y in zip(a, b))
+    others = [c for c in (_AMBER, _DIAMOND, _SPARK) if c != target]
+    img = img.copy()
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            if a and all(d((r, g, b), target) < d((r, g, b), o) for o in others):
+                px[x, y] = (*_RUBY, a)
+    return img
+
+
+def _brand_icon(size: int = 64, working: bool = False):
     """The Curatarr mark (assets/brand/curatarr-mark.png, or the classic one
-    when the tray menu says so) as a PIL image. A missing file falls back to
-    a flat amber disc, so the tray still starts."""
+    when the tray menu says so) as a PIL image; ``working``: its diamond in
+    ruby. A missing file falls back to a flat amber (or ruby) disc, so the
+    tray still starts."""
     from PIL import Image, ImageDraw
 
     src = ROOT / "assets" / "brand" / ("curatarr-mark-classic.png" if _classic_icon()
                                        else "curatarr-mark.png")
     try:
-        return Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS)
+        img = Image.open(src).convert("RGBA").resize((size, size), Image.LANCZOS)
+        return (_ruby_diamond(img, _SPARK if _classic_icon() else _DIAMOND)
+                if working else img)
     except OSError:
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        ImageDraw.Draw(img).ellipse([2, 2, size - 3, size - 3], fill=(239, 176, 44, 255))
+        ImageDraw.Draw(img).ellipse([2, 2, size - 3, size - 3],
+                                    fill=(*(_RUBY if working else _AMBER), 255))
         return img
 
 
@@ -460,6 +487,25 @@ def _agent_only(settings, mutex) -> None:
             pystray.MenuItem("Quit agent", lambda: _stop_for_good()),
         ),
     )
+    # The diamond turns ruby while Curatarr works on this card (the agent
+    # hears it with each poll), as the web logo does; checked once a second,
+    # and a switch to the classic icon is followed too.
+    def _watch_working():
+        shown = None
+        while not done.wait(1.0):
+            want = (agent.working(), _classic_icon())
+            if want == shown:
+                continue
+            try:
+                icon.icon = _brand_icon(64, working=want[0])
+                icon.title = ("Curatarr agent - Curatarr is working on this card" if want[0]
+                              else "Curatarr agent (lends this PC's card)")
+                shown = want
+            except Exception as e:  # noqa: BLE001 - a colour; the agent keeps reporting
+                logger.debug("tray icon not updated: %s", e)
+
+    done = threading.Event()
+    threading.Thread(target=_watch_working, name="curatarr-tray-working", daemon=True).start()
     # The session hook joins a "server" before Windows may end the session;
     # there is none here, so a thread that has already finished.
     nothing = threading.Thread(target=lambda: None, name="curatarr-no-server")
@@ -478,6 +524,7 @@ def _agent_only(settings, mutex) -> None:
         icon.run(setup=_late_notify)
     else:
         icon.run()
+    done.set()
     agent.stop()
     if mutex:
         ctypes.windll.kernel32.CloseHandle(mutex)   # BEFORE the re-exec
