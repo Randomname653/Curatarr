@@ -1382,6 +1382,16 @@ are still shown as lines to set on that server.
     before. Rebuild models there bakes on the node while it is free.
 - Tests: `tests/test_setup_coverage.py`, `tests/test_model_catalog.py`, `tests/test_host_advice.py`.
 
+**AMD cards are read too (2026-11-02).** Every card reading asked nvidia-smi only, so on an
+AMD card the setup's detection, Settings' bench advice, the Nodes view, the "another
+program holds the card" gate and the PC agent read nothing. Where nvidia-smi is missing,
+Curatarr now reads the amdgpu driver's own files on Linux, which a container sees too when
+it has the host's /sys. Where `amd-smi` is installed it asks that. The bench measured NVIDIA
+cards only, so for an AMD card the advice goes by memory size and says so. Which program
+holds the card is still known for NVIDIA only. Not tried on AMD hardware yet; the readers are
+checked against the drivers' and amd-smi's documented output.
+- Tests: `tests/test_amd_gpu.py`.
+
 **Card tags that tell titles apart.** A deletion card showed the arr's first
 four genres, so nearly every anime read "Action, Animation, Anime, Drama".
 Cards now take the genres from the enriched profile (AniList's for anime:

@@ -702,6 +702,23 @@ def _host_ram_gb() -> float | None:
         return None
 
 
+def _amd_cards() -> dict | None:
+    """detect_gpu's answer for AMD cards (src/amd_gpu.py), or None. The
+    bench ran on NVIDIA only: the answer says the advice is a starting point."""
+    from src.amd_gpu import cards
+    found = cards()
+    if not found:
+        return None
+    gpus = [{"name": c["name"], "vram_gb": round(c["total_mb"] / 1024, 1),
+             "free_gb": round((c["total_mb"] - (c["used_mb"] or 0)) / 1024, 1)} for c in found]
+    top = max(gpus, key=lambda g: g["vram_gb"])
+    return {"ok": True, "gpus": gpus, "vram_gb": top["vram_gb"], "name": top["name"],
+            "vendor": "amd",
+            "busy_note": ("An AMD card: the bench measured NVIDIA cards only, so its "
+                          "advice for this size is a starting point, not a measurement."),
+            "ram_gb": _host_ram_gb()}
+
+
 async def detect_gpu() -> dict:
     """Probe the Curatarr HOST's GPU via nvidia-smi (user-triggered only).
 
@@ -758,9 +775,12 @@ async def detect_gpu() -> dict:
         return {"ok": True, "gpus": gpus, "vram_gb": top["vram_gb"],
                 "name": top["name"], "busy_note": busy, "ram_gb": _host_ram_gb()}
     except FileNotFoundError:
-        return {"ok": False, "error": "nvidia-smi not found — no NVIDIA "
-                "driver on this host (or a non-NVIDIA GPU). Pick the VRAM "
-                "manually."}
+        # No NVIDIA driver: an AMD card reads from sysfs / amd-smi instead.
+        amd = await asyncio.to_thread(_amd_cards)
+        if amd:
+            return amd
+        return {"ok": False, "error": "No card found: neither nvidia-smi nor an AMD card "
+                "(amdgpu in sysfs, amd-smi) on this host. Pick the VRAM manually."}
     except Exception as e:
         logger.warning("[setup] nvidia-smi could not be run: %s: %s",
                        type(e).__name__, e)

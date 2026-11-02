@@ -162,7 +162,10 @@ def _nvidia_smi_read():
     except subprocess.TimeoutExpired:
         return SMI_TIMEOUT
     except (FileNotFoundError, OSError):
-        return SMI_MISSING
+        # No NVIDIA driver: an AMD card reads from sysfs / amd-smi instead.
+        from src.amd_gpu import usage
+        amd = usage()
+        return tuple(None if x is None else float(x) for x in amd) if amd else SMI_MISSING
     if out.returncode != 0:
         logger.debug("nvidia-smi exit %s: %s", out.returncode, (out.stderr or out.stdout or "")[:200])
         return SMI_ERROR
