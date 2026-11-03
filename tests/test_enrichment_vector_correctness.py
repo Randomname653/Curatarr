@@ -18,16 +18,15 @@ The vector store is opened in a temp dir (never the live data/chromadb).
 
     python tests/test_enrichment_vector_correctness.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sqlite3
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-from _checks import check  # noqa: E402
 
 
 # Before ANY wrapper exists: temp store + a pinned profile (no app_state read).

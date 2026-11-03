@@ -11,11 +11,12 @@ this checkout.
 
     python tests/test_self_update.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -24,14 +25,11 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src import pc_agent  # noqa: E402
 from src import self_update as su  # noqa: E402
 from src.services import notifications as nt  # noqa: E402
 from src.services import pc_host  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 ID = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"]

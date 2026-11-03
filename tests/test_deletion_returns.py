@@ -11,6 +11,8 @@ added after the delete.
 
     python tests/test_deletion_returns.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import json
 import pathlib
@@ -19,7 +21,6 @@ import types
 from datetime import datetime
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from contextlib import contextmanager  # noqa: E402
 

@@ -8,16 +8,16 @@ an existing pin: left alone.
 
     python tests/test_anime_crossref.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import sqlite3
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -25,8 +25,6 @@ from src.database.models import (ArrEnrichmentStatus as AES, Base, EnrichmentFin
                                  EnrichmentStatus as ES, MediaMatchOverride as MO)
 from src.services import anime_crossref as X, anime_mapping, anime_offline, kb_overview  # noqa: E402
 import src.routers.enrichment as R  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

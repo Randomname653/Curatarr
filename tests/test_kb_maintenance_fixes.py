@@ -9,17 +9,16 @@
 
     python tests/test_kb_maintenance_fixes.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
-import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-from _checks import check  # noqa: E402
 
 
 # ── lyrics: the request carries the schema ──────────────────────────────────

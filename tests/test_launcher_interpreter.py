@@ -10,12 +10,13 @@ tools whose pins the raises broke. Order now: a venv in the folder, else
 
     python tests/test_launcher_interpreter.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import re
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 
 def _code_lines(text: str) -> list:

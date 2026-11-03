@@ -18,6 +18,8 @@ number in the same change (the test says so).
     python tests/test_source_grep_ratchet.py            # check
     python tests/test_source_grep_ratchet.py --update   # rewrite the baseline (only ever lower)
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import ast
 import json
 import sys

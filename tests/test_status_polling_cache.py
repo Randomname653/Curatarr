@@ -6,13 +6,13 @@ of DB work per cycle, competing with every real job. The ttl_response
 memo caches each endpoint's payload for a few seconds with single-flight;
 auth dependencies still run on every request, only the body is skipped.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 
 import asyncio
-import sys
 import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.services.ttl_memo import ttl_response
 

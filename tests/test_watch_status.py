@@ -6,6 +6,8 @@ format_listening_line assembles its sentence from optional fragments, so
 every absent field is its own failure mode; _artist_variants exists because
 artist names arrive with typographic dashes that must fold to one form.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 from datetime import datetime
 from unittest.mock import patch
 

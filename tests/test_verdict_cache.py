@@ -12,14 +12,14 @@ A throwaway cache file; no model.
 
     python tests/test_verdict_cache.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import dataclasses
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 import httpx  # noqa: E402
 
@@ -30,8 +30,6 @@ settings.ENRICHMENT_CACHE = str(Path(_tmp) / "enrichment.db")   # never the real
 
 from src.services import verdict_cache as vc  # noqa: E402
 from src.services.ollama_hosts import OllamaHost  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 PC = OllamaHost(url="http://pc:11434", profile="large", num_ctx=16384, gpu={"num_gpu": 99})

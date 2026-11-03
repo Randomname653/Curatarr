@@ -13,6 +13,8 @@ call sites.
 
     python tests/test_music_lease.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import os
 import signal
 import socket
@@ -26,11 +28,8 @@ import psutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import state_lease as L
-
-from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())

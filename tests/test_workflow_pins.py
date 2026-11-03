@@ -11,6 +11,8 @@ same way. Neither failure is visible locally; this suite is.
 
     python tests/test_workflow_pins.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import re
 import sys

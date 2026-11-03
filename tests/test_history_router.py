@@ -6,14 +6,12 @@
 because half of what can break there is query validation, and /taste's
 whole contract is what it does when there is nothing to return yet.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import datetime
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.main import app
 from src.database.connection import get_db

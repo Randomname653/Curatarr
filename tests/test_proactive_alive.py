@@ -7,13 +7,14 @@ no mocks.
 
     python tests/test_proactive_alive.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import random
 import sys
 from datetime import datetime, timedelta, time
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.services import proactive_messages as pm  # noqa: E402
 from src.services.viewing_sessions import utc_offset  # noqa: E402

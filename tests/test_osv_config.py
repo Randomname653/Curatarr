@@ -11,6 +11,8 @@ push and PR jobs the same so the two scans cannot drift apart.
 
     python tests/test_osv_config.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import re
 import sys

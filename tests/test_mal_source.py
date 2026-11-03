@@ -8,12 +8,13 @@ and reviews from Jikan, stood still for every title with a MAL id.
 
     python tests/test_mal_source.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import pathlib
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 import httpx  # noqa: E402
 

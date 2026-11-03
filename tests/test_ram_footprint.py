@@ -10,18 +10,17 @@ Each fix keeps its behaviour and drops memory that was measured, not guessed:
 
     python tests/test_ram_footprint.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import sqlite3
-import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
-from _checks import check  # noqa: E402
 
 
 # The vector store lives in a temp dir (never data/chromadb).

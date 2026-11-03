@@ -10,6 +10,8 @@ helpers where it is installed (CI has it); the wiring is pinned statically.
 
     python tests/test_chat_client.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import json
 import pathlib
 import re
@@ -18,7 +20,6 @@ import subprocess
 import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 _JS = _ROOT / "frontend" / "js"
 
 

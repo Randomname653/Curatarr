@@ -7,21 +7,19 @@ in Settings -> Maintenance.
 
     python tests/test_compute_cards.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from src.services import compute_cards as cc, llm_priority as lp  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 # ── the lane ────────────────────────────────────────────────────────────────

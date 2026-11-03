@@ -7,6 +7,8 @@ the shapes are the ones the live probe of 2026-09-14 returned.
 
     python tests/test_lyrics.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import pathlib
 import sys
@@ -14,7 +16,6 @@ import tempfile
 from datetime import datetime, timedelta
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.services import lyrics as ly  # noqa: E402
 

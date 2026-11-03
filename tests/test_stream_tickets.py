@@ -1,3 +1,5 @@
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import unittest
 import time
 from src.services.stream_tickets import create_ticket, redeem_ticket, _tickets

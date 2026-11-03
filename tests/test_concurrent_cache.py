@@ -22,17 +22,15 @@ WAL and a busy_timeout do not help here. They serialise writers and stop
 "database is locked"; they do nothing about a writer whose in-memory copy is
 older than the row it is about to replace.
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 ROOT = Path(__file__).resolve().parents[1]
-from _checks import check  # noqa: E402
 
 
 from src.cache.metadata_cache import MetadataCache, write_fields  # noqa: E402

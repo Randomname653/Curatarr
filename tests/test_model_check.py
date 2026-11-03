@@ -9,12 +9,13 @@ start.bat goes through `python build_models.py --check`.
 
     python tests/test_model_check.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sys
 from types import SimpleNamespace
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.services import model_check as mc  # noqa: E402
 

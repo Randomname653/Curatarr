@@ -8,12 +8,13 @@ service prints check marks. These tests keep all three closed.
 
     python tests/test_public_surface.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import io
 import sys
 import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.config import settings
 from src.middleware import SecurityHeadersMiddleware

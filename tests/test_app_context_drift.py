@@ -7,10 +7,11 @@ but no block mentions it).
 
     python tests/test_app_context_drift.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:

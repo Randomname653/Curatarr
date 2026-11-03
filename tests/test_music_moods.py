@@ -9,13 +9,12 @@ the moods by part of the day and the player by hours.
 
     python tests/test_music_moods.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -24,8 +23,6 @@ import src.services.wrapup_facts as wf  # noqa: E402
 import src.services.wrapup_insights as wi  # noqa: E402
 from src.database.models import Base, MusicTag, User, WatchHistoryEntry as W  # noqa: E402
 from src.services.wrapup_story import render_fact_sheet  # noqa: E402
-
-from _checks import check  # noqa: E402
 
 
 from _checks import memory_engine  # noqa: E402

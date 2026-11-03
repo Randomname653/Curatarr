@@ -9,12 +9,13 @@ while the detection only knew gameoverlayui.exe.
 
     python tests/test_process_prompt.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import pathlib
 import sys
 import types
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 from src.services import process_monitor as pm  # noqa: E402
 

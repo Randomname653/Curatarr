@@ -17,6 +17,8 @@ Each block pins one finding of the shadow-module / household audit:
 
     python tests/test_household_custody.py
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 import asyncio
 import json
 import sys
@@ -24,8 +26,6 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -43,7 +43,6 @@ def check(name, cond, info=None):
         print(f"  FAIL  {name}" + (f"  [{info}]" if info is not None else ""))
 
 
-import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
 import src.database.connection as conn  # noqa: E402
 from src.database.models import (  # noqa: E402
     ArrEnrichmentStatus, Base, DeletionProposal, EnrichmentStatus, ProtectedMedia,

@@ -164,4 +164,38 @@ check.table("run_all --for finds a module by every spelling", [
     ("path", "src/services/vector_reconcile.py", ["test_a.py", "test_b.py", "test_c.py"]),
 ], lambda target: [f.name for f in run_all.suites_for(target, _files)])
 
+# ── 9. every suite imports the harness before anything that reads settings ─
+# Since 2026-11-03 all of them do (#299-#301 and the 82 after): run directly,
+# a suite reaches only its temp stores. A new one without the harness, or
+# with src / _checks / run_all imported ahead of it, would read the
+# developer's data/ again when run on its own. The stdlib may come first.
+_EARLY = ("src", "_checks", "run_all")
+
+
+def _harness_order(text: str) -> str:
+    """"" when the module imports the harness at top level before any src or
+    test-helper import, else what is wrong."""
+    for node in _ast.parse(text).body:
+        names = ([a.name for a in node.names] if isinstance(node, _ast.Import)
+                 else [node.module or ""] if isinstance(node, _ast.ImportFrom) else [])
+        for name in names:
+            if name == "_harness":
+                return ""
+            if name.split(".")[0] in _EARLY:
+                return f"imports {name} before the harness"
+    return "never imports the harness"
+
+
+_suites = sorted((ROOT / "tests").glob("test_*.py"))
+_wrong = {p.name: why for p in _suites if (why := _harness_order(p.read_text(encoding="utf-8")))}
+check(f"all {len(_suites)} suites import the harness before src and the test helpers",
+      _wrong == {}, _wrong)
+check.table("the order rule itself", [
+    ("harness first", "from _harness import check\nimport src.config\n", ""),
+    ("the stdlib ahead is fine", "import os\nfrom _harness import check\n", ""),
+    ("src ahead", "import src.config\nimport _harness\n", "imports src.config before the harness"),
+    ("_checks ahead", "from _checks import check\nimport _harness\n", "imports _checks before the harness"),
+    ("no harness", "import os\n", "never imports the harness"),
+], _harness_order)
+
 check.done()

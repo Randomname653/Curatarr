@@ -15,16 +15,16 @@ temp metadata cache; plex.tv and the arrs are stubbed.
 
     python tests/test_loop_free_g1.py
 """
+from _harness import check  # noqa: I001 - first: temp stores
+
 import asyncio
 import json
 import os
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 from fastapi import BackgroundTasks, HTTPException  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -43,7 +43,6 @@ from src.database.models import (ArrEnrichmentStatus, Base, EnrichmentFinding,  
 from src.services import app_state  # noqa: E402
 
 from _checks import loop_guarded  # noqa: E402
-from _checks import check  # noqa: E402
 
 
 tmp = Path(tempfile.mkdtemp())

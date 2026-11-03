@@ -4,6 +4,8 @@ These cover the watch-side aggregation, the conservative ``finished`` derivation
 the prompt phrase, and the re-engage (don't-repeat-the-same-question) decision —
 none of which touch the DB or the enrichment cache, so no mocking is needed.
 """
+import _harness  # noqa: F401,I001 - first: temp stores
+
 
 from datetime import datetime
 
