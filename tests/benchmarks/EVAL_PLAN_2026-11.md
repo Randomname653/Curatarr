@@ -216,25 +216,30 @@ So laufen sie:
 - **Ohne hwbench:** `curator_bench.py --models … --prompts-file tests/benchmarks/hwbench_data/curator_private_cases.json --output-dir tests/benchmarks/hwbench_data/`.
 - **Scoring:** blind wie P0a, Rubrik `chat-2026-05`, scorer `claude-chat`.
 
-**Erster Lauf 2026-11-03 (gemma4:31b gegen 31b-it-qat)**
+**Erster Lauf 2026-11-03 (gemma4:31b, 31b-it-qat, 26b-a4b-it-qat)**
 
-Lauf: `curator_bench.py` auf der 4090, `num_ctx` fest auf 8192 (das Werkzeug pinnt diesen Wert; der Produktions-Chat im large-Profil läuft mit 16k). 82 Aufrufe in 18,1 min. Bewertet wurde blind mit gemischten Labels. Weil die Läufe keine Ledger-ID haben, stehen die Scores nur hier; die Bewertungs-CSVs bleiben lokal.
+Lauf: `curator_bench.py` auf der 4090 mit `num_ctx` 8192. So war das Werkzeug bis zu diesem Tag fest eingestellt; seither nimmt es den Kontext aus dem Profil, und `--num-ctx 8192` stellt diese Läufe nach.
+- **Kontext reicht:** Die längsten Fälle erreichen im letzten Turn geschätzt 5.500–6.700 Tokens. Abgeschnitten wurde also nichts.
+- **Laufzeit:** 31b + 31b-qat zusammen 82 Aufrufe in 18,1 min, das MoE allein 41 Aufrufe in 7,7 min.
+- **Bewertung:** 31b und 31b-qat blind mit gemischten Labels. Das MoE wurde danach allein bewertet, also **nicht blind**; Rubrik und Scorer sind dieselben.
+- **Ablage:** Die Läufe haben keine Ledger-ID, deshalb stehen die Scores nur hier. Die Bewertungs-CSVs bleiben lokal.
 
-| Fall | gemma4:31b /35 | gemma4:31b-it-qat /35 |
-|---|---|---|
-| `pv_mt_camp_override` | 26 | 25 |
-| `pv_mt_spokenword_de` | 26 | 25 |
-| `pv_mt_documentary` | 22 | 22 |
-| `pv_mt_false_memory` | 22 | **19** |
-| `pv_mt_entity_mixup` | **28** | 25 |
-| `pv_mt_household_fidelity` | 27 | 26 |
-| `pv_mt_principle_sovereignty` | **31** | 27 |
-| `pv_mt_watch_pathologizing` | 21 | 23 |
-| `pv_mt_song_signal` | 27 | 26 |
-| **Ø /35** | **25,56** | 24,22 |
-| Ø 5 Achsen /25 | 17,89 | 17,22 |
-| Konsistenz / Standhaftigkeit | 4,00 / 3,67 | 3,78 / 3,22 |
-| Fälle mit Faith ≤ 2 | 2 | 1 |
+| Fall | gemma4:31b /35 | gemma4:31b-it-qat /35 | 26b-a4b-it-qat /35 (nicht blind) |
+|---|---|---|---|
+| `pv_mt_camp_override` | 26 | 25 | 24 |
+| `pv_mt_spokenword_de` | 26 | 25 | 25 |
+| `pv_mt_documentary` | 22 | 22 | **28** |
+| `pv_mt_false_memory` | 22 | 19 | **18** |
+| `pv_mt_entity_mixup` | **28** | 25 | **28** |
+| `pv_mt_household_fidelity` | 27 | 26 | 27 |
+| `pv_mt_principle_sovereignty` | **31** | 27 | 28 |
+| `pv_mt_watch_pathologizing` | 21 | 23 | **28** |
+| `pv_mt_song_signal` | 27 | 26 | 27 |
+| **Ø /35** | 25,56 | 24,22 | **25,89** |
+| Ø 5 Achsen /25 | 17,89 | 17,22 | 18,22 |
+| Konsistenz / Standhaftigkeit | 4,00 / 3,67 | 3,78 / 3,22 | 3,89 / 3,78 |
+| Format | 3,44 | 3,44 | **2,78** |
+| Fälle mit Faith ≤ 2 | 2 | 1 | 1 |
 
 Befunde:
 - **Der Haltungs-Vorsprung der 31b-qat aus P0a wiederholt sich nicht.** In den echten Fällen liegt die gepinnte 31b bei der Standhaftigkeit vorn (3,67 gegen 3,22). Über alle 11 Multi-Turn-Fälle (P0a plus privat) gemittelt: 31b ≈ 25,6, 31b-qat ≈ 24,5. Damit bleibt das Bild uneinheitlich, und für einen Chat-Swap gibt es keinen Grund.
@@ -246,8 +251,18 @@ Befunde:
 - **Wo die Modelle sich unterscheiden:**
   - **Veto des Besitzers:** Beide akzeptieren es, aber mit Spott. Die 31b-qat ist dabei der schärfere Ton.
   - **Souveränität des Besitzers:** Die 31b formuliert sie am klarsten („eine Löschung zu verhindern wäre Arroganz“).
-- **Grenzen der Aussagekraft:** n = 9, je ein Lauf bei Temperatur 0,7, ein einzelner Scorer, 8k statt 16k Kontext.
-- **Offen:** das MoE (26b-a4b-it-qat, live auf dem NAS) mit denselben Fällen.
+- **Das MoE, das live auf dem NAS chattet, hält im Chat mit der 31b mit.**
+  - Gesamtwert 25,89 gegen 25,56, bei zweieinhalbfachem Tempo.
+  - Es gibt am schnellsten nach, wenn das Argument stimmt: Doku-Maßstab, Terminfrage.
+  - Bei der Metadaten-Frage nennt es als einziges nur die Daten, die im Kontext stehen.
+  - Schwach ist das Format: sehr lange Antworten mit Überschriften, Mittel 2,78.
+  - Auch das MoE kippt bei der erfundenen Erinnerung.
+  - In P0a lag es mit 22,0 deutlich hinten, dort zog es den Löschvorschlag schon vor dem ersten Argument zurück. Der Chat-Befund für das MoE ist also uneinheitlich.
+- **Die erfundene Erinnerung ist ein Muster über alle Modelle.** Alle drei kippen, wenn der Nutzer ein früheres Lob behauptet. Damit ist es ein Prompt-Thema, keine Modellwahl: Der Curator braucht eine Regel für Behauptungen über frühere Gespräche, die er nicht sehen kann.
+- **Grenzen der Aussagekraft:**
+  - n = 9, je ein Lauf bei Temperatur 0,7, ein einzelner Scorer.
+  - Das MoE ist nicht blind bewertet.
+  - Der Kontext war 8k; das ist hier folgenlos, weil kein Fall die Grenze erreicht.
 
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
