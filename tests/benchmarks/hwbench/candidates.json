@@ -10,6 +10,7 @@
   {"ref": "qwen3.6:27b-q4_K_M",      "role": "curator",    "profiles": ["large"],          "why": "dense 27B; the DISQUALIFIED qwen3.6 was :latest = the 35B MoE, this one is untested"},
   {"ref": "granite4.2:30b",          "role": "curator",    "profiles": ["large"],          "why": "new IBM family (Apache-2.0, German, native structured JSON), 18 GB"},
   {"ref": "nemotron-3.5-lightning:30b", "role": "curator", "profiles": ["large", "small"], "why": "NVIDIA MoE 30B/A3B, 25 GB: offload candidate for 12-16 GB cards"},
+  {"ref": "gpt-oss:20b",             "role": "curator",    "profiles": ["large", "small"], "why": "OpenAI MoE 21B/A3.6B, MXFP4, Apache-2.0, ~14 GB: 16 GB-class judge/pitcher candidate (eval plan 2026-11); risk: harmony format, reasoning may ignore think:false"},
   {"ref": "ornith-1.5:35b",          "role": "curator",    "profiles": ["large", "small"], "why": "35B-A3B MoE (per its eval heading), 23 GB: offload candidate"},
   {"ref": "gemma4:12b",              "role": "curator",    "profiles": ["small", "large"], "why": "12 GB-class favourite in 2026 guides, 8 GB download"},
   {"ref": "gemma4:12b-it-qat",       "role": "curator",    "profiles": ["small"],          "why": "QAT of 12b, 7.2 GB"},
