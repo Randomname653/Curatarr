@@ -9,7 +9,8 @@
 
 Curatarr learns what you actually watch, recommends what's worth adding,
 and makes a reasoned case for what to delete — with every prompt running
-on your own hardware.
+on your own hardware down to 4gb VRAM if it really needs to more on that 
+in the documents.
 
 [![License][badge-license]][link-license]
 [![Tests][badge-tests]][link-tests]
@@ -23,22 +24,25 @@ on your own hardware.
 
 > [!WARNING]
 > **Curatarr can delete media.** Approving a deletion proposal removes the
-> files from your Radarr / Sonarr / Lidarr libraries — permanently. Keep
-> backups, review the analysis views before approving, and treat every
-> approval as final. The software is provided as-is, without warranty.
+> files from your Radarr / Sonarr / Lidarr libraries and the Disk. It also
+> adds them to the respective blocklist. So review the analysis views
+> before approving, and treat every approval as final.
+> The software is provided as-is, without warranty.
 
 > [!IMPORTANT]
 > **This codebase is at least two-thirds vibe-coded.** Practically every
-> line by now — apart from the original, very basic code ideas — across
-> backend, frontend, tests, and part of this README was written by AI
-> (Claude, Gemini, local models, plus automated review bots), directed,
-> live-tested and decided
-> on by a human operator running it daily against his own household's
-> real library. That should factor into your risk calculus; it factors
+> line by now apart from the original, very basic code ideas across
+> backend, frontend, tests, and part of this README was written or rewritten
+> by AI (Claude, Mistral, Gemini, local models, and automated review bots),
+> directed, live-tested and decided on by a human operator running it
+> daily against his own household's real library.
+>
+> That should factor into your risk calculus; it factors
 > into ours. What earns trust here is not authorship but process: the
 > test battery CI runs on every push, CodeQL, adversarial review passes,
 > and a [changelog](CHANGELOG.md) that documents the failures as
 > thoroughly as the features. Read it and judge for yourself.
+> If you have any questions or doubts please do not hesitate to reach out.
 
 ---
 
@@ -141,10 +145,11 @@ drag down to close.*
   from verified evidence, then writes the case. Every proposal has its
   own discussion thread; titles without enrichment data are skipped
   rather than judged blind. Each category keeps a pool of proposals, ten
-  on screen at a time, and a run judges only what the pool lacks. A title
+  on screen out of a pool of 50 that its backfilling all the time,
+  and a run judges only what the pool lacks. A title
   with a major honour (an Emmy, a Grammy, an Oscar …) is never a cut,
   only your call.
-- **Semantic library search** — "like *X* but darker and more mature"
+- **Semantic library search** — "like *X* but *X* and more *X*"
   resolves the anchor title, scores each constraint against real metadata
   tags, cites its evidence per hit, and admits when nothing in your
   library carries the full profile.
@@ -155,16 +160,16 @@ drag down to close.*
 - **Grounded, never hallucinated** — judgments reason from cached facts
   (TMDB, OMDb, AniList, MusicBrainz, Last.fm, Wikipedia), not from the
   model's own memory of a title.
-- **It can hear the film** — deletion candidates carry measured dialogue
-  signals from the actual subtitle track (words per minute, share of the
-  runtime without dialogue, lexical variety), so the judge has evidence
-  about *execution*, not just metadata — and a law that sparse dialogue
-  is never thin writing.
+- **It can hear the film and the music** — deletion candidates carry
+  measured dialogue signals from the actual subtitle track (words
+  per minute, share of the runtime without dialogue, lexical variety),
+  so the judge has evidence about *execution*, not just metadata and
+  a law that sparse dialogue is never thin writing.
 
 ### The household
 
-- **Multi-user** — every play is attributed to its Plex account; each
-  user gets their own taste vector, recommendations, playlists and chat.
+- **Multi-user** — every play is attributed to its Plex / Jellyfin account;
+  each user gets their own taste vector, recommendations, playlists and chat.
   What the household watches outranks the owner's taste in every keep or
   cut.
 - **Wrap-Up for every member** — the last 30 days, six months, a year or
@@ -202,7 +207,7 @@ drag down to close.*
 
 - **Local models only** — every prompt runs on Ollama on your own
   machines; nothing goes to a hosted LLM.
-- **A NAS that borrows the gaming PC** — run Curatarr around the clock in
+- **A NAS that borrows your PC** — run Curatarr around the clock in
   a container, and let a second machine lend its GPU whenever it is on and
   nobody is playing. Deletion verdicts wait for the big card for up to 72
   hours; after that the server judges with its own model, and the big card
@@ -482,7 +487,7 @@ These are the options most people change:
 | Document | What's in it |
 |---|---|
 | [Usage guide](docs/USAGE.md) | Day-to-day operations, maintenance commands, troubleshooting |
-| [Moving onto a NAS](docs/NAS_MOVE.md) | Curatarr in a container, with the gaming PC as a second GPU |
+| [Moving onto a NAS](docs/NAS_MOVE.md) | Curatarr in a container, with the main PC as a second GPU |
 | [Benchmarks](docs/BENCHMARKS.md) | How the models were chosen — method, data, and the raw scores |
 | [How the curator judges](docs/CURATOR_EXAMPLES.md) | The recommended models judging the same fictional library, word for word |
 | [Architecture](ARCHITECTURE.md) | Data flow, subsystem internals, design decisions, hard-won invariants |
