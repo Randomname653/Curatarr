@@ -400,6 +400,13 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 | **P1** | KV-Quality für gemma4:31b-it-qat (q8/q4) | `run run --only gemma4:31b-it-qat --phases quality --kv-quality --repull-for-kv` | ~12 min plus Re-Pull von 19 GB | Der 20-GB-Kandidat mit q4 (32,7 tok/s) braucht Selbstkonsistenz ≥ 90 %; heute nur f16 |
 | **P1** | Untere Stufen gemma4:26b und gemma4:12b mit Layer-Anteil nachmessen | `run run --only gemma4:12b,gemma4:26b --phases perf --force` | ~30–45 min | Ihre Zellen sind vor a0acb77 entstanden (ps unplausibel) |
 | ~~P2~~ | **gpt-oss:20b – abgehakt am 2026-11-03 (K.O. als Judge)** | f16-Durchgang gemessen, q8/q4 abgebrochen; aus der Bench-Queue genommen | ~45 min verbraucht | siehe Befund unten |
+| **P2** | qwen3.6:35b-a3b als MoE-Offload neu bewerten | erst Freigabe durch den Besitzer (steht in DISQUALIFIED); dann wie oben | ~75–90 min | Die Disqualifikation von 2026-08 betraf f16-KV bei 24 GB ohne Fit-Simulation |
+| **P3** | nemotron-3.5-bolt (IQ2, 22 GB) | zuerst nur `--phases sweep,perf` | ~60 min perf; Quality ~40 min (Lightning-Muster) | Lightning war CUT-lastig (25/40) und langsam; Lizenz OpenMDW |
+| **P3** | EmbeddingGemma 2, sobald in Ollama | eigener Embedding-Bench fehlt (§6) | – | Mehrsprachig mit MRL; Migration ist teuer |
+| **P3** | Summarizer granite4.2:8b gegen granite4.1:8b | `tournament_bench.py` (nicht hwbench) | ~1 h | Seit 2026-06 kein Qualitätsvergleich |
+| **Day-Zero** | Qwen 4 | §5 | dense 27B: ~3–5 h mit Stufen bzw. ~25 min mit `--no-tiers`; MoE: ~75 min | – |
+| Watchlist | Kolibri-1 (wartet auf GGUF), Mistral Small 4, Qwen3.8-Flash-Next, DeepSeek V4.1-Flash | – | – | passen nicht in 24 GB oder laufen nicht in Ollama |
+| **ausgeschlossen** | Muse Spark Open (Cloud-Tag) und jeder `:cloud`-Tag | – | – | Datenschutzgrenze |
 
 **gpt-oss:20b – Befund (2026-11-03)**
 - **Leistung:**
@@ -415,13 +422,6 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 - **Ursache 2, davon unabhängig:** In 5 von 8 Antworten steht in Pillar-Feldern nur das Label „NONE“ statt eines Satzes. Das Schema lehnt das ab, und jedes Mal wäre ein Reparatur-Turn fällig.
 - **Entscheidung des Besitzers:** abgehakt. Eine Denk-Stufe pro Modell in `llm_utils` wird nicht eingebaut, gpt-oss wird nicht neu gemessen. Die Ledger-Zellen bleiben; die Matrix sortiert gpt-oss über den Judge-Wert aus, im Katalog stand es nie.
 - **Lehre für Qwen 4 und andere Denk-Modelle:** Vor dem Bench zuerst `message.thinking` bei `think:false` prüfen (Checkliste §5, Schritt 4).
-| **P2** | qwen3.6:35b-a3b als MoE-Offload neu bewerten | erst Freigabe durch den Besitzer (steht in DISQUALIFIED); dann wie oben | ~75–90 min | Die Disqualifikation von 2026-08 betraf f16-KV bei 24 GB ohne Fit-Simulation |
-| **P3** | nemotron-3.5-bolt (IQ2, 22 GB) | zuerst nur `--phases sweep,perf` | ~60 min perf; Quality ~40 min (Lightning-Muster) | Lightning war CUT-lastig (25/40) und langsam; Lizenz OpenMDW |
-| **P3** | EmbeddingGemma 2, sobald in Ollama | eigener Embedding-Bench fehlt (§6) | – | Mehrsprachig mit MRL; Migration ist teuer |
-| **P3** | Summarizer granite4.2:8b gegen granite4.1:8b | `tournament_bench.py` (nicht hwbench) | ~1 h | Seit 2026-06 kein Qualitätsvergleich |
-| **Day-Zero** | Qwen 4 | §5 | dense 27B: ~3–5 h mit Stufen bzw. ~25 min mit `--no-tiers`; MoE: ~75 min | – |
-| Watchlist | Kolibri-1 (wartet auf GGUF), Mistral Small 4, Qwen3.8-Flash-Next, DeepSeek V4.1-Flash | – | – | passen nicht in 24 GB oder laufen nicht in Ollama |
-| **ausgeschlossen** | Muse Spark Open (Cloud-Tag) und jeder `:cloud`-Tag | – | – | Datenschutzgrenze |
 
 **Zeitfenster-Vorschlag.**
 - Abend 1 (~1,5 h GPU): P1-Block mit 103-Titel-MoE, 31b-qat-KV und gemma4:12b/26b-Stufen.
