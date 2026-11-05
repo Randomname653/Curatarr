@@ -261,8 +261,40 @@ Befunde:
 - **Die erfundene Erinnerung ist ein Muster über alle Modelle.** Alle drei kippen, wenn der Nutzer ein früheres Lob behauptet. Damit ist es ein Prompt-Thema, keine Modellwahl: Der Curator braucht eine Regel für Behauptungen über frühere Gespräche, die er nicht sehen kann.
 - **Grenzen der Aussagekraft:**
   - n = 9, je ein Lauf bei Temperatur 0,7, ein einzelner Scorer.
-  - Das MoE ist nicht blind bewertet.
+  - Das MoE ist nicht blind bewertet. Am 2026-11-05 nachgeholt, siehe unten.
   - Der Kontext war 8k; das ist hier folgenlos, weil kein Fall die Grenze erreicht.
+
+**Blinder Re-Score aller drei 2026-11-05**
+
+- **Vorgehen:** Dieselben zwei Läufe vom 2026-11-03, kein neuer GPU-Lauf. Pro Fall stehen alle drei Modelle als Kandidat A/B/C in zufälliger Reihenfolge nebeneinander. Modellnamen, Zeiten und Antwortlängen sind entfernt, denn das MoE wäre am Tempo erkennbar. Rubrik `chat-2026-05`, ein Scorer, Schlüssel erst nach dem letzten Fall geöffnet. Bögen und Scores liegen lokal im Scratchpad der Session, nicht im Repo.
+
+| Fall | gemma4:31b | gemma4:31b-it-qat | 26b-a4b-it-qat | MoE − 31b |
+|---|---|---|---|---|
+| `pv_mt_camp_override` | **27** | 23 | 23 | −4 |
+| `pv_mt_spokenword_de` | 28 | **30** | 28 | 0 |
+| `pv_mt_documentary` | 20 | 20 | **30** | +10 |
+| `pv_mt_false_memory` | **20** | 17 | 16 | −4 |
+| `pv_mt_entity_mixup` | **30** | 23 | 24 | −6 |
+| `pv_mt_household_fidelity` | 28 | 28 | **29** | +1 |
+| `pv_mt_principle_sovereignty` | **28** | 26 | **28** | 0 |
+| `pv_mt_watch_pathologizing` | 21 | 26 | **29** | +8 |
+| `pv_mt_song_signal` | 26 | 26 | **28** | +2 |
+| **Ø /35 blind** | 25,33 | 24,33 | **26,11** | +0,78 |
+| Ø /35 vom 2026-11-03 | 25,56 | 24,22 | 25,89 (nicht blind) | |
+| Ton / Standhaftigkeit | 2,89 / 3,67 | 2,33 / 3,11 | **3,67 / 3,89** | |
+| Format | **3,89** | 3,78 | 3,00 | |
+| Faithfulness | 3,00 | 3,11 | 3,33 | |
+
+Befunde:
+- **Der nicht blinde MoE-Wert hält.** Alle drei Mittelwerte weichen um höchstens 0,23 Punkte vom 2026-11-03 ab. Die Reihenfolge bleibt MoE ≥ 31b > 31b-qat.
+- **Der Abstand ist Rauschen.** MoE − 31b liegt pro Fall zwischen −6 und +10, Mittel +0,78, Standardabweichung 5,4. Das 95-%-Intervall reicht etwa von −3,3 bis +4,9 Punkten.
+- **Der Vorsprung hängt an zwei Fällen.** Doku-Maßstab (+10) und Terminfrage (+8) tragen ihn: Das MoE gibt dort nach, sobald das Argument stimmt, die 31b erfindet ein Metadaten-Blatt bzw. bleibt bei der Psychologisierung. Ohne diese zwei Fälle führt die 31b mit 26,7 zu 25,1.
+- **Profil des MoE:** bester Ton und beste Standhaftigkeit, schwächstes Format (lange Antworten mit Überschriften). Die 31b-qat hat den schärfsten Ton (2,33): Spott nach dem Veto, „Altruistic Bloat“, die Doku „auf Bewährung“.
+- **Erfundene Erinnerung:** Alle drei kippen wieder. Am schlechtesten ist jetzt das MoE (16): Es bestätigt das angebliche frühere Gespräch aktiv („the framework we established …“), die 31b nur unter Vorbehalt. Die Prompt-Regel bleibt der nächste Schritt; sie gilt für jedes Modell.
+- **Für die Matrix ändert sich nichts.** Im Chat gibt es weder einen Grund, das MoE auf dem NAS zu ersetzen, noch einen, es der 31b vorzuziehen.
+- **Grenzen:**
+  - Nur teilweise blind. Die Notizen vom 2026-11-03 beschreiben genau das Verhalten in den zwei entscheidenden Fällen (Metadaten-Blatt, schnellstes Nachgeben), und das lange Überschriften-Format des MoE ist wiedererkennbar.
+  - n = 9, je ein Lauf, ein Scorer, derselbe Scorer wie am 2026-11-03.
 
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
