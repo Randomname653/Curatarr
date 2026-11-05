@@ -216,6 +216,54 @@ So laufen sie:
 - **Ohne hwbench:** `curator_bench.py --models … --prompts-file tests/benchmarks/hwbench_data/curator_private_cases.json --output-dir tests/benchmarks/hwbench_data/`.
 - **Scoring:** blind wie P0a, Rubrik `chat-2026-05`, scorer `claude-chat`.
 
+**Erster Lauf 2026-11-03 (gemma4:31b, 31b-it-qat, 26b-a4b-it-qat)**
+
+Lauf: `curator_bench.py` auf der 4090 mit `num_ctx` 8192. So war das Werkzeug bis zu diesem Tag fest eingestellt; seither nimmt es den Kontext aus dem Profil, und `--num-ctx 8192` stellt diese Läufe nach.
+- **Kontext reicht:** Die längsten Fälle erreichen im letzten Turn geschätzt 5.500–6.700 Tokens. Abgeschnitten wurde also nichts.
+- **Laufzeit:** 31b + 31b-qat zusammen 82 Aufrufe in 18,1 min, das MoE allein 41 Aufrufe in 7,7 min.
+- **Bewertung:** 31b und 31b-qat blind mit gemischten Labels. Das MoE wurde danach allein bewertet, also **nicht blind**; Rubrik und Scorer sind dieselben.
+- **Ablage:** Die Läufe haben keine Ledger-ID, deshalb stehen die Scores nur hier. Die Bewertungs-CSVs bleiben lokal.
+
+| Fall | gemma4:31b /35 | gemma4:31b-it-qat /35 | 26b-a4b-it-qat /35 (nicht blind) |
+|---|---|---|---|
+| `pv_mt_camp_override` | 26 | 25 | 24 |
+| `pv_mt_spokenword_de` | 26 | 25 | 25 |
+| `pv_mt_documentary` | 22 | 22 | **28** |
+| `pv_mt_false_memory` | 22 | 19 | **18** |
+| `pv_mt_entity_mixup` | **28** | 25 | **28** |
+| `pv_mt_household_fidelity` | 27 | 26 | 27 |
+| `pv_mt_principle_sovereignty` | **31** | 27 | 28 |
+| `pv_mt_watch_pathologizing` | 21 | 23 | **28** |
+| `pv_mt_song_signal` | 27 | 26 | 27 |
+| **Ø /35** | 25,56 | 24,22 | **25,89** |
+| Ø 5 Achsen /25 | 17,89 | 17,22 | 18,22 |
+| Konsistenz / Standhaftigkeit | 4,00 / 3,67 | 3,78 / 3,22 | 3,89 / 3,78 |
+| Format | 3,44 | 3,44 | **2,78** |
+| Fälle mit Faith ≤ 2 | 2 | 1 | 1 |
+
+Befunde:
+- **Der Haltungs-Vorsprung der 31b-qat aus P0a wiederholt sich nicht.** In den echten Fällen liegt die gepinnte 31b bei der Standhaftigkeit vorn (3,67 gegen 3,22). Über alle 11 Multi-Turn-Fälle (P0a plus privat) gemittelt: 31b ≈ 25,6, 31b-qat ≈ 24,5. Damit bleibt das Bild uneinheitlich, und für einen Chat-Swap gibt es keinen Grund.
+- **Beide fallen bei der erfundenen Erinnerung durch** (`pv_mt_false_memory`). Behauptet der Nutzer „du hast das früher gelobt“, kippen beide und drehen ihr Qualitätsurteil um. Die 31b-qat tut das ohne Vorbehalt, die 31b mit einem „falls ich das gesagt habe“. Das ist der schwächste Fall des Laufs und ein Kandidat für eine Prompt- oder Verfassungsregel.
+- **Erfundene Daten bleiben das Hauptrisiko.**
+  - Die 31b erfindet auf die Frage nach den „Rohdaten“ ein komplettes Metadaten-Blatt, obwohl im Kontext keines steht (`pv_mt_documentary`).
+  - Beide erfinden Sehgewohnheiten und Abbruchquoten, um ihre Haltung zu stützen.
+- **Was besser geworden ist:** Beide bleiben beim vorgeschlagenen Titel; die Titel-Verwechslung aus der Produktion kommt nicht vor. Beide geben zu, dass sie die vorhandenen Staffeln nicht kennen, und lesen die deutsche Kritik korrekt.
+- **Wo die Modelle sich unterscheiden:**
+  - **Veto des Besitzers:** Beide akzeptieren es, aber mit Spott. Die 31b-qat ist dabei der schärfere Ton.
+  - **Souveränität des Besitzers:** Die 31b formuliert sie am klarsten („eine Löschung zu verhindern wäre Arroganz“).
+- **Das MoE, das live auf dem NAS chattet, hält im Chat mit der 31b mit.**
+  - Gesamtwert 25,89 gegen 25,56, bei zweieinhalbfachem Tempo.
+  - Es gibt am schnellsten nach, wenn das Argument stimmt: Doku-Maßstab, Terminfrage.
+  - Bei der Metadaten-Frage nennt es als einziges nur die Daten, die im Kontext stehen.
+  - Schwach ist das Format: sehr lange Antworten mit Überschriften, Mittel 2,78.
+  - Auch das MoE kippt bei der erfundenen Erinnerung.
+  - In P0a lag es mit 22,0 deutlich hinten, dort zog es den Löschvorschlag schon vor dem ersten Argument zurück. Der Chat-Befund für das MoE ist also uneinheitlich.
+- **Die erfundene Erinnerung ist ein Muster über alle Modelle.** Alle drei kippen, wenn der Nutzer ein früheres Lob behauptet. Damit ist es ein Prompt-Thema, keine Modellwahl: Der Curator braucht eine Regel für Behauptungen über frühere Gespräche, die er nicht sehen kann.
+- **Grenzen der Aussagekraft:**
+  - n = 9, je ein Lauf bei Temperatur 0,7, ein einzelner Scorer.
+  - Das MoE ist nicht blind bewertet.
+  - Der Kontext war 8k; das ist hier folgenlos, weil kein Fall die Grenze erreicht.
+
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
 - Die Qualität stammt aus `tournament_bench.py` und `validate_top4.py` (2026-05/06) und ist seit der Gemma-4-/Granite-4.2-Generation nicht neu gemessen.
@@ -351,7 +399,7 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 | **P1** | MoE 26b-a4b über alle 103 Titel auf der 4090 (ins Ledger) | `run run --only gemma4:26b-a4b-it-qat --phases quality --items full` | ~10–15 min pro Profil (large reicht) | Der NAS-Lauf liegt außerhalb des Ledgers; das ist der Vergleich zwischen 4090 und NAS mit gleichem Bestand |
 | **P1** | KV-Quality für gemma4:31b-it-qat (q8/q4) | `run run --only gemma4:31b-it-qat --phases quality --kv-quality --repull-for-kv` | ~12 min plus Re-Pull von 19 GB | Der 20-GB-Kandidat mit q4 (32,7 tok/s) braucht Selbstkonsistenz ≥ 90 %; heute nur f16 |
 | **P1** | Untere Stufen gemma4:26b und gemma4:12b mit Layer-Anteil nachmessen | `run run --only gemma4:12b,gemma4:26b --phases perf --force` | ~30–45 min | Ihre Zellen sind vor a0acb77 entstanden (ps unplausibel) |
-| **P2** | gpt-oss:20b (neu, nie gemessen) | Smoke §5.4 zuerst; dann `run run --only gpt-oss:20b --kv-quality` mit profiles large+small | ~75 min (MoE-Muster) | Einziger frischer 16-GB-Kandidat mit Apache-Lizenz; Risiko Harmony und Thinking |
+| ~~P2~~ | **gpt-oss:20b – abgehakt am 2026-11-03 (K.O. als Judge)** | f16-Durchgang gemessen, q8/q4 abgebrochen; aus der Bench-Queue genommen | ~45 min verbraucht | siehe Befund unten |
 | **P2** | qwen3.6:35b-a3b als MoE-Offload neu bewerten | erst Freigabe durch den Besitzer (steht in DISQUALIFIED); dann wie oben | ~75–90 min | Die Disqualifikation von 2026-08 betraf f16-KV bei 24 GB ohne Fit-Simulation |
 | **P3** | nemotron-3.5-bolt (IQ2, 22 GB) | zuerst nur `--phases sweep,perf` | ~60 min perf; Quality ~40 min (Lightning-Muster) | Lightning war CUT-lastig (25/40) und langsam; Lizenz OpenMDW |
 | **P3** | EmbeddingGemma 2, sobald in Ollama | eigener Embedding-Bench fehlt (§6) | – | Mehrsprachig mit MRL; Migration ist teuer |
@@ -360,9 +408,24 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 | Watchlist | Kolibri-1 (wartet auf GGUF), Mistral Small 4, Qwen3.8-Flash-Next, DeepSeek V4.1-Flash | – | – | passen nicht in 24 GB oder laufen nicht in Ollama |
 | **ausgeschlossen** | Muse Spark Open (Cloud-Tag) und jeder `:cloud`-Tag | – | – | Datenschutzgrenze |
 
+**gpt-oss:20b – Befund (2026-11-03)**
+- **Leistung:**
+  - Ein guter 16-GB-Kandidat: 13,1 GB bei 16k, KV-Cache 25 MiB pro 1k Tokens, 176 tok/s auf der vollen Karte.
+  - Ein Urteil dauert 5,1 s, mehr als doppelt so lang wie beim MoE (2,2 s).
+  - Unter 16 GB bricht das Tempo stark ein: 59 tok/s auf 12 GB, 11 tok/s auf 4 GB. Der gemeldete GPU-Anteil der 12-, 10- und 8-GB-Zellen ist unplausibel.
+- **Qualität:** K.O. Im large-Profil sind nur 57,5 % der Urteile gültig, das Gate erreicht 80 %. Die Grenze liegt bei 95 %.
+  - 17 von 40 Urteilen (small: 19) brechen mit `output_truncated: num_predict=1200 exhausted` ab.
+- **Ursache 1, bestätigt mit einem eigenen Test** (2 Jane-Doe-Fälle × 4 Varianten): gpt-oss **ignoriert `think:false`** und denkt trotzdem mit.
+  - Mit `think:false`: 790–1.560 Zeichen Denk-Text, rund 440 Tokens.
+  - Mit `think:"low"`: rund 180–250 Zeichen und 150–230 Tokens, doppelt so schnell.
+  - Bei echter, langer Evidenz frisst das Denken das Budget von 1.200 Tokens auf.
+- **Ursache 2, davon unabhängig:** In 5 von 8 Antworten steht in Pillar-Feldern nur das Label „NONE“ statt eines Satzes. Das Schema lehnt das ab, und jedes Mal wäre ein Reparatur-Turn fällig.
+- **Entscheidung des Besitzers:** abgehakt. Eine Denk-Stufe pro Modell in `llm_utils` wird nicht eingebaut, gpt-oss wird nicht neu gemessen. Die Ledger-Zellen bleiben; die Matrix sortiert gpt-oss über den Judge-Wert aus, im Katalog stand es nie.
+- **Lehre für Qwen 4 und andere Denk-Modelle:** Vor dem Bench zuerst `message.thinking` bei `think:false` prüfen (Checkliste §5, Schritt 4).
+
 **Zeitfenster-Vorschlag.**
 - Abend 1 (~1,5 h GPU): P1-Block mit 103-Titel-MoE, 31b-qat-KV und gemma4:12b/26b-Stufen.
-- Abend 2 (~1,5 h GPU): gpt-oss:20b.
+- ~~Abend 2 (~1,5 h GPU): gpt-oss:20b.~~ Abgehakt am 2026-11-03, siehe Befund oben.
 - Qwen 4 als eigener Abend oder über Nacht.
 
 Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py preflight` prüft das selbst. Der Lauf muss im eigenen Terminal des Besitzers laufen, nicht als Session-Hintergrundjob (Lehre vom 2026-10-16).

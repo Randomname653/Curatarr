@@ -97,7 +97,11 @@ FORBIDDEN_BUZZWORDS = [
 
 # ── Config ──────────────────────────────────────────────────────────────────
 OLLAMA       = settings.effective_ollama
-NUM_CTX      = 8192
+# The production chat window of this install's LLM_PROFILE (large 16384 /
+# small 8192, or CURATOR_NUM_CTX), not a fixed 8192: replayed real threads
+# reach ~7k tokens by their last turn (2026-11-03). --num-ctx overrides.
+from src.services.llm_utils import CURATOR_NUM_CTX, llm_profile  # noqa: E402
+NUM_CTX      = CURATOR_NUM_CTX
 KEEP_ALIVE   = "10m"
 ENRICH_OPTS  = {"temperature": 0.7, "num_predict": 1200, "num_gpu": 99, "num_ctx": NUM_CTX}
 WARMUP_OPTS  = {**ENRICH_OPTS, "temperature": 0.0, "num_predict": 4}
@@ -405,7 +409,12 @@ async def main():
                     default=str(Path(__file__).parent / "curator_test_prompts.json"))
     ap.add_argument("--output-dir", type=str,
                     default=str(Path(__file__).parent))
+    ap.add_argument("--num-ctx", type=int, default=0,
+                    help="Context window (default: this install's profile window, "
+                         f"now {NUM_CTX}). 8192 reproduces the runs before 2026-11-03.")
     args = ap.parse_args()
+    if args.num_ctx:
+        ENRICH_OPTS["num_ctx"] = WARMUP_OPTS["num_ctx"] = args.num_ctx
 
     # Load test set
     with open(args.prompts_file, encoding="utf-8") as f:
@@ -431,7 +440,8 @@ async def main():
     print(f"  Models       : {len(selected)}")
     print(f"  Cases        : {len(cases)} ({n_mt} multi-turn + {n_st} single-turn)")
     print(f"  Total turns  : {total_turns} per model = {total_turns * len(selected)} LLM calls")
-    print(f"  num_ctx      : {NUM_CTX} (pinned)")
+    print(f"  num_ctx      : {ENRICH_OPTS['num_ctx']} "
+          f"({'--num-ctx' if args.num_ctx else 'profile ' + llm_profile()})")
     print(f"  KEEP_ALIVE   : {KEEP_ALIVE}\n")
 
     preinstalled = installed_models()
