@@ -296,6 +296,17 @@ Befunde:
   - Nur teilweise blind. Die Notizen vom 2026-11-03 beschreiben genau das Verhalten in den zwei entscheidenden Fällen (Metadaten-Blatt, schnellstes Nachgeben), und das lange Überschriften-Format des MoE ist wiedererkennbar.
   - n = 9, je ein Lauf, ein Scorer, derselbe Scorer wie am 2026-11-03.
 
+**Prompt-Regel gegen die erfundene Erinnerung (2026-11-05)**
+
+- **Regel:** eine Zeile am Ende von `CURATOR_SYSTEM_PROMPT`: Der Curator kennt nur frühere Chats, die im Kontext stehen. Behauptet der Nutzer, er habe früher etwas gesagt, sagt er, dass er diesen Chat nicht sieht, und prüft das Argument selbst, ohne es als Tatsache zu bestätigen.
+- **Test:** gemma4:31b, `curator_bench.py --num-ctx 8192`. `pv_mt_false_memory` dreimal mit altem und dreimal mit neuem Prompt, danach blind gemischt und zugeordnet.
+- **Ergebnis:** alter Prompt 3 von 3 bestätigen das erfundene Gespräch („the framework we established …“, einmal erst unter Vorbehalt). Neuer Prompt 0 von 3: alle sagen „I cannot see that chat“ und wägen das Argument ab. Die Trennung war blind eindeutig.
+- **Offen im selben Fall:** Auch mit Regel lässt das Modell den Haushaltsgrund fallen („not because of a memory“) und rückt das Urteil unter Vorbehalt in Richtung des Arguments. Die Regel betrifft nur die Bestätigung.
+- **Gegenprobe:** Mit neuem Prompt je ein Lauf von `pv_mt_documentary`, `pv_mt_watch_pathologizing`, `pv_mt_camp_override` und `pv_mt_principle_sovereignty` (nicht blind, ein Scorer): 23 / 24 / 27 / 24 gegen 20 / 21 / 27 / 28 im blinden Re-Score, Mittel 24,5 gegen 24,0. Die Formel „cannot see that chat“ taucht in keinem dieser Fälle auf. Kein Schaden erkennbar; die Abweichungen pro Fall liegen im Rauschen eines einzelnen Laufs bei Temperatur 0,7.
+- **Nicht getestet:** das MoE 26b-a4b, das live auf dem NAS chattet und im blinden Re-Score bei diesem Fall am schlechtesten war. Es ist auf der 4090 nicht installiert.
+- **Nebenbefund:** Erfundene Statistiken („a decade of established preference“, „10 % completion rate“) bleiben das häufigste Faithfulness-Problem. Ihre Quelle ist vermutlich der erste Satz der Persona („deep, intimate knowledge of … completion rates, binge behaviour“). Ein Kandidat für die nächste Prompt-Änderung, an der Quelle statt mit einer weiteren Regel.
+- **Ausrollen:** Die Änderung trifft die Bakes. Nach dem Deploy meldet die App Drift für `curatarr-curator` (und `curatarr-pitcher`); der Rebuild bleibt eine bewusste Entscheidung des Besitzers.
+
 **Summarizer**
 - Produktion: granite4.1:8b. Nur perf in hwbench gemessen.
 - Die Qualität stammt aus `tournament_bench.py` und `validate_top4.py` (2026-05/06) und ist seit der Gemma-4-/Granite-4.2-Generation nicht neu gemessen.
