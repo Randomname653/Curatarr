@@ -313,6 +313,27 @@ Befunde:
 - **Ergebnis:** erfundene Verlaufs- oder Statistikbehauptungen alt 4 (31b 3, MoE 1), neu 4 (31b 2, MoE 2); ehrliche „dazu habe ich keine Daten“-Sätze alt 3, neu 3. Kein Effekt. Die Erfindungen sitzen fast alle in `pv_mt_principle_sovereignty`, wo der Kontext selbst von „established philosophical preferences“ spricht, und in der Terminfrage.
 - **Entscheidung:** nicht übernommen. Ohne messbaren Nutzen keine Prompt-Änderung. Der Satz bleibt, wie er ist.
 - **Grenzen:** zwei Läufe pro Fall und Modell; die Satzauswahl per Muster findet nicht jede Behauptung.
+
+**Drei weitere Varianten, gezielt auf die Problemfälle (2026-11-05)**
+
+- **Varianten** (Quellen-Änderungen, keine neue Regel):
+  - **0:** aktueller Prompt.
+  - **A:** Die letzte Zeile gilt auch für den Nutzer („If data about the user or a title is missing, name the blind spot …“).
+  - **B:** Die Perceptive-Zeile wird an Daten gebunden („… the *why* behind viewing choices in the data you have — …“).
+  - **C:** A und B zusammen.
+- **Test:** `pv_mt_principle_sovereignty` und `pv_mt_watch_pathologizing`, je 5 Läufe, gemma4:31b und gemma4:26b-a4b-it-qat. Das sind 20 Gespräche pro Variante und 80 insgesamt. Gezogen wurden 392 Sätze mit Aussagen über den Nutzer, blind gemischt eingeordnet. Bedingungssätze vom Typ „wenn deine Daten X zeigen“ zählen nicht, „…, aber deine Daten zeigen X“ zählt.
+- **Ergebnis:**
+
+  | | 0 | A | B | C |
+  |---|---|---|---|---|
+  | erfundene Verlaufs- oder Statistikbehauptungen | 12 | 7 | 15 | 14 |
+  | davon 31b / MoE | 8 / 4 | 7 / 0 | 7 / 8 | 8 / 6 |
+  | davon Souveränität / Terminfrage | 9 / 3 | 5 / 2 | 8 / 7 | 9 / 5 |
+  | ehrliche „dazu fehlen mir Daten“-Sätze | 0 | 1 | 3 | 0 |
+
+- **Lesart:** Keine Variante senkt die Erfindungen verlässlich. A liegt zwar am niedrigsten, aber C enthält A und liegt bei 14; der Unterschied 12 gegen 7 ist bei diesen Zahlen Zufall. Die Beispiele reichen von „your data shows a lifelong obsession with bleak character studies“ bis „when you are stressed, you gravitate toward slow-burn procedurals to decelerate your heart rate“. Fast alle stehen in erfundenen Beispielen zur Erklärung des Prinzips („If you ask for X, but your history shows Y …“).
+- **Schluss:** Am Prompt-Wortlaut liegt es nicht. Der Souveränitäts-Fall liefert den größten Teil, und sein Kontext ist ein gelerntes Prinzip aus dem Self-Learning („… prioritize … the user's established philosophical preferences …“), das den Curator geradezu auffordert, über „established preferences“ zu reden, obwohl keine im Kontext stehen. Hebel wären eher: (1) solche Prinzipien so formulieren lassen, dass sie keine Nutzerdaten voraussetzen, (2) in Produktion prüfen, ob der Chat bei echtem Verlauf im Kontext weniger erfindet. Beides ist ungetestet. Am Prompt wird nichts geändert.
+- **Nicht geprüft:** Die Standhaftigkeit der Varianten habe ich nicht separat bewertet, weil keine übernommen wird.
 - **Ausrollen:** Die Änderung trifft die Bakes. Nach dem Deploy meldet die App Drift für `curatarr-curator` (und `curatarr-pitcher`); der Rebuild bleibt eine bewusste Entscheidung des Besitzers.
 
 **Summarizer**
