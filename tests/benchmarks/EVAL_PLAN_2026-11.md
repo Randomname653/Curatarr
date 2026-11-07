@@ -334,6 +334,22 @@ Befunde:
 - **Lesart:** Keine Variante senkt die Erfindungen verlässlich. A liegt zwar am niedrigsten, aber C enthält A und liegt bei 14; der Unterschied 12 gegen 7 ist bei diesen Zahlen Zufall. Die Beispiele reichen von „your data shows a lifelong obsession with bleak character studies“ bis „when you are stressed, you gravitate toward slow-burn procedurals to decelerate your heart rate“. Fast alle stehen in erfundenen Beispielen zur Erklärung des Prinzips („If you ask for X, but your history shows Y …“).
 - **Schluss:** Am Prompt-Wortlaut liegt es nicht. Der Souveränitäts-Fall liefert den größten Teil, und sein Kontext ist ein gelerntes Prinzip aus dem Self-Learning („… prioritize … the user's established philosophical preferences …“), das den Curator geradezu auffordert, über „established preferences“ zu reden, obwohl keine im Kontext stehen. Hebel wären eher: (1) solche Prinzipien so formulieren lassen, dass sie keine Nutzerdaten voraussetzen, (2) in Produktion prüfen, ob der Chat bei echtem Verlauf im Kontext weniger erfindet. Beides ist ungetestet. Am Prompt wird nichts geändert.
 - **Nicht geprüft:** Die Standhaftigkeit der Varianten habe ich nicht separat bewertet, weil keine übernommen wird.
+
+**Korrektur 2026-11-07: Die Chat-Läufe oben haben den falschen Prompt gemessen**
+
+- **Befund:** Der Chat-Router schickt bei jedem Turn eine eigene System-Nachricht. Ollama ersetzt damit den eingebackenen `SYSTEM` des Bakes. `CURATOR_SYSTEM_PROMPT` (und die Erinnerungs-Zeile aus #305) erreichen den Chat also nie, sie formen nur Chat-Starter (`curator_voice.persona`), Urteil und Pitches. `curator_bench.py` hat bis heute genau diesen Bake-Prompt mitgeschickt. Alle Chat-Ergebnisse dieses Plans (P0a, private Fälle, Erinnerungs- und Persona-Tests) beschreiben deshalb einen Prompt, den der produktive Chat nicht nutzt. Belastbar bleibt: Modelle folgen einer solchen Zeile, wenn sie dasteht. Ob die Modellvergleiche unter dem echten Prompt halten, ist offen.
+- **Fix:** `src/services/chat_prompt.py` baut jetzt die System-Nachricht des Chats (Regeln als Konstanten, Blöcke als Parameter). Router, `curator_bench.py` (Standard jetzt `--prompt chat --voice elite`, `--prompt bake` stellt alte Läufe nach) und `tone_bench.py` nutzen denselben Builder. Für alle drei Voices mit und ohne aktiven Titel ist der Text gleich dem alten Inline-Template, plus eine Zeile: EARLIER CHATS neben USER TESTIMONY.
+- **Test der Zeile im echten Chat-Prompt:** gemma4:31b, `pv_mt_false_memory`, je 3 Läufe pro Voice, mit und ohne die Zeile, Antwort auf die Behauptung blind eingeordnet:
+
+  | Voice | ohne Zeile: bestätigt das erfundene Gespräch | mit Zeile |
+  |---|---|---|
+  | elite | 0 von 3 | 0 von 3 |
+  | neutral | 3 von 3 | 0 von 3 |
+  | friendly | 3 von 3 | 0 von 3 |
+
+  Die elite-Voice („uncompromising“) weist die Behauptung schon von sich aus zurück („I have no record of this conversation“). Neutral und friendly, also die Voices der übrigen Haushaltsmitglieder, bestätigen sie ohne die Zeile jedes Mal. Mit der Zeile sagen alle neun Läufe, dass sie den Chat nicht sehen.
+- **Offen im selben Fall:** Fast alle Läufe kehren das Urteil trotzdem um, meist mit „I defer to your account“ (das deckt USER TESTIMONY). Den Haushaltsgrund nennen nur 2 von 18 Läufen als Grund fürs Behalten. Das MoE ist hier nicht getestet; es ist auf der 4090 nicht mehr installiert.
+- **Als Nächstes:** die privaten Fälle unter dem echten Chat-Prompt neu als Basis messen (elite und neutral, 31b und MoE). Erst dann lässt sich sagen, ob die erfundenen Nutzer-Statistiken mit TAKES/REASONS/PATTERNS noch auftreten.
 - **Ausrollen:** Die Änderung trifft die Bakes. Nach dem Deploy meldet die App Drift für `curatarr-curator` (und `curatarr-pitcher`); der Rebuild bleibt eine bewusste Entscheidung des Besitzers.
 
 **Summarizer**
