@@ -24,10 +24,10 @@ miss most of it and a model checker rewrites instead of judging, so the
 report is read - by the owner or a reviewing session - against what each
 case was built to catch.
 
-The chat system prompt here is the voice part of the real one (identity,
-language rule, curator_voice.chat_tone) around the case's taste block -
-not the router's full prompt with RAG and pillars, which needs the live
-library. The starters use the production prompt and persona.
+The chat system prompt is the router's own (services/chat_prompt, all its
+rules) around the case's taste block; memories, RAG and the discussion
+blocks stay empty, since they need the live library (2026-11-07; before,
+only the voice part). The starters use the production prompt and persona.
 
 Load: one curator call per case, voice and rep; 8k window and num_gpu 99
 like curator_options (16k next to the desktop apps overfilled the 4090 and
@@ -49,7 +49,7 @@ import httpx  # noqa: E402
 
 from src.services import chat_starters as cs  # noqa: E402
 from src.services import curator_voice as cv  # noqa: E402
-from src.services.llm_utils import language_directive  # noqa: E402
+from src.services.chat_prompt import build_system_prompt  # noqa: E402
 
 DATA = Path(__file__).resolve().parent / "tone_data"
 CASES = DATA / "cases.json"
@@ -66,8 +66,7 @@ def _call(url, model, messages, temperature, num_predict):
 
 
 def chat_system(voice: str, taste: str, lang: str) -> str:
-    return (f"{cv.IDENTITY[voice]}\n\n{taste}\n\nCRITICAL BEHAVIOR RULES:\n"
-            f"1. {language_directive(lang)}\n{cv.chat_tone(voice)}")
+    return build_system_prompt(voice=voice, user_lang=lang, taste_context=taste)
 
 
 def run(a) -> Path:

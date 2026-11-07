@@ -590,8 +590,10 @@ check("...and fresh coinages in the same voice are named as violations",
 
 _re3 = (Path(__file__).resolve().parents[1]
         / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
-_ch3 = (Path(__file__).resolve().parents[1]
-        / "src/routers/chat.py").read_text(encoding="utf-8")
+# The chat's rules moved into services/chat_prompt (2026-11-07); the router
+# and its prompt builder are read as one.
+_ch3 = "\n".join((Path(__file__).resolve().parents[1] / p).read_text(encoding="utf-8")
+                 for p in ("src/routers/chat.py", "src/services/chat_prompt.py"))
 _pl3 = (Path(__file__).resolve().parents[1]
         / "src/services/pillars.py").read_text(encoding="utf-8")
 check("the legacy pitch no longer licenses size as a pitch point",

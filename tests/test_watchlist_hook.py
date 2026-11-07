@@ -91,8 +91,10 @@ check("the curator announces the protection and claims nothing the app has not d
       "the app then acts: it protects" in _ch
       and "never\npresent them as done" in _ch
       and "You execute nothing yourself" in _ch)
+from src.services import chat_prompt as _cp  # noqa: E402
 check("the chat LLM still executes no library actions itself",
-      "no_library_actions_rule" in _ch)
+      _cp.NO_LIBRARY_ACTIONS_RULE in _cp.build_system_prompt(voice="neutral", user_lang="en")
+      and "build_system_prompt(" in _ch)
 
 # ── size_norms: the deterministic bloat probe ──────────────────────────────
 
