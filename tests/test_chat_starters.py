@@ -378,3 +378,48 @@ def test_a_started_episode_is_not_zero_episodes():
             "duration_ms": 1_440_000, "view_offset_ms": 60_000}
     r = rhythm([play], now)
     assert "0 episodes" not in r["phrase"] and "not finished yet" in r["phrase"]
+
+
+# ── a start is no pause; an asked-about stall rests (2026-11-07) ─────────
+
+def test_a_first_episode_is_a_start_not_a_pause():
+    """"One episode before you left it hanging" - a day after the pilot. The
+    fact said "normal: 1 day", nothing said the series had just begun."""
+    now = dt.datetime(2026, 11, 7, 18)
+    pilot = [_play("Evil", now - dt.timedelta(days=1), ep=1)]
+    assert cs._pause(pilot, "Evil", now) == "just started: the first episode, yesterday"
+    assert cs._pause(pilot, "Evil", now - dt.timedelta(hours=20)).endswith("today")
+    later = [{**_play("Evil", now - dt.timedelta(days=1), ep=5), "season": 2}]
+    assert not cs._pause(later, "Evil", now).startswith("just started"), \
+        "one play in the window mid-series is a return, not a start"
+
+
+def test_a_stalled_series_rests_once_an_opener_was_about_it():
+    """One stalled series anchored most openers for six weeks: the facts
+    offered it to every batch, and every batch asked it again."""
+    from src.database.models import ChatStarter, User, WatchHistoryEntry
+    conn = _harness.app_db()
+    now = dt.datetime(2026, 11, 7, 18)
+    with conn.get_db_session() as db:
+        db.add(User(id=7, plex_user_id="p7", plex_username="u7"))
+        for i, title in enumerate(("Mushoku", "Psycho")):
+            for ep in range(1, 6):
+                db.add(WatchHistoryEntry(user_id=7, plex_user_id="p7", plex_item_id=f"{title}{ep}",
+                                         title=f"E{ep}", series_title=title, media_type="anime",
+                                         season=1, episode=ep, completed=True,
+                                         viewed_at=now - dt.timedelta(days=40 + i, hours=ep)))
+        db.commit()
+    stalled = lambda: [f["title"] for f in cs.collect_facts(7, now=now) if f["kind"] == "stalled_series"]
+    assert stalled() == ["Mushoku"] or stalled() == ["Psycho"]
+    first = stalled()[0]
+    with conn.get_db_session() as db:
+        db.add(ChatStarter(user_id=7, text="x", form="question", fact_used="stalled",
+                           anchor_title=first, created_at=now - dt.timedelta(days=3)))
+        db.commit()
+    rest = stalled()
+    assert rest and rest[0] != first, "the asked-about stall rests, the next one comes up"
+    with conn.get_db_session() as db:
+        db.query(ChatStarter).filter(ChatStarter.user_id == 7).update(
+            {"created_at": now - dt.timedelta(days=cs.STALLED_REST_DAYS + 1)})
+        db.commit()
+    assert stalled()[0] == first, "after the rest it may come back"
