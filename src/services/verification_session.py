@@ -337,7 +337,8 @@ _VERIFICATION_TTL = timedelta(days=7)
 
 
 def _asked_recently(db, user_id: int) -> bool:
-    return db.query(ProactiveMessage).filter(
+    # ⚡ Bolt: Query specific column instead of instantiating full ORM object for existence check
+    return db.query(ProactiveMessage.id).filter(
         ProactiveMessage.user_id == user_id,
         ProactiveMessage.trigger_type == "verification",
         ProactiveMessage.created_at >= datetime.utcnow() - timedelta(hours=12),
