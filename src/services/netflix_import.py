@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 IMPORT_DIR = ROOT / "data" / "imports" / "netflix"
 MAX_MEMBER_BYTES = 100 * 1024 * 1024
+MAX_TOTAL_BYTES = 400 * 1024 * 1024
 BATCH_SIZE = 5000
 # Shorter than this is a trailer that played on its own, a preview while
 # browsing, or a start that was abandoned at once - not a viewing.
@@ -231,13 +232,16 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).name)[:120] or "upload.csv"
 
 
-def save_upload(filename: str, content: bytes, import_dir: Path = None) -> dict:
+def save_upload(filename: str, content: bytes, import_dir: Path = None, *,
+                max_member_bytes: int = MAX_MEMBER_BYTES,
+                max_total_bytes: int = MAX_TOTAL_BYTES) -> dict:
     """Keep the usable CSVs of one upload (a CSV, or the export zip, of
     which only ViewingActivity.csv is read). {"saved": [...], "rejected":
     [(name, reason)]}."""
     import_dir = import_dir or IMPORT_DIR
     import_dir.mkdir(parents=True, exist_ok=True)
     saved, rejected = [], []
+    total = 0
 
     def _keep(name: str, data: bytes):
         try:
@@ -262,10 +266,14 @@ def save_upload(filename: str, content: bytes, import_dir: Path = None) -> dict:
                     rejected.append((filename, "the zip has no CONTENT_INTERACTION/ViewingActivity.csv"))
                 for m in members:
                     with zf.open(m) as fh:
-                        data = fh.read(MAX_MEMBER_BYTES + 1)
-                    if len(data) > MAX_MEMBER_BYTES:
+                        data = fh.read(max_member_bytes + 1)
+                    if len(data) > max_member_bytes:
                         rejected.append((Path(m).name, "file too large for a Netflix export"))
                         continue
+                    if total + len(data) > max_total_bytes:
+                        rejected.append((Path(m).name, "archive exceeds the import size limit"))
+                        break
+                    total += len(data)
                     _keep(m, data)
         except zipfile.BadZipFile:
             rejected.append((filename, "not a readable zip archive"))
