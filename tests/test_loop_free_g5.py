@@ -174,7 +174,7 @@ with conn_mod.get_db_session() as db:
     db.commit()
 
 
-async def _fake_generate(trigger, taste_blurb, lang_directive=""):
+async def _fake_generate(trigger, taste_blurb, lang_directive="", voice=None):
     return f"About {trigger['type']}?"
 
 

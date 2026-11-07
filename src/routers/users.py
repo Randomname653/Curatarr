@@ -178,6 +178,30 @@ def set_timezone(
     return {"timezone": name}
 
 
+class CuratorVoiceUpdate(BaseModel):
+    voice: str
+
+
+@router.get("/me/curator-voice")
+def get_curator_voice(user: User = Depends(get_current_user)):
+    """The voice the curator talks to this user in - chat, chat starters,
+    proactive messages (services/curator_voice) - and whether it was picked."""
+    from src.services import curator_voice
+    picked = curator_voice.stored_voice(user.id)
+    return {"voice": picked or curator_voice.default_voice(user.is_admin),
+            "picked": picked is not None, "voices": list(curator_voice.VOICES)}
+
+
+@router.post("/me/curator-voice")
+def set_curator_voice(body: CuratorVoiceUpdate, user: User = Depends(get_current_user)):
+    from src.services import curator_voice
+    try:
+        voice = curator_voice.set_voice(user.id, body.voice)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unknown voice: {body.voice[:32]}")
+    return {"voice": voice, "picked": True, "voices": list(curator_voice.VOICES)}
+
+
 @router.get("/me/notification-preferences")
 def get_notification_preferences(user: User = Depends(get_current_user)):
     """Return the catalogue of proactive triggers + this user's enabled state.

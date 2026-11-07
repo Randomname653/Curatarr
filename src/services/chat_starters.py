@@ -179,7 +179,9 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                         if r["season"] is not None and r["episode"] is not None
                         else None),
             "days_ago": days,
-            "completed": r["completed"],
+            # Was "completed": the model read it as the series finished
+            # ("You finished <the series> in five episodes", 2026-10-30).
+            "episode_finished": r["completed"],
             "pause": _pause(video, r["series_title"] or r["title"], now),
         })
 
@@ -288,7 +290,13 @@ def _opening(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]", "", text.lower()).split()[:3])
 
 
-_PROMPT = """You are Curatarr, an opinionated personal media curator. You write OPENERS: short first messages FROM YOU TO THE USER, shown as clickable chips on your chat page. Clicking one makes you SAY it — the conversation begins with your line, and the user replies to you. Write in YOUR voice, addressed to the user: direct, curious, a little pointed, never generic.
+# The voice phrase and the persona sent with it come from the user's voice
+# (services/curator_voice). The forms are defined by what they point at:
+# "a pattern of theirs" invited one-title "shifts" ("pivoting from <a fantasy
+# epic> to <a satire>" - 2026-11 replay), "provoke a defence" invited
+# "defend your binge", and a tonight-pick with no target turned the wit on
+# the user's own viewing ("more rigor than your recent picks").
+_PROMPT = """You are Curatarr, a personal media curator. You write OPENERS: short first messages FROM YOU TO THE USER, shown as clickable chips on your chat page. Clicking one makes you SAY it — the conversation begins with your line, and the user replies to you. Write in YOUR voice, addressed to the user: {voice}
 
 FACTS about this user's recent watching (use them — an opener that names a real title, number or gap beats any clever generality):
 {facts}
@@ -299,9 +307,11 @@ Write {n} openers as a JSON array. Each element:
 
 Rules:
 - "form" must be one of {forms} and every opener must use a DIFFERENT form
-  (question: you ask the user something; observation: you point out a
-  pattern of theirs; challenge: you provoke a defence; callback: you pick
-  an earlier thread back up; tonight_pick: you offer to pick for tonight).
+  (question: you ask the user something; observation: you point out one
+  concrete thing from the facts (a number, a rhythm, a title); challenge:
+  you put a pointed take on a title and invite them to argue it; callback:
+  you pick an earlier thread back up; tonight_pick: you offer to pick for
+  tonight - more like a title from the facts, or a genre you name).
 - "text": max 140 characters, no emoji, no quotes around titles needed.
 - "fact": which fact anchored it, in a few words. An opener with no
   anchoring fact is invalid.
@@ -316,6 +326,9 @@ Rules:
   routine; repeat the rhythm the fact gives, never inflate it.
 - Name today's weekday only when it genuinely matters — such openers are shown today only.
 - A gap, a slowdown or lost interest is news only where the fact's "pause" says longer than usual; otherwise it is the user's own pace, so leave it out. No habit ("your usual Thursday session") the facts do not state.
+- Opinions are about titles; the user's choices, mood and discipline are not yours to grade.
+- Numbers and spans exactly as the facts give them (days stay days).
+- A pattern or shift needs two or more titles behind it; one title is not a trend.
 
 Return ONLY the JSON array."""
 
@@ -330,8 +343,12 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
     if len(facts) <= 1:          # only the clock fact → nothing to anchor on
         return 0
 
+    from src.services import curator_voice
+    voice = await run_read(curator_voice.voice_for, user_id)
     prompt = _PROMPT.format(facts=json.dumps(facts, ensure_ascii=False, indent=1),
-                            n=n, forms=list(FORMS))
+                            n=n, forms=list(FORMS), voice=curator_voice.STARTER_VOICE[voice])
+    # Sent, not left to the bake: the baked persona is the elite one.
+    system = curator_voice.persona(voice)
     # Through the priority gate, never past it: a deletion run holding the
     # pitcher must not get the curator loaded on top by a background refill.
     # BACKGROUND priority and a quiet window: GET /starters fires this refill
@@ -352,7 +369,8 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
                         f"{host.url}/api/chat",
                         json={
                             "model": model,
-                            "messages": [{"role": "user", "content": prompt}],
+                            "messages": [{"role": "system", "content": system},
+                                         {"role": "user", "content": prompt}],
                             "stream": False,
                             "keep_alive": CURATOR_KEEP_ALIVE,
                             **curator_options(temperature=0.9, num_predict=900, host=host),

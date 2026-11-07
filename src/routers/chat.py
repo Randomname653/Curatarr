@@ -3507,8 +3507,12 @@ async def _send_message_guarded(message: ChatMessage, user: User,
     # answer "where do I find …?" about its own UI instead of improvising.
     from src.services.app_context import APP_MAP_BLOCK, KB_HEALING_BLOCK
     from src.services.llm_utils import UNTRUSTED_RULE
+    # The user's voice (Settings > Account): identity and tone; the
+    # guardrails come with every voice (services/curator_voice).
+    from src.services import curator_voice
+    voice = await run_read(curator_voice.voice_for, user.id, user.is_admin)
 
-    system_prompt = f"""You are Curatarr, an uncompromising, elite personal media curator.
+    system_prompt = f"""{curator_voice.IDENTITY[voice]}
 
 {APP_MAP_BLOCK}{KB_HEALING_BLOCK}
 {taste_context if taste_context else "No taste profile yet."}
@@ -3525,7 +3529,7 @@ RELEVANT LIBRARY ITEMS:
 
 CRITICAL BEHAVIOR RULES:
 {lang_rule}
-2. TONE: Be direct, concise, and highly opinionated. NEVER use generic AI apologies or corporate bot phrases. Talk to the user like a brutally honest friend.
+{curator_voice.chat_tone(voice)}
 TRANSPARENCY: If the user asks for the raw metadata, show EVERYTHING you were given above — verified data AND watch status, storage, size context, reception, Wikipedia — never a partial selection, never refuse.
 EVIDENCE HONESTY: NEVER fabricate or imitate a metadata/context block. If no context block exists for a title, say exactly that. General knowledge about well-known titles is welcome ONLY when explicitly labeled as general knowledge rather than library data.
 USER TESTIMONY: Claims the user makes about a work's content, scenes, creators or production that are NOT in your context blocks are unverified testimony — weigh them, but never call them "new evidence" or "verified", and never restate them as your own facts. If you reverse a verdict on them, say plainly that you are deferring to the owner's account.

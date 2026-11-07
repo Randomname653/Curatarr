@@ -744,6 +744,19 @@
                 </div>
               </section>
               <section class="section">
+                <div class="section-head"><h3>Curator</h3><span class="section-hint">How the curator talks to you in chat, its openers and its messages. Saves immediately.</span></div>
+                <div class="section-body">
+                  <div class="pref-row">
+                    <span class="pref-text" id="curator-voice-label">Tone<small>Sharp is a touch elitist about titles. Every tone judges the work, not you.</small></span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="curator-voice-label">
+                      <label for="voice-friendly"><input type="radio" name="curator-voice" id="voice-friendly" value="friendly" data-on-change="setCuratorVoice" data-args='["$el"]'>Friendly</label>
+                      <label for="voice-neutral"><input type="radio" name="curator-voice" id="voice-neutral" value="neutral" data-on-change="setCuratorVoice" data-args='["$el"]'>Neutral</label>
+                      <label for="voice-elite"><input type="radio" name="curator-voice" id="voice-elite" value="elite" data-on-change="setCuratorVoice" data-args='["$el"]'>Sharp</label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="section">
                 <div class="section-head"><h3>This device</h3><span class="section-hint">Saved in this browser only.</span></div>
                 <div class="section-body">
                   <div class="pref-row">
