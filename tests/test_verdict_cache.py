@@ -105,9 +105,9 @@ check("...a reused one does not spend the cap (up to REUSE_FACTOR x)",
       "if reused <= judge_cap * REUSE_FACTOR:\n                            judged -= 1" in loop)
 check("...a new one is stored", loop.index("verdict = await adjudicate(")
       < loop.index("verdict_cache.put_verdict, _vkey, verdict"))
-check("the pitch is reused per language and guard",
+check("the pitch is reused per language and guard, a guard's note per stance version",
       "verdict_cache.get_pitch, _vkey, _variant" in loop
-      and "_variant = f\"{lang_directive_str}|{verdict.get('_guard') or ''}\"" in loop)
+      and "|{_guard}|v{GUARD_STANCE_VERSION}" in loop)
 check("the weights' digest is read once per run", loop.count("verdict_cache.bake_digest(") == 1)
 check("every title the run can reach has its keep-value scored, and it never goes further",
       "_consider_slice = scored_candidates[:_reach]" in loop and "or _ci >= _reach):" in loop)

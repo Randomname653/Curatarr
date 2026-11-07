@@ -765,7 +765,9 @@ async def build_evidence(item: dict, user_id: int, category: str, db=None,
         wiki = ""
         try:
             from src.services.media_enricher import fetch_wikipedia_summary
-            wiki = await fetch_wikipedia_summary(title, media_type, max_chars=2000) or ""
+            wiki = await fetch_wikipedia_summary(title, media_type, max_chars=2000,
+                                                 imdb_id=item.get("imdb_id"),
+                                                 year=item.get("year")) or ""
         except Exception as e:
             # No article -> evidence_thin below, and the loop skips the title.
             from src.services.enrichment_state import log_topup_failure
@@ -1308,16 +1310,23 @@ def major_honours(facts: str) -> list:
 
 
 # A verdict the deletion loop changed after the judge spoke. The judge's own
-# stance would argue the CUT it no longer is.
+# stance would argue the CUT it no longer is. GUARD_STANCE_VERSION rides in
+# the pitch cache's variant: bump it with the wording, or cached notes keep
+# the old one.
+GUARD_STANCE_VERSION = 2
 _GUARD_STANCE = {
-    "household_floor": "Another member of the household has genuinely watched "
-                       "this title or asked to keep it, so it is the owner's "
-                       "call, not a cut — make the honest case on what the "
-                       "title itself is, and say plainly that someone in the "
-                       "house holds it",
-    "stature_floor": "This title carries major honours, so it is the owner's "
-                     "call, not a cut - make the honest case on what the title "
-                     "itself is, its honours included",
+    "household_floor": "The judge would cut this title, but another member of "
+                       "the household has genuinely watched it or asked to keep "
+                       "it, so it is the owner's call - say what speaks against "
+                       "keeping it, then say plainly that someone in the house "
+                       "holds it",
+    # Was "make the honest case on what the title itself is, its honours
+    # included": the note became praise under "suggested for deletion"
+    # (Teacher's Pet, 2026-11-06). The owner needs both sides to decide.
+    "stature_floor": "The judge would cut this title, but it carries major "
+                     "honours, so it is the owner's call - say what speaks "
+                     "against keeping it, then what its honours put on the "
+                     "other side: a case to weigh, not a recommendation",
 }
 
 

@@ -9,7 +9,7 @@ import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, haptic, _errHtml, _errMsg, _
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
-import { _busyStreaming, enterThread, sendMessage } from './chat.js';
+import { _busyStreaming, enterThread, proposalOpener, sendMessage } from './chat.js';
 import { tabToHash } from './nav.js';
 
 // Proposals deleted through the media server itself (music without Lidarr,
@@ -190,7 +190,7 @@ function _delCardHtml(p) {
           ? "e.g. 'Keep — haven't watched it yet' or 'Delete — awful film'"
           : "e.g. 'Keep — still watching this' or 'Delete — dropped after 2 eps'";
       const limbo = p.status === 'limbo';
-      const ctx = `data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}"`;
+      const ctx = `data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}" data-stagnant="${p.stagnant ? 1 : 0}"`;
       return `
       <div class="card mb-12${p.stagnant ? ' is-stagnant' : (p.confidence > .7 ? ' is-hot' : '')}" data-del-id="${p.id}" data-title="${escAttr(p.title)}" data-service="${escAttr(p.service || '')}">
         <div class="poster-card">
@@ -884,7 +884,7 @@ export async function onReevaluateDeletion(btn) {
     reevaluate: true,
   };
   if (!await enterThread(ctx, `Reevaluating deletion of "${title}"`,
-                         `I have suggested "${title}" for deletion. Reason: "${pitch}"`)) return;
+                         proposalOpener(title, pitch, btn.dataset.stagnant === '1'))) return;
 
   // 3. Pre-fill a short, readable user message and auto-send. The actual
   //    Level-2 framing arrives via the system prompt on the backend —

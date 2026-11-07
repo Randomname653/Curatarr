@@ -7,7 +7,7 @@
 // that fills the bench's values in, and the model fields as lists of the
 // catalog's choices marked installed / too big for that card.
 import { api } from './api.js';
-import { _errMsg, act, actOn, esc, setStatus } from './ui.js';
+import { _errMsg, act, actOn, esc, escAttr, setStatus } from './ui.js';
 
 // Which form field holds which value, per host card.
 export const ADVICE_FIELDS = {
@@ -91,10 +91,13 @@ function _measured(part, model) {
 
 const _window = (profile, ctx) => Number(ctx) || PROFILE_CTX[profile] || 16384;
 
-function _row(label, now, bench, same) {
+// ``passed``: what is set is not the bench's pick but passed on this card
+// too (an alternative) - a choice, not a mismatch.
+function _row(label, now, bench, same, passed = false) {
   const badge = bench === null ? ''
     : same ? ' <span class="badge success badge-sm">as measured</span>'
-      : ` <span class="badge amber badge-sm">bench: ${esc(bench)}</span>`;
+      : passed ? ` <span class="badge badge-sm" title="The bench's pick here is ${escAttr(bench)}">passed the bench here</span>`
+        : ` <span class="badge amber badge-sm">bench: ${esc(bench)}</span>`;
   return `<div class="fs-12">${esc(label)}: <b>${esc(now)}</b>${badge}</div>`;
 }
 
@@ -119,7 +122,8 @@ export function _adviceHtml(host, part, form) {
   const profile = form.profile || part.current.profile;
   const win = _window(profile, form.num_ctx);
   const rows = [
-    _row('Curator model', curator, rec.model, curator === rec.model),
+    _row('Curator model', curator, rec.model, curator === rec.model,
+         (pkg.alternatives || []).some(a => a.model === curator)),
     _row('Profile', profile, vals ? vals.profile : null, vals && vals.profile === profile),
     _row('Context window', String(win), vals ? String(_window(vals.profile, vals.num_ctx)) : null,
          vals && _window(vals.profile, vals.num_ctx) === win),

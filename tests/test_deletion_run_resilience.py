@@ -132,7 +132,7 @@ try:
                "pillar_0_ego": "x", "protecting_pillar": "NONE"}
     asyncio.run(pillars.write_monologue("TITLE: X", floored, skip_priority=True))
     check("a floored CUT is pitched as the household's title, not as 'merely fine'",
-          "Another member of the household has genuinely watched" in PROMPTS[-1]
+          "member of the household has genuinely watched" in PROMPTS[-1]
           and "merely 'fine'" not in PROMPTS[-1])
     asyncio.run(pillars.write_monologue("TITLE: X", {**floored, "_guard": None},
                                         skip_priority=True))
