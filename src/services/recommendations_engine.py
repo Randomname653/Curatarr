@@ -2637,7 +2637,8 @@ async def generate_deletion_proposals(
 
     if getattr(settings, "PILLARS_ENABLED", False):
         from collections import Counter
-        from src.services.pillars import build_evidence, adjudicate, write_monologue
+        from src.services.pillars import (GUARD_STANCE_VERSION, adjudicate, build_evidence,
+                                          write_monologue)
         from src.services.llm_errors import DESCRIPTIONS, INFRA, LLMFailure
         from src.services.llm_priority import (curator_start, curator_done,
                                                evict_if_resident, gate_contested,
@@ -3024,7 +3025,9 @@ async def generate_deletion_proposals(
                         await wait_quiet(_YIELD_QUIET_S)
                         _run_lane = await curator_start(_gate_label, exclusive_model=pitch_model, role="judge")
                         _holds_gate = True
-                    _variant = f"{lang_directive_str}|{verdict.get('_guard') or ''}"
+                    _guard = verdict.get('_guard') or ''
+                    _variant = (f"{lang_directive_str}|{_guard}|v{GUARD_STANCE_VERSION}"
+                                if _guard else f"{lang_directive_str}|")
                     pitch = await asyncio.to_thread(verdict_cache.get_pitch, _vkey, _variant)
                     if not pitch:
                         pitch = await write_monologue(

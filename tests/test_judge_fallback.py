@@ -171,7 +171,8 @@ check.table("major honours come from the Significance and Awards lines only", [
     ("an Oscar in the plot is no honour", "  Plot: a washed-up actor dreams of the Oscar he never won", []),
     ("no facts", "", []),
 ], pillars.major_honours)
-check("the monologue argues the owner's call, honours included, not the cut",
-      "major honours" in pillars._GUARD_STANCE["stature_floor"])
+check("the owner's-call note gives both sides, honours included - a case to weigh",
+      "major honours" in pillars._GUARD_STANCE["stature_floor"]
+      and "against keeping" in pillars._GUARD_STANCE["stature_floor"])
 
 check.done()

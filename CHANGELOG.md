@@ -37,6 +37,17 @@ follow them:
   media-server seam, and moves between them both ways without losing
   anything (Settings -> Media server, or `scripts/rebind_server.py`).
 
+**Same-name works, and the owner's call that read like a keep.** The deletion discussion read
+the 2004 animated "Teacher's Pet" for the 1958 Gable/Day comedy (a name search ranks the
+popular one first) and then rightly refused a verdict on the mixed record. Its Wikipedia read
+now resolves the article by IMDb id through Wikidata, and without one the year decides: a hit
+whose "(… film)" names another year is dropped, and a film article with no year in its title
+must name it in its opening. A cut that became the owner's call (major honours, or a household
+member's keep) now gets a note with both sides instead of praise under "suggested for
+deletion", the chat opens such a card as "up as your call", and cached notes are rewritten
+once. Settings -> Integrations no longer flags a curator that passed the bench on this card as
+a mismatch with the bench's pick.
+
 **The curator's tone, per user: it judges the work, never the person.** A replay of the
 owner's own chats found the old persona reading moods and motives into viewing ("Excuses.",
 "a regression into comfort-watching", "a lapse in self-control" to another household

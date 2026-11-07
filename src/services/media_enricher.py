@@ -1047,8 +1047,30 @@ async def fetch_significance(
     return out
 
 
+_YEAR_RE = re.compile(r"\b(18|19|20)\d{2}\b")
+
+
+def _year_fits(page_title: str, year: Optional[int]) -> Optional[bool]:
+    """What a hit's "(… film)" disambiguator says about the year: True when it
+    names ``year``, False when it names another one, None when it names none."""
+    if not year:
+        return None
+    m = re.search(r"\(([^)]*)\)\s*$", page_title or "")
+    years = {int(y.group()) for y in _YEAR_RE.finditer(m.group(1))} if m else set()
+    if not years:
+        return None
+    return int(year) in years
+
+
+def _lead_names_year(extract: str, year: int) -> bool:
+    """The article's opening names the year (or the next: festival premieres,
+    release-year drift) - "is a 1958 American romantic comedy"."""
+    return any(str(y) in extract[:600] for y in (year, year + 1, year - 1))
+
+
 async def fetch_wikipedia_summary(
     title: str, media_type: str = "movie", *, max_chars: int = 6000,
+    imdb_id: Optional[str] = None, year: Optional[int] = None,
 ) -> Optional[str]:
     """Fetch the readable text of a title's Wikipedia article (lead + the first
     sections — plot, reception, themes — up to ``max_chars``) as RAW grounding,
@@ -1058,32 +1080,57 @@ async def fetch_wikipedia_summary(
     This is for the deletion DISCUSSION, where the curator reasons far more
     precisely from the real article than from a thin synopsis, and the cost (one
     title, interactive) is affordable — the batch scan keeps the cheap distilled
-    significance instead. Returns None when no matching article is found."""
+    significance instead. Returns None when no matching article is found.
+
+    Same-name works: an ``imdb_id`` resolves the article by identity
+    (wikidata.resolve_enwiki_article); without one, ``year`` decides. The
+    name guard alone took the 2004 "Teacher's Pet" (animated) for the 1958
+    Gable/Day comedy, and the discussion then refused a verdict on the mixed
+    record (2026-11-06): a hit whose "(… film)" names another year is
+    dropped, the one naming the right year goes first, and a film article
+    with no year in its title has to name it in its opening."""
+    year = int(year) if str(year or "").strip().isdigit() else None
     hint = {"anime": "anime", "movie": "film", "show": "television series",
             "music": "band musician"}.get(media_type, "")
-    query = f"{title} {hint}".strip()
+    query = " ".join(p for p in (title, str(year) if year and media_type == "movie" else "", hint) if p)
     try:
+        page_by_id = None
+        if imdb_id:
+            from src.services.wikidata import resolve_enwiki_article
+            page_by_id = await resolve_enwiki_article(imdb_id) or None   # "" / None: fall back to the search
         async with httpx.AsyncClient(verify=tls_context(), timeout=20, headers={
             "User-Agent": "Curatarr/1.0 (https://github.com/Randomname653/curatarr; "
                           "personal media curator) python-httpx"
         }) as client:
-            sr = await client.get("https://en.wikipedia.org/w/api.php", params={
-                "action": "query", "list": "search", "srsearch": query,
-                "format": "json", "srlimit": 5,
-            })
-            hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
-            page = next((h["title"] for h in hits
-                         if _wiki_hit_matches(title, h["title"], media_type)), None)
-            if not page:
-                return None
-            ex = await client.get("https://en.wikipedia.org/w/api.php", params={
-                "action": "query", "prop": "extracts",
-                "explaintext": 1, "redirects": 1, "titles": page, "format": "json",
-            })
-            pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
-            for _pid, pdata in pages.items():
-                extract = (pdata.get("extract") or "").strip()
-                if len(extract) >= 120:
+            if page_by_id:
+                pages_to_try = [(page_by_id, True)]
+            else:
+                sr = await client.get("https://en.wikipedia.org/w/api.php", params={
+                    "action": "query", "list": "search", "srsearch": query,
+                    "format": "json", "srlimit": 5,
+                })
+                hits = sr.json().get("query", {}).get("search", []) if sr.status_code == 200 else []
+                named = [h["title"] for h in hits if _wiki_hit_matches(title, h["title"], media_type)]
+                named = [p for p in named if _year_fits(p, year) is not False]
+                # the right year in the disambiguator first, then the rest in search order
+                named.sort(key=lambda p: _year_fits(p, year) is not True)
+                pages_to_try = [(p, _year_fits(p, year) is True) for p in named[:2]]
+            for page, year_settled in pages_to_try:
+                ex = await client.get("https://en.wikipedia.org/w/api.php", params={
+                    "action": "query", "prop": "extracts",
+                    "explaintext": 1, "redirects": 1, "titles": page, "format": "json",
+                })
+                pages = ex.json().get("query", {}).get("pages", {}) if ex.status_code == 200 else {}
+                for _pid, pdata in pages.items():
+                    extract = (pdata.get("extract") or "").strip()
+                    if len(extract) < 120:
+                        continue
+                    # Films only: a series' opening often names its network
+                    # before any year, and a missed year must not cost a
+                    # long-running show its article.
+                    if (year and media_type == "movie" and not year_settled
+                            and not _lead_names_year(extract, year)):
+                        continue        # a same-name article about another work
                     return extract[:max_chars]
             return None
     except Exception as e:

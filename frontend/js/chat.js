@@ -920,7 +920,14 @@ export async function deleteFromDiscussion() {
   }
 }
 
-export async function discussDeletion(id, title, pitch, category, poster_url) {
+// The pane's first bubble: what the card proposed. A "Your call" card is no
+// deletion suggestion - its text is the case for the owner to weigh.
+export function proposalOpener(title, pitch, stagnant) {
+  return stagnant ? `I have put "${title}" up as your call. Reason: "${pitch}"`
+    : `I have suggested "${title}" for deletion. Reason: "${pitch}"`;
+}
+
+export async function discussDeletion(id, title, pitch, category, poster_url, stagnant = false) {
   if (_busyStreaming()) return;
   warmCurator();
   const userNote = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
@@ -946,7 +953,7 @@ export async function discussDeletion(id, title, pitch, category, poster_url) {
     poster_url: poster_url || null,
   };
   if (!await enterThread(ctx, `Discussing deletion of "${title}"`,
-                         `I have suggested "${title}" for deletion. Reason: "${pitch}"`)) return;
+                         proposalOpener(title, pitch, stagnant))) return;
 
   // 4. Prepare the input field for the user
   const input = document.getElementById('chat-input');
@@ -986,6 +993,7 @@ export function onDiscussDeletion(btn) {
     btn.dataset.pitch    || '',
     btn.dataset.category || '',
     btn.dataset.poster   || '',
+    btn.dataset.stagnant === '1',
   );
 }
 

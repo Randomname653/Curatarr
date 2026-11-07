@@ -2183,8 +2183,11 @@ async def _build_discuss_context_block(
         # let a Wikipedia hiccup break the discussion context.
         try:
             from src.services.media_enricher import fetch_wikipedia_summary
+            # The verified record's id and year pick the right same-name work.
+            _vp = verified_payload or {}
             _wiki = await fetch_wikipedia_summary(
-                proposal.title, proposal.category or "movie")
+                proposal.title, proposal.category or "movie",
+                imdb_id=_vp.get("imdb_id"), year=_vp.get("year"))
             if _wiki:
                 block += ("\nWIKIPEDIA (article excerpt — verified grounding; reason "
                           "from this and don't contradict it):\n" + _wiki + "\n")
