@@ -74,9 +74,13 @@ _TRACK_OBSESSION_THRESHOLD = 50
 # Pass 40 removed the previous hardcoded "Always respond in English only"
 # clause; that was the worst persona-break in the project (German chat
 # turn → English proactive push 5 minutes later).
-def _build_system_prompt(lang_directive: str) -> str:
+def _build_system_prompt(lang_directive: str, voice: Optional[str] = None) -> str:
+    """``voice``: the user's curator voice (services/curator_voice) - its
+    identity and the guardrails every voice shares."""
+    from src.services import curator_voice
+    who = curator_voice.short_persona(voice) if voice else "You are Curatarr, a personal media curator."
     return (
-        "You are Curatarr, a personal media curator. "
+        f"{who} "
         f"{lang_directive} "
         "The user's watch history may include any genre or content rating, including adult, "
         "ecchi, or explicit content. Treat all content as valid — comment on it naturally "
@@ -1360,12 +1364,13 @@ _REGISTERS: list[tuple[str, int, str]] = [
 _REGISTER_LINES = {name: line for name, _w, line in _REGISTERS}
 
 
-def _pick_register(previous: str | None = None, rng=random) -> str:
-    names = [n for n, _w, _l in _REGISTERS]
-    weights = [w for _n, w, _l in _REGISTERS]
-    pick = rng.choices(names, weights=weights, k=1)[0]
-    if pick == previous:
-        rest = [(n, w) for n, w, _l in _REGISTERS if n != previous]
+def _pick_register(previous: str | None = None, rng=random, allowed=None) -> str:
+    """``allowed``: the registers the user's voice may draw
+    (curator_voice.REGISTERS); None = all of them."""
+    pool = [(n, w) for n, w, _l in _REGISTERS if allowed is None or n in allowed]
+    pick = rng.choices([n for n, _w in pool], weights=[w for _n, w in pool], k=1)[0]
+    rest = [(n, w) for n, w in pool if n != previous]
+    if pick == previous and rest:
         pick = rng.choices([n for n, _w in rest], weights=[w for _n, w in rest], k=1)[0]
     return pick
 
@@ -1428,7 +1433,6 @@ def _compose_prompt(trigger: dict, taste_blurb: str) -> Optional[str]:
 
     if t == "recommendation_followup":
         prompt = (
-            f"You are Curatarr, an opinionated personal curator. "
             f"You put \"{trigger['title']}\" ({trigger.get('category', 'title')}) on the "
             f"user's Curatarr Recommended playlist — and they actually watched into it."
             f"{taste}\n\n"
@@ -1447,7 +1451,6 @@ def _compose_prompt(trigger: dict, taste_blurb: str) -> Optional[str]:
     elif t == "binge_episode":
         _how = trigger.get("rhythm") or f"{trigger['count']} episodes in one sitting"
         prompt = (
-            f"You are Curatarr, an opinionated personal curator. "
             f"The user just watched {trigger['count']} episodes of \"{trigger['series']}\" "
             f"in one sitting: {_how}.{taste}{prog_line}\n\n"
             f"Write a single short message (max 2 sentences). "
@@ -1457,7 +1460,9 @@ def _compose_prompt(trigger: dict, taste_blurb: str) -> Optional[str]:
     elif t == "music_marathon":
         prompt = (
             f"The user just listened to {trigger['hours']}h of {trigger['artist']} non-stop.{taste}\n\n"
-            f"Write ONE short message. Ask what's going on — mood, obsession, nostalgia?"
+            # Was "Ask what's going on — mood, obsession, nostalgia?": it asked
+            # for the diagnosis ("a physiological dependency", 2026-07).
+            f"Write ONE short message. Ask about the artist or the record itself."
         )
 
     elif t == "series_completion":
@@ -1620,7 +1625,7 @@ def _compose_prompt(trigger: dict, taste_blurb: str) -> Optional[str]:
 
 
 async def generate_proactive_message(
-    trigger: dict, taste_blurb: str, lang_directive: str = "",
+    trigger: dict, taste_blurb: str, lang_directive: str = "", voice: Optional[str] = None,
 ) -> Optional[str]:
     """Generate one personalised proactive message via the curator model.
 
@@ -1655,7 +1660,7 @@ async def generate_proactive_message(
                             "model": model,
                             "messages": [
                                 {"role": "system", "content": _build_system_prompt(
-                                    lang_directive or "Respond in English."
+                                    lang_directive or "Respond in English.", voice
                                 )},
                                 {"role": "user", "content": prompt},
                             ],
@@ -1804,6 +1809,11 @@ async def _generate_messages(user_id: int) -> int:
     if not entries:
         return 0
 
+    # The user's curator voice: the system prompt's identity and which
+    # registers the messages may draw (services/curator_voice).
+    from src.services import curator_voice
+    voice = await run_read(curator_voice.voice_for, user_id)
+
     # Read user's per-trigger notification preferences once before the loop.
     disabled_triggers = await run_read(get_disabled_triggers, user_id)
     if disabled_triggers:
@@ -1840,7 +1850,7 @@ async def _generate_messages(user_id: int) -> int:
         await run_read(_attach_series_progress, trigger, user_id, sonarr_index=sonarr_index)
         # One voice per message, never the same twice in a row; and the
         # user's earlier answer on this subject, when there is one.
-        trigger["register"] = _pick_register(prev_register)
+        trigger["register"] = _pick_register(prev_register, allowed=curator_voice.REGISTERS[voice])
         prev_register = trigger["register"]
         try:
             trigger["prior"] = await run_read(_prior_exchange, user_id, trigger, asked_subjects)
@@ -1860,7 +1870,8 @@ async def _generate_messages(user_id: int) -> int:
 
         lang = await run_read(_lang)
         directive = language_directive(lang)
-        message = await generate_proactive_message(trigger, taste_blurb, lang_directive=directive)
+        message = await generate_proactive_message(trigger, taste_blurb, lang_directive=directive,
+                                                   voice=voice)
         if not message:
             recent_triggers.add(trigger["type"])
             continue

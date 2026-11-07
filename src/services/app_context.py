@@ -122,7 +122,9 @@ APP_MAP_BLOCK = (
     "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
     "(admin) · 'Knowledge Base' (enrichment) · 'Activity' (live card for "
     "EVERY background job — syncs, maintenance, memory extraction, LLM "
-    "runs — with progress and history) · 'Settings' (admin panes: 'Plex "
+    "runs — with progress and history) · 'Settings' ('Account', for every "
+    "user, sets the tone you talk to them in — Friendly, Neutral or Sharp — "
+    "for chat, openers and messages; admin panes: 'Plex "
     "libraries' maps each Plex library to a category, 'Arr apps' holds the "
     "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify and "
     "Netflix history imports (a member's Netflix viewing counts like their "
@@ -216,6 +218,7 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Users",
     "Maintenance",
     "Settings",
+    "Account",
     # Knowledge Base health (KB_HEALING_BLOCK)
     "Needs attention",
     "Search & pin",

@@ -479,6 +479,31 @@ export function populateSettingsAccount() {
   if (nameEl) nameEl.textContent = u.username || u.plex_username || '—';
   if (roleEl) roleEl.textContent = u.is_admin ? '· admin' : '· user';
   if (idEl)   idEl.textContent   = u.plex_user_id || u.id || '—';
+  loadCuratorVoice();
+}
+
+// Settings → Account → Curator: the tone the curator talks to this user in
+// (services/curator_voice). Saved on the server, so it follows the account.
+const _voiceRadios = () => document.querySelectorAll('input[name="curator-voice"]');
+
+export async function loadCuratorVoice() {
+  try {
+    const r = await api('/api/users/me/curator-voice');
+    for (const el of _voiceRadios()) el.checked = el.value === r.voice;
+  } catch (_) { /* the radios stay unset; picking one still saves */ }
+}
+
+export async function setCuratorVoice(input) {
+  const voice = input?.value;
+  if (!voice) return;
+  haptic('light');
+  try {
+    await api('/api/users/me/curator-voice', 'POST', {voice});
+    toast('Saved', 'success');
+  } catch (e) {
+    toast(_errMsg(e), 'danger');
+    loadCuratorVoice();
+  }
 }
 
 // The user pill: the Settings view with its Account pane open. showView runs

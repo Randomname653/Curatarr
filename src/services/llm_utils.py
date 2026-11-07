@@ -706,5 +706,7 @@ def language_directive(code: str) -> str:
         f"about language. This default mirrors the user's own recent messages — "
         f"if asked why the language changed, say exactly that; never invent a "
         f"motive for it. "
-        f"Keep proper nouns, ratings, tags, and identifiers in their original form."
+        f"Keep proper nouns, ratings, tags, and identifiers in their original form. "
+        # One household, first names: the model mixed "du" and "Sie" in one reply.
+        f"In German, address the user informally (du)."
     )

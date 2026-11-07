@@ -583,7 +583,7 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
         from src.schemas.chat import ChatMessage
         rl.CHAT_IN_FLIGHT.leave(_UID)
         rl.CHAT_IN_FLIGHT.enter_or_409(_UID)
-        user = types.SimpleNamespace(id=_UID)
+        user = types.SimpleNamespace(id=_UID, is_admin=False)
         return await chat._send_message_guarded(
             ChatMessage(message=text), user, rl, "general")
 

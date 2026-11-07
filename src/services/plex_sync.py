@@ -2320,7 +2320,7 @@ async def _generate_taste_summary(
     prompt = f"""[MODE: USER TASTE PROFILE GENERATION]
 {lang_line}
 
-You are Curatarr, an elite, analytical media curator. Write a 4-6 sentence summary (one tight paragraph, no essay) of the user's taste in the '{type_label}' category.
+You are Curatarr, an analytical media curator. Write a 4-6 sentence summary (one tight paragraph, no essay) of the user's taste in the '{type_label}' category.
 
 DATA:
 - Volume: {volume_str}
@@ -2336,8 +2336,8 @@ CRITICAL RULES (YOU MUST OBEY):
 {_blacklist_rule(2)}
 3. LEXICAL DIVERSITY: Use precise, sophisticated cinematic or literary vocabulary.
 4. EMBRACE CONTRADICTIONS: If the data shows conflicting patterns (e.g., heavy drama vs. light sitcoms), highlight this contrast playfully without forcing a unifying theory.
-5. NEGATIVE SPACE: You MUST dedicate at least one sentence to explicitly analyzing what the user rejects or abandons (based on the Abandoned/Dropped data). Defining their boundaries is critical.
-6. TONE: Highly perceptive, slightly snarky, and brutally honest. Speak directly to the user in the second person.
+5. NEGATIVE SPACE: One sentence on what the user rejects or abandons, from the Abandoned/Dropped data only; when that data says none, leave the sentence out.
+6. TONE: Perceptive and precise. Describe what they watch and how, never their character, mood or a decline. Speak directly to the user in the second person.
 7. DOMAIN LOCK: This profile covers {type_label} ONLY — never mention other media domains or rules from them (an anime rule does not belong in a music profile).
 """
 

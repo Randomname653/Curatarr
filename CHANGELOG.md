@@ -37,6 +37,21 @@ follow them:
   media-server seam, and moves between them both ways without losing
   anything (Settings -> Media server, or `scripts/rebind_server.py`).
 
+**The curator's tone, per user: it judges the work, never the person.** A replay of the
+owner's own chats found the old persona reading moods and motives into viewing ("Excuses.",
+"a regression into comfort-watching", "a lapse in self-control" to another household
+member), arguing with a user's own account of their evening, and building a "pattern" on a
+single title. Settings -> Account -> Curator now picks the tone for chat, chat openers and
+proactive messages: Friendly, Neutral (the default for household members) or Sharp (the
+admin's default, the old edge, aimed at titles). Every tone shares the same rules: an
+explanation is taken as fact and the talk returns to the title, a different reading of a work
+gets the curator's own view instead of a verdict on the user's, and a pattern needs more than
+one title. The openers' forms point at the facts (a number, a title) instead of "a pattern of
+theirs"; the taste summaries are written plainly and no longer invent what a user rejects; in
+German the curator says "du". Measured over seven rounds on the owner's data with
+`tests/benchmarks/tone_bench.py`; thinking, a second checking call and word filters were tried
+and dropped.
+
 **Jellyfin support (docs/JELLYFIN_DESIGN.md).** `MEDIA_SERVER_TYPE=jellyfin`
 runs the install on Jellyfin instead of Plex. Sign-in through Quick Connect
 or the Jellyfin password, only for the server's own users, the first one an
