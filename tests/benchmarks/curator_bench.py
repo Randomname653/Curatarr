@@ -78,13 +78,28 @@ MODELS_DEFAULT: list[str] = [
     "nemotron-3-nano:30b",    # NVIDIA chat-focused (largest in pool)
 ]
 
-# Production-faithful curator system prompt (copied verbatim from
-# setup_wizard.py). This is what's baked into curatarr-curator's modelfile
-# in production — we replicate it here so bare candidate models get the
-# same instructions before generating.
-# The production persona, imported: the verbatim copy that lived here had
-# drifted from the bake by 2026-10 (three lines reworded in PR #150).
+# The system prompt a chat turn really carries. The router sends its own
+# system message (services/chat_prompt), which replaces the baked persona,
+# so until 2026-11-07 this bench measured a prompt no chat turn used: it sent
+# setup_wizard.CURATOR_SYSTEM_PROMPT. ``--prompt bake`` still does that, to
+# reproduce the older runs; ``--voice`` picks the user's voice (the owner's
+# default is elite).
 from src.services.setup_wizard import CURATOR_SYSTEM_PROMPT  # noqa: E402
+from src.services.chat_prompt import build_system_prompt  # noqa: E402
+from src.services.pillars import PILLAR_FRAMEWORK  # noqa: E402
+PROMPT = {"mode": "chat", "voice": "elite"}
+
+
+def system_prompt(context: str = "", lang: str = "en") -> str:
+    """The system message for a case. A hot-start context ("You previously
+    proposed deleting ...") is what the router puts in the discussion block,
+    with the title as the active one and the pillar framework beside it."""
+    if PROMPT["mode"] == "bake":
+        return CURATOR_SYSTEM_PROMPT + ("\n\n" + context if context else "")
+    m = re.search(r'proposed deleting "([^"]+)"', context or "")
+    title = m.group(1) if m else ""
+    return build_system_prompt(voice=PROMPT["voice"], user_lang=lang, discuss_block=context,
+                               active_title=title, pillar_framework=PILLAR_FRAMEWORK if title else "")
 
 # Buzzword blacklist from the system prompt itself. We auto-count hits as
 # a CHEAP automated signal — every hit is one of the model directly
@@ -221,7 +236,7 @@ def detect_likely_english(text: str) -> bool:
 # ── Per-case runners ────────────────────────────────────────────────────────
 async def run_single_turn(model: str, case: dict) -> dict:
     msgs = [
-        {"role": "system", "content": CURATOR_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(lang=case.get("lang", "en"))},
         {"role": "user", "content": case["prompt"]},
     ]
     response, dt = await chat_call(model, msgs)
@@ -243,8 +258,7 @@ async def run_multi_turn(model: str, case: dict) -> dict:
     conversation history. Each turn's response feeds into the context
     for the next turn — this is how we test whether the model holds
     position under sustained pushback."""
-    system_content = CURATOR_SYSTEM_PROMPT + "\n\n" + case["context"]
-    history = [{"role": "system", "content": system_content}]
+    history = [{"role": "system", "content": system_prompt(case["context"], case.get("lang", "en"))}]
     turn_results = []
     for i, user_turn in enumerate(case["turns"]):
         history.append({"role": "user", "content": user_turn})
@@ -327,6 +341,8 @@ def write_md_report(summaries: list[dict], cases_in_order: list[dict], path: Pat
     with path.open("w", encoding="utf-8") as f:
         f.write(f"# Curator-Bench Results — {datetime.now():%Y-%m-%d %H:%M}\n\n")
         f.write(f"- Models tested: **{len(summaries)}**\n")
+        f.write(f"- System prompt: **{PROMPT['mode']}**"
+                + (f", voice **{PROMPT['voice']}**" if PROMPT["mode"] == "chat" else "") + "\n")
         f.write(f"- Cases per model: **{len(cases_in_order)}** "
                 f"({sum(1 for c in cases_in_order if c['type']=='multi_turn')} multi-turn "
                 f"+ {sum(1 for c in cases_in_order if c['type']=='single')} single-turn)\n\n")
@@ -412,9 +428,15 @@ async def main():
     ap.add_argument("--num-ctx", type=int, default=0,
                     help="Context window (default: this install's profile window, "
                          f"now {NUM_CTX}). 8192 reproduces the runs before 2026-11-03.")
+    ap.add_argument("--prompt", choices=["chat", "bake"], default="chat",
+                    help="chat = the system prompt the chat router sends (default); "
+                         "bake = the baked persona, as every run before 2026-11-07 used.")
+    ap.add_argument("--voice", choices=["elite", "neutral", "friendly"], default="elite",
+                    help="the user's curator voice for --prompt chat (owner default: elite)")
     args = ap.parse_args()
     if args.num_ctx:
         ENRICH_OPTS["num_ctx"] = WARMUP_OPTS["num_ctx"] = args.num_ctx
+    PROMPT.update(mode=args.prompt, voice=args.voice)
 
     # Load test set
     with open(args.prompts_file, encoding="utf-8") as f:

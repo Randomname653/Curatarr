@@ -8,6 +8,7 @@
   {"ref": "gemma4:31b-it-qat",       "role": "curator",    "profiles": ["large"],          "why": "quantisation-aware q4 of the production model, 19 GB"},
   {"ref": "gemma4:26b-a4b-it-qat",   "role": "curator",    "profiles": ["large", "small"], "why": "QAT of the MoE fallback, 16 GB"},
   {"ref": "qwen3.6:27b-q4_K_M",      "role": "curator",    "profiles": ["large"],          "why": "dense 27B; the DISQUALIFIED qwen3.6 was :latest = the 35B MoE, this one is untested"},
+  {"ref": "qwen3.6:35b-a3b",         "role": "curator",    "profiles": ["large", "small"], "why": "the 35B/A3B MoE DISQUALIFIED in 2026-08 for f16 KV starvation at 24 GB; re-measured with q8/q4 KV and the fit simulation (owner's OK 2026-11-05). Stays DISQUALIFIED in the catalog until it passes"},
   {"ref": "granite4.2:30b",          "role": "curator",    "profiles": ["large"],          "why": "new IBM family (Apache-2.0, German, native structured JSON), 18 GB"},
   {"ref": "nemotron-3.5-lightning:30b", "role": "curator", "profiles": ["large", "small"], "why": "NVIDIA MoE 30B/A3B, 25 GB: offload candidate for 12-16 GB cards"},
   {"ref": "ornith-1.5:35b",          "role": "curator",    "profiles": ["large", "small"], "why": "35B-A3B MoE (per its eval heading), 23 GB: offload candidate"},

@@ -57,7 +57,7 @@ def test_every_prompt_that_receives_third_party_text_fences_it():
     sn = _src("src/services/studio_notes.py")
     assert 'fence_untrusted("wikipedia"' in sn and "+ UNTRUSTED_RULE" in sn
     assert "_NOTE_CACHE_DAYS = 365 " in sn, "a decade-long cache turned any bad fetch into a decade-long payload"
-    ch = _src("src/routers/chat.py")
+    ch = _src("src/routers/chat.py") + _src("src/services/chat_prompt.py")  # its prompt builder
     assert "{UNTRUSTED_RULE}" in ch and "never instructions]" in ch
     assert "IT IS REAL DATA]" not in ch, "the old header asserted trust without the data/instruction split"
     pl = _src("src/services/pillars.py")

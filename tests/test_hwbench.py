@@ -96,7 +96,8 @@ check("escalation beyond x3 fails", not matrix.perf_ok({**ok, "judge_escalation_
 check("offloaded but too slow fails",
       not matrix.perf_ok({**ok, "gpu_share_pct": 55, "mono_gen_tok_s_median": 3})[0])
 check("offloaded and usable passes",
-      matrix.perf_ok({**ok, "gpu_share_pct": 55, "mono_gen_tok_s_median": 9, "judge_wall_s_p90": 40})[0])
+      matrix.perf_ok({**ok, "gpu_share_pct": 55, "mono_gen_tok_s_median": matrix.MIN_GEN_TOK_S * 1.5,
+                      "judge_wall_s_p90": 40})[0])
 check("a cell whose /api/ps figure is implausible cannot vouch for a fit",
       not matrix.perf_ok({**ok, "ps_implausible": True})[0])
 from tests.benchmarks.hwbench.perf import ps_implausible  # noqa: E402
@@ -233,6 +234,10 @@ check("degenerate judge: 10 of 12 the same verdict",
 check("...a spread judge and a too-small sample are not",
       matrix.degenerate({"artifacts": [judge_file("spread", ["CUT", "HARD_KEEP", "STAGNANT"] * 4)]}) == ""
       and matrix.degenerate({"artifacts": [judge_file("tiny", ["CUT"] * 5)]}) == "")
+check("a judge that never cuts on 40 titles is a K.O., below 20 verdicts it is not judged",
+      matrix.degenerate({"artifacts": [judge_file("nocut", ["HARD_KEEP", "STAGNANT", "KEEP_WITH_FLAG", "HARD_KEEP"] * 10)]})
+      == "degenerate judge: no CUT in 40 verdicts"
+      and matrix.degenerate({"artifacts": [judge_file("nocut-small", ["HARD_KEEP", "STAGNANT", "KEEP_WITH_FLAG"] * 5)]}) == "")
 
 # Recommendation gates: comfort, then the quality window.
 def _opt(name, score, tok, judge, prov=False, share=60):
@@ -319,8 +324,8 @@ check("a cell that took more than the simulated card has is a K.O.",
 # ── borderline cells get measured again ────────────────────────────────────
 off = {**ok, "gpu_share_pct": 18}
 check("borderline: offloaded and near the tok/s K.O. line",
-      matrix.borderline({**off, "mono_gen_tok_s_median": 8.2})
-      and matrix.borderline({**off, "mono_gen_tok_s_median": 4.7}))
+      matrix.borderline({**off, "mono_gen_tok_s_median": matrix.MIN_GEN_TOK_S * 1.37})
+      and matrix.borderline({**off, "mono_gen_tok_s_median": matrix.MIN_GEN_TOK_S / 1.28}))
 check("not borderline: clear of the line, or fully on the GPU, or failed",
       not matrix.borderline({**off, "mono_gen_tok_s_median": 30, "judge_wall_s_p90": 10})
       and not matrix.borderline({**ok, "gpu_share_pct": 100, "mono_gen_tok_s_median": 7})

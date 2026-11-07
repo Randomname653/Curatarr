@@ -59,7 +59,9 @@ TIERS_GB = (4, 6, 8, 10, 12, 16, 20, 24)
 MIN_GATE_VALID = 95.0
 MIN_JUDGE_VALID = 95.0
 MAX_MONO_EMPTY = 5.0
-MIN_GEN_TOK_S = 6.0
+# Readable streaming, the owner's rule (2026-11-05): text must arrive faster than
+# it is read. Reading ~240 wpm is ~5-6 tok/s, German more; 12 leaves a 2x margin.
+MIN_GEN_TOK_S = 12.0
 MAX_JUDGE_P90_S = 90.0
 MAX_ESCALATION = 3.0
 FIT_MARGIN_MIB = 512
@@ -73,6 +75,7 @@ BEST_TIE = 0.25                 # scores this close count as the same quality
 HOST_RAM_BASE_GB = 6.0          # OS + Curatarr + Ollama itself, before any offloaded layers
 MAX_VERDICT_SHARE = 0.75        # one verdict on more titles than this = a degenerate judge
 MIN_DEGENERATE_N = 10           # too few verdicts to call it either way
+MIN_CUT_N = 20                  # from this many verdicts on, a judge that never says CUT is degenerate
 DEFAULT_SERVER = "fa-auto_kv-f16"
 TIER_METHOD = "llama_fit_target"
 TIER_OVERRUN_TOL_MIB = 256
@@ -240,7 +243,10 @@ def ram_need_gb(model: dict, gpu_share_pct) -> float | None:
 def degenerate(run: dict) -> str:
     """A judge that hands nearly every title the same verdict is not judging:
     llama3.2:3b called 31 of 40 KEEP_WITH_FLAG, granite4.2:3b 34 of 40
-    STAGNANT (2026-10-19). Empty when the verdicts are spread."""
+    STAGNANT (2026-10-19). Neither is one that never cuts: the small-profile
+    MoE and granite4.2:8b gave 0 CUT on 40 titles where the reference cuts 8
+    (2026-11-05: a K.O. here costs no recommended package).
+    Empty when the verdicts are spread."""
     rows = _judge_rows(run)
     if len(rows) < MIN_DEGENERATE_N:
         return ""
@@ -250,6 +256,8 @@ def degenerate(run: dict) -> str:
     verdict, n = max(counts.items(), key=lambda kv: kv[1])
     if n / len(rows) > MAX_VERDICT_SHARE:
         return f"degenerate judge: {n} of {len(rows)} verdicts are {verdict}"
+    if len(rows) >= MIN_CUT_N and not counts.get("CUT"):
+        return f"degenerate judge: no CUT in {len(rows)} verdicts"
     return ""
 
 

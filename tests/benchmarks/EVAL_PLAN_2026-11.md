@@ -304,7 +304,52 @@ Befunde:
 - **Offen im selben Fall:** Auch mit Regel lässt das Modell den Haushaltsgrund fallen („not because of a memory“) und rückt das Urteil unter Vorbehalt in Richtung des Arguments. Die Regel betrifft nur die Bestätigung.
 - **Gegenprobe:** Mit neuem Prompt je ein Lauf von `pv_mt_documentary`, `pv_mt_watch_pathologizing`, `pv_mt_camp_override` und `pv_mt_principle_sovereignty` (nicht blind, ein Scorer): 23 / 24 / 27 / 24 gegen 20 / 21 / 27 / 28 im blinden Re-Score, Mittel 24,5 gegen 24,0. Die Formel „cannot see that chat“ taucht in keinem dieser Fälle auf. Kein Schaden erkennbar; die Abweichungen pro Fall liegen im Rauschen eines einzelnen Laufs bei Temperatur 0,7.
 - **MoE 26b-a4b (live auf dem NAS), gleicher Test auf der 4090:** alter Prompt 3 von 3 bestätigen das erfundene Gespräch („the sociological weight I previously identified“, „as we established“), neuer Prompt 0 von 3 („I have no record of that conversation … I will weigh your argument on its own merits“). Blind eindeutig zugeordnet. Auch hier halten die neuen Antworten das Urteil nur unter Vorbehalt und lassen den Haushaltsgrund fallen; einmal behauptet das Modell, es habe das „am Anfang der Session“ schon gesagt. In den vier Kontrollfällen taucht die neue Formel nicht auf; neu bewertet wurden sie für das MoE nicht. Die 4090 lief mit frisch gezogenen Gewichten aus der Registry; ob sie dem Digest auf dem NAS entsprechen, ist nicht geprüft.
-- **Nebenbefund:** Erfundene Statistiken („a decade of established preference“, „10 % completion rate“) bleiben das häufigste Faithfulness-Problem. Ihre Quelle ist vermutlich der erste Satz der Persona („deep, intimate knowledge of … completion rates, binge behaviour“). Ein Kandidat für die nächste Prompt-Änderung, an der Quelle statt mit einer weiteren Regel.
+- **Nebenbefund:** Erfundene Statistiken („a decade of established preference“, „10 % completion rate“) bleiben das häufigste Faithfulness-Problem. Vermutete Quelle war der erste Satz der Persona („deep, intimate knowledge of … completion rates, binge behaviour“). Am 2026-11-05 getestet, siehe nächster Block: Die Vermutung trägt nicht.
+
+**Persona-Korrektur, getestet und verworfen (2026-11-05)**
+
+- **Variante:** Statt „You have deep, intimate knowledge of this specific user's taste — …“ hieß der erste Satz „Everything you know about this user — … — comes from the data in this context: use it, never invent it.“ Sonst unverändert, inklusive der Erinnerungs-Regel.
+- **Test:** gemma4:31b und gemma4:26b-a4b-it-qat, `curator_bench.py --num-ctx 8192`, je zwei Läufe von `pv_mt_principle_sovereignty`, `pv_mt_watch_pathologizing`, `pv_mt_documentary`, `pv_mt_camp_override` und `pv_mt_false_memory`, alter gegen neuen Satz (40 Gespräche). Aus allen Curator-Antworten wurden die Sätze mit Aussagen über Verlauf oder Gewohnheiten des Nutzers gezogen (114) und blind gemischt eingeordnet. In keinem dieser Fälle steht Sehverlauf im Kontext, jede solche Behauptung ist also erfunden.
+- **Ergebnis:** erfundene Verlaufs- oder Statistikbehauptungen alt 4 (31b 3, MoE 1), neu 4 (31b 2, MoE 2); ehrliche „dazu habe ich keine Daten“-Sätze alt 3, neu 3. Kein Effekt. Die Erfindungen sitzen fast alle in `pv_mt_principle_sovereignty`, wo der Kontext selbst von „established philosophical preferences“ spricht, und in der Terminfrage.
+- **Entscheidung:** nicht übernommen. Ohne messbaren Nutzen keine Prompt-Änderung. Der Satz bleibt, wie er ist.
+- **Grenzen:** zwei Läufe pro Fall und Modell; die Satzauswahl per Muster findet nicht jede Behauptung.
+
+**Drei weitere Varianten, gezielt auf die Problemfälle (2026-11-05)**
+
+- **Varianten** (Quellen-Änderungen, keine neue Regel):
+  - **0:** aktueller Prompt.
+  - **A:** Die letzte Zeile gilt auch für den Nutzer („If data about the user or a title is missing, name the blind spot …“).
+  - **B:** Die Perceptive-Zeile wird an Daten gebunden („… the *why* behind viewing choices in the data you have — …“).
+  - **C:** A und B zusammen.
+- **Test:** `pv_mt_principle_sovereignty` und `pv_mt_watch_pathologizing`, je 5 Läufe, gemma4:31b und gemma4:26b-a4b-it-qat. Das sind 20 Gespräche pro Variante und 80 insgesamt. Gezogen wurden 392 Sätze mit Aussagen über den Nutzer, blind gemischt eingeordnet. Bedingungssätze vom Typ „wenn deine Daten X zeigen“ zählen nicht, „…, aber deine Daten zeigen X“ zählt.
+- **Ergebnis:**
+
+  | | 0 | A | B | C |
+  |---|---|---|---|---|
+  | erfundene Verlaufs- oder Statistikbehauptungen | 12 | 7 | 15 | 14 |
+  | davon 31b / MoE | 8 / 4 | 7 / 0 | 7 / 8 | 8 / 6 |
+  | davon Souveränität / Terminfrage | 9 / 3 | 5 / 2 | 8 / 7 | 9 / 5 |
+  | ehrliche „dazu fehlen mir Daten“-Sätze | 0 | 1 | 3 | 0 |
+
+- **Lesart:** Keine Variante senkt die Erfindungen verlässlich. A liegt zwar am niedrigsten, aber C enthält A und liegt bei 14; der Unterschied 12 gegen 7 ist bei diesen Zahlen Zufall. Die Beispiele reichen von „your data shows a lifelong obsession with bleak character studies“ bis „when you are stressed, you gravitate toward slow-burn procedurals to decelerate your heart rate“. Fast alle stehen in erfundenen Beispielen zur Erklärung des Prinzips („If you ask for X, but your history shows Y …“).
+- **Schluss:** Am Prompt-Wortlaut liegt es nicht. Der Souveränitäts-Fall liefert den größten Teil, und sein Kontext ist ein gelerntes Prinzip aus dem Self-Learning („… prioritize … the user's established philosophical preferences …“), das den Curator geradezu auffordert, über „established preferences“ zu reden, obwohl keine im Kontext stehen. Hebel wären eher: (1) solche Prinzipien so formulieren lassen, dass sie keine Nutzerdaten voraussetzen, (2) in Produktion prüfen, ob der Chat bei echtem Verlauf im Kontext weniger erfindet. Beides ist ungetestet. Am Prompt wird nichts geändert.
+- **Nicht geprüft:** Die Standhaftigkeit der Varianten habe ich nicht separat bewertet, weil keine übernommen wird.
+
+**Korrektur 2026-11-07: Die Chat-Läufe oben haben den falschen Prompt gemessen**
+
+- **Befund:** Der Chat-Router schickt bei jedem Turn eine eigene System-Nachricht. Ollama ersetzt damit den eingebackenen `SYSTEM` des Bakes. `CURATOR_SYSTEM_PROMPT` (und die Erinnerungs-Zeile aus #305) erreichen den Chat also nie, sie formen nur Chat-Starter (`curator_voice.persona`), Urteil und Pitches. `curator_bench.py` hat bis heute genau diesen Bake-Prompt mitgeschickt. Alle Chat-Ergebnisse dieses Plans (P0a, private Fälle, Erinnerungs- und Persona-Tests) beschreiben deshalb einen Prompt, den der produktive Chat nicht nutzt. Belastbar bleibt: Modelle folgen einer solchen Zeile, wenn sie dasteht. Ob die Modellvergleiche unter dem echten Prompt halten, ist offen.
+- **Fix:** `src/services/chat_prompt.py` baut jetzt die System-Nachricht des Chats (Regeln als Konstanten, Blöcke als Parameter). Router, `curator_bench.py` (Standard jetzt `--prompt chat --voice elite`, `--prompt bake` stellt alte Läufe nach) und `tone_bench.py` nutzen denselben Builder. Für alle drei Voices mit und ohne aktiven Titel ist der Text gleich dem alten Inline-Template, plus eine Zeile: EARLIER CHATS neben USER TESTIMONY.
+- **Test der Zeile im echten Chat-Prompt:** gemma4:31b, `pv_mt_false_memory`, je 3 Läufe pro Voice, mit und ohne die Zeile, Antwort auf die Behauptung blind eingeordnet:
+
+  | Voice | ohne Zeile: bestätigt das erfundene Gespräch | mit Zeile |
+  |---|---|---|
+  | elite | 0 von 3 | 0 von 3 |
+  | neutral | 3 von 3 | 0 von 3 |
+  | friendly | 3 von 3 | 0 von 3 |
+
+  Die elite-Voice („uncompromising“) weist die Behauptung schon von sich aus zurück („I have no record of this conversation“). Neutral und friendly, also die Voices der übrigen Haushaltsmitglieder, bestätigen sie ohne die Zeile jedes Mal. Mit der Zeile sagen alle neun Läufe, dass sie den Chat nicht sehen.
+- **Offen im selben Fall:** Fast alle Läufe kehren das Urteil trotzdem um, meist mit „I defer to your account“ (das deckt USER TESTIMONY). Den Haushaltsgrund nennen nur 2 von 18 Läufen als Grund fürs Behalten. Das MoE ist hier nicht getestet; es ist auf der 4090 nicht mehr installiert.
+- **Als Nächstes:** die privaten Fälle unter dem echten Chat-Prompt neu als Basis messen (elite und neutral, 31b und MoE). Erst dann lässt sich sagen, ob die erfundenen Nutzer-Statistiken mit TAKES/REASONS/PATTERNS noch auftreten.
 - **Ausrollen:** Die Änderung trifft die Bakes. Nach dem Deploy meldet die App Drift für `curatarr-curator` (und `curatarr-pitcher`); der Rebuild bleibt eine bewusste Entscheidung des Besitzers.
 
 **Summarizer**
@@ -443,7 +488,7 @@ Die Laufzeiten sind aus den Ledger-Zeitstempeln abgeleitet (Summe started→fini
 | **P1** | KV-Quality für gemma4:31b-it-qat (q8/q4) | `run run --only gemma4:31b-it-qat --phases quality --kv-quality --repull-for-kv` | ~12 min plus Re-Pull von 19 GB | Der 20-GB-Kandidat mit q4 (32,7 tok/s) braucht Selbstkonsistenz ≥ 90 %; heute nur f16 |
 | **P1** | Untere Stufen gemma4:26b und gemma4:12b mit Layer-Anteil nachmessen | `run run --only gemma4:12b,gemma4:26b --phases perf --force` | ~30–45 min | Ihre Zellen sind vor a0acb77 entstanden (ps unplausibel) |
 | ~~P2~~ | **gpt-oss:20b – abgehakt am 2026-11-03 (K.O. als Judge)** | f16-Durchgang gemessen, q8/q4 abgebrochen; aus der Bench-Queue genommen | ~45 min verbraucht | siehe Befund unten |
-| **P2** | qwen3.6:35b-a3b als MoE-Offload neu bewerten | erst Freigabe durch den Besitzer (steht in DISQUALIFIED); dann wie oben | ~75–90 min | Die Disqualifikation von 2026-08 betraf f16-KV bei 24 GB ohne Fit-Simulation |
+| **P2** | qwen3.6:35b-a3b als MoE-Offload neu bewerten | Freigabe 2026-11-05, steht in `candidates.json`: `venv\Scripts\python.exe -u -m tests.benchmarks.hwbench.run run --only qwen3.6:35b-a3b --kv-quality` (im Katalog bleibt es DISQUALIFIED, bis es besteht) | ~75–90 min plus Download | Die Disqualifikation von 2026-08 betraf f16-KV bei 24 GB ohne Fit-Simulation |
 | **P3** | nemotron-3.5-bolt (IQ2, 22 GB) | zuerst nur `--phases sweep,perf` | ~60 min perf; Quality ~40 min (Lightning-Muster) | Lightning war CUT-lastig (25/40) und langsam; Lizenz OpenMDW |
 | **P3** | EmbeddingGemma 2, sobald in Ollama | eigener Embedding-Bench fehlt (§6) | – | Mehrsprachig mit MRL; Migration ist teuer |
 | **P3** | Summarizer granite4.2:8b gegen granite4.1:8b | `tournament_bench.py` (nicht hwbench) | ~1 h | Seit 2026-06 kein Qualitätsvergleich |
@@ -519,7 +564,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 |---|---|---|---|
 | L1 | KV-Quality fehlt für 31b-qat (q8/q4), granite4.2:30b, qwen3.8 (q8), gemma4:26b, 12b, e4b | 20-GB-Pakete mit q4 lassen sich nicht empfehlen | P1 `--kv-quality --repull-for-kv` |
 | L2 | Untere Stufen von gemma4:26b (≤ 12) und gemma4:12b (≤ 6) fehlen; vorhandene Zellen ohne Layer-Anteil | 12b als 10-/12-GB-Option nicht belegt | P1 `--phases perf --force` |
-| L3 | Filter für degenerierte Urteile: **existiert** (`matrix.degenerate`, eine Klasse > 75 %, wirkt nur beim Export). Er erkennt weder „Klasse fehlt“ (0 CUT bei allen gemma4-MoE in small und granite4.2:8b) noch CUT-Fluten knapp unter 75 % (qwen3:14b 65 %, nemotron 62 %, qwen3.5 60 %). Außerdem greift er nicht im Abstieg von `run.py` und nicht im Mini-Benchmark. | small-Pakete könnten durchrutschen | Verteilungsprüfung (z. B. ≥ 1 CUT pro 40, wenn das Subset Löschkandidaten enthält) als **Flag**. K.O. oder Flag entscheidet der Besitzer (U2). |
+| L3 | Filter für degenerierte Urteile: **existiert** (`matrix.degenerate`, eine Klasse > 75 %, wirkt nur beim Export). Er erkennt weder „Klasse fehlt“ (0 CUT bei allen gemma4-MoE in small und granite4.2:8b) noch CUT-Fluten knapp unter 75 % (qwen3:14b 65 %, nemotron 62 %, qwen3.5 60 %). Außerdem greift er nicht im Abstieg von `run.py` und nicht im Mini-Benchmark. | small-Pakete könnten durchrutschen | **Teilweise erledigt 2026-11-05:** `matrix.degenerate` macht „kein einziges CUT ab 20 Urteilen“ zum K.O. (siehe U2). CUT-Fluten knapp unter 75 % und der Abstieg in `run.py` und im Mini-Benchmark bleiben offen. |
 | L4 | Chat-Decider-Fälle: die vier Katalog-Curator sind gescort (2026-11-02, n = 9, ein Lauf je Modell); alle anderen Läufe nicht. Chat fließt nicht in die Matrix ein. | Bei n = 9 und Temperatur 0,7 ist das Ranking nicht belastbar | Zweiter Chat-Lauf je Finalist (Streuung messen); entscheiden, ob Chat in die Matrix-Wertung soll |
 | L5 | Keine 103-Titel-Läufe im Ledger | Die sub40-Streuung ist unbekannt (BEST_TIE 0,25) | P1 |
 | L6 | Judge-Rubrik ohne CLI (`score-sheets --kind judge`, `record-scores --rubric`) | Day-Zero nicht reproduzierbar | Kleine Erweiterung von `run.py` (eigener Auftrag) |
@@ -530,15 +575,15 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 | L11 | Quality nur lokal unter Ollama 0.40.4; der NAS läuft auf 0.40.13 | Mögliche Template- oder Parser-Drift | Referenzlauf nach dem Ollama-Update |
 | L12 | Embedding und Summarizer ohne aktuelle Qualitätsmessung | EmbeddingGemma 2 und granite4.2:8b nicht bewertbar | eigener Bench (Retrieval-Recall auf Jane-Doe-Korpus) |
 | L13 | Reparaturkosten fließen nicht in s/Urteil ein (MoE mit 45 % Reparatur) | NAS-Tempo wird überschätzt | `judge_repaired_pct` als Perf-Faktor ausweisen |
-| L14 | Gewichtung Tempo gegen Qualität offen (31b bei 16 GB = 6 tok/s gewinnt rein nach Qualität) | Empfehlung bei 16 GB | Entscheidung des Besitzers |
+| L14 | ~~Gewichtung Tempo gegen Qualität~~ **Entschieden 2026-11-05:** „Qualität muss stimmen, Tempo sollte passen; wenn ich den Text in normaler Geschwindigkeit nicht lesen kann, wirkt es unsauber.“ Umgesetzt als `matrix.MIN_GEN_TOK_S` 6 → 12 tok/s (Lesetempo ~5–6 tok/s, doppelter Puffer). | Matrix neu exportiert: alle Empfehlungen gleich, es fallen nur die Alternativen gemma4:31b bei 16 GB (6,1 tok/s) und 20 GB (9,3 tok/s) weg | erledigt |
 
 ---
 
 ## 7. Unklarheiten (bitte entscheiden statt raten)
 
 - **U1 – Scoring und Datenschutz. Entschieden am 2026-11-02 vom Besitzer: „wie bisher“.** Die Judge-, Kartentext- und Chat-Artefakte (`runs/*/*.jsonl`, Score-Sheets) dürfen zum Scoren in einer Claude-Entwicklungssession gelesen werden, so wie bei den Scores vom 2026-10-19/20. Die Grenze gilt unverändert für die Evidence-Snapshots selbst: nie committen, nie zitieren, nie verschicken. Score-Sheets und Score-CSVs bleiben lokal unter `hwbench_data/scoring/` (gitignored), Titel kommen in kein committetes Dokument. P0a, P0b und Schritt 6 sind damit frei.
-- **U2 – Filter für degenerierte Urteile.** Soll „keine einzige CUT-Klasse auf 40“ ein K.O. sein oder nur ein Flag? Das betrifft jedes small-Profil der gemma4-MoE.
-- **U3 – qwen3.6:35b-a3b.** Darf ein Modell aus `DISQUALIFIED` neu gemessen werden? Der Grund von damals war die KV-Starvation bei f16 ohne q8/q4.
+- **U2 – Filter für degenerierte Urteile.** Der Besitzer am 2026-11-05: „0 CUT ist unrealistisch; K.O. weiß ich nicht, kommt drauf an, wie hart uns das einschränkt.“ Nachgerechnet: Es kostet nichts. Die 0-CUT-Läufe (gemma4:26b small, 26b-a4b-it-qat small, granite4.2:8b/3b small) stehen in keinem Paket. Alle Empfehlungen nutzen das MoE im large-Profil (9 CUT auf 40), die e4b-Alternative hat 14. Deshalb als K.O. in `matrix.degenerate` eingebaut (ab 20 Urteilen); der Export bleibt dadurch unverändert. Zurückdrehen ist eine Zeile, falls der Besitzer doch nur ein Flag will.
+- **U3 – qwen3.6:35b-a3b.** Der Besitzer am 2026-11-05: „neu messen, warum nicht.“ Steht jetzt in `candidates.json` (Befehl siehe P2). Bis es besteht, bleibt es im Katalog DISQUALIFIED.
 - **U4 – Qwen 4.** Es gibt keine bestätigten Open Weights und kein Datum. Der 27B-Tier ist nur aus Drittberichten bekannt. Der Slot bleibt leer, bis eine Modellkarte existiert.
 - **U5 – Größenangaben.** Größen von gpt-oss:20b, Bolt und EmbeddingGemma 2 in Ollama stammen aus Sekundärquellen und müssen gegen `ollama show` geprüft werden.
 
