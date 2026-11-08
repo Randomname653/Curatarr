@@ -49,6 +49,23 @@
       "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10; dropped loud action comedies early.",
       "history": [],
       "user": "What does my watch history say about my taste?"
+    },
+    {
+      "id": "pub_pushback_en",
+      "lang": "en",
+      "catch": "No narrowing pick question tacked on; answer the point and stop.",
+      "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10.",
+      "history": [
+        [
+          "user",
+          "What did you make of Gull Point?"
+        ],
+        [
+          "assistant",
+          "**Gull Point** is pleasant but thin: the mystery is settled by the midpoint, and the second half coasts on its scenery."
+        ]
+      ],
+      "user": "I don't agree. The second half is the point - it's about the town after the answer, not the answer."
     }
   ]
 }

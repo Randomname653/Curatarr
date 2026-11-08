@@ -108,6 +108,43 @@ check("the card is the newest unread, unexpired follow-up - not the expired morn
       and card["label"] == "Recommendation follow-up", card)
 check("an English writer gets English answers", card["replies"] == list(pm.FOLLOWUP_REPLIES["en"]))
 
+# A morning line gets the card only when it is about exactly one title:
+# "Loved it" on two series and an hour of music answers nothing.
+import json  # noqa: E402
+
+with conn.get_db_session() as db:
+    db.query(ProactiveMessage).filter(ProactiveMessage.user_id == UID,
+                                      ProactiveMessage.trigger_type == "recommendation_followup"
+                                      ).update({"read": True})
+    db.add_all([
+        ProactiveMessage(user_id=UID, trigger_type="last_night", message="Two series and music.",
+                         trigger_data=json.dumps({"type": "last_night", "parts": 3, "titles": 2}),
+                         read=False, created_at=now - timedelta(minutes=30),
+                         expires_at=now + timedelta(hours=3)),
+        ProactiveMessage(user_id=UID, trigger_type="last_night", message="Stored before the count.",
+                         trigger_data=json.dumps({"type": "last_night", "summary": "x"}),
+                         read=False, created_at=now - timedelta(minutes=20),
+                         expires_at=now + timedelta(hours=3)),
+    ])
+    db.commit()
+check("a morning line about several things, or stored before the count, gets no card",
+      pm.followup_card(UID) is None)
+with conn.get_db_session() as db:
+    db.add(ProactiveMessage(user_id=UID, trigger_type="last_night",
+                            message="Three episodes of Starfall Archive last night.",
+                            trigger_data=json.dumps({"type": "last_night", "parts": 1, "titles": 1}),
+                            read=False, created_at=now - timedelta(minutes=40),
+                            expires_at=now + timedelta(hours=3)))
+    db.commit()
+one = pm.followup_card(UID)
+check("a morning line about exactly one title gets the card, even under newer ones that do not",
+      one and one["message"] == "Three episodes of Starfall Archive last night.", one)
+with conn.get_db_session() as db:
+    db.query(ProactiveMessage).filter(ProactiveMessage.user_id == UID,
+                                      ProactiveMessage.message == "You tried The Lantern Room. How did it land?"
+                                      ).update({"read": False})
+    db.commit()
+
 with conn.get_db_session() as db:
     for text in ("Was soll ich heute Abend schauen? Gern etwas Ruhiges.",
                  "Ich glaube, das ist nicht so mein Ding, aber ich schaue es mir an.",
@@ -119,7 +156,8 @@ check("a German writer gets the answers in German (they are sent as the member's
       pm.followup_card(UID)["replies"] == list(pm.FOLLOWUP_REPLIES["de"]))
 check("every language has four answers", all(len(r) == 4 for r in pm.FOLLOWUP_REPLIES.values()))
 got = asyncio.run(messages_router.get_followup(user=SimpleNamespace(id=UID)))
-check("GET /api/messages/followup answers the card", got["card"]["id"] == card["id"], got)
+check("GET /api/messages/followup answers the card", got["card"] is not None
+      and got["card"]["trigger_type"] in pm.FOLLOWUP_TYPES, got)
 
 # ── the Wrap-Up playlist names the server that answered ─────────────────────
 

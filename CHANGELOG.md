@@ -15,13 +15,15 @@ line, the enrichment tile, the Knowledge Base and Activity entries, Recompute ta
 libraries, Re-fetch and the beta tag are the owner's only; the recommendations tile reads the
 cache and no longer starts a generation when it is empty. A member's chat error and queue lines
 say what happened in plain words; the owner still reads the job and the Ollama address. The
-newest unanswered "how did it land?" message (a watched recommendation, the morning line) sits
-on the landing as a card with four one-tap answers instead of only behind the bell, and a
+newest unanswered "how did it land?" message (a watched recommendation, or a morning line about
+exactly one title) sits on the landing as a card with four one-tap answers instead of only
+behind the bell, and a
 returning visit opens on the landing with the last conversation folded behind "Continue our
 last conversation". The starters' daypart, weekday and day-named expiry and the morning line
 read the member's own time zone instead of the machine's (a UTC container put a Berlin evening
 an hour or two late). The chat gained one rule for recommendation turns: one or two titles with
-a reason each, then one question that narrows the next pick, a longer list only when asked.
+a reason each, then one question that narrows the next pick, a longer list only when asked;
+every other turn ends once it is answered, with no question tacked on.
 Notification labels judge the watching, not the person ("Started, not finished" for "Attention
 deficit", "Comfort picks" for "Guilty pleasures", ...), and the bell badge shows the label
 instead of the internal type. Swipe, Wrap-Up and History name Jellyfin on a Jellyfin install,

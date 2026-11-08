@@ -473,8 +473,8 @@ export function fillPrompt(text) {
   inp.focus();
 }
 // ── CHAT LANDING "HOW DID IT LAND?" CARD ────────────────────────────────────
-// The newest unread follow-up (a watched recommendation, the morning line)
-// as a card above the landing panels, with one-tap answers in the member's
+// The newest unread follow-up (a watched recommendation, or a morning line
+// about exactly one title) as a card above the landing panels, with one-tap answers in the member's
 // language (services/proactive_messages.followup_card). Before 2026-11-08 it
 // waited behind the bell and answering meant typing. An answer is the same
 // as Respond + typing it: the message's own thread, the curator's line as the

@@ -151,10 +151,15 @@ EARLIER_CHATS_RULE = (
 # keeps its last title as active_title, so gating it on that would drop it
 # from the very threads that ask "and what tonight?" after naming a title.
 # One line on purpose; the shape is the prompt's job, no filter on the reply.
+# The first wording leaked: the narrowing question landed on pushback, opinion
+# and small talk too (tone_bench 2026-11-08: 35/45 private replies ended in a
+# question, 9/45 without the rule). "Only when ... every other turn ends once
+# it is answered" measured 12/45, the pick cases kept theirs (tonight 6/6).
 CONVERSATION_RULE = (
-    "8. CONVERSATION: When the user asks what to watch or listen to, offer one or two titles, "
-    "each with one sentence on why it fits them, then ask one short question that narrows the "
-    "next pick; give a longer list only when they ask for one."
+    "8. CONVERSATION: Only when the user asks what to watch or listen to, offer one or two "
+    "titles, each with one sentence on why it fits them, then one short question that narrows "
+    "the next pick, and a longer list only when they ask for one; every other turn ends once it "
+    "is answered, with no question tacked on."
 )
 
 

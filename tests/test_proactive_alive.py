@@ -121,6 +121,7 @@ def test_the_morning_line_sums_up_last_night_and_only_in_the_morning():
     assert "\"Frieren\": 2 episodes" in hit["summary"] and "the film \"Heat\"" in hit["summary"], hit["summary"]
     assert "Otis Redding" not in hit["summary"] and "Old" not in hit["summary"]
     assert hit["ended"] == "22:00" and hit["series"] == "Frieren"
+    assert hit["parts"] == 2 and hit["titles"] == 2, "a series and a film: two titles"
     assert pm.detect_last_night(entries, _local_to_utc(datetime.combine(today, time(14, 0))), zone=BERLIN) is None, "afternoon: no morning line"
     asked = {"tracks": set(), "titles": set(), "series": {}, "subjects": {"last_night:2026-09-22": morning - timedelta(hours=1)}}
     assert pm.detect_last_night(entries, morning, asked, zone=BERLIN) is None, "one per day"
@@ -140,6 +141,11 @@ def test_the_morning_line_is_the_members_morning_not_the_machines():
     hit = pm.detect_last_night(entries, early, zone=BERLIN)
     assert hit and hit["date"] == "2026-11-09" and hit["weekday"] == "Monday", hit
     assert hit["ended"] == "21:00", "the play's time on the member's clock"
+    assert hit["parts"] == 1 and hit["titles"] == 1, "one series, nothing else: one title"
+    music = entries + [_row("Track", "music", to_utc(datetime.combine(ev, time(22, 0)), BERLIN),
+                            series="The Hollow Pines", dur=40 * 60_000)]
+    hit = pm.detect_last_night(music, early, zone=BERLIN)
+    assert hit["parts"] == 2 and hit["titles"] == 1, "music minutes are a part, not a title"
     assert pm.detect_last_night(entries, early, zone=ZoneInfo("UTC")) is None, "04:30 is no morning in UTC"
     # summer time: noon in Berlin is 10:00 UTC, not 11:00
     summer = datetime(2026, 7, 14, 6, 0)

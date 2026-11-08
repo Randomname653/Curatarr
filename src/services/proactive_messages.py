@@ -25,6 +25,7 @@ and picks up the user's earlier answer on the same subject when there is one):
 """
 
 import json
+import re
 import logging
 import random
 from datetime import datetime, timedelta, time as _time, tzinfo
@@ -804,6 +805,9 @@ def detect_guilty_pleasure(entries: list[dict], now: datetime,
     return None
 
 
+_MUSIC_PART = re.compile(r"^\d+ min of ")
+
+
 def detect_last_night(entries: list[dict], now: datetime,
                       asked_subjects: dict | None = None,
                       zone: Optional[tzinfo] = None) -> Optional[dict]:
@@ -856,11 +860,17 @@ def detect_last_night(entries: list[dict], now: datetime,
     if not parts:
         return None
     last = max(rows, key=lambda e: e["viewed_at"])
+    shown = parts[:4]
     return {
         "type": "last_night",
         "date": key,
         "weekday": local_now.strftime("%A"),
-        "summary": "; ".join(parts[:4]),
+        "summary": "; ".join(shown),
+        # How many things the line sums up, and how many are titles (series,
+        # films; music minutes are not): the landing's one-tap verdict fits a
+        # line about exactly one title only (followup_card).
+        "parts": len(shown),
+        "titles": sum(1 for p in shown if not _MUSIC_PART.match(p)),
         "ended": to_local(last["viewed_at"], zone).strftime("%H:%M"),
         "series": first_series,
         "media_type": last.get("media_type"),
@@ -2010,21 +2020,35 @@ FOLLOWUP_REPLIES = {
 }
 
 
+def _one_title(trigger_data: Optional[str]) -> bool:
+    """A morning line about exactly one title. "Loved it" on a line that sums
+    up two series and an hour of music answers nothing; lines stored before
+    the count existed read as more than one."""
+    try:
+        td = json.loads(trigger_data or "{}")
+    except (ValueError, TypeError):
+        return False
+    return isinstance(td, dict) and td.get("parts") == 1 and td.get("titles") == 1
+
+
 def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict]:
     """The newest unread, unexpired follow-up message with its one-tap
-    answers, or None. Read only: showing the card is no impression (the bell
-    counts those). Blocking."""
+    answers, or None: a watched recommendation (one title by nature), or a
+    morning line about exactly one title. Read only: showing the card is no
+    impression (the bell counts those). Blocking."""
     from src.services.user_language import user_language
     now = now or datetime.utcnow()
     with get_db_session() as db:
-        m = (db.query(ProactiveMessage)
-             .filter(ProactiveMessage.user_id == user_id,
-                     ProactiveMessage.read == False,  # noqa: E712 - SQL comparison
-                     ProactiveMessage.trigger_type.in_(FOLLOWUP_TYPES))
-             .filter((ProactiveMessage.expires_at == None)  # noqa: E711 - SQL comparison
-                     | (ProactiveMessage.expires_at > now))
-             .order_by(ProactiveMessage.created_at.desc())
-             .first())
+        rows = (db.query(ProactiveMessage)
+                .filter(ProactiveMessage.user_id == user_id,
+                        ProactiveMessage.read == False,  # noqa: E712 - SQL comparison
+                        ProactiveMessage.trigger_type.in_(FOLLOWUP_TYPES))
+                .filter((ProactiveMessage.expires_at == None)  # noqa: E711 - SQL comparison
+                        | (ProactiveMessage.expires_at > now))
+                .order_by(ProactiveMessage.created_at.desc())
+                .limit(20).all())
+        m = next((r for r in rows if r.trigger_type == "recommendation_followup"
+                  or _one_title(r.trigger_data)), None)
         if m is None:
             return None
         card = {"id": m.id, "message": m.message, "trigger_type": m.trigger_type,
