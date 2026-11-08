@@ -21,7 +21,7 @@ body:
     id: version
     attributes:
       label: Curatarr version / commit
-      placeholder: "1.0.0-beta @ abc1234"
+      placeholder: "1.1.0 @ abc1234"
   - type: input
     id: env
     attributes:

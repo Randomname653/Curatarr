@@ -4,9 +4,35 @@ Condensed release history, newest first.
 
 ---
 
-## Unreleased — Wrap-Up for everyone, a tactile glass UI on desktop and phone, Curatarr on a NAS, one SQLite writer
+## Unreleased
 
-Two weeks after 1.1.0. The milestones, in the order the entries below
+**A member's chat landing speaks to the member** (design record
+[docs/UX_RETENTION_DESIGN.md](docs/UX_RETENTION_DESIGN.md), stage 1). Beside the curator's
+openers the landing now offers chips in the member's own voice, built without a model from the
+same facts (their daypart and weekday, the series they are in, the music on rotation) and
+written in the language they talk to the curator in. The owner's clean-up chip and greeting
+line, the enrichment tile, the Knowledge Base and Activity entries, Recompute taste, Plex
+libraries, Re-fetch and the beta tag are the owner's only; the recommendations tile reads the
+cache and no longer starts a generation when it is empty. A member's chat error and queue lines
+say what happened in plain words; the owner still reads the job and the Ollama address. The
+newest unanswered "how did it land?" message (a watched recommendation, the morning line) sits
+on the landing as a card with four one-tap answers instead of only behind the bell, and a
+returning visit opens on the landing with the last conversation folded behind "Continue our
+last conversation". The starters' daypart, weekday and day-named expiry and the morning line
+read the member's own time zone instead of the machine's (a UTC container put a Berlin evening
+an hour or two late). The chat gained one rule for recommendation turns: one or two titles with
+a reason each, then one question that narrows the next pick, a longer list only when asked.
+Notification labels judge the watching, not the person ("Started, not finished" for "Attention
+deficit", "Comfort picks" for "Guilty pleasures", ...), and the bell badge shows the label
+instead of the internal type. Swipe, Wrap-Up and History name Jellyfin on a Jellyfin install,
+and a Jellyfin member without a linked account is told so instead of "not found in Plex".
+
+---
+
+## 2026-11-08 — v1.1.0: Wrap-Up for everyone, a tactile glass UI on desktop and phone, Curatarr on a NAS, one SQLite writer
+
+Four weeks after 1.1.0-beta, the first release without the suffix (the
+badge next to the logo still says beta). The milestones, in the order the entries below
 follow them:
 
 - **Wrap-Up** replaces the owner-only Curation Report: every household
@@ -37,26 +63,25 @@ follow them:
   media-server seam, and moves between them both ways without losing
   anything (Settings -> Media server, or `scripts/rebind_server.py`).
 
-**A member's chat landing speaks to the member** (design record
-[docs/UX_RETENTION_DESIGN.md](docs/UX_RETENTION_DESIGN.md), stage 1). Beside the curator's
-openers the landing now offers chips in the member's own voice, built without a model from the
-same facts (their daypart and weekday, the series they are in, the music on rotation) and
-written in the language they talk to the curator in. The owner's clean-up chip and greeting
-line, the enrichment tile, the Knowledge Base and Activity entries, Recompute taste, Plex
-libraries, Re-fetch and the beta tag are the owner's only; the recommendations tile reads the
-cache and no longer starts a generation when it is empty. A member's chat error and queue lines
-say what happened in plain words; the owner still reads the job and the Ollama address. The
-newest unanswered "how did it land?" message (a watched recommendation, the morning line) sits
-on the landing as a card with four one-tap answers instead of only behind the bell, and a
-returning visit opens on the landing with the last conversation folded behind "Continue our
-last conversation". The starters' daypart, weekday and day-named expiry and the morning line
-read the member's own time zone instead of the machine's (a UTC container put a Berlin evening
-an hour or two late). The chat gained one rule for recommendation turns: one or two titles with
-a reason each, then one question that narrows the next pick, a longer list only when asked.
-Notification labels judge the watching, not the person ("Started, not finished" for "Attention
-deficit", "Comfort picks" for "Guilty pleasures", ...), and the bell badge shows the label
-instead of the internal type. Swipe, Wrap-Up and History name Jellyfin on a Jellyfin install,
-and a Jellyfin member without a linked account is told so instead of "not found in Plex".
+**Anime watched, reported to Shoko (2026-11-08).** An optional Shoko Server
+(`SHOKO_URL`, `SHOKO_API_KEY`, one key per Shoko user) now gets every
+finished anime episode marked watched, with the day it was watched. The
+media server's file decides which Shoko episode it is, then TMDB; a play
+whose Plex key is gone (a replaced file, a series moved between libraries)
+is found again through the series' current copy. On the owner's history
+that placed 686 of 859 plays. What is left is listed per series and season
+under Settings -> Integrations -> Shoko, where the owner links it to its
+AniDB entry (one link per cour where AniDB splits a season) or skips it (western
+cartoons filed as anime). Nothing runs
+without the two settings.
+
+**Ready for the TrueNAS app catalog.** `deploy/truenas/catalog/curatarr` is the app in the
+official catalog's format (made from its Tautulli app): settings form, compose template on the
+catalog's library, test values, readme; `SUBMITTING.md` lists the steps to propose it. A new
+workflow runs it through the catalog's own test script on every change (ports against the
+whole catalog, the template rendered, the app started until its health check passes). A
+release tag `vX.Y.Z` now also publishes the image as `:X.Y.Z`, the fixed tag a catalog app
+pins, after checking it matches `VERSION` (`docs/RELEASING.md`).
 
 **Jellyfin plays while Curatarr is off.** Curatarr may run only a few hours a day on a PC, and
 Jellyfin itself keeps only each item's current state. The live-session poller now notices

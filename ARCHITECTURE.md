@@ -1293,7 +1293,7 @@ ones close the list.
 - **Service URLs and the secret sent with them** (`src/services/endpoint_policy.py`,
   2026-10-10 audit). The setup wizard and the library panel share one
   policy for every operator-supplied endpoint (Plex, the arrs, Ollama,
-  SoulSync). `validate_service_url` admits an http(s) base URL without
+  SoulSync, Shoko). `validate_service_url` admits an http(s) base URL without
   credentials, query or fragment, because a `#` or `?` would cut off or
   swallow the fixed API path the clients append and turn "Test connection"
   into fetch-anything; link-local, cloud-metadata, multicast and unspecified
@@ -1632,6 +1632,23 @@ growing this list.
   a SQLite-cached fallback lookup.
 - `src/services/discogs_offline.py` — streams the monthly Discogs CC0 masters
   dump into a local per-artist style vocabulary (no API token needed).
+
+### Anime neighbour
+- `src/services/shoko_client.py`, `shoko_sync.py`, `shoko_pins.py`,
+  `src/routers/shoko.py` — the optional Shoko Server (`SHOKO_URL`,
+  `SHOKO_API_KEY`, one key per Shoko user). Custodian task `shoko_watched`
+  (6 h) marks each finished anime play watched there with its own date
+  (`PUT /Episode/{id}/UserData`; a play no later than Shoko's last one plus
+  the same-viewing window is left alone). The Shoko episode comes from the
+  media server's file (name + size, `/File/PathEndsWith?include=XRefs`),
+  else TMDB, else the current copy of a play whose key is gone (same series
+  title, season and number), else an owner pin per series and season
+  (`ShokoPin`: link to an AniDB anime from an episode on, that episode =
+  its regular episode 1, so a season AniDB splits into cours takes one
+  link per cour; or skip). Ledger `shoko_watch_sync`: one report per play, unmatched ones
+  retried weekly five times. Routes and shapes are read from the live
+  server's OpenAPI (`/swagger/v3/swagger.json`, Shoko 6); writes never
+  leave a test process.
 
 ### Music neighbours
 - `src/services/soulsync_client.py` — client for the SoulSync LAN

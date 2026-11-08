@@ -369,7 +369,8 @@ class ShokoWatchSync(Base):
     """One finished anime play and what Shoko made of it (services/
     shoko_sync). status: "sent" (Shoko holds it as watched), "already"
     (Shoko had it watched on that day or later), "unmatched" (no Shoko
-    episode for the file yet; retried while attempts last). A play is
+    episode for the file yet; retried while attempts last), "skipped" (the
+    owner's pin says the series is not in Shoko). A play is
     reported once; a re-watch is its own play and its own row."""
     __tablename__ = "shoko_watch_sync"
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -378,10 +379,34 @@ class ShokoWatchSync(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(String(16), nullable=False)
     shoko_episode_ids = Column(String(200), nullable=True)   # comma-joined
-    matched_by = Column(String(8), nullable=True)            # path | tmdb | title
+    matched_by = Column(String(8), nullable=True)            # path | tmdb | title | pin
     attempts = Column(Integer, default=0)
     last_attempt_at = Column(DateTime, nullable=True)
     sent_at = Column(DateTime, nullable=True)
+
+
+class ShokoPin(Base):
+    """The owner's word on a series of the watch history that the Shoko
+    sync cannot place by itself (services/shoko_pins): "link" = its plays
+    of this season are episodes of this AniDB anime, "skip" = not in
+    Shoko, stop trying. Keyed by the normalized series title as the history
+    spells it, the season (NULL = plays without one, films) and the first
+    episode the pin covers: AniDB splits a season into cours (Mushoku
+    Tensei's 23-episode season 1 is two entries of 11 and 12), so a second
+    pin "from episode 12" makes episode 12 the next entry's episode 1. A
+    pin covers its episodes up to the next pin's. The AniDB id, not Shoko's
+    own series id: that one changes when Shoko re-imports."""
+    __tablename__ = "shoko_pins"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    series_key = Column(String(512), nullable=False, index=True)
+    series_title = Column(String(512), nullable=False)
+    season = Column(Integer, nullable=True)
+    from_episode = Column(Integer, nullable=False, default=1)
+    action = Column(String(8), nullable=False)          # link | skip
+    anidb_id = Column(Integer, nullable=True)
+    shoko_title = Column(String(512), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class ProtectedMedia(Base):

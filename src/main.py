@@ -498,6 +498,7 @@ from src.routers import stats
 from src.routers import wrapup
 from src.routers import model_updates
 from src.routers import jellyfin
+from src.routers import shoko
 from src.routers.auth import require_admin
 
 # Admin-only routers: enrichment runs heavy LLM jobs that block the GPU
@@ -527,6 +528,7 @@ app.include_router(imports.router,         prefix="/api/import",          tags=[
 app.include_router(swipe.router,           prefix="/api/swipe",           tags=["swipe"])
 app.include_router(hosts.router,           prefix="/api/hosts",           tags=["hosts"])
 app.include_router(jellyfin.router,        prefix="/api/jellyfin",        tags=["jellyfin"])
+app.include_router(shoko.router,           prefix="/api/shoko",           tags=["shoko"])
 app.include_router(model_updates.router,   prefix="/api/system/model-updates", tags=["models"],
                    dependencies=_ADMIN_ONLY)
 

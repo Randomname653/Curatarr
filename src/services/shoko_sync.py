@@ -27,6 +27,9 @@ A play no later than Shoko's last play of that episode (plus the window in
 which two rows are one viewing, series_progress.SAME_VIEW_WINDOW_H) is
 "already" there and left alone; a later one counts one more playback.
 
+What none of that places, the owner pins per series and season
+(services/shoko_pins): a link to an AniDB anime, or skip. A pin wins.
+
 Whether Shoko passes a watched episode on to the AniDB MyList depends on
 Shoko's own MyList settings, not on Curatarr.
 
@@ -264,9 +267,32 @@ class CurrentCopies:
         return out
 
 
+async def _pinned(sess, pin: dict, p: dict, matches: dict) -> tuple[list[int], Optional[str]]:
+    """The episodes an owner's link pin names: the pin's first episode is
+    regular episode 1 of the pinned AniDB anime, the next one 2, and so on
+    (a film: episode 1)."""
+    anidb = pin.get("anidb_id")
+    cache_key = ("pin", anidb)
+    if cache_key not in matches:
+        series = await sess.series_by_anidb(anidb) if anidb else None
+        sid = ((series or {}).get("IDs") or {}).get("ID")
+        matches[cache_key] = await sess.regular_episodes(sid) if isinstance(sid, int) else {}
+    number = (p.get("episode") or 1) - int(pin.get("from_episode") or 1) + 1
+    ep = matches[cache_key].get(number)
+    return ([ep], "pin") if ep else ([], "pin")
+
+
 async def _match(sess, adapter, copies: CurrentCopies, p: dict, items: dict,
-                 matches: dict) -> tuple[list[int], Optional[str]]:
-    """The Shoko episodes of one play: its own item, else the current copy."""
+                 matches: dict, pins: Optional[dict] = None) -> tuple[list[int], Optional[str]]:
+    """The Shoko episodes of one play: the owner's pin first, then its own
+    item, else the current copy. ([], "skip") when a pin says skip."""
+    from src.services.shoko_pins import pin_for
+    pin = pin_for(pins or {}, _norm_title(p.get("series") or p.get("title")), p.get("season"),
+                  p.get("episode"))
+    if pin and pin.get("action") == "skip":
+        return [], "skip"
+    if pin and pin.get("action") == "link":
+        return await _pinned(sess, pin, p, matches)
     key = str(p["item"] or "")
     if key not in matches:
         item = await _item_of(adapter, key, items) if key else None
@@ -352,8 +378,10 @@ async def sync_user(sess, adapter, user_id: int, *, limit: int = BATCH,
     first plays with what would happen to them."""
     from src.database.runner import run_read, run_write
     now = now or datetime.utcnow()
+    from src.services.shoko_pins import load_pins
     plays = await run_read(_due_plays, user_id, limit, now)
-    counts = {"sent": 0, "already": 0, "unmatched": 0, "stopped": None}
+    pins = await run_read(load_pins)
+    counts = {"sent": 0, "already": 0, "unmatched": 0, "skipped": 0, "stopped": None}
     sample: list[dict] = []
     outcomes: list[dict] = []
     items: dict = {}
@@ -362,8 +390,10 @@ async def sync_user(sess, adapter, user_id: int, *, limit: int = BATCH,
     copies = CurrentCopies(adapter)
     failures = 0
     for p in plays:
-        eps, how = await _match(sess, adapter, copies, p, items, matches)
-        if not eps:
+        eps, how = await _match(sess, adapter, copies, p, items, matches, pins)
+        if how == "skip":
+            status, how = "skipped", "pin"
+        elif not eps:
             status = "unmatched"
         else:
             try:

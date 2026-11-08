@@ -146,6 +146,40 @@ class ShokoSession:
         return [i for i in ((e.get("IDs") or {}).get("ID") for e in got if isinstance(e, dict))
                 if isinstance(i, int) and i > 0]
 
+    async def search_collection(self, query: str, limit: int = 10) -> list[dict]:
+        """AniDB anime in the local collection matching ``query`` (fuzzy;
+        an AniDB id also works), Shoko's best first. Each: anidb_id,
+        shoko_id, title, type, air_date, episodes."""
+        got = await self._get("/Series/AniDB/Search", {
+            "query": query, "local": "true", "fuzzy": "true", "includeTitles": "false",
+            "pageSize": limit})
+        out = []
+        for a in (got or {}).get("List") or [] if isinstance(got, dict) else []:
+            if isinstance(a, dict) and isinstance(a.get("ID"), int):
+                out.append({"anidb_id": a["ID"], "shoko_id": a.get("ShokoID"),
+                            "title": a.get("Title") or "", "type": a.get("Type") or "",
+                            "air_date": a.get("AirDate"), "episodes": a.get("EpisodeCount")})
+        return out
+
+    async def series_by_anidb(self, anidb_id: int) -> Optional[dict]:
+        s = await self._get(f"/Series/AniDB/{int(anidb_id)}/Series")
+        return s if isinstance(s, dict) else None
+
+    async def regular_episodes(self, series_id: int) -> dict[int, int]:
+        """{AniDB episode number: Shoko episode id} of a series' regular
+        episodes, the ones without a file included (watched state does not
+        need one)."""
+        got = await self._get(f"/Series/{int(series_id)}/Episode", {
+            "pageSize": 0, "includeMissing": "true", "type": "Episode",
+            "includeDataFrom": "AniDB"})
+        out: dict[int, int] = {}
+        for e in (got or {}).get("List") or [] if isinstance(got, dict) else []:
+            sid = ((e or {}).get("IDs") or {}).get("ID")
+            num = ((e or {}).get("AniDB") or {}).get("EpisodeNumber")
+            if isinstance(sid, int) and isinstance(num, int):
+                out.setdefault(num, sid)
+        return out
+
     async def episode_user_data(self, episode_id: int) -> Optional[dict]:
         d = await self._get(f"/Episode/{int(episode_id)}/UserData")
         return d if isinstance(d, dict) else None

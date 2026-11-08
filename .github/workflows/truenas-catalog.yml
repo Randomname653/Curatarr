@@ -1,0 +1,55 @@
+name: truenas-catalog
+
+# The TrueNAS catalog app (deploy/truenas/catalog/curatarr) run through the
+# catalog's own test script, as its CI will run it on our pull request there:
+# ports checked against every app in the catalog, the template rendered with
+# the catalog's library, the app started from the rendered compose file and
+# waited on until its health check passes.
+# truenas/apps is fetched at a pinned commit; move the pin when its rules move
+# (deploy/truenas/catalog/SUBMITTING.md).
+
+on:
+  pull_request:
+    paths: ['deploy/truenas/catalog/**', '.github/workflows/truenas-catalog.yml']
+  push:
+    branches: [main]
+    paths: ['deploy/truenas/catalog/**', '.github/workflows/truenas-catalog.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    env:
+      TRUENAS_APPS_SHA: f142a16a1e15da5f8517658f5a9ad34400972fc4
+      IMAGE: ghcr.io/randomname653/curatarr
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: The catalog's tooling at the pinned commit
+        run: |
+          git init -q truenas-apps
+          cd truenas-apps
+          git remote add origin https://github.com/truenas/apps.git
+          git fetch -q --depth 1 origin "$TRUENAS_APPS_SHA"
+          git checkout -q FETCH_HEAD
+
+      - name: Our app into the community train
+        run: |
+          cp -r deploy/truenas/catalog/curatarr truenas-apps/ix-dev/community/curatarr
+          # Until the pinned release tag is published, test the current image.
+          tag=$(python3 -c "import yaml; print(str(yaml.safe_load(open('deploy/truenas/catalog/curatarr/ix_values.yaml'))['images']['image']['tag']).split('@')[0])")
+          if ! docker manifest inspect "$IMAGE:$tag" > /dev/null 2>&1; then
+            echo "$IMAGE:$tag is not published yet: testing $IMAGE:latest"
+            sed -i "s|tag: \"$tag\"|tag: \"latest\"|" truenas-apps/ix-dev/community/curatarr/ix_values.yaml
+          fi
+
+      - name: Ports are unique in the catalog
+        working-directory: truenas-apps
+        run: python3 ./.github/scripts/port_validation.py
+
+      - name: Render, start and wait for the health check
+        working-directory: truenas-apps
+        run: python3 ./.github/scripts/ci.py --train community --app curatarr --test-file basic-values.yaml --skip-metadata
