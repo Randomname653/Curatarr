@@ -55,7 +55,7 @@ async def post_verdict(message_id: int, body: VerdictBody, user: User = Depends(
         # The picks nearest it move up now (services/rec_lift); the card says
         # how many - only what really moved.
         from src.services.rec_lift import lift_near
-        out["lifted"] = await lift_near(user.id, out["category"], out["title"])
+        out["lifted"] = await lift_near(user.id, out["category"], out["title"], source="verdict")
     return out
 
 

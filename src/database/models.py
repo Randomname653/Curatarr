@@ -856,6 +856,7 @@ class CachedRecommendation(Base):
     # regeneration rebuilds the rows.
     lifted_at       = Column(DateTime, nullable=True)
     lifted_by       = Column(String(500), nullable=True)
+    lift_source     = Column(String(16), nullable=True)    # swipe | verdict: an Undo takes back its own
 
     __table_args__ = (
         Index("ix_cached_recs_user_cat", "user_id", "category"),

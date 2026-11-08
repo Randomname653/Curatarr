@@ -110,8 +110,18 @@ check("the playlist push: lifted picks first, and the lift makes the playlist du
       [r["title"] for r in rows][:2] == ["North Signal", "Top Pick"]
       and rows[0]["cached_at"] == NOW and rows[1]["cached_at"] == NOW - timedelta(days=3), rows)
 LATER = NOW + timedelta(hours=1)
+import src.services.swipe as swsvc  # noqa: E402
+
+check("a swipe undone while its neighbours were looked up lifts nothing, and says nothing moved",
+      asyncio.run(rl.lift_near(UID, "movie", "Some Swiped Film", seed_doc_id="swipe-doc", now=LATER,
+                               source="swipe")) == [])
+with conn.get_db_session() as db:
+    stray = db.query(CachedRecommendation).filter(CachedRecommendation.lifted_at == LATER).count()
+check("...no row carries a mark the Undo can no longer take back", stray == 0, stray)
+swsvc.save_answer(UID, "movie", "swipe-doc", "Some Swiped Film", True, 10)
 check("a Swipe card's own doc id is its vector, and a later Loved lifts anew",
-      asyncio.run(rl.lift_near(UID, "movie", "Some Swiped Film", seed_doc_id="swipe-doc", now=LATER))
+      asyncio.run(rl.lift_near(UID, "movie", "Some Swiped Film", seed_doc_id="swipe-doc", now=LATER,
+                               source="swipe"))
       == ["Gull Point", "North Signal", "Paper Moon Hotel"]
       # one lift, one moment: among its picks the match order holds
       and [r["title"] for r in plex_playlists._library_recs(UID, "movie", 10)][:2] == ["North Signal", "Gull Point"])
@@ -126,8 +136,8 @@ import src.services.taste_engine as te  # noqa: E402
 asked = []
 
 
-async def _fake_lift(uid, category, title, seed_doc_id=None, now=None):
-    asked.append((uid, category, title, seed_doc_id))
+async def _fake_lift(uid, category, title, seed_doc_id=None, now=None, source=None):
+    asked.append((uid, category, title, seed_doc_id, source))
     return ["North Signal"]
 
 
@@ -166,25 +176,27 @@ finally:
     rl.lift_near, te.compute_all_taste_vectors, bg.track_task = _saved
 check("a Loved swipe lifts by its own doc id and reports what moved; a Liked lifts nothing",
       loved["lifted"] == ["North Signal"] and "lifted" not in liked
-      and asked[0] == (UID, "movie", "Some Swiped Film", "swipe-doc"), (loved, liked, asked))
+      and asked[0] == (UID, "movie", "Some Swiped Film", "swipe-doc", "swipe"), (loved, liked, asked))
 check("a 'Loved it' verdict lifts by the play's title; 'okay' lifts nothing",
       v_loved["lifted"] == ["North Signal"] and "lifted" not in v_okay
-      and asked[1] == (UID, "movie", "Gull Point", None), (v_loved, v_okay, asked))
+      and asked[1] == (UID, "movie", "Gull Point", None, "verdict"), (v_loved, v_okay, asked))
 
 # ── an undone Loved takes its lift back ─────────────────────────────────────
 
-import src.services.swipe as swsvc  # noqa: E402
-
 with conn.get_db_session() as db:
     db.query(CachedRecommendation).filter(CachedRecommendation.title == "Far Away Store").update(
-        {"lifted_at": NOW, "lifted_by": "Another Loved Film"})
+        {"lifted_at": NOW, "lifted_by": "Some Swiped Film", "lift_source": "verdict"})
+    db.query(CachedRecommendation).filter(CachedRecommendation.title == "Shop Window").update(
+        {"lifted_at": NOW, "lifted_by": "Another Loved Film", "lift_source": "swipe"})
     db.commit()
 swsvc.save_answer(UID, "movie", "swipe-doc", "Some Swiped Film", True, 10)
 undone = asyncio.run(swipe_router.undo(category="movie", user=SimpleNamespace(id=UID)))
 with conn.get_db_session() as db:
     left = {r.title: r.lifted_by for r in db.query(CachedRecommendation)
             .filter(CachedRecommendation.lifted_by.isnot(None))}
-check("undoing a Loved swipe clears the lifts it gave, and only those",
-      undone["unlifted"] == 3 and left == {"Far Away Store": "Another Loved Film"}, (undone, left))
+check("undoing a Loved swipe clears the lifts it gave, and only those: another title's stays, "
+      "and so does the lift a chat verdict gave the same title",
+      undone["unlifted"] == 3 and left == {"Far Away Store": "Some Swiped Film", "Shop Window": "Another Loved Film"},
+      (undone, left))
 
 check.done()
