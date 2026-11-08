@@ -52,6 +52,14 @@ sees them, and a section that says one is rewritten. The editor and the writer c
 law, the work and never the person, for the archetype line too, and the balance card says what
 the server did ("the server grew"), not what the member is.
 
+**A German Wrap-Up is written in German.** The editor and the writer of a story in German now
+read its cards in German - claims, the renderings they may use ("11,9 Stunden", "735 Tage",
+"20.10.2026") and the note on why each matters - and no English background sheet, and the editor
+writes the archetype, its line and the share line in German. They used to read English and carried
+"11.9 hours" or "2026-10-20" into the German text. The device card says the kind of device ("the
+TV", "the computer"), never the name a device was given, and one kind is no story. The writer's
+law, the work and never the person, now stands where each headline and roast is written.
+
 **Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
 library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
 explicit form of "keep this": written and confirmed at once, where the keep-detector's outcome
