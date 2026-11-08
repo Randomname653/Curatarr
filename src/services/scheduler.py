@@ -1746,6 +1746,47 @@ async def _cache_recommendations(user_id: int):
                     logger.warning("[scheduler] Rec cache failed for %s/%s: %s", cat, lane, e)
                     task_monitor.update(task, message=f"{cat}/{lane} failed: {e}", level="warn")
 
+            # "Because you watched A, B and C" (services/because_recs): from
+            # the same unwatched pool, near three recent titles; "Rediscover"
+            # (services/rediscover_recs): owned titles loved two years ago and
+            # more. Both written even when empty, so a lane about last month's
+            # viewing does not stay.
+            extra_lanes = []
+            if cat != "music":
+                from src.routers.recommendations import _fetch_arr_candidates
+                from src.services.because_recs import because_recs
+                from src.services.rediscover_recs import rediscover_recs
+                try:
+                    owned_all = await _fetch_arr_candidates(cat) or []
+                except Exception as e:
+                    logger.warning("[scheduler] %s owned items unreadable: %s", cat, e)
+                    owned_all = None
+                if owned_all is not None:
+                    if lane_inputs[-1][0] == "library":
+                        extra_lanes.append(("because", lane_inputs[-1][1],
+                                            lambda: because_recs(user_id, cat, lane_inputs[-1][1], owned_all)))
+                    extra_lanes.append(("rediscover", owned_all,
+                                        lambda: rediscover_recs(user_id, cat, owned_all)))
+            for lane_name, id_pool, build in extra_lanes:
+                try:
+                    task_monitor.update(task, message=f"{cat}/{lane_name}…")
+                    recs = await build()
+                    unwatched_pool = id_pool
+                    for rec in recs:
+                        try:
+                            rec["poster_url"], rec["synopsis"] = await fetch_rec_art(
+                                rec.get("title", ""), cat, rec.get("year"))
+                        except Exception as e:
+                            from src.services.enrichment_state import log_topup_failure
+                            log_topup_failure(logger, "[recs] poster", rec.get("title", ""), e)
+                            rec["poster_url"] = rec["synopsis"] = None
+                    if recs:
+                        await run_read(_attach_rec_ids, recs, unwatched_pool, cat)
+                    await run_write(_write_rec_lane, user_id, cat, lane_name, recs)
+                    total += len(recs)
+                except Exception as e:
+                    logger.warning("[scheduler] Rec cache failed for %s/%s: %s", cat, lane_name, e)
+
         await run_write(set_state, "recs_cached_at", datetime.utcnow().isoformat())
         logger.info("[scheduler] Recommendations cached: %d total", total)
         task_monitor.done(task, f"{total} recommendations cached")

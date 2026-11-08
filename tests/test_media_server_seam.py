@@ -197,7 +197,6 @@ RATCHET = {
     "src/services/music_matcher.py": 2,
     "src/services/music_tags.py": 4,
     "src/services/orphan_repair.py": 4,
-    "src/services/plex_collections.py": 5,
     "src/services/plex_players.py": 2,
     "src/services/plex_playlists.py": 9,
     "src/services/plex_sync.py": 15,
@@ -306,8 +305,10 @@ try:
 except Exception as e:  # noqa: BLE001 - the raise IS the assertion
     raised = "401" in str(e)
 check("a refused token raises - never an empty library", raised)
-check("now_playing is off for Plex and live_sessions answers empty",
-      not pa.capabilities().now_playing and asyncio.run(pa.live_sessions()) == [])
+live = asyncio.run(pa.live_sessions())
+check("Plex shows no 'now playing' (capability off), but live_sessions reads what plays",
+      not pa.capabilities().now_playing and [(s.session_key, s.item_key, s.user_key, s.paused) for s in live]
+      == [("41", "1001", "1", False), ("42", "2003", "2", True)] and live[0].device == "Living Room TV")
 
 print("\n-- get_adapter --")
 from types import SimpleNamespace  # noqa: E402

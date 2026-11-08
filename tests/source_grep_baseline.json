@@ -24,7 +24,7 @@
   "test_chat_starters.py": 15,
   "test_chroma_hardening.py": 6,
   "test_cluster_gate.py": 2,
-  "test_collections_planner.py": 6,
+  "test_collections_planner.py": 4,
   "test_compute_cards.py": 5,
   "test_concurrent_cache.py": 2,
   "test_container.py": 7,

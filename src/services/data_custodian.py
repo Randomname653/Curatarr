@@ -383,10 +383,11 @@ async def _run_playlist_push(deep: bool = False, task=None) -> bool:
 
     def _users():
         with get_db_session() as db:
-            rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()
+            rows = db.query(User.id, User.plex_username, User.plex_token, User.is_admin).filter(
+                User.is_active == True).all()  # noqa: E712
             # detach the attributes we need before the session closes
-            return [type("U", (), {"id": u_id, "plex_username": uname,
-                                   "plex_token": token})() for u_id, uname, token in rows]
+            return [type("U", (), {"id": u_id, "plex_username": uname, "plex_token": token,
+                                   "is_admin": bool(adm)})() for u_id, uname, token, adm in rows]
 
     users = await run_read(_users)
     all_ok = True
@@ -424,6 +425,12 @@ async def _run_plex_players(deep: bool = False, task=None) -> bool:
     (services/plex_players). No model."""
     from src.services.plex_players import run_player_backfill
     return await run_player_backfill(task=task)
+
+
+async def _run_milestones(deep: bool = False, task=None) -> bool:
+    """Every member's milestones from the watch history (services/milestones). No model."""
+    from src.services.milestones import run_milestones
+    return await run_milestones(task=task)
 
 
 async def _run_music_tags(deep: bool = False, task=None) -> bool:
@@ -476,9 +483,10 @@ async def _run_music_playlist_push(deep: bool = False, task=None) -> bool:
 
     def _users():
         with get_db_session() as db:
-            rows = db.query(User.id, User.plex_username, User.plex_token).filter(User.is_active == True).all()  # noqa: E712
-            return [type("U", (), {"id": u_id, "plex_username": uname,
-                                   "plex_token": token})() for u_id, uname, token in rows]
+            rows = db.query(User.id, User.plex_username, User.plex_token, User.is_admin).filter(
+                User.is_active == True).all()  # noqa: E712
+            return [type("U", (), {"id": u_id, "plex_username": uname, "plex_token": token,
+                                   "is_admin": bool(adm)})() for u_id, uname, token, adm in rows]
 
     users = await run_read(_users)
     all_ok = True
@@ -855,13 +863,16 @@ def _registry() -> list[Task]:
         # playlists. Early refresh: the all-sampled hook in plex_sync clears
         # both job stamps, so the next 30-min tick reruns just these two
         # (the 144h per-user freshness guard shields everyone already done).
+        # The pushes run daily: recs are also rewritten between the weekly
+        # runs (2026-11-08: recs of 11-06 still waited for the push of 11-09),
+        # and a push with nothing newer than the last one reads no Plex.
         Task("custodian_recs",   "Recommendation cache refresh", 168.0,
              _run_recs, needs_llm=True, reports_own=True),
-        Task("plex_rec_playlist", "Curatarr Recommended playlists", 168.0,
+        Task("plex_rec_playlist", "Curatarr Recommended playlists", 24.0,
              _run_playlist_push, takes_task=True, after=("custodian_recs",)),
         # Music variant: one unheard album per recommended artist, per user.
         # Plex reads/writes only — no LLM gate.
-        Task("plex_music_playlist", "Curatarr music playlists", 168.0,
+        Task("plex_music_playlist", "Curatarr music playlists", 24.0,
              _run_music_playlist_push, takes_task=True, after=("custodian_recs",)),
         # Wrap-ups written ahead, so the page opens with the curator's story
         # instead of a "write it" button. Curator work — waits for a game.
@@ -881,6 +892,9 @@ def _registry() -> list[Task]:
         # How the music feels: Plex's moods and styles per artist, album and
         # track, for the wrap-up's moods by time of day. No model.
         Task("music_tags", "Music moods and styles", 72.0, _run_music_tags, takes_task=True),
+        # The 100th film, 1,000 hours: fixed rules over the history, reached
+        # dates and the title that crossed them (services/milestones). No model.
+        Task("milestones", "Milestones", 24.0, _run_milestones, takes_task=True),
         # The Wrap-Up's rhythm clock: the device of every play ("phone after
         # midnight"). Plex only, no model.
         Task("plex_players", f"Players of the {srv} plays", 24.0, _run_plex_players, takes_task=True),

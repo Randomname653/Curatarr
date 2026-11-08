@@ -11,11 +11,19 @@ and anything it invents is dropped at the mapping step.
 
 Collections are household-global (see plex_collections.py), so the taste
 input is the ADMIN's per-category summary.
+
+Every library also gets a SEASON shelf, always its first design and so its
+oldest slot: it keeps its place on the home screens while the moment
+changes (services/season_calendar: Advent, Karneval, Easter, the summer
+holidays ... in the household's language, the owner's). The household's
+own same-month history from earlier years (taste_snapshots) is the hint.
 """
 from __future__ import annotations
 
 import json
 import logging
+from datetime import date
+from typing import Optional
 
 from src.database.runner import run_read
 from src.services.llm_utils import parse_llm_json, seasonal_context
@@ -71,15 +79,48 @@ def map_designs(themes: list, by_title: dict, by_norm: dict,
 
 
 def _design_prompt(cat: str, n: int, taste: str, titles: list,
-                   prev_names: list) -> str:
+                   prev_names: list, season: Optional[dict] = None,
+                   language: str = "English") -> str:
+    """``season``: {"label", "before"} - the season shelf's moment and what
+    they watched in this month before. ``language``: the household's (the
+    owner's) - every shelf is named and described in it, since a shelf has
+    one name for every account."""
     prev = ", ".join(prev_names) if prev_names else "—"
+    total = n + (1 if season else 0)
+    season_line = ""
+    if season:
+        before = "; ".join(season.get("before") or []) or "—"
+        season_line = (f"\nSEASON SHELF: theme 1 is the household's shelf for {season['label']}. "
+                       f"Watched in this month in earlier years (the mood, not titles to repeat): {before}.")
     return f"""[MODE: COLLECTION DESIGNER]
-You design {n} themed collection shelves from the household's OWNED {cat} library for their media server.
+You design {total} themed collection shelves from the household's OWNED {cat} library for their media server.
 HOUSEHOLD TASTE: {taste or "broad, adventurous"}
-{seasonal_context()}
+{seasonal_context()}{season_line}
 CANDIDATES (owned — pick ONLY from this list, exact spelling): {"; ".join(titles)}
-RULES: exactly {n} theme(s); {MIN_ITEMS + 2}-{MAX_ITEMS} titles each; shelf names short and evocative (2-4 words, English); a one-sentence description each; do NOT reuse last rotation's shelf names: {prev}.
+RULES: exactly {total} theme(s); {MIN_ITEMS + 2}-{MAX_ITEMS} titles each; shelf names short and evocative (2-4 words), names and descriptions in {language}; a one-sentence description each; do NOT reuse last rotation's shelf names: {prev}.
 JSON ONLY: [{{"title": "Winter Noir", "description": "one sentence", "items": ["Exact Title", "..."]}}]"""
+
+
+def same_month_before(user_id: int, category: str, today: date, years: int = 3) -> list:
+    """Titles the user watched most in this calendar month of earlier years
+    (taste_snapshots' top titles), newest year first, at most 8. Blocking."""
+    from src.database.connection import get_db_session
+    from src.database.models import TasteSnapshot as S
+    months = [f"{today.year - k:04d}-{today.month:02d}" for k in range(1, years + 1)]
+    out: list = []
+    with get_db_session() as db:
+        rows = (db.query(S.month, S.top_titles)
+                .filter(S.user_id == user_id, S.category == category, S.month.in_(months))
+                .order_by(S.month.desc()).all())
+    for _m, raw in rows:
+        try:
+            titles = json.loads(raw or "[]")
+        except (ValueError, TypeError):
+            continue
+        for t in titles if isinstance(titles, list) else []:
+            if isinstance(t, str) and t and t not in out:
+                out.append(t)
+    return out[:8]
 
 
 async def design_collections() -> list:
@@ -94,6 +135,7 @@ async def design_collections() -> list:
             sections = {lc.media_category: lc.plex_section_key
                         for lc in db.query(LibraryConfig).all()}
             admin = db.query(User).filter(User.is_admin == True).first()  # noqa: E712
+            admin_id = admin.id if admin else None
             tv = admin and db.query(TasteVectorEntry).filter(
                 TasteVectorEntry.user_id == admin.id).first()
             summary_text = (tv.summary_text or "") if tv else ""
@@ -105,9 +147,16 @@ async def design_collections() -> list:
                         .order_by(MediaTechProfile.id.desc())
                         .limit(_CANDIDATE_CAP).all())
                 cands[cat] = [{"title": t, "plex_rating_key": k} for t, k in rows if t]
-        return sections, summary_text, cands
+        return sections, summary_text, cands, admin_id
 
-    sections, summary_text, cands = await run_read(_load)
+    sections, summary_text, cands, admin_id = await run_read(_load)
+
+    # The season shelf speaks the household's language: the owner's.
+    from src.services.season_calendar import language_name, moment
+    from src.services.user_language import user_language
+    today = date.today()
+    lang = (await run_read(user_language, admin_id)) if admin_id else "en"
+    now = moment(today, lang)
 
     from src.services.plex_collections import COLLECTION_PREFIX
     try:
@@ -130,8 +179,10 @@ async def design_collections() -> list:
                         cat, section, len(pool))
             continue
         taste = _taste_section(summary_text, cat)
+        before = (await run_read(same_month_before, admin_id, cat, today)) if admin_id else []
+        season = {"label": now["label"], "before": before}
         prompt = _design_prompt(cat, n, taste, [c["title"] for c in pool],
-                                prev_names)
+                                prev_names, season=season, language=language_name(lang))
         raw = await _call_llm(prompt, max_tokens=900)
         if not raw:
             logger.warning("[collections] designer LLM returned nothing for %s", cat)

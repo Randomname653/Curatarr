@@ -10,13 +10,22 @@
 - merging: two reports of one play less than 20 minutes apart are one row,
   the richer witness wins (hook > session > report > poll > marked); plays
   from other sources are never merged; further apart they stay two;
+- tier C, without any plugin: a count up by more than one takes the extra
+  plays' times from Jellyfin's activity log where a start-to-stop span of
+  80 % of the runtime makes them plays; the rest stay date-only;
 - tier C: the first poll files one "marked" row per played item (none for
   an item with a finished play on record: after a server switch that is
   the carried-over history); later a count up by n is n plays (the extra
   ones date-only), a re-mark without a count change is one, nothing changed
-  is nothing; the switch's reset_poll makes the next poll a first one;
-- tier D: the Playback Reporting rows of this user past 80 %, once; without
-  the plugin that is recorded, not retried;
+  is nothing; plays the sessions already filed since the last poll are not
+  counted again; the switch's reset_poll makes the next poll a first one;
+- tier D: the Playback Reporting rows of this user past 80 %, once, in UTC
+  (the plugin stamps the server's local clock) at the play's end; without
+  the plugin that is recorded, not retried; later only the plays inside the
+  gaps tier A noted, each gap once;
+- gaps: a live-session read after more than 15 minutes without one notes
+  the stretch and starts the catch-up sync; the heartbeat is written at
+  most every 5 minutes;
 - tier B: the webhook needs its secret, takes JSON objects of a capped size,
   writes only what the server confirms as freshly played;
 - sync_history: all members, the follow-up flag for the taste work, one at a
@@ -28,6 +37,7 @@ from _harness import app_db, check  # noqa: I001 - first: temp stores
 
 import asyncio
 import copy
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -206,6 +216,73 @@ check("a count up by two is two plays: one at the last-played date, one date-onl
 check("a re-mark without a count change is one play", len(rows(plex_item_id=HUNTER, source="jellyfin_poll")) == 1
       and moved["inserted"] == 3)
 
+# A track or an episode the live sessions saw between two polls: the count
+# goes up by what they saw, and nothing of it is new.
+wipe()
+for k in (jh._POLL_SEEDED.format(uid=1), jh._LAST_POLL.format(uid=1)):
+    asyncio.run(asyncio.to_thread(set_state, k, ""))
+played = copy.deepcopy(load("jellyfin", f"Items_played_{JANE}.json")["Items"])
+asyncio.run(jh.poll_user(adapter(played={JANE: played}), 1, JANE, now=T0))
+seen_at = T0 + timedelta(hours=3)
+asyncio.run(jh.record_plays([Play(user_key=JANE, item_key=HEAT, played_at=seen_at, source="jellyfin_session",
+                                  position_ms=9_900_000, duration_ms=10_200_000, device="Pixel 8")], a))
+played[1]["UserData"] = {**played[1]["UserData"], "PlayCount": 3,
+                         "LastPlayedDate": (seen_at - timedelta(minutes=1)).isoformat() + ".0000000Z"}
+after_one = asyncio.run(jh.poll_user(adapter(played={JANE: played}), 1, JANE, now=T0 + timedelta(hours=6)))
+check("a count up by one the sessions already filed is no new play",
+      after_one["inserted"] == 0 and len(rows(plex_item_id=HEAT, source="jellyfin_session")) == 1
+      and not rows(plex_item_id=HEAT, source="jellyfin_poll"))
+asyncio.run(jh.record_plays([Play(user_key=JANE, item_key=HEAT, played_at=T0 + timedelta(hours=8),
+                                  source="jellyfin_session", position_ms=9_900_000, duration_ms=10_200_000)], a))
+played[1]["UserData"] = {**played[1]["UserData"], "PlayCount": 6,
+                         "LastPlayedDate": (T0 + timedelta(hours=8)).isoformat() + ".0000000Z"}
+after_three = asyncio.run(jh.poll_user(adapter(played={JANE: played}), 1, JANE, now=T0 + timedelta(hours=12)))
+extra = rows(plex_item_id=HEAT, source="jellyfin_poll")
+check("a count up by three with one seen adds two, both date-only (the dated one is the seen one)",
+      after_three["inserted"] == 2 and len(extra) == 2 and all(x.date_only for x in extra))
+
+# No plugin: Jellyfin's own activity log dates the extra plays of a count
+# that rose by more than one. Every stop there reads "finished playing", so
+# only a start-to-stop span of 80 % of the runtime can be a play.
+wipe()
+for k in (jh._POLL_SEEDED.format(uid=1), jh._LAST_POLL.format(uid=1)):
+    asyncio.run(asyncio.to_thread(set_state, k, ""))
+played = copy.deepcopy(load("jellyfin", f"Items_played_{JANE}.json")["Items"])
+for it in played:
+    it["RunTimeTicks"] = 10_200 * 10_000_000
+
+
+def _act(kind, user, item, at):
+    return {"Type": kind, "UserId": user, "ItemId": item, "Date": at.isoformat() + ".1234567Z",
+            "Name": "translated text, never read"}
+
+
+asyncio.run(jh.poll_user(adapter(played={JANE: played}), 1, JANE, now=T0))
+end = T0 + timedelta(hours=10)
+played[1]["UserData"] = {**played[1]["UserData"], "PlayCount": 5, "LastPlayedDate": end.isoformat() + ".0000000Z"}
+activity = [
+    _act("VideoPlayback", JANE, HEAT, T0 + timedelta(hours=1)),
+    _act("VideoPlaybackStopped", JANE, HEAT, T0 + timedelta(hours=3, minutes=50)),   # 2 h 50: a play
+    _act("VideoPlayback", JANE, HEAT, T0 + timedelta(hours=5)),
+    _act("VideoPlaybackStopped", JANE, HEAT, T0 + timedelta(hours=5, minutes=2)),    # 2 min: a stop
+    _act("VideoPlayback", JANE, HEAT, T0 + timedelta(hours=7, minutes=10)),
+    _act("VideoPlaybackStopped", JANE, HEAT, end),                                  # the dated one
+    _act("VideoPlaybackStopped", JANE, HEAT, end + timedelta(milliseconds=150)),    # Jellyfin's twin stop
+    _act("VideoPlayback", SAM, HEAT, T0 + timedelta(hours=1)),
+    _act("VideoPlaybackStopped", SAM, HEAT, T0 + timedelta(hours=4)),               # not hers
+]
+seen_log = asyncio.run(jh.poll_user(adapter(played={JANE: played}, activity=activity), 1, JANE,
+                                    now=T0 + timedelta(hours=12)))
+heat = rows(plex_item_id=HEAT, source="jellyfin_poll")
+check("a count up by three: the last-played date, one play the log dates, one date-only",
+      seen_log["inserted"] == 3 and [(x.viewed_at, bool(x.date_only)) for x in heat]
+      == [(T0, True), (T0 + timedelta(hours=3, minutes=50, microseconds=123456), False), (end, False)])
+mute = jh._log_plays([{"user_key": JANE, "item_key": HEAT, "started_at": None, "stopped_at": end}],
+                     JANE, SimpleNamespace(item_key=HEAT, duration_ms=10_200_000), after=T0, taken=[])
+check("a stop without its start dates nothing", mute == [])
+gone = asyncio.run(jh._playback_log(adapter(), T0))
+check("no log to read (an older server, a key without admin rights): nothing dated, no error", gone == [])
+
 # After a media server switch: the switch reset the poll, and marked as
 # played on Jellyfin what Curatarr already had from Plex. The first poll
 # finds those played - nothing new, no twin "marked" rows.
@@ -225,7 +302,6 @@ check("...whose 'played' for a title with a finished play on record adds no twin
 # The switch's own marks, seen late: a server still scanning lists a marked
 # item as played only after the first poll - then it must not be a play.
 import calendar  # noqa: E402
-import json  # noqa: E402
 wipe()
 mark_at = datetime(2026, 10, 31, 12, 52, 30)
 epoch = calendar.timegm(mark_at.timetuple())
@@ -249,12 +325,78 @@ rep = asyncio.run(jh.import_report(adapter(), 1, JANE))
 r = rows(user_id=1)
 check("jane's plays past 80 % come in (Heat 9,900 s of 10,200); a 5-minute start does not; Sam's are not hers",
       rep["inserted"] == 1 and rep["skipped"] == 1 and len(r) == 1 and r[0].plex_item_id == HEAT
-      and r[0].viewed_at == datetime(2025, 12, 31, 22, 5, 11, 123456) and r[0].player == "Firefox"
-      and r[0].source == "jellyfin_report")
+      and r[0].player == "Firefox" and r[0].source == "jellyfin_report")
+check("...in UTC, not the server's local clock, at the play's end: 21:05:11 UTC - 20 s (the row is written 20 s in) + 9,900 s",
+      r[0].viewed_at == datetime(2025, 12, 31, 23, 49, 51))
 check("...once", asyncio.run(jh.import_report(adapter(), 1, JANE)) == {"skipped": "done"})
 nop = asyncio.run(jh.import_report(adapter(report=False), 2, SAM))
 check("without the plugin: recorded as absent, not an error",
       nop == {"plugin": False} and asyncio.run(asyncio.to_thread(get_state, "jellyfin_report_done:2")) == "absent")
+check("...and not asked again", asyncio.run(jh.import_report(adapter(), 2, SAM)) == {"skipped": "no plugin"})
+
+print("\n-- gaps: what the sessions missed --")
+wipe()
+asyncio.run(asyncio.to_thread(set_state, "jellyfin_report_done:1", "1"))
+asyncio.run(asyncio.to_thread(set_state, jh._REPORT_UPTO.format(uid=1), "2025-12-30T00:00:00"))
+asyncio.run(asyncio.to_thread(set_state, jh._GAPS, json.dumps([
+    ["2025-12-01T00:00:00", "2025-12-02T00:00:00"],           # read before: upto is past it
+    ["2025-12-31T20:00:00", "2026-01-01T02:00:00"],           # Heat ends inside
+    ["2026-01-02T18:00:00", "2026-01-02T19:30:00"]])))        # only a 5-minute start inside
+gap = asyncio.run(jh.import_report(adapter(), 1, JANE))
+r = rows(user_id=1)
+check("after the import, the plugin's plays inside a new gap come in, past 80 % only",
+      gap["inserted"] == 1 and gap["gaps"] == 2 and len(r) == 1 and r[0].plex_item_id == HEAT
+      and r[0].viewed_at == datetime(2025, 12, 31, 23, 49, 51))
+check("...each gap once", asyncio.run(jh.import_report(adapter(), 1, JANE)) == {"skipped": "done"}
+      and get_state(jh._REPORT_UPTO.format(uid=1)) == "2026-01-02T19:30:00")
+asyncio.run(asyncio.to_thread(set_state, "jellyfin_report_done:2", "1"))
+asyncio.run(asyncio.to_thread(set_state, jh._REPORT_UPTO.format(uid=2), ""))
+asyncio.run(asyncio.to_thread(set_state, jh._GAPS, json.dumps([["2026-01-03T06:00:00", "2026-01-03T09:00:00"]])))
+outside = asyncio.run(jh.import_report(adapter(), 2, SAM))
+check("a play that ended after the gap (Sam's Heat, 09:48) is left to the sessions that saw it",
+      outside["inserted"] == 0 and not rows(user_id=2))
+
+import src.services.media_server as ms_pkg  # noqa: E402
+
+
+class _Live:
+    async def live_sessions(self):
+        return []
+
+
+class _Stop(Exception):
+    pass
+
+
+async def _one_tick(alive):
+    """One pass of the session poller, the catch-up sync replaced."""
+    started = []
+    real_sync, real_sleep, real_get = jh.sync_history, jh.asyncio.sleep, ms_pkg.get_adapter
+    jh.sync_history = lambda: started.append(1) or real_sleep(0)
+    ms_pkg.get_adapter = lambda: _Live()
+
+    async def stop(_s):
+        raise _Stop()
+    jh.asyncio.sleep = stop
+    await asyncio.to_thread(set_state, jh._ALIVE, alive)
+    await asyncio.to_thread(set_state, jh._GAPS, "")
+    try:
+        await jh.run_session_poller()
+    except _Stop:
+        pass
+    finally:
+        jh.sync_history, jh.asyncio.sleep, ms_pkg.get_adapter = real_sync, real_sleep, real_get
+    return started, jh._gaps(await asyncio.to_thread(get_state, jh._GAPS)), \
+        await asyncio.to_thread(get_state, jh._ALIVE)
+
+started, gaps, beat = asyncio.run(_one_tick((datetime.utcnow() - timedelta(hours=3)).isoformat()))
+check("the first read after three hours away notes the gap, starts the catch-up and beats again",
+      started == [1] and len(gaps) == 1 and gaps[0][1] - gaps[0][0] > timedelta(hours=2, minutes=59)
+      and datetime.fromisoformat(beat) > gaps[0][0])
+started, gaps, _ = asyncio.run(_one_tick((datetime.utcnow() - timedelta(minutes=4)).isoformat()))
+check("four minutes is no gap", started == [] and gaps == [])
+started, gaps, _ = asyncio.run(_one_tick(""))
+check("a first start ever is no gap either", started == [] and gaps == [])
 
 print("\n-- tier B: the webhook --")
 wipe()

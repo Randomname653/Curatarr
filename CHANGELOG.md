@@ -37,6 +37,113 @@ follow them:
   media-server seam, and moves between them both ways without losing
   anything (Settings -> Media server, or `scripts/rebind_server.py`).
 
+**Jellyfin plays while Curatarr is off.** Curatarr may run only a few hours a day on a PC, and
+Jellyfin itself keeps only each item's current state. The live-session poller now notices
+when it saw nothing for more than 15 minutes (the app off, the PC asleep, Jellyfin out of
+reach) and catches up at once instead of at the next daily sync. No plugin is needed: when a
+title's play count rose by more than one, Jellyfin's own activity log dates the extra plays
+(a start-to-stop span of 80 % of the runtime makes a play; the log calls every stop "finished
+playing"), where before all but the last had no time. Where the optional Playback Reporting
+plugin is installed it reads the plugin's plays inside that stretch, with their times and
+devices; before, the plugin was read once, for the time before Curatarr. Its times were read
+as UTC although the plugin stamps the server's local clock, so every play sat an hour or two
+off; they are now converted on the server and stamped at the play's end, as every other
+witness stamps it. The delta poll no longer counts plays again that the live sessions already
+filed since the last poll (a track played five times in a day), and a count up by three no
+longer collapses into two rows.
+
+**A household member's playlists land in their own account.** A look at the live server found
+the member's recommendations in the owner's "Curatarr Recommended" playlists: Plex answers a
+Plex Home member's sign-in token with the owner's playlists and view state, so the member's
+weekly push replaced the owner's Shows and Anime playlists, and "next episode" read the
+owner's progress. Every per-user write (the recommended, music and Wrap-Up playlists, and the
+played marks on the way back from Jellyfin) now uses the server's own token for that account
+from plex.tv; without one the member is skipped. The music playlist had found no artist since
+the install maps no music library (the Plex index holds the music); it now uses every music
+library the server has. A series no longer starts with a special that sorts first, and the
+playlists follow the recommendations daily instead of weekly.
+
+**Collaboration credits count for their artists.** A music "artist" such as "North Signal &
+South Static" that no source knows as an act of its own now counts for the artists it names, when
+the first-billed one has a profile: its plays join their taste, and the Knowledge Base files it
+as "Credit of known artists" instead of "not found". A name known itself ("Sun & Moon",
+"Simon & Garfunkel") is never split, and an unknown first name keeps it whole, so "Blank &
+Jones" does not land on an unrelated "Jones". On the owner's history most credits already had a
+profile; the rule moved 16 names (34 plays).
+
+**Curatarr's collections on every home screen, edited in place.** The weekly push deleted the
+shelves and made new ones, so a shelf placed on a home screen was gone each week, and none was
+ever put there. A library's shelves now keep their objects: the new rotation renames,
+describes and refills them, and they show on the owner's home, every other account's home and
+the library's Recommended tab (`COLLECTIONS_ON_HOME`: `all`, `owner` or `off`; Plex has no
+choice per account). Checked live: all four shelves on the owner's and the member's home. On
+Jellyfin, whose home screen has no row for a single collection, each shelf now carries the
+designer's description and says where to find it (checked on a test server). The first
+collection on a Jellyfin adds its Collections library without a view, so nobody saw the
+shelf until a library scan; Curatarr starts that scan once when the view is missing.
+
+**A season shelf in every library.** Each library's first shelf now follows the household's
+moment of the year, in the owner's language: in German Advent und Weihnachten, zwischen den
+Jahren, Karneval (moving with Easter), Ostern, Sommerferien, Halloween, else the season. It
+keeps its slot, and so its place on the home screens, while the moment changes; what the
+household watched in the same month of earlier years is the designer's hint. Every shelf is
+now named and described in the owner's language (a shelf has one name for every account), the
+Jellyfin note included. Checked with the curator on the owner's library: German names and descriptions, for now
+and for Advent, all from owned titles only.
+
+**Playlists in the member's language.** A playlist lives in one member's account, so its name
+follows the language that member writes to the curator in: "Curatarr empfiehlt · Filme",
+"Curatarr Merkliste" on Jellyfin, and so on. A playlist under another language's name is found
+and renamed in place, so its id and pins stay (checked live on the owner's Plex).
+
+**Because you watched A, B and C.** A third recommendation lane takes three titles a member
+finished in the last 60 days and keeps only owned, unwatched titles close to all three (the
+lowest of the three similarities decides, on vectors centred on the category's mean); the
+curator writes one line per pick on what links it to the three, from their themes and plots.
+It shows as its own sections on the recommendations page ("Because you watched ...", a lane
+chip of its own) and as one more playlist per member ("Curatarr · Because You Watched").
+Checked on a copy of the owner's data: three recent anime gave five owned picks with their
+links; films and series had too few finished titles in the window, so no lane there.
+Recommendation pitches are now written in the member's own language (they were English for
+everyone, being written ahead with no conversation to read).
+
+**Plex plays arrive within minutes.** Plex keeps every play, but Curatarr fetched them once a
+day, so the curator learned of an evening's viewing the next morning. A small watcher now looks
+at Plex's sessions every 5 minutes while something played in the last hour (every 15 otherwise,
+`PLEX_SESSION_POLL_S`, 0 = off) and runs the incremental history sync a few minutes after a
+session ends, batched so a music session does not sync every track. No live display and no
+webhooks (they need a Plex Pass).
+
+**Rediscover, and a year ago.** Two quiet rows on the recommendations page. "Rediscover":
+owned titles a member finished (a film) or watched in earnest (six episodes of a series) and
+has not touched for two years, ranked by today's taste, one film of a series at most, each with
+its fact in the member's language ("Zuletzt vor 3 Jahren · 2× gesehen"); no model writes
+anything. "A year ago": what they finished within three days of this date last year, on the
+days that have it, each title hideable for good. Checked on a copy of the owner's data.
+
+**Milestones.** Fixed rules over the watch history decide what a milestone is: the 10th, 50th,
+100th ... different film, series and anime series finished (every aired episode of an ended
+series, from Sonarr), episodes, hours, different artists, and years since the first play. Each
+carries its day and the title that crossed it, computed back over the whole history (the
+custodian's daily `milestones` job, no model). The Wrap-Up page shows them as a timeline, with
+the kinds a member can switch off; a story gets a slide for the ones reached in its period; one
+newly reached is offered once as a chat opener, never again, and the ones a first run finds
+stay history. On a copy of the owner's data: 26, in 2.2 s.
+
+**Your decades.** A Wrap-Up tile shows each decade of release with its share of the hours, its
+leading titles and, for a year, the points against the year before; when a decade that is not
+this one held a quarter of the hours or more, the story gets a slide for it (the curator writes
+the line, a bar chart beside it); and members who compare with the household hear which
+decades are theirs in the house, nobody else's numbers. Facts version 13. On a copy of the
+owner's data: "Your 2010s: 52% of the hours" over the last six months.
+
+**The anime season as a Wrap-Up.** A fourth kind of period, "Anime season" (Winter from
+January, Spring, Summer, Fall), offered for the seasons a member watched anime in. Besides the
+usual wrap-up it says what they started (a first episode that season), finished (every aired
+episode of a season, from Sonarr) and dropped (begun, not finished, untouched for a month at
+the season's end), as a tile and a story slide. On a copy of the owner's data: Summer 2026, 13
+started, 7 finished, 6 dropped.
+
 **Same-name works, and the owner's call that read like a keep.** The deletion discussion read
 the 2004 animated "Teacher's Pet" for the 1958 Gable/Day comedy (a name search ranks the
 popular one first) and then rightly refused a verdict on the mixed record. Its Wikipedia read

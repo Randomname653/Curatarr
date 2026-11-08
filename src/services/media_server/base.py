@@ -204,6 +204,7 @@ class UserItemState:
     liked: Optional[bool] = None             # Jellyfin Likes; None = not set
     favorite: bool = False
     rating: Optional[float] = None           # Plex 0-10 scale; Jellyfin: None
+    duration_ms: Optional[int] = None        # the item's runtime, when the server sends it
 
 
 @dataclass(frozen=True)

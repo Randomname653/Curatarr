@@ -210,6 +210,33 @@ snapshot). Where the build differs from the draft above:
   same bar as tier A; shorter starts are skipped.
 - Plays of Jellyfin users who never signed in to Curatarr, and of unmapped
   or ignored libraries, are skipped, as the Plex sync skips them.
+- **Gaps (2026-11-08).** Curatarr may run only a few hours a day on a PC.
+  Tier A keeps a heartbeat (`jellyfin_sessions_alive`, at most every 5
+  minutes); a read after more than 15 minutes without one stores the
+  stretch in `jellyfin_gaps` and runs `sync_history` at once. After its
+  first import, tier D reads the plugin's plays that END inside a gap not
+  yet read for that member (`jellyfin_report_upto:{uid}`); plays that end
+  after it were seen by tier A. Tier C leaves out, per item, the plays
+  tiers A, B and D filed since the last poll, and its date-only plays are
+  never merged with each other (they are a count, all at one time).
+- **The activity log dates extra plays, no plugin (2026-11-08).** The
+  owner wants Curatarr to work on a plain Jellyfin. Core Jellyfin logs
+  `VideoPlayback` / `VideoPlaybackStopped` (and the audio pair) in
+  `/System/ActivityLog/Entries` with UTC date, user and item, 30 days by
+  default, read with the admin key. It has no position and names every
+  stop "finished playing" (live: stops after 3 s to 3 min, seeks to the
+  end that Jellyfin counted as played). So the log only DATES plays the
+  counts already prove: a count up by more than one takes, newest first,
+  the stops whose start-to-stop span reaches 80 % of the runtime and that
+  are not within 20 minutes of a play already filed; the rest stay
+  date-only. Entries are matched by type and ids, never by their
+  translated text, so the device stays unknown.
+- **The plugin's `DateCreated` is local time** (`DateTime.Now`, stored
+  without an offset, about 20 s into the play). The query asks SQLite for
+  `datetime(DateCreated, 'utc')`, which applies the server's own zone
+  rules, summer time included; the row is written 20 s into the play,
+  so a play is stamped at that moment minus 20 s plus
+  `PlayDuration` (paused time excluded), the moment tiers A and C stamp.
 
 ### 4.6 One play, many witnesses
 

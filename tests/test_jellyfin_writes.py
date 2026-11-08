@@ -7,7 +7,8 @@
   id), and a second push without new recommendations does nothing;
 - the music playlist: one unheard album per recommended artist;
 - the Wrap-Up playlist(s), with what was not found named;
-- collections: created or edited in place, our older shelves removed, the
+- collections: created or edited in place, described (the designer's line
+  and where Jellyfin shows them: it has no home row), our older shelves removed, the
   titles in them untouched, the snapshot written;
 - the watchlist: a title from the library onto "Curatarr Watchlist", once;
   a title not in the library refused with a reason, never raised;
@@ -97,6 +98,30 @@ run(jw.push_user_playlists(jane, adapter=A))
 movies = pl("Curatarr Recommended · Movies")
 check("new recommendations edit the playlist in place: same id, the dropped title gone",
       len(movies) == 1 and movies[0][0] == old_id and movies[0][1]["items"] == [HEAT])
+
+# A member who writes German now: the same playlist, renamed in place.
+import src.services.user_language as ul  # noqa: E402
+ul._cache[1] = ("de", 10 ** 12)
+with conn_mod.get_db_session() as db:
+    db.query(CR).filter(CR.title == "Heat").update({"cached_at": datetime.utcnow() + timedelta(seconds=10)})
+    db.commit()
+run(jw.push_user_playlists(jane, adapter=A))
+check("a German member's playlist is renamed in place: same id, German name, no second copy",
+      [k for k, _ in pl("Curatarr empfiehlt · Filme")] == [old_id] and not pl("Curatarr Recommended · Movies"))
+ul._cache.pop(1, None)
+
+# "Because you watched": the picks of every video category in one playlist,
+# a series as the member's next episode.
+with conn_mod.get_db_session() as db:
+    db.add_all([CR(user_id=1, category="movie", lane="because", title="Home Movie", confidence=0.8,
+                   cached_at=datetime.utcnow() + timedelta(seconds=20)),
+                CR(user_id=1, category="show", lane="because", title="Dark", confidence=0.7,
+                   plex_rating_key=DARK, cached_at=datetime.utcnow() + timedelta(seconds=20))])
+    db.commit()
+run(jw.push_user_playlists(jane, adapter=A))
+bw = pl("Curatarr · Because You Watched")
+check("'Because you watched' is one playlist across categories, a series as its next episode",
+      len(bw) == 1 and bw[0][1]["items"] == [HOME, DOUBLE])
 check("a Plex-only account is skipped with a reason",
       run(jw.push_user_playlists(SimpleNamespace(id=2, plex_username="plexonly"), adapter=A))
       == {"pushed": [], "skipped": "no_jellyfin_account"})
@@ -122,15 +147,23 @@ check("video and music playlists, the misses named (a wrong artist is a miss)",
 print("\n-- collections --")
 SRV.collections["f" * 32] = {"name": "Curatarr · Old Shelf", "items": [HEAT]}
 SRV.collections["e" * 32] = {"name": "Kometa Classics", "items": [HEAT]}
-designs = [{"section_key": LIB_MOV, "plex_type": 1, "title": "Curatarr · Night Moves", "keys": [HEAT, HOME]}]
+designs = [{"section_key": LIB_MOV, "plex_type": 1, "title": "Curatarr · Night Moves", "keys": [HEAT, HOME],
+            "description": "Cities after dark."}]
 cr = run(jw.push_collections(designs, adapter=A))
 names = {v["name"]: v["items"] for v in SRV.collections.values()}
 check("our shelf is created, our old one removed, someone else's left alone",
       cr == {"created": 1, "deleted": 1, "failed": 0} and names.get("Curatarr · Night Moves") == [HEAT, HOME]
       and "Curatarr · Old Shelf" not in names and "Kometa Classics" in names)
+shelf = next(v for v in SRV.collections.values() if v["name"] == "Curatarr · Night Moves")
+check("the first shelf: Jellyfin's Collections library has no view yet, so one library scan starts",
+      SRV.refreshes == 1 and SRV.collections_ready)
+check("its overview: the designer's line, then where Jellyfin shows it (no home row), locked",
+      shelf.get("overview") == "Cities after dark.\n\n" + jw.JELLYFIN_SHELF_NOTE
+      and "home screen" in jw.JELLYFIN_SHELF_NOTE and shelf.get("locked") == ["Overview"])
 cid = next(k for k, v in SRV.collections.items() if v["name"] == "Curatarr · Night Moves")
 run(jw.push_collections([{**designs[0], "keys": [HOME]}], adapter=A))
-check("the next rotation edits it in place", SRV.collections[cid]["items"] == [HOME])
+check("the next rotation edits it in place, and starts no second scan",
+      SRV.collections[cid]["items"] == [HOME] and SRV.refreshes == 1)
 check("the snapshot names the shelf", json.loads(run(asyncio.to_thread(get_state, "curatarr_collections")))
       ["designs"][0]["title"] == "Curatarr · Night Moves")
 

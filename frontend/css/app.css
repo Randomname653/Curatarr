@@ -1698,6 +1698,19 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .wu-decades span { flex: 1; display: flex; flex-direction: column; justify-content: end; height: 100%; }
 .wu-dec-fill { display: block; height: var(--v); min-height: 2px; background: var(--amber); border-radius: 2px; }
 .wu-decades em { font-style: normal; font-size: 10px; color: var(--text3); text-align: center; margin-top: 3px; }
+.wu-dec-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.wu-dec-row { display: grid; grid-template-columns: 3.5em 1fr 4.5em; grid-template-areas: "k bar v" ". t t"; gap: 2px 10px; align-items: center; font-size: 13px; }
+.wu-dec-k { grid-area: k; color: var(--text2); font-variant-numeric: tabular-nums; }
+.wu-dec-line { grid-area: bar; display: block; height: 6px; width: var(--v); min-width: 2px; background: var(--amber); border-radius: 3px; }
+.wu-dec-v { grid-area: v; text-align: right; color: var(--text2); font-variant-numeric: tabular-nums; }
+.wu-dec-v em { font-style: normal; font-size: 11px; color: var(--text3); }
+.wu-dec-t { grid-area: t; font-size: 11px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wus-dec { width: 100%; max-width: 30em; overflow: visible; }
+.wus-dec-k { fill: var(--text2); font-size: 12px; }
+.wus-dec-k.is-lead { fill: var(--text); font-weight: 600; }
+.wus-dec-bar { fill: var(--text3); }
+.wus-dec-bar.is-lead { fill: var(--amber); }
+.wus-dec-v { fill: var(--text3); font-size: 11px; }
 
 .wu-cal { display: grid; grid-template-columns: repeat(auto-fill, 12px); gap: 3px; margin-top: 10px; }
 .wu-cal-day { width: 12px; height: 12px; border-radius: 3px; background: var(--bg3); }
@@ -1822,6 +1835,19 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .wus-rd-shape { fill: var(--amber-dim); stroke: var(--amber); stroke-width: 2; }
 .wus-rd-median { fill: none; stroke: var(--text3); stroke-width: 1.5; stroke-dasharray: 4 3; }
 .wu-household { margin-top: 12px; }
+.wu-milestones { margin-top: 12px; }
+.wu-as { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 6px; }
+@media (max-width: 640px) { .wu-as { grid-template-columns: 1fr; } }
+.wu-as-h { font-size: 12px; color: var(--text3); text-transform: uppercase; letter-spacing: .04em; }
+.wu-as-h b { color: var(--text); font-size: 15px; margin-left: 4px; }
+.wu-as-list { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; color: var(--text2); display: flex; flex-direction: column; gap: 2px; }
+.wu-ms-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wu-ms-row { display: grid; grid-template-columns: 7.5em 1fr; gap: 10px; font-size: 14px; color: var(--text2); }
+.wu-ms-date { color: var(--text3); font-variant-numeric: tabular-nums; }
+.wu-ms-what b { color: var(--text); font-weight: 600; }
+.wu-ms-kinds { margin-top: 10px; }
+.wu-ms-kinds-row { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 13px; color: var(--text2); }
+.wus-ms { list-style: none; margin: 0; padding: 0; color: var(--text2); font-size: 15px; line-height: 1.6; }
 .wus-rd-lbl { fill: var(--text2); font-size: 9px; }
 .wus-bal-in { fill: var(--amber); }
 .wus-bal-out { fill: var(--text3); }

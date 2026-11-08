@@ -9,9 +9,12 @@ rebuild the plays, no plugin required:
   with its device. A restart in the same session after 80 % is a play too.
 - **B, the Webhook plugin** (``jellyfin_hook``): a hint, re-read here.
 - **C, the delta poll** (``poll_user``): play counts and last-played dates
-  against the last poll's snapshot (``ServerPlayState``).
-- **D, the Playback Reporting plugin** (``import_history_for_user``): per-play
-  history from before Curatarr, imported once per user.
+  against the last poll's snapshot (``ServerPlayState``); when a count rose
+  by more than one, Jellyfin's own activity log (no plugin) dates the
+  extra plays.
+- **D, the Playback Reporting plugin** (``import_report``): per-play history
+  from before Curatarr, imported once per user, and later the plays of every
+  stretch Curatarr was not watching (``jellyfin_gaps``, written by tier A).
 
 All of them write through ``record_plays``, which keys a play on (user, item)
 and merges two reports less than 20 minutes apart: the richer witness wins
@@ -21,6 +24,7 @@ and later by C stays one row.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -48,9 +52,24 @@ RANK = {"jellyfin_hook": 5, "jellyfin_session": 4, "jellyfin_report": 3,
         "jellyfin_poll": 2, "marked": 1}
 
 _REPORT_DONE = "jellyfin_report_done:{uid}"    # "1" imported, "absent" no plugin
+_REPORT_UPTO = "jellyfin_report_upto:{uid}"    # the end of the last gap read for this user
 _POLL_SEEDED = "jellyfin_poll_seeded:{uid}"
 _LAST_POLL = "jellyfin_last_poll:{uid}"
 _SESSIONS_SEEN = "jellyfin_sessions_seen"
+# Tier A's heartbeat and the stretches it missed. Curatarr may run a few hours
+# a day on a PC: while it is off (or asleep, or cut off from Jellyfin) no
+# session is seen, and Jellyfin itself keeps only each item's current state.
+# A gap is read back from the Playback Reporting plugin (tier D), and the
+# delta poll runs at once instead of at the next daily sync.
+_ALIVE = "jellyfin_sessions_alive"
+_GAPS = "jellyfin_gaps"
+ALIVE_EVERY = timedelta(minutes=5)
+# Without a plugin the times of repeat plays in a gap come from Jellyfin's
+# activity log, 30 days by default; two weeks of absence leave room
+# (docs/MEDIA_SERVERS.md tells the owner to run Curatarr that often).
+LONG_GAP = timedelta(days=14)
+GAP_MIN = timedelta(minutes=15)    # above the quiet poll's 5 minutes
+MAX_GAPS = 50
 
 
 # ── tier A ───────────────────────────────────────────────────────────────────
@@ -148,12 +167,24 @@ async def run_session_poller() -> None:
     from src.services.media_server import get_adapter
     tracker = SessionTracker()
     last_activity = datetime.utcnow()
+    try:
+        last_ok = _parse(await _read_state(_ALIVE))
+    except Exception as e:  # noqa: BLE001 - without the last heartbeat the gap is left to the daily sync; logged
+        logger.warning("[jellyfin] last live-session heartbeat not read: %s", e)
+        last_ok = None
+    beat = None
     while True:
         now = datetime.utcnow()
         sessions = []
         try:
             adapter = get_adapter()
             sessions = await adapter.live_sessions()
+            if last_ok is not None and now - last_ok > GAP_MIN:
+                await note_gap(last_ok, now)
+            last_ok = now
+            if beat is None or now - beat >= ALIVE_EVERY:
+                await _note_state(_ALIVE, now.isoformat())
+                beat = now
             plays = tracker.observe(sessions, now)
             if sessions:
                 last_activity = now
@@ -167,6 +198,37 @@ async def run_session_poller() -> None:
             logger.warning("[jellyfin] live sessions not read: %s", e)
         quiet = not sessions and not tracker.pairs and now - last_activity > QUIET_AFTER
         await asyncio.sleep(QUIET_POLL_S if quiet else max(10, int(settings.JELLYFIN_SESSION_POLL_S)))
+
+
+def _parse(raw: Optional[str]) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def _gaps(raw: Optional[str]) -> list:
+    try:
+        out = [(datetime.fromisoformat(a), datetime.fromisoformat(b)) for a, b in json.loads(raw or "[]")]
+    except (ValueError, TypeError):
+        return []
+    return sorted(out)
+
+
+async def note_gap(start: datetime, end: datetime) -> None:
+    """Remember a stretch tier A missed and catch it up in the background:
+    the delta poll for every member, and the plugin's plays where it is
+    installed (``sync_history``)."""
+    gaps = _gaps(await _read_state(_GAPS)) + [(start, end)]
+    await _note_state(_GAPS, json.dumps([[a.isoformat(), b.isoformat()] for a, b in gaps[-MAX_GAPS:]]))
+    logger.info("[jellyfin] no live sessions seen %s - %s; catching up", start, end)
+    if end - start > LONG_GAP:
+        logger.warning("[jellyfin] Curatarr was away for %d days: every play still counts, but "
+                       "Jellyfin's activity log (30 days by default) may no longer date repeat plays "
+                       "from the start of that stretch; run Curatarr at least every two weeks",
+                       (end - start).days)
+    from src.services.bg_tasks import track_task
+    track_task(sync_history(), name="jellyfin_gap_catchup")
 
 
 # ── writing plays ────────────────────────────────────────────────────────────
@@ -235,7 +297,11 @@ def _write_plays(rows: list) -> dict:
     with get_db_session() as db:
         for r in rows:
             at = r["viewed_at"]
-            near = (db.query(W).filter(
+            # The poll's date-only plays are a count: all of them sit at the
+            # previous poll's time, and merging them would make three plays
+            # one. The poll has already left out what other witnesses filed.
+            counted = r["source"] == "jellyfin_poll" and r["date_only"]
+            near = [] if counted else (db.query(W).filter(
                 W.user_id == r["user_id"], W.plex_item_id == r["plex_item_id"],
                 W.source.in_(sorted(RANK)),
                 W.viewed_at >= at - MERGE_WINDOW, W.viewed_at <= at + MERGE_WINDOW).all())
@@ -366,6 +432,53 @@ def _known_finished(user_id: int, keys: list) -> set:
     return out
 
 
+def _seen_since(user_id: int, since: datetime, keys: list) -> dict:
+    """When the richer Jellyfin witnesses (hook, session, plugin) filed plays
+    of these items after ``since``: item -> [times]."""
+    from src.database.connection import get_db_session
+    from src.database.models import WatchHistoryEntry as W
+    out: dict = {}
+    with get_db_session() as db:
+        for i in range(0, len(keys), 500):
+            for k, at in db.query(W.plex_item_id, W.viewed_at).filter(
+                    W.user_id == user_id, W.plex_item_id.in_(keys[i:i + 500]),
+                    W.source.in_(("jellyfin_hook", "jellyfin_session", "jellyfin_report")),
+                    W.viewed_at > since):
+                out.setdefault(k, []).append(at)
+    return out
+
+
+async def _playback_log(adapter, since: datetime) -> list:
+    """The activity log's playback stops, or [] when it cannot be read (an
+    older server, a key without admin rights): the extra plays stay
+    date-only then, as before."""
+    try:
+        return await adapter.playback_log(since=since)
+    except Exception as e:  # noqa: BLE001 - the log only dates plays the counts already prove; logged
+        logger.info("[jellyfin] activity log not read, extra plays stay date-only: %s", e)
+        return []
+
+
+def _log_plays(log: list, user_key: str, st, *, after: datetime, taken: list) -> list:
+    """Stop times of ``st``'s item by this user after ``after`` that can be
+    a play: start to stop spans 80 % of the runtime (a stop after a minute
+    is a stop, not a play; without a start or a runtime it cannot be told
+    and is left out), not within the merge window of a play already filed.
+    Newest first."""
+    out = []
+    for e in log:
+        if e["user_key"] != user_key or e["item_key"] != st.item_key or e["stopped_at"] <= after:
+            continue
+        if not (e["started_at"] and st.duration_ms):
+            continue
+        if (e["stopped_at"] - e["started_at"]).total_seconds() * 1000 < SESSION_PLAY_SHARE * st.duration_ms:
+            continue
+        if any(abs(e["stopped_at"] - t) <= MERGE_WINDOW for t in taken + out):
+            continue
+        out.append(e["stopped_at"])
+    return sorted(out, reverse=True)
+
+
 def reset_poll(user_ids: list) -> int:
     """Blocking (run_write): forget the delta poll's snapshot, so the next
     poll is a first one again. The media server switch calls it when this
@@ -414,6 +527,12 @@ async def poll_user(adapter, user_id: int, user_key: str, now: Optional[datetime
     # marked played here by it - that is nothing new, and was a twin row.
     known = set() if seeded else await run_read(_known_finished, user_id,
                                                 [st.item_key for st in states])
+    # A count up by n is n plays, but the live sessions, the webhook or the
+    # plugin may have filed some of them since the last poll already (a
+    # track played five times today): only the rest are new.
+    seen = (await run_read(_seen_since, user_id, last, [st.item_key for st in states])
+            if (seeded and last) else {})
+    log = None                           # the activity log, read once and only when needed
     plays, updates = [], []
     for st in states:
         prev = snap.get(st.item_key)
@@ -430,11 +549,25 @@ async def poll_user(adapter, user_id: int, user_key: str, now: Optional[datetime
             new = st.play_count - prev[0]
             if new <= 0 and at and (prev[1] is None or at > prev[1] + timedelta(minutes=1)):
                 new = 1                   # marked played again without a count change
+        had = seen.get(st.item_key, [])
+        new -= len(had)
         if new <= 0:
             continue
-        plays.append(Play(user_key=user_key, item_key=st.item_key, played_at=at or now,
-                          source="jellyfin_poll", completed=True, date_only=at is None))
-        for _ in range(new - 1):
+        dated = []
+        if not had:
+            plays.append(Play(user_key=user_key, item_key=st.item_key, played_at=at or now,
+                              source="jellyfin_poll", completed=True, date_only=at is None))
+            new -= 1
+            if at:
+                dated.append(at)
+        if new > 0 and last:
+            if log is None:
+                log = await _playback_log(adapter, last)
+            for t in _log_plays(log, user_key, st, after=last, taken=dated + had)[:new]:
+                plays.append(Play(user_key=user_key, item_key=st.item_key, played_at=t,
+                                  source="jellyfin_poll", completed=True))
+                new -= 1
+        for _ in range(new):
             plays.append(Play(user_key=user_key, item_key=st.item_key, played_at=last or now,
                               source="jellyfin_poll", completed=True, date_only=True))
     res = await record_plays(plays, adapter)
@@ -489,13 +622,32 @@ async def sync_ratings(adapter, user_id: int, user_key: str) -> dict:
 
 # ── tier D ───────────────────────────────────────────────────────────────────
 
-async def import_report(adapter, user_id: int, user_key: str) -> dict:
-    """Tier D for one user, once: the Playback Reporting plugin's plays from
-    before Curatarr. Without the plugin this records that and returns."""
+async def import_report(adapter, user_id: int, user_key: str, now: Optional[datetime] = None) -> dict:
+    """Tier D for one user: once, the Playback Reporting plugin's plays from
+    before Curatarr; after that, its plays inside the gaps tier A noted
+    (``note_gap``) that this user has not had read yet. Without the plugin
+    this records that and returns."""
     from src.services.media_server.jellyfin_adapter import PluginMissing
+    now = now or datetime.utcnow()
     key = _REPORT_DONE.format(uid=user_id)
-    if await _read_state(key):
-        return {"skipped": "done"}
+    done = await _read_state(key)
+    if done == "absent":
+        return {"skipped": "no plugin"}
+    upto_key = _REPORT_UPTO.format(uid=user_id)
+    if done:
+        upto = _parse(await _read_state(upto_key))
+        gaps = [(a, b) for a, b in _gaps(await _read_state(_GAPS)) if upto is None or b > upto]
+        if not gaps:
+            return {"skipped": "done"}
+        try:
+            plays = await adapter.plays(ServerUser(key=user_key, name=""), since=gaps[0][0])
+        except PluginMissing:
+            await _note_state(key, "absent")
+            return {"plugin": False}
+        inside = [p for p in plays if any(a <= p.played_at <= b for a, b in gaps)]
+        res = await record_plays(inside, adapter, min_share=SESSION_PLAY_SHARE)
+        await _note_state(upto_key, gaps[-1][1].isoformat())
+        return {**res, "plugin": True, "gaps": len(gaps)}
     try:
         plays = await adapter.plays(ServerUser(key=user_key, name=""))
     except PluginMissing:
@@ -503,6 +655,7 @@ async def import_report(adapter, user_id: int, user_key: str) -> dict:
         return {"plugin": False}
     res = await record_plays(plays, adapter, min_share=SESSION_PLAY_SHARE)
     await _note_state(key, "1")
+    await _note_state(upto_key, now.isoformat())     # earlier gaps are inside this import
     oldest = min((p.played_at for p in plays), default=None)
     return {**res, "plugin": True, "since": oldest.isoformat() if oldest else None}
 

@@ -638,7 +638,19 @@ async def _sync_to_plex(plan: Plan, *, since: Optional[str], transport=None) -> 
         if uid not in plan.users or not is_plex_key(key) or (uid, key) in seen:
             continue
         seen.add((uid, key))
-        tok = owner if is_admin and owner else token
+        if is_admin and owner:
+            tok = owner
+        else:
+            # A member's account token marks a Plex Home member's plays in
+            # the OWNER's account; the server's own token for them does not.
+            from types import SimpleNamespace
+            from src.services.plex_playlists import server_token
+            try:
+                tok = await server_token(SimpleNamespace(id=uid, is_admin=bool(is_admin), plex_token=token,
+                                                         plex_username=str(uid)))
+            except Exception as e:  # noqa: BLE001 - no server token: this item is counted as not marked; logged
+                logger.warning("[rebind] no Plex server token for user %s: %s", uid, e)
+                tok = None
         if not tok:
             no_token += 1
             continue

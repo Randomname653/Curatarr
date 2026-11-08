@@ -14,7 +14,7 @@ must never read as "the library is empty" (design §6.2).
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import AsyncIterator, Optional, Sequence
 
 import httpx
@@ -67,8 +67,14 @@ class PluginMissing(JellyfinError):
 _PLAYABLE = "Movie,Episode,Audio"
 # The Playback Reporting plugin's own table (jellyfin-plugin-playbackreporting).
 # A fixed string: nothing a caller passes ever reaches the query (design §4.4).
-_REPORT_QUERY = ("SELECT DateCreated, UserId, ItemId, ItemType, ItemName, PlaybackMethod, "
-                 "ClientName, DeviceName, PlayDuration FROM PlaybackActivity ORDER BY DateCreated")
+# The plugin stamps DateCreated with the server's LOCAL clock (DateTime.Now,
+# stored without an offset, about 20 s into the play); SQLite's 'utc'
+# modifier turns it into UTC with the server's own zone rules, summer time
+# included. DateUtc is NULL on a SQLite without them: DateCreated then.
+_REPORT_DELAY = timedelta(seconds=20)    # the plugin writes a play's row 20 s in
+_REPORT_QUERY = ("SELECT DateCreated, datetime(DateCreated, 'utc') AS DateUtc, UserId, ItemId, "
+                 "ItemType, ItemName, PlaybackMethod, ClientName, DeviceName, PlayDuration "
+                 "FROM PlaybackActivity ORDER BY DateCreated")
 
 
 def to_user_state(user_key: str, item: dict) -> Optional[UserItemState]:
@@ -81,7 +87,8 @@ def to_user_state(user_key: str, item: dict) -> Optional[UserItemState]:
         user_key=user_key, item_key=key, played=bool(ud.get("Played")),
         play_count=_int(ud.get("PlayCount")) or 0, last_played_at=_ts(ud.get("LastPlayedDate")),
         position_ms=_ms(ud.get("PlaybackPositionTicks")),
-        liked=None if likes is None else bool(likes), favorite=bool(ud.get("IsFavorite")))
+        liked=None if likes is None else bool(likes), favorite=bool(ud.get("IsFavorite")),
+        duration_ms=_ms(item.get("RunTimeTicks")))
 
 
 def _int(value) -> Optional[int]:
@@ -406,7 +413,7 @@ class JellyfinAdapter:
         out = []
         params = {"userId": user.key, "Recursive": "true", "Filters": "IsPlayed",
                   "IncludeItemTypes": _PLAYABLE, "SortBy": "DatePlayed", "SortOrder": "Descending",
-                  "Fields": "ParentId", "EnableUserData": "true"}
+                  "Fields": "ParentId", "EnableUserData": "true"}     # RunTimeTicks comes always
         pages = self._pages("/Items", params)
         try:
             async for raw in pages:
@@ -458,7 +465,10 @@ class JellyfinAdapter:
         """Per-play history from the Playback Reporting plugin (tier D), oldest
         first. Raises PluginMissing without the plugin. ``position_ms`` is how
         long it played; whether that counts as a play is the caller's call,
-        against the item's runtime."""
+        against the item's runtime. ``played_at`` is the play's end in UTC,
+        its start plus the time it played: the moment the other witnesses
+        (the session poll, the server's last-played date, Plex's viewedAt)
+        stamp, so one play seen twice merges. ``since`` compares that end."""
         async with self._client() as c:
             body = await self._send(c, "POST", "/user_usage_stats/submit_custom_query",
                                     json={"CustomQueryString": _REPORT_QUERY, "ReplaceUserId": False})
@@ -468,13 +478,54 @@ class JellyfinAdapter:
             rec = dict(zip(cols, row))
             if normalize_jellyfin_id(rec.get("UserId")) != user.key:
                 continue
-            item, at = normalize_jellyfin_id(rec.get("ItemId")), _ts(str(rec.get("DateCreated") or "").replace(" ", "T"))
+            item = normalize_jellyfin_id(rec.get("ItemId"))
+            stamp = rec.get("DateUtc") or rec.get("DateCreated") or ""
+            at = _ts(str(stamp).replace(" ", "T"))
+            secs = _int(rec.get("PlayDuration"))
+            if at:
+                # The row is written 20 s into the play, stamped then: the
+                # start is 20 s earlier (live 2026-11-08: start 13:40:53,
+                # DateCreated 13:41:13, stop and last-played 13:46:48 after
+                # 355 s played).
+                at -= _REPORT_DELAY
+            if at and secs:
+                at += timedelta(seconds=secs)
             if not item or not at or (since and at < since):
                 continue
-            secs = _int(rec.get("PlayDuration"))
             out.append(Play(user_key=user.key, item_key=item, played_at=at, source="jellyfin_report",
                             position_ms=secs * 1000 if secs is not None else None,
                             device=rec.get("DeviceName") or None, client=rec.get("ClientName") or None))
+        return out
+
+    async def playback_log(self, *, since: datetime) -> list[dict]:
+        """Playback stops in Jellyfin's own activity log since ``since``, no
+        plugin needed: ``{"user_key", "item_key", "started_at", "stopped_at"}``
+        in UTC, each stop paired with the same user's latest start of that
+        item before it (None when that start is older than ``since`` or the
+        log's retention, 30 days by default). The log keeps no position and
+        calls every stop "finished playing", so start to stop is only an upper
+        bound of what played. Read with the admin key; entries are matched by
+        type and ids, never by their (translated) text."""
+        starts, out = {}, []
+        rows = []
+        pages = self._pages("/System/ActivityLog/Entries",
+                            {"minDate": since.isoformat(timespec="seconds") + "Z", "hasUserId": "true"})
+        try:
+            async for raw in pages:
+                rows.append(raw)
+        finally:
+            await pages.aclose()
+        for raw in sorted(rows, key=lambda r: str(r.get("Date") or "")):
+            kind = str(raw.get("Type") or "")
+            user, item = normalize_jellyfin_id(raw.get("UserId")), normalize_jellyfin_id(raw.get("ItemId"))
+            at = _ts(raw.get("Date"))
+            if not (user and item and at) or not kind.endswith(("Playback", "PlaybackStopped")):
+                continue
+            if kind.endswith("PlaybackStopped"):
+                out.append({"user_key": user, "item_key": item,
+                            "started_at": starts.pop((user, item), None), "stopped_at": at})
+            else:
+                starts[(user, item)] = at
         return out
 
     # ── finding things (the writes' key resolution) ─────────────────────────
@@ -558,10 +609,11 @@ class JellyfinAdapter:
                 for i in body.get("Items") or []
                 if normalize_jellyfin_id(i.get("Id")) and (title is None or i.get("Name") == title)]
 
-    async def playlist_keys(self, user: ServerUser, title: str) -> list[str]:
-        """The item ids in ``user``'s playlist ``title``, in order; [] when
-        there is no such playlist."""
-        mine = await self.playlists(user, title)
+    async def playlist_keys(self, user: ServerUser, title: str, *, aliases: Sequence[str] = ()) -> list[str]:
+        """The item ids in ``user``'s playlist ``title`` (or one of its
+        ``aliases``, its names in other languages), in order; [] when there
+        is no such playlist."""
+        mine = [p for p in await self.playlists(user) if p["title"] in {title, *aliases}]
         if not mine:
             return []
         async with self._client() as c:
@@ -569,12 +621,14 @@ class JellyfinAdapter:
         return [k for k in (normalize_jellyfin_id(i.get("Id")) for i in body.get("Items") or []) if k]
 
     async def upsert_playlist(self, user: ServerUser, title: str, keys: Sequence[str],
-                              media_type: str = "Video") -> str:
+                              media_type: str = "Video", *, aliases: Sequence[str] = ()) -> str:
         """``user``'s playlist ``title`` holding exactly ``keys``. An existing
-        one is edited in place (its id, and the user's pins, survive); extra
-        copies of the same name are removed. Returns the playlist id."""
+        one, under this name or one of ``aliases`` (its names in other
+        languages), is edited in place and renamed (its id, and the user's
+        pins, survive); extra copies are removed. Returns the playlist id."""
         keys = [k for k in (normalize_jellyfin_id(k) for k in keys) if k]
-        mine = await self.playlists(user, title)
+        mine = [p for p in await self.playlists(user) if p["title"] in {title, *aliases}]
+        mine.sort(key=lambda p: p["title"] != title)       # one under the wanted name first
         async with self._client() as c:
             for extra in mine[1:]:
                 await self._send(c, "DELETE", f"/Items/{extra['key']}", ok=(200, 204))
@@ -583,6 +637,8 @@ class JellyfinAdapter:
                     "Name": title, "Ids": keys, "UserId": user.key, "MediaType": media_type})
                 return normalize_jellyfin_id((body or {}).get("Id")) or ""
             pid = mine[0]["key"]
+            if mine[0]["title"] != title:
+                await self._send(c, "POST", f"/Playlists/{pid}", json={"Name": title}, ok=(200, 204))
             current = (await self._get(c, f"/Playlists/{pid}/Items", params={"userId": user.key})).get("Items") or []
             have = {normalize_jellyfin_id(i.get("Id")): i.get("PlaylistItemId") for i in current}
             drop = [entry for k, entry in have.items() if k not in set(keys) and entry]
@@ -605,17 +661,24 @@ class JellyfinAdapter:
                 if normalize_jellyfin_id(i.get("Id")) and str(i.get("Name") or "").startswith(prefix)]
 
     async def upsert_collection(self, library: Optional[Library], title: str,
-                                keys: Sequence[str]) -> str:
+                                keys: Sequence[str], *, summary: Optional[str] = None) -> str:
         """The collection ``title`` holding exactly ``keys`` (created, or
-        edited in place). ``library`` is ignored: collections span libraries."""
+        edited in place), with ``summary`` as its overview when given.
+        ``library`` is ignored: collections span libraries."""
         keys = [k for k in (normalize_jellyfin_id(k) for k in keys) if k]
         found = [c for c in await self.collections(title) if c["title"] == title]
-        async with self._client() as c:
-            if not found:
+        if not found:
+            async with self._client() as c:
                 body = await self._send(c, "POST", "/Collections",
                                         params={"Name": title, "Ids": ",".join(keys)})
-                return normalize_jellyfin_id((body or {}).get("Id")) or ""
-            cid = found[0]["key"]
+            cid = normalize_jellyfin_id((body or {}).get("Id")) or ""
+            if cid and summary is not None:
+                await self.set_overview(cid, summary)
+            return cid
+        cid = found[0]["key"]
+        if summary is not None:
+            await self.set_overview(cid, summary)
+        async with self._client() as c:
             # A collection's members are listed only in a user's view:
             # without userId Jellyfin answers an empty list, so nothing was
             # ever dropped and a shelf kept every title it once held
@@ -633,6 +696,40 @@ class JellyfinAdapter:
                 await self._send(c, "POST", f"/Collections/{cid}/Items",
                                  params={"ids": ",".join(add)}, ok=(200, 204))
             return cid
+
+    async def collections_view_ready(self) -> bool:
+        """Whether the "Collections" library is a view people can open. The
+        first collection makes Jellyfin add the library (CollectionType
+        boxsets) but not its folder item: until a library scan it has no
+        ItemId and shows in nobody's views, the administrator's included
+        (2026-11-08, the test Jellyfin: the shelf existed, nobody saw it)."""
+        async with self._client() as c:
+            folders = await self._get(c, "/Library/VirtualFolders")
+        return any(f.get("CollectionType") == "boxsets" and f.get("ItemId") for f in folders or [])
+
+    async def refresh_library(self) -> None:
+        """Start Jellyfin's library scan (it runs in the background)."""
+        async with self._client() as c:
+            await self._send(c, "POST", "/Library/Refresh", ok=(200, 204))
+
+    async def set_overview(self, key: str, overview: str) -> None:
+        """An item's description. Jellyfin edits an item by taking back its
+        whole record (POST /Items/{id}), so the record is read first and
+        only the overview changes; it is locked so a metadata refresh keeps
+        it."""
+        k = normalize_jellyfin_id(key)
+        if not k:
+            raise JellyfinError(f"not a Jellyfin item id: {key!r}")
+        users = await self.users()
+        viewer = next((u for u in users if u.is_admin), users[0] if users else None)
+        async with self._client() as c:
+            item = await self._get(c, f"/Items/{k}", params={"userId": viewer.key} if viewer else None)
+            if (item or {}).get("Overview") == overview:
+                return
+            locked = list((item or {}).get("LockedFields") or [])
+            body = {**(item or {}), "Overview": overview,
+                    "LockedFields": locked if "Overview" in locked else locked + ["Overview"]}
+            await self._send(c, "POST", f"/Items/{k}", json=body, ok=(200, 204))
 
     async def remove_collection(self, key: str) -> None:
         """Deletes the collection object only; its titles stay."""

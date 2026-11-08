@@ -53,25 +53,22 @@ check("empty themes -> empty", map_designs([], BY_TITLE, BY_NORM, "10", 1) == []
 # ── wiring asserts ───────────────────────────────────────────────────────────
 
 root = Path(__file__).resolve().parents[1]
-pc = (root / "src/services/plex_collections.py").read_text(encoding="utf-8")
-check("mutations are prefix-guarded (Kometa coexistence)",
-      'startswith(COLLECTION_PREFIX)' in pc)
-check("create handles stale machineIdentifier",
-      "get_machine_identifier(force=True)" in pc)
+# The prefix guard (Kometa coexistence) and the writes themselves are
+# behaviour tests now: tests/test_plex_collection_slots.py.
 
 dc = (root / "src/services/data_custodian.py").read_text(encoding="utf-8")
 check("custodian task registered with needs_llm",
       '"plex_collections", "Curatarr collections", 168.0' in dc
       and dc.split('"plex_collections"')[1][:120].count("needs_llm=True") == 1)
 
-# All Plex collection writes live in plex_collections.py only
+# All Plex collection writes live behind the media-server seam
 offenders = []
 for p in (root / "src").rglob("*.py"):
-    if p.name in ("plex_collections.py",):
+    if p.name in ("plex_adapter.py",):
         continue
     if "/library/collections" in p.read_text(encoding="utf-8"):
         offenders.append(p.name)
-check("collection endpoint touched ONLY by plex_collections.py",
+check("collection endpoint touched ONLY by the Plex adapter",
       offenders == [])
 
 cd = (root / "src/services/collection_designer.py").read_text(encoding="utf-8")

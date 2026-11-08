@@ -99,9 +99,18 @@ async def fake_resolve(name, sections=None):
 picked = []
 
 
+pick_tokens = []
+
+
 async def fake_pick(token, artist_key):
     picked.append(artist_key)
+    pick_tokens.append(token)
     return f"alb-{artist_key}"
+
+
+async def fake_server_token(user):
+    # plex.tv's resources list: the server's own token for this account
+    return f"srv-{user.plex_token}" if user.plex_token else None
 
 
 listed = [{"title": pp.MUSIC_PLAYLIST_TITLE, "ratingKey": "756000"}]
@@ -135,6 +144,7 @@ async def fake_mid(force=False):
 
 # The push now checks the server identity before deleting the old playlist.
 pp.get_machine_identifier = fake_mid
+pp.server_token = fake_server_token
 
 no_token = type("U", (), {"id": 42, "plex_username": "x", "plex_token": None})()
 res = asyncio.run(pp.push_user_music_playlist(no_token))
@@ -146,6 +156,8 @@ check("push happened", res == {"pushed": ["music"]})
 check("unresolvable artist skipped, two albums pushed",
       created and created[0]["keys"] == ["alb-111", "alb-222"])
 check("playlist created as AUDIO type", created[0]["type"] == "audio")
+check("the listen state is read with the member's server token, not the account token",
+      pick_tokens and set(pick_tokens) == {"srv-tok"})
 check("existing same-title playlist deleted first (find-delete-recreate)",
       deleted == ["756000"])
 check("snapshot records artists",
@@ -160,6 +172,17 @@ created.clear()
 res2 = asyncio.run(pp.push_user_music_playlist(user))
 check("fresh snapshot + no newer recs -> second push skipped",
       res2 == {"pushed": []} and created == [])
+
+# A member who writes German: the English playlist goes, the German one comes.
+import src.services.user_language as ul  # noqa: E402
+ul._cache[42] = ("de", 10 ** 12)
+snapshots.clear()
+deleted.clear()
+listed[:] = [{"title": "Curatarr Recommended · Music", "ratingKey": "756999"}]
+asyncio.run(pp.push_user_music_playlist(user))
+check("in the member's language: the old-language playlist replaced by 'Curatarr empfiehlt · Musik'",
+      deleted == ["756999"] and created and created[-1]["title"] == "Curatarr empfiehlt · Musik")
+ul._cache.pop(42, None)
 
 # ── wiring asserts ───────────────────────────────────────────────────────────
 

@@ -127,7 +127,7 @@ def is_due(next_retry: Optional[datetime], now: Optional[datetime] = None) -> bo
 # ── states ────────────────────────────────────────────────────────────────────
 
 STATES = (
-    "enriched", "enriched_provisional", "enriched_dead",
+    "enriched", "enriched_provisional", "credit", "enriched_dead",
     "rule_based", "awaiting_llm",
     "retry_due", "not_found",
     "queued", "processing_error",
@@ -147,6 +147,11 @@ STATE_DEFINITIONS: dict[str, dict[str, str]] = {
         "label": "🌗 Enriched (provisional)",
         "explainer": "A profile was written from the fast pass; the slow sources (MusicBrainz, MyAnimeList) are still being merged in the background.",
         "next_step": "Promoted automatically once the slow sources have answered.",
+    },
+    "credit": {
+        "label": "Credit of known artists",
+        "explainer": "A collaboration credit (\"A & B\", \"A feat. B\") that no source knows as an act of its own; its first-billed artist has a profile, and its plays count for the artists it names.",
+        "next_step": "Nothing to do. If it is a real act, pin its MusicBrainz id under Needs attention.",
     },
     "enriched_dead": {
         "label": "🪦 Enriched, cache gone",

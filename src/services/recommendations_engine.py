@@ -1151,16 +1151,14 @@ async def generate_recommendations(
         bug) can never survive — soft prompt lines alone never sufficed.
     """
 
-    # Detect the user's language once so each pitch is written in the language
-    # they chat in. One cheap SELECT; the directive is injected into every
-    # prompt below.
-    from src.services.llm_utils import detect_user_language, language_directive
+    # The language the member writes to the curator in (services/user_language,
+    # the one the UI, the playlists' names and the Wrap-Up follow). The pitch
+    # is written ahead with no conversation to read: detect_user_language
+    # answers English then, so every member got English pitches.
+    from src.services.llm_utils import language_directive
+    from src.services.user_language import user_language
 
-    def _user_lang():
-        with get_db_session() as _ld_db:
-            return detect_user_language(user_id, _ld_db)
-
-    _lang_code = await run_read(_user_lang)
+    _lang_code = await run_read(user_language, user_id)
     lang_directive_str = language_directive(_lang_code)
 
     # LANE: "library" when the caller hands us an owned pool to pick from,

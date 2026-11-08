@@ -105,6 +105,13 @@ def compare(user_id: int, scope: str, period_key: str, facts: dict) -> Optional[
                 med[name] = round(median(vals), 2)
         if med:
             out["radar_median"] = med
+    # The decades this member holds the biggest share of, among the members
+    # who compare (others' shares stay unnamed, like their titles).
+    mine_dec = (facts.get("eras") or {}).get("decades") or {}
+    owned = [d for d, v in mine_dec.items() if v >= 0.1 and all(
+        v > ((f.get("eras") or {}).get("decades") or {}).get(d, 0) for _, f in theirs)]
+    if owned:
+        out["decades_owned"] = sorted(owned)
     titles = [t["title"] for t in (facts.get("top") or [])[:5] if t.get("title")]
     if titles:
         with get_db_session() as db:

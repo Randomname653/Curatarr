@@ -89,21 +89,28 @@ async def push_user_playlists(user, *, adapter=None) -> dict:
     from src.database.runner import run_read, run_write
     from src.services.plex_playlists import (PLAYLIST_TITLES, _library_recs, _load_snapshot,
                                              _save_snapshot, _section_keys)
+    from src.services.playlist_names import name as playlist_name, names as playlist_names
+    from src.services.user_language import user_language
     who = await server_user(user.id)
     if who is None:
         return {"pushed": [], "skipped": "no_jellyfin_account"}
     adapter = _adapter(adapter)
     snap = await run_read(_load_snapshot, user.id)
+    lang = await run_read(user_language, user.id)
     pushed = []
-    for category, title in PLAYLIST_TITLES.items():
-        rows = await run_read(_library_recs, user.id, category, 10)
+    from src.services.plex_playlists import _because_recs
+    for category in [*PLAYLIST_TITLES, "because"]:
+        title = playlist_name(category, lang)
+        rows = (await run_read(_because_recs, user.id) if category == "because"
+                else await run_read(_library_recs, user.id, category, 10))
         if not rows or not _due(snap.get(category), rows):
             continue
-        sections = await run_read(_section_keys, category)
         keys, titles = [], []
         for r in rows:
-            key = await _resolve(adapter, r["title"], category, r["key"], sections, user_id=user.id)
-            if key and category in ("show", "anime"):
+            cat = r.get("category") or category
+            sections = await run_read(_section_keys, cat)
+            key = await _resolve(adapter, r["title"], cat, r["key"], sections, user_id=user.id)
+            if key and cat in ("show", "anime"):
                 key = await adapter.next_episode(who, key)   # a series id expands to every episode
             if key:
                 keys.append(key)
@@ -111,7 +118,7 @@ async def push_user_playlists(user, *, adapter=None) -> dict:
         if not keys:
             logger.info("[playlists] %s/%s: nothing resolvable in Jellyfin - skipped", who.name, category)
             continue
-        pid = await adapter.upsert_playlist(who, title, keys, "Video")
+        pid = await adapter.upsert_playlist(who, title, keys, "Video", aliases=playlist_names(category))
         snap[category] = {"pushed_at": datetime.utcnow().isoformat(), "playlist_key": pid, "titles": titles}
         pushed.append(category)
         logger.info("[playlists] %s: pushed '%s' (%d items, Jellyfin)", who.name, title, len(keys))
@@ -144,7 +151,10 @@ async def push_user_music_playlist(user, *, adapter=None) -> dict:
             logger.info("[playlists] %s/music: %r not in Jellyfin - skipped", who.name, r["title"])
     if not keys:
         return {"pushed": []}
-    pid = await adapter.upsert_playlist(who, MUSIC_PLAYLIST_TITLE, keys, "Audio")
+    from src.services.playlist_names import name as playlist_name, names as playlist_names
+    from src.services.user_language import user_language
+    pid = await adapter.upsert_playlist(who, playlist_name("music", await run_read(user_language, user.id)),
+                                        keys, "Audio", aliases=playlist_names("music"))
     snap["music"] = {"pushed_at": datetime.utcnow().isoformat(), "playlist_key": pid, "titles": titles}
     await run_write(_save_snapshot, user.id, snap)
     return {"pushed": ["music"]}
@@ -185,19 +195,48 @@ async def push_wrapup_playlist(user, label: str, videos: list, tracks: list, *, 
     return {"pushed": pushed, "missing": missing}
 
 
+# Jellyfin's home screen has no row for one collection (docs/MEDIA_SERVERS.md):
+# the shelf says where it lives, so the gap is visible where it is met.
+# In the household's (the owner's) language, as the shelves' names.
+JELLYFIN_SHELF_NOTES = {
+    "en": ("A Curatarr shelf, rotated weekly. Jellyfin shows it under Collections; "
+           "its home screen has no row for a single collection."),
+    "de": ("Ein Curatarr-Regal, jede Woche neu. Jellyfin zeigt es unter Sammlungen; "
+           "der Startbildschirm hat keine Zeile für eine einzelne Sammlung."),
+}
+JELLYFIN_SHELF_NOTE = JELLYFIN_SHELF_NOTES["en"]
+
+
+def _owner_language() -> str:
+    """Blocking: the owner's language (services/user_language), English
+    without an owner."""
+    from src.database.connection import get_db_session
+    from src.database.models import User
+    from src.services.user_language import user_language
+    with get_db_session() as db:
+        owner = db.query(User.id).filter(User.is_admin == True).first()  # noqa: E712
+    return user_language(owner[0]) if owner else "en"
+
+
 async def push_collections(designs: list, *, adapter=None) -> dict:
     """The designer's shelves as Jellyfin collections: each one created or
-    edited in place; our earlier shelves not in this rotation removed (the
-    titles in them stay). Same snapshot as the Plex push."""
+    edited in place, its overview the designer's line plus where to find it
+    (JELLYFIN_SHELF_NOTE); our earlier shelves not in this rotation removed
+    (the titles in them stay). Same snapshot as the Plex push."""
     from src.database.runner import run_write
     from src.services.app_state import set_state
     from src.services.plex_collections import COLLECTION_PREFIX
     adapter = _adapter(adapter)
+    from src.database.runner import run_read
+    note = JELLYFIN_SHELF_NOTES.get(await run_read(_owner_language), JELLYFIN_SHELF_NOTE)
     created = failed = deleted = 0
     results, keep = [], set()
     for d in designs:
         try:
-            cid = await adapter.upsert_collection(None, d["title"], d["keys"])
+            line = (d.get("description") or "").strip()
+            cid = await adapter.upsert_collection(
+                None, d["title"], d["keys"],
+                summary=f"{line}\n\n{note}" if line else note)
         except Exception as e:  # noqa: BLE001 - one shelf's failure must not cost the others; logged
             failed += 1
             logger.warning("[collections] %r not written to Jellyfin: %s", d.get("title"), e)
@@ -210,6 +249,14 @@ async def push_collections(designs: list, *, adapter=None) -> dict:
         if coll["title"] not in keep:
             await adapter.remove_collection(coll["key"])
             deleted += 1
+    if created:
+        try:
+            if not await adapter.collections_view_ready():
+                await adapter.refresh_library()
+                logger.info("[collections] Jellyfin's Collections library has no view yet; "
+                            "a library scan was started so the shelves show")
+        except Exception as e:  # noqa: BLE001 - the shelves exist; they show after Jellyfin's next scan; logged
+            logger.warning("[collections] Jellyfin library scan not started: %s", e)
     await run_write(set_state, "curatarr_collections", json.dumps({
         "pushed_at": datetime.utcnow().isoformat(), "designs": results}))
     return {"created": created, "deleted": deleted, "failed": failed}
@@ -244,9 +291,12 @@ async def add_to_watchlist(user_id: int, title: str, year: Optional[int] = None,
             key = await adapter.next_episode(who, key)
             if not key:
                 return {"ok": False, "error": f"{title!r} has no episode in Jellyfin yet"}
-        current = await adapter.playlist_keys(who, WATCHLIST_TITLE)
+        from src.services.playlist_names import name as playlist_name, names as playlist_names
+        from src.services.user_language import user_language
+        wl = playlist_name("watchlist", await run_read(user_language, user_id))
+        current = await adapter.playlist_keys(who, wl, aliases=playlist_names("watchlist"))
         if key not in current:
-            await adapter.upsert_playlist(who, WATCHLIST_TITLE, current + [key], "Video")
+            await adapter.upsert_playlist(who, wl, current + [key], "Video", aliases=playlist_names("watchlist"))
         logger.info("[watchlist] user %d: %s on the Curatarr Watchlist (Jellyfin)", user_id, title)
         return {"ok": True, "matched": f"{title} ({year})" if year else title}
     except Exception as e:  # noqa: BLE001 - the contract is "never raises"; the caller logs the error text

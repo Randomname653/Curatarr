@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
-import { EL, _errHtml, _errMsg, _posterImg, act, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
 import { playStory } from './wrapup_story.js';
 import { brandMarkHtml } from './brand.js';
 
@@ -31,9 +31,11 @@ const wu = {scope: 'all', period: '30d', year: null, data: null, poll: null, sna
             layout: 'card', quizOpen: false, tiles: []};
 try { Object.assign(wu, JSON.parse(localStorage.getItem(WU_KEY) || '{}')); } catch (_) { /* private mode: defaults */ }
 function _save() {
-  try { localStorage.setItem(WU_KEY, JSON.stringify({scope: wu.scope, period: wu.period, year: wu.year})); } catch (_) { /* private mode */ }
+  try { localStorage.setItem(WU_KEY, JSON.stringify({scope: wu.scope, period: wu.period, year: wu.year, season: wu.season})); } catch (_) { /* private mode */ }
 }
-const _periodKey = () => wu.period === 'year' ? `year:${wu.year || new Date().getFullYear()}` : wu.period;
+const _periodKey = () => wu.period === 'year' ? `year:${wu.year || new Date().getFullYear()}`
+  : wu.period === 'season' ? (wu.season || '30d') : wu.period;
+const _seasonLabel = k => { const [y, s] = String(k).replace('season:', '').split('-'); return `${s ? s[0].toUpperCase() + s.slice(1) : ''} ${y}`; };
 const _pct = v => Math.round(100 * (v || 0));
 const _s = v => esc(String(v ?? ''));
 const _isMusic = mt => mt === 'music';
@@ -66,6 +68,14 @@ export function setWrapupPeriod(p) {
   if (p === wu.period) return;
   wu.period = p; _save(); haptic('tick'); loadWrapup();
 }
+// The anime season (services/wrapup_facts: Winter, Spring, Summer, Fall):
+// a wrap-up of the member's anime in that season.
+export function setWrapupSeason(key) {
+  if (wu.period === 'season' && key === wu.season) return;
+  wu.period = 'season'; wu.season = key;
+  if ((wu.data?.scopes || []).includes('anime')) wu.scope = 'anime';
+  _save(); haptic('tick'); loadWrapup();
+}
 export function setWrapupYear(y) {
   if (wu.period === 'year' && +y === +wu.year) return;
   wu.period = 'year'; wu.year = +y; _save(); haptic('tick'); loadWrapup();
@@ -91,7 +101,7 @@ function _render(reveal = false) {
   }
   el.innerHTML = wu.snapshot
     ? _controls(d) + _snapshot(f, d.story)
-    : _controls(d) + _hero(f, d) + '<h2 class="wu-explore">Explore</h2>' + _bento(f) + _story(f, d) + _household(d) + _ledgerSlot(f);
+    : _controls(d) + _hero(f, d) + '<h2 class="wu-explore">Explore</h2>' + _bento(f) + _story(f, d) + _household(d) + _milestones(d) + _ledgerSlot(f);
   if (reveal) el.querySelector('.wu-hero')?.classList.add('is-reveal');
   _armCounters(el);
   if (f.curatarr?.ledger && !wu.snapshot) {
@@ -102,7 +112,14 @@ function _render(reveal = false) {
 
 // ── controls ────────────────────────────────────────────────────────────────
 function _controls(d) {
-  const per = PERIODS.map(([k, l]) => `<button type="button" class="wu-chip${k === wu.period ? ' is-on' : ''}" aria-pressed="${k === wu.period}" ${act('setWrapupPeriod', k)}>${esc(l)}</button>`).join('');
+  const seasons = d.seasons || [];
+  const per = PERIODS.map(([k, l]) => `<button type="button" class="wu-chip${k === wu.period ? ' is-on' : ''}" aria-pressed="${k === wu.period}" ${act('setWrapupPeriod', k)}>${esc(l)}</button>`).join('')
+    + (seasons.length ? `<button type="button" class="wu-chip${wu.period === 'season' ? ' is-on' : ''}" aria-pressed="${wu.period === 'season'}" ${act('setWrapupSeason', wu.season && seasons.includes(wu.season) ? wu.season : seasons[0])}>Anime season</button>` : '');
+  const seasonChips = wu.period === 'season' && seasons.length > 1
+    ? `<div class="wu-chips" role="group" aria-label="Anime season">${seasons.map(k => {
+        const on = k === wu.season;
+        return `<button type="button" class="wu-chip wu-chip-sm${on ? ' is-on' : ''}" aria-pressed="${on}" ${act('setWrapupSeason', k)}>${esc(_seasonLabel(k))}</button>`;
+      }).join('')}</div>` : '';
   const years = wu.period === 'year' && (d.years || []).length > 1
     ? `<div class="wu-chips" role="group" aria-label="Year">${d.years.map(y => {
         const on = +y === +(wu.year || new Date().getFullYear());
@@ -110,7 +127,7 @@ function _controls(d) {
       }).join('')}</div>` : '';
   const scopes = (d.scopes || ['all']).map(s => `<button type="button" class="wu-tab${s === wu.scope ? ' is-on' : ''}" aria-pressed="${s === wu.scope}" ${act('setWrapupScope', s)}>${esc(SCOPE_LABEL[s] || s)}</button>`).join('');
   return `<div class="wu-controls">
-    <div class="wu-chips" role="group" aria-label="Period">${per}</div>${years}
+    <div class="wu-chips" role="group" aria-label="Period">${per}</div>${years}${seasonChips}
     <div class="wu-tabs" role="group" aria-label="Media">${scopes}</div>
     <button type="button" class="btn btn-secondary btn-sm wu-snap-btn" ${act('toggleWrapupSnapshot')}>${wu.snapshot ? 'Full view' : 'Snapshot'}</button></div>`;
 }
@@ -260,6 +277,30 @@ function _bento(f) {
      <div class="wu-meta">${esc(e.oldest.title)} (${_s(e.oldest.year)}) → ${esc(e.newest.title)} (${_s(e.newest.year)})</div>
      <div class="wu-decades">${Object.entries(e.decades).map(([k, v]) => `<span title="${esc(k)} · ${_pct(v)}%">${_bar('wu-dec-fill', _pct(v))}<em>${esc(k.slice(2))}</em></span>`).join('')}</div>`,
     `Viewing age ${e.viewing_age_year}`));
+  const as = f.anime_season;
+  if (as && (as.started?.length || as.finished?.length || as.dropped?.length)) {
+    const list = (xs, fmt) => xs.length ? `<ul class="wu-as-list">${xs.slice(0, 6).map(x => `<li>${fmt(x)}</li>`).join('')}</ul>` : '<p class="wu-meta">None</p>';
+    tiles.push(_tile('wu-span-split', 'This anime season',
+      `<div class="wu-as">
+        <div><div class="wu-as-h">Started <b>${_s(as.started.length)}</b></div>${list(as.started, x => `${esc(x.title)} <span class="t3">· ${_s(x.episodes)} ep</span>`)}</div>
+        <div><div class="wu-as-h">Finished <b>${_s(as.finished.length)}</b></div>${list(as.finished, x => `${esc(x.title)} <span class="t3">· ${x.series_done ? 'the whole series' : `season ${_s(x.season)}`}</span>`)}</div>
+        <div><div class="wu-as-h">Dropped <b>${_s(as.dropped.length)}</b></div>${list(as.dropped, x => `${esc(x.title)} <span class="t3">· ${_s(x.episodes)}${x.of ? ` of ${_s(x.of)}` : ''} ep</span>`)}</div>
+      </div>`,
+      `This anime season: ${as.started.length} started, ${as.finished.length} finished, ${as.dropped.length} dropped`));
+  }
+  if (e?.decade_top && Object.keys(e.decades || {}).length >= 2) {
+    const prev = wu.data?.decades_prev || null;
+    const rows = Object.entries(e.decades).map(([k, v]) => {
+      const was = prev ? Math.round(100 * (prev[k] || 0)) : null, now = _pct(v);
+      const d = was == null ? '' : now - was;
+      return `<div class="wu-dec-row"><span class="wu-dec-k">${esc(k)}</span>${_bar('wu-dec-line', now)}
+        <span class="wu-dec-v"><b>${now}%</b>${d !== '' && d !== 0 ? ` <em class="${d > 0 ? 't-amber' : ''}">${d > 0 ? '+' : ''}${d}</em>` : ''}</span>
+        <span class="wu-dec-t">${esc((e.decade_top[k] || []).slice(0, 2).join(', '))}</span></div>`;
+    }).join('');
+    tiles.push(_tile('wu-span-split', 'Your decades',
+      `<div class="wu-dec-list">${rows}</div>${prev ? '<div class="wu-meta">Points against last year</div>' : ''}`,
+      `My decades: ${Object.entries(e.decades).map(([k, v]) => `${k} ${_pct(v)}%`).join(', ')}`));
+  }
   if (e?.shortest) tiles.push(_tile('wu-span-sm', 'Shortest vs longest',
     `<div class="wu-pairline"><b>${_s(e.shortest.minutes)}</b> min <span>${esc(e.shortest.title)}</span></div>
      <div class="wu-pairline"><b>${_s(e.longest.minutes)}</b> min <span>${esc(e.longest.title)}</span></div>`,
@@ -368,10 +409,38 @@ function _household(d) {
   if (!h.rank_hours) {
     return `<p class="wu-note">You are in. The comparison starts once another member turns it on and has a wrap-up for this period. ${off}</p>`;
   }
-  const only = h.only_you ? ` · only you watched <b>${esc(h.only_you)}</b>` : '';
+  const only = (h.only_you ? ` · only you watched <b>${esc(h.only_you)}</b>` : '')
+    + ((h.decades_owned || []).length ? ` · the ${esc(h.decades_owned.join(' and the '))} are yours in this house` : '');
   return `<article class="card wu-household"><div class="wu-tile-lbl">In the house</div>
     <p><b>#${_s(h.rank_hours)}</b> of ${_s(h.members)} by hours${only}${h.radar_median ? ' · the dashed line on your taste radar is the household median' : ''}</p>
     <p class="wu-note">Only members who turned this on are compared, and nobody sees anyone else's titles. ${off}</p></article>`;
+}
+
+// ── milestones (services/milestones): the whole history, newest first ─────
+const _cap = s => String(s || '').replace(/^./, c => c.toUpperCase());
+const _MS_KIND = { films: 'Films', series: 'Series finished', anime: 'Anime finished', episodes: 'Episodes',
+  hours: 'Hours', artists: 'Artists', years: 'Years' };
+
+function _msDate(iso) {
+  return new Date(iso).toLocaleDateString(loc(), { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function _milestones(d) {
+  const m = d.milestones || {}, hist = m.history || [], off = new Set(m.off || []);
+  const rows = hist.slice(0, 40).map(x => `<li class="wu-ms-row"><span class="wu-ms-date">${esc(_msDate(x.reached_at))}</span>
+      <span class="wu-ms-what">${esc(_cap(x.phrase))}${x.title ? ` · <b>${esc(x.title)}</b>` : ''}</span></li>`).join('');
+  const kinds = (m.kinds || []).map(k => `<label class="wu-ms-kind"><input type="checkbox" ${off.has(k) ? '' : 'checked'}
+      ${actOn('change', 'toggleMilestoneKind', k, EL)}> ${esc(_MS_KIND[k] || k)}</label>`).join('');
+  return `<article class="card wu-milestones"><div class="wu-tile-lbl">Your milestones</div>
+    ${rows ? `<ol class="wu-ms-list">${rows}</ol>` : '<p class="wu-note">None yet — the first one is ten films, a hundred episodes or a hundred hours away.</p>'}
+    <details class="wu-ms-kinds"><summary class="fs-12 t3">Which kinds count</summary><div class="wu-ms-kinds-row">${kinds}</div></details></article>`;
+}
+
+export async function toggleMilestoneKind(kind, el) {
+  try {
+    await api('/api/wrapup/milestones/kinds', 'POST', { kind, on: !!el?.checked });
+    await loadWrapup();
+  } catch (e) { toast(`Not saved: ${e.message || e}`, 'error'); }
 }
 
 export async function toggleWrapupHousehold() {
