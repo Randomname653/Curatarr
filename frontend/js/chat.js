@@ -1099,6 +1099,17 @@ export async function deleteFromDiscussion() {
   if (!ctx || ctx.kind !== 'deletion_proposal' || !ctx.proposal_id) return;
   const id    = ctx.proposal_id;
   const title = ctx.title || 'this item';
+  // The approve waits on the arr deleting the files, long enough to open
+  // another discussion meanwhile. Its answer then closed THAT thread and
+  // flushed its memories, and the next message went to free chat without
+  // the title (2026-11-08). Everything after the approve acts on this
+  // proposal's own thread; the pane is only touched while it still shows it.
+  const tid = _threadIdForContext(ctx);
+  const stillHere = () => {
+    const c = state.pendingDiscussContext;
+    return !!c && c.kind === 'deletion_proposal' && String(c.proposal_id) === String(id);
+  };
+  const say = (text, tone) => (stillHere() ? addMsg(text, 'assistant') : toast(text, tone));
 
   // Deletion is irreversible — keep the 3-second-countdown confirm. No
   // reason field here: the discussion thread itself IS the reasoning.
@@ -1120,11 +1131,13 @@ export async function deleteFromDiscussion() {
     ).catch(e => console.warn('[chat] deletion audit comment failed', id, e));
 
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
+    // The banner re-arms its button for whichever discussion opened since.
+    const rearm = () => { if (btn && stillHere()) { btn.disabled = false; btn.textContent = 'Delete & exit'; } };
 
     if (r.limbo) {
       // ARR unreachable — proposal kept in limbo, user can retry.
-      addMsg(r.error, 'assistant');
-      if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
+      say(r.error, 'amber');
+      rearm();
       return;
     }
 
@@ -1135,11 +1148,15 @@ export async function deleteFromDiscussion() {
         state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
       }
       // Pass 61: explicit end-of-conversation — flush this thread's pending
-      // memory extraction now. Fire-and-forget; read the thread id before
-      // state.pendingDiscussContext is nulled below.
-      const tid = _threadIdForContext(state.pendingDiscussContext);
+      // memory extraction now. Fire-and-forget; the thread id was read
+      // from this proposal's context before the approve.
       if (tid && tid !== 'general') {
         _flushThreadMemories(tid);
+      }
+      if (!stillHere()) {
+        // Another discussion owns the pane now: it stays as it is.
+        toast(`Deleted "${title}".`, 'success');
+        return;
       }
       // Close the discussion — same end-state as exitDiscussion(), minus
       // its "exited thread" note (a more specific one follows). A reply
@@ -1149,12 +1166,12 @@ export async function deleteFromDiscussion() {
       if (!_stream) await _showThread('general');
       addMsg(`Deleted "${title}". Discussion thread closed.`, 'assistant');
     } else {
-      addMsg(`Delete failed for "${title}". Try again from the Deletions view.`, 'assistant');
-      if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
+      say(`Delete failed for "${title}". Try again from the Deletions view.`, 'danger');
+      rearm();
     }
   } catch (e) {
-    addMsg(`Delete request failed for "${title}". Try again from the Deletions view.`, 'assistant');
-    if (btn) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
+    say(`Delete request failed for "${title}". Try again from the Deletions view.`, 'danger');
+    if (btn && stillHere()) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
   }
 }
 
