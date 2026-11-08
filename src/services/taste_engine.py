@@ -883,7 +883,11 @@ async def compute_taste_vector_for_user(
     )
     task_monitor.start(_tv_task)
 
-    if not entries:
+    # A member who has only swiped here (a calibration deck: titles seen
+    # elsewhere) has no plays yet but a taste to build all the same.
+    from src.services.swipe import load_swipe_entries
+    _swipes = await asyncio.to_thread(load_swipe_entries, user_id, category)
+    if not entries and not _swipes:
         task_monitor.skip(_tv_task, "No entries for this category")
         return {}
 
@@ -1162,8 +1166,7 @@ async def compute_taste_vector_for_user(
     # Swipe answers (services/swipe.py): a title seen outside Plex, with its
     # stars, joins the average like a watch - 10 stars pull, 1 star pushes.
     # A title already weighed from the user's own plays is left to them.
-    from src.services.swipe import load_swipe_entries
-    _swipes = await asyncio.to_thread(load_swipe_entries, user_id, category)
+    _added: list = []
     if _swipes:
         _have = {e.get("plex_item_id") for _, e in top_entries}
         _added = [s for s in _swipes if s[1]["plex_item_id"] not in _have]
@@ -1456,6 +1459,8 @@ async def compute_taste_vector_for_user(
         "dropped_titles": list(dict.fromkeys(t for t in dropped_titles if t))[:20],
         "top_titles": [k for k, _ in title_counter.most_common(30)],
         "watch_count": len(entries),
+        # Seen-it Swipe answers that joined the average (titles seen elsewhere).
+        "swipe_count": len(_added),
         "avg_completion": avg_completion,
         "binges": binges[-10:],
         # time-of-day / day-of-week distributions — read by the rec prompts
@@ -1732,7 +1737,9 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
     for cat in categories:
         logger.info("Computing taste vector for %s...", cat)
         result = await compute_taste_vector_for_user(user_id, category=cat)
-        if result.get("watch_count", 0) >= 5:
+        # Five plays, or five seen-it Swipe answers (a calibration deck: a
+        # member's first profile before their first play here).
+        if result.get("watch_count", 0) + result.get("swipe_count", 0) >= 5:
             all_results[cat] = result
 
     if not all_results:

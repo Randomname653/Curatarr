@@ -6,6 +6,17 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Swipe comes in decks of ten, with a reason you can read in two seconds.** The stack refilled
+for ever and its ring counted only seen-it answers toward the next taste refresh, so it barely
+moved. Now the ring counts the deck, and after ten answers a screen says what went on the
+watchlist and what you loved, with "Another 10" or "Done for tonight". Each card names one
+reason: the title you loved (a "Loved it" on the landing card, a Rediscover title) or watched
+recently that sits nearest it, instead of a taste cluster's three strongest titles. Cards show
+one line of the synopsis, all of it on a tap, and the stack no longer runs three of one genre in
+a row. A member with no profile in a category no longer reads "watch a few titles first": they
+get a calibration deck of the category's most central library titles, best-rated first, and
+their fifth seen-it answer builds their first taste profile, plays or not.
+
 **"What should I watch tonight?" is answered from what the member can start tonight.** Free chat
 used to search the vector store for that sentence and hand the curator its five nearest library
 items, watched or not. Every chat turn outside a deletion, principle or Wrap-Up discussion now

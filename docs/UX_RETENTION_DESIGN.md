@@ -1,7 +1,7 @@
 # Curatarr — Feeling at home: UX, retention and habit design
 
 _Design record, **Proposed** 2026-11-08; **stage 1 built** the same day
-(see CHANGELOG); stage 2 in progress: `post_watch_verdicts` and `[TONIGHT CANDIDATES]` built. Owner's decisions since: the post-watch verdict
+(see CHANGELOG); stage 2 in progress: `post_watch_verdicts`, `[TONIGHT CANDIDATES]` and the Swipe decks, hook and calibration built. The calibration deck ranks by the corpus centre and public score, not by other members' plays. Owner's decisions since: the post-watch verdict
 gets its own table `post_watch_verdicts` and weighs the existing play row
 (like `user_rating_by_item` for music), never a second row; model work for
 stage 3 runs only through the custodian with the game lock; the member UI

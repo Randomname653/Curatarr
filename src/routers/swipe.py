@@ -55,6 +55,7 @@ async def _posters(cards: list, cat: str) -> None:
             c["poster_url"] = poster
             if not c.get("synopsis") and synopsis:
                 c["synopsis"] = synopsis[:600]
+            c["pitch"] = sw.pitch(c.get("synopsis"))
     await asyncio.gather(*(_poster(c) for c in cards))
 
 
@@ -63,8 +64,10 @@ async def next_cards(category: str = Query("show"), n: int = Query(8, ge=1, le=2
                      seed: Optional[str] = Query(None, max_length=128),
                      skip: str = Query("", max_length=4000),
                      user: User = Depends(get_current_user)):
-    """The next cards for this user, nearest to their taste first. Empty with
-    a reason when there is no taste profile for the category yet.
+    """The next cards for this user, nearest to their taste first. Without a
+    taste profile for the category yet: a calibration deck (reason
+    "calibration", services/swipe.calibration_cards) whose seen answers build
+    the first one; empty with reason "no_taste" only when there is no corpus.
 
     ``seed``: a doc id the user just loved - the cards are its nearest
     unanswered neighbours instead (empty, no reason, when it has none).
@@ -77,8 +80,14 @@ async def next_cards(category: str = Query("show"), n: int = Query(8, ge=1, le=2
         return {"cards": cards}
     cards = await sw.next_cards(uid, cat, n, _skip_ids(skip))
     if not cards:
-        return {"cards": [], "reason": "no_taste"
-                if not await run_read(sw._taste_queries, uid, cat) else "done"}
+        if await run_read(sw._taste_queries, uid, cat):
+            return {"cards": [], "reason": "done"}
+        cards = await sw.calibration_cards(uid, cat, n, _skip_ids(skip))
+        if not cards:
+            return {"cards": [], "reason": "no_taste"}
+        await _posters(cards, cat)
+        return {"cards": cards, "reason": "calibration",
+                "first_build_after": sw.CALIBRATION_FIRST_BUILD}
     await _posters(cards, cat)
     return {"cards": cards}
 
@@ -97,7 +106,11 @@ async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
     uid = user.id
     count = await run_write(sw.save_answer, uid, cat, body.doc_id, body.title,
                             body.seen, body.stars, body.want)
-    rebuild = count >= sw.REBUILD_EVERY
+    # A member calibrating (no profile yet) gets the first one sooner.
+    every = sw.REBUILD_EVERY
+    if body.seen and count < every and not await run_read(sw._taste_queries, uid, cat):
+        every = sw.CALIBRATION_FIRST_BUILD
+    rebuild = count >= every
     if rebuild:
         await run_write(sw.reset_rebuild_counter, uid, cat)
         from src.services.bg_tasks import track_task
@@ -105,7 +118,7 @@ async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
         track_task(compute_all_taste_vectors(uid, [cat], skip_summaries=True),
                    name=f"swipe_taste_rebuild_{cat}")
     out = {"ok": True, "taste_rebuild": rebuild,
-           "since_rebuild": 0 if rebuild else count, "rebuild_every": sw.REBUILD_EVERY}
+           "since_rebuild": 0 if rebuild else count, "rebuild_every": every}
     if body.want and body.title:
         # The same write chat makes for "I want to watch X": the user's own
         # plex.tv watchlist, so it shows in their Plex apps. Never raises;

@@ -21,7 +21,7 @@ import { hideYearAgo, loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reload
 import { renderLedger } from './report.js';
 import { answerWrapupStory, closeWrapupStory, nextWrapupSlide, prevWrapupSlide } from './wrapup_story.js';
 import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, setWrapupSeason, toggleMilestoneKind, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
-import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo } from './swipe.js';
+import { loadSwipe, swipeCategory, swipeExact, swipeNextDeck, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
 import { routeFromHash, toggleMobileSidebar, toggleSidebar, topbarSearch, showLibrariesForce, goToView } from './nav.js';
@@ -224,6 +224,7 @@ const actions = {
   loadSwipe,
   swipeCategory,
   swipeExact,
+  swipeNextDeck,
   swipeReact,
   swipeStars,
   swipeUndo,
