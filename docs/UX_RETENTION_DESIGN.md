@@ -1,7 +1,7 @@
 # Curatarr — Feeling at home: UX, retention and habit design
 
 _Design record, **Proposed** 2026-11-08; **stage 1 built** the same day
-(see CHANGELOG, Unreleased). Owner's decisions since: the post-watch verdict
+(see CHANGELOG); stage 2 in progress, `post_watch_verdicts` first. Owner's decisions since: the post-watch verdict
 gets its own table `post_watch_verdicts` and weighs the existing play row
 (like `user_rating_by_item` for music), never a second row; model work for
 stage 3 runs only through the custodian with the game lock; the member UI

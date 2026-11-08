@@ -6,6 +6,19 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**A one-tap "how did it land?" now shapes the taste** (design record stage 2, the owner's
+decision). The landing's follow-up card stores the member's verdict (Loved it / Liked it / It
+was okay / Not for me) in a new table, `post_watch_verdicts`, instead of sending it as a chat
+message that only memory extraction read. The taste rebuild weighs the play that is already in
+the history by it, never a second row: a film by its play's key, a series by its title. It
+replaces the completion and drop guesses for that play, and "Not for me" pushes the vector away,
+where any positive weight on a finished film would still have pulled it closer. The answer
+rebuilds that category's vector in the background without the curator's summaries (the rebuild
+a tenth Swipe answer starts), and "Tell the curator why" opens the message's thread for the
+words a tap cannot carry. The card now asks only about one film or series: music follow-ups and
+morning lines about several things stay in the bell. The Plex/Jellyfin rebind carries the
+verdicts' play keys over.
+
 **A member's chat landing speaks to the member** (design record
 [docs/UX_RETENTION_DESIGN.md](docs/UX_RETENTION_DESIGN.md), stage 1). Beside the curator's
 openers the landing now offers chips in the member's own voice, built without a model from the

@@ -638,6 +638,37 @@ class SwipeRating(Base):
     )
 
 
+class PostWatchVerdict(Base):
+    """The member's one-tap verdict on something they PLAYED (2026-11-08,
+    docs/UX_RETENTION_DESIGN.md §2.5): "Loved it / Liked it / It was okay /
+    Not for me" on the landing's follow-up card.
+
+    It is a weight on the play that is already there, never a play of its
+    own: the taste rebuild multiplies the matching history row's weight by
+    the verdict's factor (services/post_watch), as it does with a Plex star
+    rating on a music row. A film matches by ``item_key`` (the play's key),
+    a series by its ``title`` - its episodes carry keys of their own and the
+    rebuild weighs the series as one. swipe_ratings stays the record of what
+    was seen OUTSIDE the server.
+
+    One verdict per work: a new answer replaces the old one (same user,
+    category and key for a film; same title for a series)."""
+    __tablename__ = "post_watch_verdicts"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False)
+    item_key   = Column(String(128), nullable=True)            # the judged play's plex_item_id
+    title      = Column(String(512), nullable=False)           # film title / series title
+    category   = Column(String(16), nullable=False)            # movie | show | anime
+    verdict    = Column(String(16), nullable=False)            # loved | liked | okay | not_for_me
+    source     = Column(String(32), nullable=False, default="followup_card")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_pwv_user_category", "user_id", "category"),
+    )
+
+
 class PlexRating(Base):
     """User-set Plex star ratings (1-5 ★), captured from PlexAmp / Plex Web.
 

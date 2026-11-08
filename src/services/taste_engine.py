@@ -199,7 +199,7 @@ def _profile_keys(entries: list, canonical_keys: dict) -> list:
 
 
 def _series_entries(entries: list, now: datetime, canonical_keys: dict,
-                    has_profile) -> list:
+                    has_profile, verdicts: Optional[dict] = None) -> list:
     """show/anime: ONE (weight, entry) per series, like the music path does
     per artist. Episode rows all resolve to the SAME series vector (the
     series profile is aliased onto every played episode key), so row-level
@@ -214,7 +214,13 @@ def _series_entries(entries: list, now: datetime, canonical_keys: dict,
 
     ``canonical_keys`` maps series title → its EnrichmentStatus key (tried
     first); ``has_profile(entry)`` says whether an entry has an enrichment
-    profile. Series without any profile are left to the genre counters."""
+    profile. Series without any profile are left to the genre counters.
+
+    ``verdicts`` maps a series title (lower-cased) to the member's post-watch
+    verdict factor (services/post_watch). The member said how it landed, so
+    the factor scales the series' weight and replaces the guesses: an
+    unfinished series counts as one finished episode, a "drop" is not a push
+    when they said they liked it, and "Not for me" pushes."""
     by_series: dict = {}
     for e in entries:   # newest first (see _load_watch_entries)
         key = e.get("series_title") or e.get("title")
@@ -238,7 +244,10 @@ def _series_entries(entries: list, now: datetime, canonical_keys: dict,
     out = []
     for key, d in by_series.items():
         r = recency_weight(d["last"], now)
-        if d["done"]:
+        f = (verdicts or {}).get(key.lower())
+        if f is not None:
+            w = r * (1.0 + math.log10(d["done"])) * f if d["done"] else r * f
+        elif d["done"]:
             w = r * (1.0 + math.log10(d["done"]))
         elif _series_dropped(d, now):
             w = -DROP_PUSH_WEIGHT * r
@@ -988,6 +997,19 @@ async def compute_taste_vector_for_user(
     except Exception as e:
         logger.warning("[taste-vector] user-rating preload failed: %s", e)
 
+    # Post-watch verdicts (services/post_watch): the member's one-tap "how
+    # did it land?" on a play. A factor on the play row that is already here,
+    # never a row of its own: a film by its key, a series by its title.
+    from src.services import post_watch
+    try:
+        _v_keys, _v_series = await asyncio.to_thread(post_watch.factors_for, user_id, category)
+    except Exception as e:  # noqa: BLE001 - verdicts refine the weights; without them the rebuild is the old one
+        logger.warning("[taste-vector] post-watch verdicts unreadable: %s", e)
+        _v_keys, _v_series = {}, {}
+    if _v_keys or _v_series:
+        logger.info("[taste-vector] %d post-watch verdict(s) weigh their plays",
+                    len(_v_keys) + len(_v_series))
+
     # Select top items by combined weight for embedding
     scored = []
     for e in entries:
@@ -1002,7 +1024,12 @@ async def compute_taste_vector_for_user(
             if ur is not None:
                 rating_factor = ur / 6.0
 
-        if _is_drop(e, now):
+        verdict = post_watch.factor_of(e, _v_keys, _v_series) if (_v_keys or _v_series) else None
+        if verdict is not None:
+            # The member said how it landed: that replaces the completion
+            # and drop guesses for this play ("Not for me" pushes).
+            total_w = r_weight * replay * verdict
+        elif _is_drop(e, now):
             # The design's promised negative signal, finally real: a drop
             # contributes a NEGATIVE weight, pushing the taste vector away
             # from the abandoned item's profile (see weighted_average_embedding).
@@ -1125,7 +1152,8 @@ async def compute_taste_vector_for_user(
 
         def _has_profile(e: dict) -> bool:
             return _live_rows.get(_enriched_key(e)) is not None
-        series_entries = _series_entries(entries, now, series_key_by_title, _has_profile)
+        series_entries = _series_entries(entries, now, series_key_by_title, _has_profile,
+                                         {t: f for (c, t), f in _v_series.items() if c == category})
         logger.info("%s: %d episode rows → %d series entries (%d drops)",
                     category, len(entries), len(series_entries),
                     sum(1 for w, _ in series_entries if w < 0))

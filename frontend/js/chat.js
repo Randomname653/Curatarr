@@ -473,13 +473,14 @@ export function fillPrompt(text) {
   inp.focus();
 }
 // ── CHAT LANDING "HOW DID IT LAND?" CARD ────────────────────────────────────
-// The newest unread follow-up (a watched recommendation, or a morning line
-// about exactly one title) as a card above the landing panels, with one-tap answers in the member's
-// language (services/proactive_messages.followup_card). Before 2026-11-08 it
-// waited behind the bell and answering meant typing. An answer is the same
-// as Respond + typing it: the message's own thread, the curator's line as the
-// opener, the answer sent as the member's message. Same lifecycle as the
-// other landing panels: gone on the first send.
+// The newest unread follow-up about one film or series (a watched
+// recommendation, or a morning line about exactly one title) as a card above
+// the landing panels (services/proactive_messages.followup_card). One tap is
+// a verdict on that play (POST /api/messages/{id}/verdict,
+// services/post_watch): the taste rebuild weighs the play by it, and the
+// message retires. "Tell the curator why" opens the message's own thread for
+// the words a tap cannot carry. Same lifecycle as the other landing panels:
+// gone on the first send.
 export async function loadFollowupCard() {
   const el = document.getElementById('followup-panel');
   if (!el) return;
@@ -489,22 +490,40 @@ export async function loadFollowupCard() {
     el.innerHTML = `<div class="card mt-14">
       <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(card.label)}</span></div>
       <p>${esc(card.message)}</p>
-      <div class="flex gap-8 flex-wrap mt-10">${card.replies.map(r =>
-        `<button type="button" class="sp-chip" ${act('answerFollowup', card.id, card.message, r)}>${esc(r)}</button>`).join('')}
+      <div class="flex gap-8 flex-wrap mt-10">${card.answers.map(a =>
+        `<button type="button" class="sp-chip" ${act('answerFollowup', card.id, a.verdict, card.message, EL)}>${esc(a.label)}</button>`).join('')}
         <button type="button" class="btn btn-ghost btn-sm" title="Hide it here - it stays in the notifications" ${act('hideFollowup')}>Not now</button>
       </div></div>`;
   } catch { el.innerHTML = ''; } // best-effort nicety: the bell still has the message
 }
-export async function answerFollowup(id, msgText, reply) {
+export async function answerFollowup(id, verdict, msgText, btn) {
+  const el = document.getElementById('followup-panel');
+  if (!el) return;
+  el.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  try {
+    const r = await api(`/api/messages/${encodeURIComponent(id)}/verdict`, 'POST', { verdict });
+    haptic('light');
+    el.innerHTML = `<div class="card mt-14" role="status">
+      <p>Got it - your taste profile now weighs <b>${esc(r.title)}</b> by that.</p>
+      <div class="flex gap-8 flex-wrap mt-10">
+        <button type="button" class="btn btn-secondary btn-sm" ${act('explainFollowup', id, msgText)}>Tell the curator why</button>
+        <button type="button" class="btn btn-ghost btn-sm" ${act('hideFollowup')}>Done</button>
+      </div></div>`;
+    loadUnreadMessages();
+  } catch (e) {
+    el.querySelectorAll('button').forEach(b => { b.disabled = false; });
+    toast(`Not saved: ${_errMsg(e)}`, 'danger');
+    btn?.focus();
+  }
+}
+// After a verdict: the message's own thread, the curator's line as the opener,
+// the input left to the member's words.
+export async function explainFollowup(id, msgText) {
   if (_busyStreaming()) return;
-  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST')
-    .catch(e => console.warn('[chat] follow-up mark-read failed', id, e));
   if (!await enterThread({ kind: 'proactive_message', message_id: id },
                          'Discussing a proactive message', msgText)) return;
   const inp = document.getElementById('chat-input');
-  inp.value = reply;
-  loadUnreadMessages();
-  sendMessage();
+  if (inp) { inp.value = ''; inp.focus(); }
 }
 export function hideFollowup() {
   const el = document.getElementById('followup-panel');

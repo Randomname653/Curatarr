@@ -845,14 +845,17 @@ def detect_last_night(entries: list[dict], now: datetime,
             artist = e.get("series_title") or "Unknown"
             music[artist] = music.get(artist, 0) + (e.get("duration_ms") or 200_000)
     parts: list = []
+    named: list = []                   # (title, category) per title part, in order
     first_series = None
     for name, eps in series.items():
         r = _viewing_rhythm(eps, end, window_days=1)
         if r["episodes"]:
             first_series = first_series or name
             parts.append(f"\"{name}\": {r['phrase']}")      # the phrase already counts the episodes
+            named.append((name, eps[0].get("media_type")))
     for title in films[:2]:
         parts.append(f"the film \"{title}\"")
+        named.append((title, "movie"))
     for artist, ms in sorted(music.items(), key=lambda kv: -kv[1])[:1]:
         mins = int(ms // 60_000)
         if mins >= 20:
@@ -871,6 +874,9 @@ def detect_last_night(entries: list[dict], now: datetime,
         # line about exactly one title only (followup_card).
         "parts": len(shown),
         "titles": sum(1 for p in shown if not _MUSIC_PART.match(p)),
+        # The one title, when the line is about exactly one (post_watch.subject_of).
+        **({"subject": named[0][0], "subject_type": named[0][1]}
+           if len(shown) == 1 and len(named) == 1 else {}),
         "ended": to_local(last["viewed_at"], zone).strftime("%H:%M"),
         "series": first_series,
         "media_type": last.get("media_type"),
@@ -2008,34 +2014,19 @@ async def get_unread_messages(user_id: int, seen: bool = False) -> dict:
 # The two messages that ask about something the member just watched - a
 # watched recommendation and the morning line - reached them only behind the
 # bell, and answering meant typing. The landing shows the newest unread one
-# as a card with one-tap answers. An answer goes the way a typed reply goes
-# (the message's own chat thread, the existing feedback path), so nothing
-# new is stored. The answers are in the member's language: they are sent as
-# the member's own message, and the language detection counts those.
+# about exactly one film or series as a card with one-tap answers in the
+# member's language; an answer is a verdict on that play
+# (services/post_watch, POST /api/messages/{id}/verdict). Music follow-ups
+# and morning lines about several things stay in the bell.
 
 FOLLOWUP_TYPES = ("recommendation_followup", "last_night")
-FOLLOWUP_REPLIES = {
-    "en": ("Loved it", "Liked it", "It was okay", "Not for me"),
-    "de": ("Hat mir sehr gefallen", "Hat mir gefallen", "War okay", "Nichts für mich"),
-}
-
-
-def _one_title(trigger_data: Optional[str]) -> bool:
-    """A morning line about exactly one title. "Loved it" on a line that sums
-    up two series and an hour of music answers nothing; lines stored before
-    the count existed read as more than one."""
-    try:
-        td = json.loads(trigger_data or "{}")
-    except (ValueError, TypeError):
-        return False
-    return isinstance(td, dict) and td.get("parts") == 1 and td.get("titles") == 1
 
 
 def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict]:
-    """The newest unread, unexpired follow-up message with its one-tap
-    answers, or None: a watched recommendation (one title by nature), or a
-    morning line about exactly one title. Read only: showing the card is no
+    """The newest unread, unexpired follow-up message a verdict can answer,
+    with its one-tap answers, or None. Read only: showing the card is no
     impression (the bell counts those). Blocking."""
+    from src.services import post_watch
     from src.services.user_language import user_language
     now = now or datetime.utcnow()
     with get_db_session() as db:
@@ -2047,15 +2038,15 @@ def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict
                         | (ProactiveMessage.expires_at > now))
                 .order_by(ProactiveMessage.created_at.desc())
                 .limit(20).all())
-        m = next((r for r in rows if r.trigger_type == "recommendation_followup"
-                  or _one_title(r.trigger_data)), None)
-        if m is None:
+        found = next(((r, sub) for r in rows
+                      if (sub := post_watch.subject_of(r.trigger_type, r.trigger_data))), None)
+        if found is None:
             return None
+        m, subject = found
         card = {"id": m.id, "message": m.message, "trigger_type": m.trigger_type,
-                "label": trigger_label(m.trigger_type),
+                "label": trigger_label(m.trigger_type), "title": subject["title"],
                 "created_at": m.created_at.isoformat() if m.created_at else None}
-    lang = user_language(user_id)
-    card["replies"] = list(FOLLOWUP_REPLIES.get(lang) or FOLLOWUP_REPLIES["en"])
+    card["answers"] = post_watch.answers(user_language(user_id))
     return card
 
 

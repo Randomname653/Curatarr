@@ -60,7 +60,7 @@ ITEM_COLUMNS = (
     ("media_identities", "plex_rating_key"), ("media_tech_profiles", "plex_rating_key"),
     ("media_subtitle_profiles", "plex_rating_key"), ("library_items", "plex_rating_key"),
     ("library_events", "plex_rating_key"), ("cached_recommendations", "plex_rating_key"),
-    ("music_tags", "item_key"),
+    ("music_tags", "item_key"), ("post_watch_verdicts", "item_key"),
 )
 # Vector-store doc ids: ``plex_rating_key or tmdb_id or anilist_id or title``
 # (media_enricher.store_profile_vector). A TMDB id can look exactly like a

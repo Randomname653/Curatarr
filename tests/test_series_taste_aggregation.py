@@ -245,7 +245,7 @@ check("end to end: one embedding per series", res["embedding_items"] == 2)
 src = (ROOT / "src/services/taste_engine.py").read_text(encoding="utf-8")
 check("show/anime rebuild goes through _series_entries",
       'if category in ("show", "anime"):' in src
-      and "_series_entries(entries, now, series_key_by_title, _has_profile)" in src)
+      and "_series_entries(entries, now, series_key_by_title, _has_profile," in src)
 check("row-level drop checks pass `now` (grace window)",
       "_is_drop(e)" not in src and "if _is_drop(e, now):" in src
       and src.count("if _is_drop(e, now):") == 2)
