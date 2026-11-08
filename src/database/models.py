@@ -850,6 +850,12 @@ class CachedRecommendation(Base):
     # as JSON. No existing column could carry it; NULL on older rows, which
     # then show no "Why?" rather than a made-up one.
     score_factors   = Column(Text, nullable=True)
+    # Moved up by a member's "Loved" (a Swipe answer, a "Loved it" on the
+    # landing card - services/rec_lift): when, and the loved title. A lifted
+    # pick sorts first in its lane and in the playlist push until the next
+    # regeneration rebuilds the rows.
+    lifted_at       = Column(DateTime, nullable=True)
+    lifted_by       = Column(String(500), nullable=True)
 
     __table_args__ = (
         Index("ix_cached_recs_user_cat", "user_id", "category"),

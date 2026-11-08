@@ -6,6 +6,13 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**A "Loved" shows at once.** A Loved answer in Swipe, or "Loved it" on the landing card, fed the
+taste rebuild, and the Recommendations page and the TV's "Curatarr Recommended" rows showed
+nothing of it until the weekly regeneration. Now the member's stored picks nearest the loved
+title (at most three, from the library and because lanes) move up: first in their lane, marked
+"moved up" on the card, and first in the next playlist push, which the lift makes due. The
+answer says how many moved, and says nothing when none were close.
+
 **Swipe comes in decks of ten, with a reason you can read in two seconds.** The stack refilled
 for ever and its ring counted only seen-it answers toward the next taste refresh, so it barely
 moved. Now the ring counts the deck, and after ten answers a screen says what went on the

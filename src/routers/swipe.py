@@ -119,6 +119,11 @@ async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
                    name=f"swipe_taste_rebuild_{cat}")
     out = {"ok": True, "taste_rebuild": rebuild,
            "since_rebuild": 0 if rebuild else count, "rebuild_every": every}
+    if body.seen and body.stars == 10 and body.title:
+        # Loved: the member's stored picks nearest it move up now - the
+        # Recommendations page and the next playlist push (services/rec_lift).
+        from src.services.rec_lift import lift_near
+        out["lifted"] = await lift_near(uid, cat, body.title, seed_doc_id=body.doc_id)
     if body.want and body.title:
         # The same write chat makes for "I want to watch X": the user's own
         # plex.tv watchlist, so it shows in their Plex apps. Never raises;

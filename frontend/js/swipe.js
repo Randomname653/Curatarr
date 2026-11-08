@@ -87,7 +87,7 @@ let _uid = 0;
 let _deck = _newDeck();
 let _calibrating = 0;          // the seen answers a first profile needs, while calibrating
 
-function _newDeck() { return {n: 0, wantOk: 0, loved: [], chained: false, start: Date.now()}; }
+function _newDeck() { return {n: 0, wantOk: 0, loved: [], chained: false, lifted: 0, start: Date.now()}; }
 function _deckDone() { return _deck.n >= DECK_SIZE; }
 
 function _el(id) { return document.getElementById(id); }
@@ -331,6 +331,7 @@ function _deckEndHtml() {
     <h2>Deck done - ${_deck.n} answered in ${_fmtTime(Date.now() - _deck.start)}</h2>
     ${_deck.wantOk ? `<p><b>${_deck.wantOk}</b> now on your ${esc(_watchlistName())}.</p>` : ''}
     ${loved.length ? `<p>You loved ${loved.map(t => `<b>${esc(t)}</b>`).join(' and ')}${_deck.chained ? ' - titles like it lead the next deck' : ''}.</p>` : ''}
+    ${_deck.lifted ? `<p><b>${_deck.lifted}</b> of your recommendations moved up for it.</p>` : ''}
     <p class="fs-12 t3">${_calibrating
       ? `${left} more seen-it answer${left === 1 ? '' : 's'} and your first taste profile is built.`
       : `${left} more seen-it answer${left === 1 ? '' : 's'} until your taste profile refreshes.`}</p>
@@ -588,23 +589,33 @@ async function _submit(seen, stars, kind, gesture) {
   } else if (r.watchlist) {
     _say(`Saved as Want to watch; ${c.title} is not on your ${_watchlistName()}.`);
   }
-  if (kind === 'loved') _chain(c, gen);
+  const lifted = (r.lifted || []).length;
+  _deck.lifted += lifted;
+  if (kind === 'loved') _chain(c, gen, lifted);
 }
 
 // A loved title pulls a few of its nearest neighbours to the front of the
 // stack (after the card already showing, so nothing jumps under the pointer).
-async function _chain(c, gen) {
+// ``lifted``: how many of the member's stored picks this Loved moved up
+// (services/rec_lift) - said in the same note, only when some did.
+function _liftedText(n) { return n ? `${n} of your recommendations moved up` : ''; }
+
+async function _chain(c, gen, lifted = 0) {
   try {
     const r = await api(`/api/swipe/next?category=${encodeURIComponent(_cat)}&n=3&seed=${encodeURIComponent(c.doc_id)}${_skipParam()}`);
     if (gen !== _gen) return;
     const added = _add(r.cards, Math.min(1, _queue.length));
-    if (!added.length) return;
+    if (!added.length) {
+      if (lifted) _note(`${ICON.loved}<span>${_liftedText(lifted)} for <b>${esc(c.title)}</b></span>`);
+      return;
+    }
     _deck.chained = true;
     if (!_deckDone()) _layout();
-    _note(`${ICON.loved}<span>${added.length} more like <b>${esc(c.title)}</b> coming up</span>`);
-    _say(`${added.length} more titles like ${c.title} added next.`);
+    _note(`${ICON.loved}<span>${added.length} more like <b>${esc(c.title)}</b> coming up${lifted ? ` · ${_liftedText(lifted)}` : ''}</span>`);
+    _say(`${added.length} more titles like ${c.title} added next.${lifted ? ` ${_liftedText(lifted)}.` : ''}`);
   } catch (e) {
     console.debug('[swipe] chain failed', e);
+    if (lifted) _note(`${ICON.loved}<span>${_liftedText(lifted)} for <b>${esc(c.title)}</b></span>`);
   }
 }
 

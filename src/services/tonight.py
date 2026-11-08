@@ -97,7 +97,7 @@ def candidates(user_id: int, domain: Optional[str] = None,
 
         recs = (db.query(R.title, R.category, R.lane, R.reason, R.year, R.cached_at, R.score_factors)
                 .filter(R.user_id == user_id, R.lane.in_(_LANES), R.category.in_(cats))
-                .order_by(R.confidence.desc()).limit(40).all())
+                .order_by(R.lifted_at.desc(), R.confidence.desc()).limit(40).all())
         seen = {c["title"].lower() for c in out}
         by_lane = {lane: [r for r in recs if r.lane == lane] for lane in _LANES}
         picked: list = []

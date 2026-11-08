@@ -240,6 +240,9 @@ def _migrate_columns() -> None:
         # Two-lane recommendations: "library" (owned, unwatched) vs "discovery"
         # (not owned, taste-fit). Existing rows backfill to "discovery".
         ("cached_recommendations","lane",        "VARCHAR(20) DEFAULT 'discovery'"),
+        # A loved title moves its nearest picks up (services/rec_lift)
+        ("cached_recommendations","lifted_at",   "DATETIME"),
+        ("cached_recommendations","lifted_by",   "VARCHAR(500)"),
         # Music / Spotify enrichment columns
         ("watch_history",         "spotify_uri", "TEXT"),
         ("watch_history",         "source",      "TEXT"),

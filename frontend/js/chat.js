@@ -504,7 +504,9 @@ export async function answerFollowup(id, verdict, msgText, btn) {
     const r = await api(`/api/messages/${encodeURIComponent(id)}/verdict`, 'POST', { verdict });
     haptic('light');
     el.innerHTML = `<div class="card mt-14" role="status">
-      <p>Got it - your taste profile now weighs <b>${esc(r.title)}</b> by that.</p>
+      <p>${(r.lifted || []).length
+        ? `Got it - ${r.lifted.length} of your recommendations near <b>${esc(r.title)}</b> moved up.`
+        : `Got it - your taste profile now weighs <b>${esc(r.title)}</b> by that.`}</p>
       <div class="flex gap-8 flex-wrap mt-10">
         <button type="button" class="btn btn-secondary btn-sm" ${act('explainFollowup', id, msgText)}>Tell the curator why</button>
         <button type="button" class="btn btn-ghost btn-sm" ${act('hideFollowup')}>Done</button>

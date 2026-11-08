@@ -150,7 +150,10 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                 # Generous cap: up to three lanes × ~10 each per category, so no
                 # lane gets truncated. Ordered by lane then confidence (best-first).
                 cap = limit * (8 if category else 32)
+                # A pick a member's "Loved" moved up comes first in its lane
+                # (services/rec_lift; NULL sorts last on DESC in SQLite).
                 cached = q.order_by(CachedRecommendation.lane.asc(),
+                                    CachedRecommendation.lifted_at.desc(),
                                     CachedRecommendation.confidence.desc()).limit(cap).all()
                 return [{"title": r.title, "reason": r.reason, "confidence": r.confidence,
                          "genres": r.genres, "category": r.category,
@@ -160,6 +163,7 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                          "poster_url": r.poster_url, "synopsis": r.synopsis,
                          # None on rows cached before the breakdown existed
                          "score_factors": _load_score_factors(r.score_factors),
+                         "lifted_by": r.lifted_by,
                          "cached_at": r.cached_at.isoformat() if r.cached_at else None}
                         for r in cached]
         recs = await run_read(_load_cached)

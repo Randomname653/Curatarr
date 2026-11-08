@@ -85,7 +85,8 @@ export function _recCard(rec, key) {
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span class="badge muted badge-sm">${esc(g)}</span>`).join('');
   const isLib = ['library', 'because', 'rediscover'].includes(rec.lane);
-  const laneBadge = `<span class="badge muted badge-sm" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`;
+  const laneBadge = `<span class="badge muted badge-sm" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`
+    + (rec.lifted_by ? `<span class="badge amber badge-sm" title="${escAttr(`Moved up because you loved ${rec.lifted_by}`)}">moved up</span>` : '');
   return `
   <div class="card mb-12">
     <div class="poster-card">
