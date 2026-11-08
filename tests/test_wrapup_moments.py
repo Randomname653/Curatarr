@@ -62,14 +62,37 @@ check("on a Tuesday there is no week card",
 check("a week under the Wrap-Up's threshold gets no card - no small number, no 'only'",
       wc.week_card(QUIET, now=monday, zone=BERLIN, lang="en") is None)
 
+# ── "Your month is ready", "Your year is ready" ─────────────────────────────
+
+from src.services import wrapup_store  # noqa: E402
+
+first_nov = datetime(2026, 10, 31, 23, 30)             # 00:30 on 1 November in Berlin
+check("no month card before the month's story exists - loading never writes one",
+      wc.month_card(UID, now=first_nov, zone=BERLIN, lang="en") is None
+      and wrapup_store.load(UID, "all", "month:2026-10") is None)
+wrapup_store.save_story(UID, "all", "month:2026-10", "h", {"version": 2, "slides": []}, "llm")
+check("in a month's first days, once its story is written: the month just ended, in the member's words",
+      wc.month_card(UID, now=first_nov, zone=BERLIN, lang="en")
+      == {"kind": "month", "key": "month:2026-10", "label": "Your October is ready",
+          "lines": ["A short story of your month."]}
+      and wc.month_card(UID, now=first_nov, zone=BERLIN, lang="de")["label"] == "Dein Oktober ist fertig")
+check("after the first week the month card is gone",
+      wc.month_card(UID, now=datetime(2026, 11, 9, 12, 0), zone=BERLIN, lang="en") is None)
+wrapup_store.save_story(UID, "all", "year:2026", "h", {"version": 2, "slides": []}, "llm")
+check("the year card from 1 December to 14 January, once the year is written",
+      wc.year_card(UID, now=datetime(2026, 11, 30, 23, 30), zone=BERLIN, lang="en")["key"] == "year:2026"
+      and wc.year_card(UID, now=datetime(2027, 1, 10, 12, 0), zone=BERLIN, lang="en")["label"] == "Your 2026 is ready"
+      and wc.year_card(UID, now=datetime(2026, 11, 20, 12, 0), zone=BERLIN, lang="en") is None
+      and wc.year_card(UID, now=datetime(2027, 1, 20, 12, 0), zone=BERLIN, lang="en") is None)
+
 from src.routers import home  # noqa: E402
 
-_real = wc.week_card
-wc.week_card = lambda uid: _real(uid, now=monday, zone=BERLIN, lang="en")
+_real = wc.moments
+wc.moments = lambda uid: _real(uid, now=monday, zone=BERLIN, lang="en")
 try:
     out = asyncio.run(home.moments(user=SimpleNamespace(id=UID)))
 finally:
-    wc.week_card = _real
-check("GET /api/home/moments carries the week card", out == {"cards": [card]}, out)
+    wc.moments = _real
+check("GET /api/home/moments carries the cards of the moment", out == {"cards": [card]}, out)
 
 check.done()

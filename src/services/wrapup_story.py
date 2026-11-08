@@ -387,7 +387,9 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         await run_write(save_facts, user_id, scope, period_key, facts)
         step(4)
         sheet, idx = render_fact_sheet(facts)
-        cards = mine(facts)
+        # A week or a month tells a mini story: its strongest few cards.
+        cards = (mine(facts, limit=MINI_STORY_CARDS)
+                 if period_key.startswith(("week:", "month:")) else mine(facts))
         lang, quotes = await run_read(_voice, user_id, cards)
         story, source, model = await write(facts, sheet, idx, cards, quotes=quotes, lang=lang)
         step(5)
@@ -437,14 +439,24 @@ def wrapup_discussion_block(facts: dict, story: Optional[dict]) -> str:
 _REFRESH_DAYS = 7
 
 
-def due_wrapups(row_for, now=None) -> list:
+# The month a "Your month is ready" card offers: written in its first days.
+MONTH_STORY_DAYS = 7
+# A week's or a month's story is a mini story: the strongest few cards.
+MINI_STORY_CARDS = 5
+
+
+def due_wrapups(row_for, now=None, local=None) -> list:
     """(scope, period) pairs worth writing ahead for one user, given
     ``row_for(scope, period)`` → the stored row or None. The rolling month is
-    kept at most a week old; from 1 December the current year is written
-    (and refreshed weekly while it fills), and in the first two weeks of
-    January the closed year once more, so the final version covers every day."""
+    kept at most a week old; in the first MONTH_STORY_DAYS days of a month on
+    the member's clock (``local``) the month just ended is written once, a
+    mini story for "Your month is ready"; from 1 December the current year is
+    written (and refreshed weekly while it fills), and in the first two weeks
+    of January the closed year once more, so the final version covers every
+    day."""
     from datetime import datetime, timedelta
     now = now or datetime.utcnow()
+    local = local or now
     out = []
 
     def stale(row, written_after=None):
@@ -460,6 +472,11 @@ def due_wrapups(row_for, now=None) -> list:
 
     if stale(row_for("all", "30d")):
         out.append(("all", "30d"))
+    if local.day <= MONTH_STORY_DAYS:
+        y, m = (local.year, local.month - 1) if local.month > 1 else (local.year - 1, 12)
+        month = f"month:{y}-{m:02d}"
+        if stale(row_for("all", month), written_after=datetime(local.year, local.month, 1)):
+            out.append(("all", month))
     if now.month == 12 and stale(row_for("all", f"year:{now.year}")):
         out.append(("all", f"year:{now.year}"))
     if now.month == 1 and now.day <= 14:
@@ -485,7 +502,10 @@ async def pregenerate_all(task=None) -> bool:
                     for u in db.query(User).filter(User.is_active == True).all()]  # noqa: E712
 
     def _due(uid):
-        return due_wrapups(lambda scope, period: load(uid, scope, period))
+        from src.services.chat_starters import local_now
+        from src.services.user_time import user_zone_by_id
+        return due_wrapups(lambda scope, period: load(uid, scope, period),
+                           local=local_now(user_zone_by_id(uid)))
 
     ok = True
     users = await run_read(_users)

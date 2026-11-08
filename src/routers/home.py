@@ -43,11 +43,12 @@ async def tonight(user: User = Depends(get_current_user)):
 @router.get("/moments")
 async def moments(user: User = Depends(get_current_user)):
     """The Wrap-Up's small moments for the landing (services/wrapup_cards):
-    "Your week" from Sunday evening to Monday, on the member's clock.
+    "Your week" from Sunday evening to Monday, "Your month is ready" in a
+    month's first days, "Your year is ready" from 1 December - on the
+    member's clock, only once the story exists. Reads, never writes one.
     {"cards": [...]}, empty most of the time."""
-    from src.services.wrapup_cards import week_card
-    cards = [c for c in [await run_read(week_card, user.id)] if c]
-    return {"cards": cards}
+    from src.services.wrapup_cards import moments as _moments
+    return {"cards": await run_read(_moments, user.id)}
 
 
 class WatchlistBody(BaseModel):

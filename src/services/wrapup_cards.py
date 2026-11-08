@@ -11,8 +11,10 @@ clock, and say only what the facts say:
   threshold (five plays, three hours), so a quiet week gets no card rather
   than a small number;
 * "Your month is ready" - the first seven days of a month, once the month's
-  story is written (the custodian writes it on the 1st; services/wrapup_story);
-* "Your year is ready" - from 1 December, once the year's story is written.
+  story is written (the custodian writes it ahead on the 1st, a mini story;
+  services/wrapup_story.due_wrapups). Loading the page never writes one;
+* "Your year is ready" - from 1 December to 14 January, once the year's story
+  is written.
 
 No streaks, no "you missed", nothing about a gap: a card is either there to
 enjoy or not there. Every card can be hidden. The words come in the language
@@ -27,10 +29,18 @@ _week_cache: dict = {}          # (user id, week key) -> (monotonic, card or Non
 
 _TEXT = {
     "en": {"week": "Your week", "week_line": "{hours} h · {days} days with something on",
-           "most": "Most of it: **{title}** ({hours} h)", "new": "New for you: {genre}"},
+           "most": "Most of it: **{title}** ({hours} h)", "new": "New for you: {genre}",
+           "month_ready": "Your {label} is ready", "month_line": "A short story of your month.",
+           "year_ready": "Your {year} is ready", "year_line": "Your year in review, ready to play."},
     "de": {"week": "Deine Woche", "week_line": "{hours} Std · an {days} Tagen lief etwas",
-           "most": "Am meisten: **{title}** ({hours} Std)", "new": "Neu für dich: {genre}"},
+           "most": "Am meisten: **{title}** ({hours} Std)", "new": "Neu für dich: {genre}",
+           "month_ready": "Dein {label} ist fertig", "month_line": "Eine kurze Geschichte deines Monats.",
+           "year_ready": "Dein {year} ist fertig", "year_line": "Dein Jahr im Rückblick, bereit zum Abspielen."},
 }
+_MONTHS = {"en": ("January", "February", "March", "April", "May", "June", "July", "August",
+                  "September", "October", "November", "December"),
+           "de": ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August",
+                  "September", "Oktober", "November", "Dezember")}
 
 
 def _t(lang: str) -> dict:
@@ -84,3 +94,62 @@ def week_card(user_id: int, now: Optional[datetime] = None, zone=None,
     if new:
         lines.append(tx["new"].format(genre=new))
     return {"kind": "week", "key": key, "label": tx["week"], "lines": lines}
+
+
+def _written(user_id: int, key: str) -> bool:
+    """Whether the member's "all" wrap-up for ``key`` has a story stored."""
+    from src.services.wrapup_store import load
+    row = load(user_id, "all", key)
+    return bool(row and row.get("story"))
+
+
+def month_card(user_id: int, now: Optional[datetime] = None, zone=None,
+               lang: Optional[str] = None) -> Optional[dict]:
+    """"Your October is ready": the first days of a month on the member's
+    clock, once the month just ended has its story (wrapup_story writes it
+    ahead on the 1st). None otherwise. Blocking."""
+    from src.services.chat_starters import local_now
+    from src.services.user_language import user_language
+    from src.services.user_time import user_zone_by_id
+    from src.services.wrapup_story import MONTH_STORY_DAYS
+    local = local_now(zone or user_zone_by_id(user_id), now or datetime.utcnow())
+    if local.day > MONTH_STORY_DAYS:
+        return None
+    y, m = (local.year, local.month - 1) if local.month > 1 else (local.year - 1, 12)
+    key = f"month:{y}-{m:02d}"
+    if not _written(user_id, key):
+        return None
+    lang = lang or user_language(user_id)
+    tx = _t(lang)
+    name = (_MONTHS.get(lang) or _MONTHS["en"])[m - 1]
+    return {"kind": "month", "key": key, "label": tx["month_ready"].format(label=name),
+            "lines": [tx["month_line"]]}
+
+
+def year_card(user_id: int, now: Optional[datetime] = None, zone=None,
+              lang: Optional[str] = None) -> Optional[dict]:
+    """"Your 2026 is ready": from 1 December (the year's story is written
+    ahead from then) to 14 January, once the year has its story. Blocking."""
+    from src.services.chat_starters import local_now
+    from src.services.user_language import user_language
+    from src.services.user_time import user_zone_by_id
+    local = local_now(zone or user_zone_by_id(user_id), now or datetime.utcnow())
+    if local.month == 12:
+        year = local.year
+    elif local.month == 1 and local.day <= 14:
+        year = local.year - 1
+    else:
+        return None
+    key = f"year:{year}"
+    if not _written(user_id, key):
+        return None
+    tx = _t(lang or user_language(user_id))
+    return {"kind": "year", "key": key, "label": tx["year_ready"].format(year=year),
+            "lines": [tx["year_line"]]}
+
+
+def moments(user_id: int, now: Optional[datetime] = None, zone=None,
+            lang: Optional[str] = None) -> list:
+    """Every card that belongs to this moment, the year first. Blocking."""
+    return [c for c in (year_card(user_id, now, zone, lang), month_card(user_id, now, zone, lang),
+                        week_card(user_id, now, zone, lang)) if c]
