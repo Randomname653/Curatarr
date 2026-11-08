@@ -164,9 +164,16 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                          # None on rows cached before the breakdown existed
                          "score_factors": _load_score_factors(r.score_factors),
                          "lifted_by": r.lifted_by,
+                         # owned lanes only: a discovery pick's key is NULL anyway
+                         "_key": r.plex_rating_key if r.lane in ("library", "because", "rediscover") else None,
                          "cached_at": r.cached_at.isoformat() if r.cached_at else None}
                         for r in cached]
         recs = await run_read(_load_cached)
+        # An owned pick opens on the member's own server (services/server_links).
+        from src.services.server_links import attach_links
+        await attach_links(recs, key_field="_key")
+        for r in recs:
+            r.pop("_key", None)
         if recs:
             # This user's own newest row: the shared app_state stamp is the
             # last household-wide refresh, which is another member's time

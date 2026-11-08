@@ -3752,6 +3752,21 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                     yield f"data: {json.dumps({'warning': 'This reply could not be saved to the conversation history.', 'severity': 'moderate'})}\n\n"
                 else:
                     _schedule_post_turn(_uid, thread_id, message.message, reply, domain)
+                # One-tap actions for the reply's bold library titles: open
+                # on the server, watchlist, keep (services/title_actions).
+                # After the reply, so nothing delays a word of it; a failure
+                # costs the row, never the turn.
+                try:
+                    from src.services.server_links import attach_links
+                    from src.services.title_actions import for_reply
+                    _acts = await run_read(for_reply, _uid, reply, _library_title_index)
+                    if _acts:
+                        await attach_links(_acts)
+                        for _a in _acts:
+                            _a.pop("key", None)
+                        yield f"data: {json.dumps({'titles': _acts})}\n\n"
+                except Exception as _ae:  # noqa: BLE001 - the action row is a convenience
+                    logger.warning("[chat] title actions unavailable: %s", _ae)
             yield f"data: {json.dumps({'done': True})}\n\n"
         finally:
             _rl.CHAT_IN_FLIGHT.leave(_uid)

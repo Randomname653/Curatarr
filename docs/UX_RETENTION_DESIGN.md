@@ -1,7 +1,7 @@
 # Curatarr — Feeling at home: UX, retention and habit design
 
 _Design record, **Proposed** 2026-11-08; **stage 1 built** the same day
-(see CHANGELOG); stage 2 in progress: `post_watch_verdicts`, `[TONIGHT CANDIDATES]`, the Swipe decks, hook and calibration, the Loved lift and the Tonight card built; the chat's action row (2.1) and the recommendation cards' Play/Watchlist (2.2) are open. The calibration deck ranks by the corpus centre and public score, not by other members' plays. Owner's decisions since: the post-watch verdict
+(see CHANGELOG); **stage 2 built** the same day. Where it differs from §2.2/§2.3: the deck end has no play button (Swipe cards carry no server key); Undo still leaves the watchlist entry; the chat's action row offers Open / + Watchlist / Keep (no Discuss - it is the chat); "Play" is "Open in …", the server's own page. The calibration deck ranks by the corpus centre and public score, not by other members' plays. Owner's decisions since: the post-watch verdict
 gets its own table `post_watch_verdicts` and weighs the existing play row
 (like `user_rating_by_item` for music), never a second row; model work for
 stage 3 runs only through the custodian with the game lock; the member UI

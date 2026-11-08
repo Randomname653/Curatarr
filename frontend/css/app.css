@@ -911,6 +911,10 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .msg.system { align-self: center; background: none; border: none; color: var(--text3); font-size: 12px; font-style: italic; max-width: 90%; }
 /* The folded history of a returning visit (chat.js restoreChatHistory) */
 #earlier-chat-btn { align-self: center; }
+/* One-tap actions under a reply (chat.js _titleRow): sits with the reply it belongs to */
+.msg-actions { align-self: flex-start; margin: -6px 0 0 var(--chat-badge-gap); display: flex; flex-direction: column; gap: 6px; }
+.msg-actions-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.msg-actions-t { font-size: 12px; color: var(--text2); margin-right: 4px; }
 /* Working-without-a-count dot: the sidebar's pulse as a content-level spinner */
 .spinner { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: sb-pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
 /* Number-as-link inside tables: the door to the list behind a count */

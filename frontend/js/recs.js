@@ -95,6 +95,8 @@ export function _recCard(rec, key) {
         <div class="panel-item-head">
           <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null && rec.lane !== 'rediscover' ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}${why.btn}</div>
           <div class="panel-actions">
+            ${isLib && rec.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(rec.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
+            ${isLib && rec.category !== 'music' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('titleWatchlist', rec.title, rec.category, EL)}>+ Watchlist</button>` : ''}
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
               ? `<button type="button" class="btn btn-primary btn-sm" ${act('onAddRecToArr', EL)} data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`

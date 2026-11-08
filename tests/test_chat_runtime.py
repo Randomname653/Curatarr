@@ -681,6 +681,34 @@ def test_tonight_candidates_ride_every_turn_but_a_deletion_debate():
     assert debate and "TONIGHT-X" not in debate[0], "a deletion debate does not"
 
 
+def test_a_reply_ends_with_actions_for_its_library_titles():
+    # UX audit 2026-11-08, C4: a reply's bold library titles get a row of
+    # one-tap actions - a frame after the reply's last token, before done.
+    import src.services.server_links as sl
+    import src.services.title_actions as ta
+    real = (ta.for_reply, sl.attach_links)
+    ta.for_reply = lambda uid, reply, index: [{"title": "Hello", "category": "movie", "key": "4711",
+                                              "protected": False}]
+
+    async def links(items, key_field="key"):
+        for it in items:
+            it["link"] = "https://app.plex.tv/x"
+    sl.attach_links = links
+    try:
+        with _stream_rig(_OK) as rig:
+            frames = asyncio.run(_drain(rig.start("what should I watch?")))
+        ta.for_reply = lambda uid, reply, index: []
+        with _stream_rig(_OK) as rig:
+            plain = asyncio.run(_drain(rig.start("hi")))
+    finally:
+        ta.for_reply, sl.attach_links = real
+    rows = [json.loads(f[6:]) for f in frames if f.startswith("data: ") and '"titles"' in f]
+    assert rows == [{"titles": [{"title": "Hello", "category": "movie", "protected": False,
+                                 "link": "https://app.plex.tv/x"}]}], rows
+    assert frames.index(next(f for f in frames if '"titles"' in f)) < frames.index('data: {"done": true}\n\n')
+    assert not any('"titles"' in f for f in plain), "no library titles, no frame"
+
+
 async def _drain(start):
     resp = await start
     return [f async for f in resp.body_iterator]

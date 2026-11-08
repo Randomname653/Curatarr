@@ -185,7 +185,7 @@ _real_card = tonight_mod.tonight_card
 tonight_mod.tonight_card = lambda uid: _real_card(uid, now=datetime(2026, 11, 13, 19, 0), zone=BERLIN)
 try:
     out = asyncio.run(home.tonight(user=SimpleNamespace(id=UID)))
-    w = asyncio.run(home.tonight_watchlist(home.WatchlistBody(title="The Lantern Room", category="movie",
+    w = asyncio.run(home.watchlist(home.WatchlistBody(title="The Lantern Room", category="movie",
                                                               year=2019), user=SimpleNamespace(id=UID)))
 finally:
     (plex_playlists.get_machine_identifier, media_server.active_kind, plex_watchlist.add_to_watchlist,
@@ -197,7 +197,7 @@ check("GET /api/home/tonight: the pick links into Plex for every account the ser
       and all("key" not in i for i in out["card"]["items"]), first)
 check("an item without a server key has no link", all("link" not in i for i in out["card"]["items"][1:]
                                                        if i["title"] != "Starfall Archive"))
-check("POST /api/home/tonight/watchlist: the member's own watchlist, as a Swipe 'Want to watch'",
+check("POST /api/home/watchlist: the member's own watchlist, as a Swipe 'Want to watch'",
       w["ok"] is True and added == [(UID, "The Lantern Room", 2019, "movie")])
 
 check.done()

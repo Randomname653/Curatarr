@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
+library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
+explicit form of "never delete this": the protection is written and confirmed at once, where
+the keep-detector's outcome used to arrive later in the bell (it still runs as before). Owned
+recommendation cards gained "Open in …" and "+ Watchlist" next to Discuss. Links go through
+app.plex.tv on Plex, so they work for a shared account away from home. The match is exact
+library names and the library ledger's server key; a title the reply did not set in bold, or one
+the library does not hold, gets no row.
+
 **A Tonight card on the chat landing.** Above the chat a member now finds one pick for this
 moment of their own week, from their series in progress, stored recommendations and Swipe wants:
 on a weeknight the series they are in the middle of, on Friday and Saturday evening a film, on a

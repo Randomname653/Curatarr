@@ -309,6 +309,7 @@ export async function sendMessage() {
           full += data.token;
           if (!rafId) rafId = requestAnimationFrame(paint);
         }
+        if (data.titles) _titleRow(bubble, data.titles);
         if (data.done) { gotDone = true; break; }
       }
     }
@@ -577,7 +578,7 @@ export async function tonightWatchlist(btn) {
   if (!it) return;
   btnBusy(btn, 'Adding…');
   try {
-    const r = await api('/api/home/tonight/watchlist', 'POST', { title: it.title, category: it.category, year: it.year || null });
+    const r = await api('/api/home/watchlist', 'POST', { title: it.title, category: it.category, year: it.year || null });
     if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
     else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
   } catch (e) {
@@ -674,6 +675,51 @@ export async function discussLastPlayed(i) {
   } : null;
   if (!await enterThread(ctx, ctx ? `Discussing "${title}"` : null)) return;
   discussInChat('custom', {message: `I recently ${isMusic ? 'listened to' : 'watched'} "${title}" — what do you think about it, or what should I know?`});
+}
+
+// ── ONE-TAP ACTIONS UNDER A REPLY ───────────────────────────────────────────
+// The reply's bold library titles (services/title_actions), each with Open on
+// the server, + Watchlist and Keep - the reply stops being text only. Keep is
+// the explicit form of "never delete this": a protection written now, said
+// now, instead of a detector's guess reported later in the bell.
+function _titleRow(bubble, titles) {
+  if (!bubble?.isConnected || !Array.isArray(titles) || !titles.length) return;
+  const row = document.createElement('div');
+  row.className = 'msg-actions';
+  row.setAttribute('aria-live', 'off');
+  row.innerHTML = titles.map(t => {
+    const video = ['movie', 'show', 'anime'].includes(t.category);
+    return `<div class="msg-actions-item" role="group" aria-label="${escAttr(t.title)}">
+      <span class="msg-actions-t">${esc(t.title)}</span>
+      ${t.link ? `<a class="btn btn-secondary btn-sm" href="${escAttr(t.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
+      ${video ? `<button type="button" class="btn btn-ghost btn-sm" ${act('titleWatchlist', t.title, t.category, EL)}>+ Watchlist</button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" title="Never propose it for deletion" ${t.protected ? 'disabled' : ''} ${act('titleKeep', t.title, t.category, EL)}>${t.protected ? 'Kept' : 'Keep'}</button>
+    </div>`;
+  }).join('');
+  bubble.after(row);
+}
+export async function titleWatchlist(title, category, btn) {
+  btnBusy(btn, 'Adding…');
+  try {
+    const r = await api('/api/home/watchlist', 'POST', { title, category });
+    if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
+    else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
+  } catch (e) {
+    btnDone(btn, '+ Watchlist');
+    toast(`Not added: ${_errMsg(e)}`, 'danger');
+  }
+}
+export async function titleKeep(title, category, btn) {
+  btnBusy(btn, 'Keeping…');
+  try {
+    await api('/api/home/keep', 'POST', { title, category });
+    btnDone(btn, 'Kept');
+    btn.disabled = true;
+    toast(`Kept: ${title} will not be proposed for deletion`, 'success');
+  } catch (e) {
+    btnDone(btn, 'Keep');
+    toast(`Not kept: ${_errMsg(e)}`, 'danger');
+  }
 }
 
 export function addMsg(text,role) {
