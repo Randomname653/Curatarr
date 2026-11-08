@@ -64,7 +64,9 @@ _ELIGIBLE_HOURS = 3
 #     play counts its own minutes (plex_sync.mark_unwitnessed, schema generation 3).
 # 13: eras carry each decade's hours and leading titles ("your decades").
 # 14: week: and month: periods on the member's clock.
-FACTS_VERSION = 14
+# 15: the narrative facts - ritual, comfort genre, of the month, night shift
+#     (services/wrapup_narrative).
+FACTS_VERSION = 15
 
 
 @dataclass(frozen=True)
@@ -387,6 +389,9 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
             if out["music"] and moods:
                 out["music"]["moods"] = moods
         out["devices"] = _devices(db, W, ms, base, local)
+        # The narrative facts, on the member's clock (services/wrapup_narrative).
+        from src.services import wrapup_narrative as _narrative
+        out.update(_narrative.narrative(db, W, ms, base, local, period, out.get("comfort")))
 
         out["genres"] = _genres(db, W, ms, user_id, period, types)
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)

@@ -421,7 +421,58 @@ def _decades(f) -> list:
                   {"decade": lead, "share": share}, {"share": say_share(share)}, titles[:3])]
 
 
-_MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _decades, _music, _moods, _devices)
+def _narrative(f) -> list:
+    """The narrative facts (services/wrapup_narrative) as cards: a ritual, a
+    comfort genre, the month one title owned, the after-midnight series, the
+    title it started with. Each claim is the fact, numbers and all; the
+    writer phrases it, it adds none."""
+    out = []
+    r = f.get("ritual") or {}
+    if r:
+        what = r["title"] or {"movie": "films", "show": "series", "anime": "anime",
+                              "music": "music"}.get(r["media_type"], r["media_type"])
+        out.append(_card("rhythm", "rhythm", 0.4 + _clamp(r["weeks"] / max(1, r["of_weeks"])) * 0.4,
+                         f"{r['weekday']} {r['daypart']}s were {what}: {r['weeks']} of {r['of_weeks']} weeks.",
+                         "the same evening and the same thing, week after week - a ritual, not a habit",
+                         {"weeks": r["weeks"], "of_weeks": r["of_weeks"], "hours": r["hours"]},
+                         {"weeks": say_count(r["weeks"], "weeks"), "hours": say_hours(r["hours"])},
+                         [r["title"]] if r["title"] else [], r["media_type"]))
+    cg = f.get("comfort_genre") or {}
+    if cg:
+        out.append(_card("identity", "identity", 0.35 + _clamp(cg["plays"] / 15) * 0.35,
+                         f"The genre you came back to: {cg['genre']}, {cg['plays']} plays across "
+                         f"{', '.join(cg['titles'])}.",
+                         "comfort with a shape: not one title but a kind of story",
+                         {"plays": cg["plays"]}, {"plays": say_count(cg["plays"], "plays")}, cg["titles"]))
+    months = f.get("of_the_month") or []
+    if months:
+        m = max(months, key=lambda x: (x["share"], x["hours"]))
+        out.append(_card("superlative", "moment", 0.35 + _clamp((m["share"] - 0.35) / 0.5) * 0.45,
+                         f"{m['label']} belonged to {m['title']}: {round(m['share'] * 100)}% of the month's "
+                         f"hours, {_fmt(m['hours'])} hours.",
+                         "one title that owned a whole month", {"share": m["share"], "hours": m["hours"]},
+                         {"share": say_share(m["share"]), "hours": say_hours(m["hours"])},
+                         [m["title"]], m["media_type"]))
+    n = f.get("night_shift") or {}
+    if n:
+        out.append(_card("rhythm", "rhythm", 0.35 + _clamp(n["share"] - 0.5) * 0.6 + _clamp(n["plays"] / 30) * 0.1,
+                         f"{n['title']} was the after-midnight series: {n['night_plays']} of its "
+                         f"{n['plays']} plays after 23:00.",
+                         "a series kept for the hours after everyone else stopped",
+                         {"night_plays": n["night_plays"], "plays": n["plays"], "share": n["share"]},
+                         {"night_plays": say_count(n["night_plays"], "plays"), "share": say_share(n["share"])},
+                         [n["title"]], n["media_type"]))
+    key = (f.get("period") or {}).get("key") or ""
+    first = ((f.get("first_last") or {}).get("first")) or {}
+    if first.get("title") and not key.startswith("week:") and key != "all":
+        out.append(_card("moment", "open", 0.36, f"It started with {first['title']}.",
+                         "the first thing played in the period", {}, {}, [first["title"]],
+                         first.get("media_type")))
+    return out
+
+
+_MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _decades, _music, _moods,
+           _devices, _narrative)
 
 
 def mine(facts: dict, floor: float = FLOOR, limit: int = MAX_CARDS) -> list:
