@@ -27,7 +27,7 @@ and picks up the user's earlier answer on the same subject when there is one):
 import json
 import logging
 import random
-from datetime import datetime, timedelta, time as _time
+from datetime import datetime, timedelta, time as _time, tzinfo
 from collections import Counter
 from typing import Optional
 
@@ -50,7 +50,8 @@ from src.services.series_progress import (
     should_reengage_series,
     normalize_title,
 )
-from src.services.viewing_sessions import episode_id, rhythm as _viewing_rhythm, utc_offset as _utc_offset
+from src.services.viewing_sessions import episode_id, rhythm as _viewing_rhythm
+from src.services.user_time import server_zone, to_local, to_utc, user_zone_by_id
 from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
@@ -804,20 +805,25 @@ def detect_guilty_pleasure(entries: list[dict], now: datetime,
 
 
 def detect_last_night(entries: list[dict], now: datetime,
-                      asked_subjects: dict | None = None) -> Optional[dict]:
+                      asked_subjects: dict | None = None,
+                      zone: Optional[tzinfo] = None) -> Optional[dict]:
     """A morning line: between 05:00 and 11:00 local, what the user watched
     between 17:00 yesterday and 04:00 today, once per day. Series come with
     their sitting rhythm, films by title, music as minutes per artist. Timely
-    or nothing: the message expires at local noon (see _expiry_for)."""
-    off = _utc_offset()
-    local_now = now + off
+    or nothing: the message expires at local noon (see _expiry_for).
+
+    "Local" is the member's own clock (``zone``, services/user_time), with
+    the offset in force at each moment: the machine's current offset put a
+    Berlin morning in UTC on a Docker install, and an hour off across DST."""
+    zone = zone or server_zone()
+    local_now = to_local(now, zone)
     if not (5 <= local_now.hour < 11):
         return None
     key = local_now.date().isoformat()
     if _subject_asked(asked_subjects, "last_night", key, days=1, now=now):
         return None
-    start = datetime.combine(local_now.date() - timedelta(days=1), _time(17, 0)) - off
-    end = datetime.combine(local_now.date(), _time(4, 0)) - off
+    start = to_utc(datetime.combine(local_now.date() - timedelta(days=1), _time(17, 0)), zone)
+    end = to_utc(datetime.combine(local_now.date(), _time(4, 0)), zone)
     rows = [e for e in entries if e.get("viewed_at") and start <= e["viewed_at"] < end]
     if not rows:
         return None
@@ -855,7 +861,7 @@ def detect_last_night(entries: list[dict], now: datetime,
         "date": key,
         "weekday": local_now.strftime("%A"),
         "summary": "; ".join(parts[:4]),
-        "ended": (last["viewed_at"] + off).strftime("%H:%M"),
+        "ended": to_local(last["viewed_at"], zone).strftime("%H:%M"),
         "series": first_series,
         "media_type": last.get("media_type"),
     }
@@ -998,7 +1004,7 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
                       disabled: set[str] | None = None,
                       asked_subjects: dict | None = None,
                       last_fired: dict | None = None,
-                      rng=random) -> Optional[dict]:
+                      rng=random, zone: Optional[tzinfo] = None) -> Optional[dict]:
     """
     Run every trigger that is neither cooling down nor disabled by the user,
     then let _pick_trigger choose among the hits.
@@ -1020,7 +1026,7 @@ def _run_all_triggers(entries: list[dict], now: datetime, user_id: int,
         # max one per day — deliberate; the hit queue holds the rest.
         ("recommendation_followup",
          lambda: detect_recommendation_followup(user_id, asked_subjects)),
-        ("last_night",        lambda: detect_last_night(entries, now, asked_subjects)),
+        ("last_night",        lambda: detect_last_night(entries, now, asked_subjects, zone)),
         ("rewatch",           lambda: detect_rewatch(entries, asked_subjects)),
         ("track_obsession",   lambda: detect_track_obsession(user_id, _tracks)),
         ("binge_episode",     lambda: detect_binge(entries, now, asked_subjects)),
@@ -1388,12 +1394,12 @@ def _register_of(tdata_raw) -> Optional[str]:
     return td.get("register") if isinstance(td, dict) else None
 
 
-def _expiry_for(trigger: dict, now: datetime) -> datetime:
-    """A week for most nudges; a morning line is worth nothing after local
-    noon, so it retires then (at least half an hour from now)."""
+def _expiry_for(trigger: dict, now: datetime, zone: Optional[tzinfo] = None) -> datetime:
+    """A week for most nudges; a morning line is worth nothing after the
+    member's local noon, so it retires then (at least half an hour from now)."""
     if trigger.get("type") == "last_night":
-        off = _utc_offset()
-        noon = datetime.combine((now + off).date(), _time(12, 0)) - off
+        zone = zone or server_zone()
+        noon = to_utc(datetime.combine(to_local(now, zone).date(), _time(12, 0)), zone)
         return noon if noon > now + timedelta(minutes=30) else now + timedelta(hours=1)
     # A week is the whole shelf life: a nudge about last weekend's binge is
     # stale by the next one, and the same trigger re-fires after the cooldown.
@@ -1823,6 +1829,8 @@ async def _generate_messages(user_id: int) -> int:
     # What have we already asked about? Index it so the generator rotates to
     # fresh subjects instead of repeating a song / series already answered.
     asked_subjects = await run_read(_load_asked_subjects, user_id)
+    # The member's clock for the morning line and its noon expiry.
+    zone = await run_read(user_zone_by_id, user_id)
 
     # Sonarr season/episode totals, fetched once per run (TTL-cached across the
     # scheduler sweep) and married with the Plex watch history for "season X of
@@ -1841,6 +1849,7 @@ async def _generate_messages(user_id: int) -> int:
             disabled=disabled_triggers,
             asked_subjects=asked_subjects,
             last_fired=last_fired,
+            zone=zone,
         )
         if not trigger:
             break
@@ -1885,7 +1894,7 @@ async def _generate_messages(user_id: int) -> int:
                     message=message,
                     read=False,
                     created_at=now + timedelta(seconds=generated),
-                    expires_at=_expiry_for(trigger, now),
+                    expires_at=_expiry_for(trigger, now, zone),
                 ))
                 db.commit()
 

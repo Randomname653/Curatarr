@@ -31,7 +31,9 @@ an ownership check, never a persisted fake assistant turn.
 
 Dayparts make "time-of-day dependent" cheap: starters are TAGGED at
 generation (a tonight-pick is an evening starter), and selection filters
-by the current hour — no per-request LLM anywhere.
+by the current hour — no per-request LLM anywhere. The hour, the weekday
+and "today" are the MEMBER's (``users.timezone``, services/user_time): the
+machine's clock put a Berlin evening in UTC on a Docker install.
 
 Batch surfaces speak English by the deterministic-language law
 (llm_utils.detect_user_language rule 3); the reply follows whatever
@@ -41,7 +43,7 @@ language the user answers in, as always.
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, tzinfo
 from typing import Optional
 
 import httpx
@@ -55,6 +57,7 @@ from src.database.models import ChatStarter, WatchHistoryEntry
 from src.services.llm_utils import strip_think_tags, curator_options, CURATOR_KEEP_ALIVE
 from src.services.viewing_sessions import rhythm as _viewing_rhythm, sittings as _sittings
 from src.services.http_client import tls_context
+from src.services.user_time import to_local, to_utc, user_zone_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +87,27 @@ def _named_day(text: str) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
-def _end_of_local_day_utc() -> datetime:
-    """Next local midnight, in the naive-UTC terms the pool compares with."""
-    local = datetime.now().astimezone()
+def _zone(user_id: int, zone: Optional[tzinfo]) -> tzinfo:
+    return zone if zone is not None else user_zone_by_id(user_id)
+
+
+def local_now(zone: tzinfo, now_utc: Optional[datetime] = None) -> datetime:
+    """The member's wall clock (naive) for a naive-UTC moment, default now."""
+    return to_local(now_utc or datetime.utcnow(), zone)
+
+
+def _end_of_local_day_utc(zone: tzinfo, now_utc: Optional[datetime] = None) -> datetime:
+    """The member's next local midnight, in the naive-UTC terms the pool
+    compares with."""
+    local = local_now(zone, now_utc)
     nxt = (local + timedelta(days=1)).replace(hour=0, minute=0,
                                               second=0, microsecond=0)
-    return nxt.astimezone(timezone.utc).replace(tzinfo=None)
+    return to_utc(nxt, zone)
 
 
-def current_daypart(now: Optional[datetime] = None) -> str:
-    h = (now or datetime.now()).hour
+def current_daypart(local: datetime) -> str:
+    """The daypart of a wall-clock time - the member's (``local_now``)."""
+    h = local.hour
     if 5 <= h < 11:
         return "morning"
     if 11 <= h < 17:
@@ -142,8 +156,11 @@ def _pause(video: list[dict], title: str, now: datetime) -> str:
             + ", other titles watched since")
 
 
-def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
+def collect_facts(user_id: int, now: Optional[datetime] = None,
+                  zone: Optional[tzinfo] = None) -> list[dict]:
     """Concrete hooks from the user's own watch log. No LLM, one query.
+    ``now`` is naive UTC; the weekday and daypart are read on the member's
+    clock (``zone``, default their stored one).
 
     Every fact is something a starter can NAME — the specificity is what
     keeps ten starters from sounding like one starter ten times.
@@ -258,10 +275,11 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
     for m in pending_announcements(user_id)[:2]:
         facts.append({"kind": "milestone", "milestone": phrase(m), "title": m.get("title"),
                       "reached_on": str(m.get("reached_at"))[:10]})
-    # Wall clock, not the UTC `now` of the query windows: between local
-    # midnight and 2am the UTC weekday is still yesterday's.
-    facts.append({"kind": "now", "weekday": datetime.now().strftime("%A"),
-                  "daypart": current_daypart()})
+    # The member's wall clock, not the UTC `now` of the query windows:
+    # between local midnight and 2am the UTC weekday is still yesterday's.
+    local = local_now(_zone(user_id, zone), now)
+    facts.append({"kind": "now", "weekday": local.strftime("%A"),
+                  "daypart": current_daypart(local)})
     return facts
 
 
@@ -431,6 +449,8 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
     seen_openings = {_opening(t) for t in await run_read(_recent_texts)}
     seen_forms: set = set()
     now = datetime.utcnow()
+    zone = await run_read(user_zone_by_id, user_id)
+    today = _DAY_NAMES[local_now(zone, now).weekday()]
     accepted = []
     for c in candidates:
         text = (c.get("text") or "").strip()
@@ -450,7 +470,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
         if daypart not in ("morning", "day", "evening", "night", "any"):
             daypart = "any"
         day = _named_day(text)
-        if day is not None and day not in _DAY_NAMES[datetime.now().weekday()]:
+        if day is not None and day not in today:
             continue                          # names a day that isn't today
         anchor = (c.get("anchor_title") or "").strip() or None
         anchor_mt = (c.get("anchor_media_type") or "").strip() or None
@@ -463,7 +483,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             fact_used=fact[:200], created_at=now,
             anchor_title=anchor[:512] if anchor else None,
             anchor_media_type=anchor_mt,
-            expires_at=(_end_of_local_day_utc() if day
+            expires_at=(_end_of_local_day_utc(zone, now) if day
                         else now + timedelta(hours=STARTER_TTL_HOURS)),
         ))
 
@@ -505,11 +525,14 @@ def pool_fresh_count(user_id: int) -> int:
         return _fresh_filter(db.query(func.count(ChatStarter.id)), user_id, now).scalar()
 
 
-def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
-    """Up to ``limit`` fresh starters for the current daypart, forms as
-    distinct as the pool allows, least-shown first. Counts the impression."""
-    now = datetime.utcnow()
-    dp = current_daypart()
+def pick_starters(user_id: int, limit: int = 3, now: Optional[datetime] = None,
+                  zone: Optional[tzinfo] = None) -> list[dict]:
+    """Up to ``limit`` fresh starters for the member's current daypart, forms
+    as distinct as the pool allows, least-shown first. Counts the impression.
+    ``now`` is naive UTC (default now), ``zone`` the member's (default stored)."""
+    now = now or datetime.utcnow()
+    local = local_now(_zone(user_id, zone), now)
+    dp = current_daypart(local)
     with get_db_session() as db:
         pool = (_fresh_filter(db.query(ChatStarter), user_id, now)
                 .filter((ChatStarter.daypart.in_((dp, "any")))
@@ -519,7 +542,7 @@ def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
                 .limit(limit * 4).all())
         # Day-named rows from before the midnight-expiry rule (or from a
         # DST edge) get retired here instead of shown a day late.
-        today = _DAY_NAMES[datetime.now().weekday()]
+        today = _DAY_NAMES[local.weekday()]
         alive = []
         for row in pool:
             d = _named_day(row.text)
