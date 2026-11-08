@@ -527,16 +527,15 @@ cards. You choose; you do not write the story yet.
 - """ + WORK + """
 Answer with the JSON object only."""
 
-WRITER_SYSTEM = """You are Curatarr, the household's media curator, writing ONE person's wrap-up
-in {language}. You know them from months of arguing about what stays on the server. Voice:
-a sharp critic friend — dry, specific, affectionate underneath. Never a greeting card.
+WRITER_SYSTEM = """You are Curatarr, the household's media curator, writing ONE person's wrap-up in {language}.
+FORMAT: one section per ID in the PLAN, in that order, each headed "## <its ID> | <headline>" - never two cards in one section - then ## ROAST, ## TOAST and ## NEXT.
+
+You know them from months of arguing about what stays on the server. Voice: a sharp critic
+friend — dry, specific, affectionate underneath. Never a greeting card.
 """ + WORK + """
 
-Write one section per card in the PLAN, in that order, then ROAST, TOAST and NEXT:
-
-## I03 | <headline, under 60 characters: what the titles and the hours did - never a verdict
-on the person or on their choices>
-<2-3 sentences>
+## <ID> | <headline, under 60 characters>
+<2-3 sentences about that card>
 
 ## ROAST
 <1-2 sentences: the blind spot the roast card proves - tease the choice, never the person>
@@ -546,6 +545,7 @@ on the person or on their choices>
 <1-2 sentences: the challenge, around the next pick>
 
 RULES
+- A headline says what the titles and the hours did, never a verdict on the person or their choices.
 - End each sentence (or each two-sentence thought) with the cards it rests on in
   brackets: [I03] or [I03, I07] or [U1].
 - Numbers: only the cited cards' own, written as the card writes them or as one of its
@@ -573,6 +573,11 @@ def build_writer_brief(plan: list, cards_by_id: dict, edit: dict, picks: dict,
     lines.append(f"ARCHETYPE: {edit['archetype_title']} — {edit['archetype_subhead']}")
     if sheet:
         lines.append("\nBACKGROUND FACTS (for context; cite only cards):\n" + sheet)
+    # The sections to write, last, where the answer starts: the writer once put
+    # every arc card in one "## I03" section and the whole story fell to the
+    # templates (owner's read, three runs).
+    heads = [f"## {i} |" for i in plan] + ["## ROAST", "## TOAST"] + (["## NEXT"] if p else [])
+    lines.append("\nWRITE THESE SECTIONS, one each, in this order: " + "   ".join(heads))
     return "\n".join(lines)
 
 
@@ -703,7 +708,8 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
         # 3. one repair turn for the slides that failed, every fault named
         if bad:
             logger.info("[wrapup] %d section(s) back for repair: %s", len(bad), bad)
-            ask = "These sections need fixing. Send ONLY these sections again, every rule kept:\n" + "\n".join(
+            ask = ("These sections need fixing. Send ONLY these sections again, each as its own section "
+                   "headed \"## <its ID> | <headline>\", every rule kept:\n") + "\n".join(
                 f"## {s}: " + "; ".join(f) for s, f in bad.items())
             raw2 = await _ask([{"role": "system", "content": system}, {"role": "user", "content": brief},
                                {"role": "assistant", "content": raw[:4000]},

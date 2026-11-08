@@ -14,6 +14,7 @@ from _harness import check  # noqa: I001 - first: temp stores
 
 import asyncio
 import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -228,7 +229,7 @@ story, source, _ = run(edit(), prose(bad_court=True, bad_bear=True),
 ask = calls[2]["messages"][-1]["content"]
 check("only the failing slides go back, every fault named",
       f"## {court['id']}" in ask and f"## {bear['id']}" in ask and f"## {top['id']}:" not in ask
-      and "15" in ask and "77" in ask)
+      and "15" in ask and "77" in ask and 'each as its own section headed "## <its ID> | <headline>"' in ask)
 check("a repaired slide is kept, the good ones stay as written",
       story["slide_sources"][court["id"]] == "repaired" and story["slide_sources"][top["id"]] == "llm")
 check("a slide that fails twice gets its card's template — only that slide",
@@ -274,10 +275,22 @@ check("the editor and the writer carry the voice's law: the work, never the pers
       WORK in ww.EDITOR_SYSTEM and WORK in ww.WRITER_SYSTEM.format(language="German")
       and "never a verdict on who they are" in ww.EDITOR_SYSTEM)
 _w = ww.WRITER_SYSTEM.format(language="German")
-check("...the writer's law frames the voice, before the sections, and each headline and roast says it where it "
-      "is written (inline, as the archetype's: headlines judged the person where the law came last)",
-      _w.index(WORK) < _w.index("## I03 |") and _w.count(WORK) == 1
-      and "never a verdict\non the person or on their choices>" in _w and "tease the choice, never the person>" in _w)
+fmt = next(line for line in _w.splitlines() if line.startswith("FORMAT:"))
+check("the writer's format rule is one short line at the top, before the voice and the content rules: "
+      "a section per arc ID, never two cards in one (all arc cards came back in one '## I03' section)",
+      _w.index(fmt) < _w.index(WORK) < _w.index("RULES") and len(fmt) < 200
+      and '"## <its ID> | <headline>"' in fmt and "never two cards in one section" in fmt
+      and "## I03" not in _w, fmt)
+check("...the law frames the voice once; headlines and roasts say it where they are written",
+      _w.count(WORK) == 1 and "- A headline says what the titles and the hours did, never a verdict" in _w
+      and "tease the choice, never the person>" in _w)
+story, source, _ = run(edit(), prose())
+brief = calls[1]["messages"][1]["content"]
+tail = brief.splitlines()[-1]
+check("the brief ends with the sections to write, each arc ID its own, in the arc's order",
+      tail.startswith("WRITE THESE SECTIONS")
+      and [h[3:-2] for h in re.findall(r"## I\d\d \|", tail)] == ARC
+      and tail.index("## ROAST") > tail.index(f"## {ARC[-1]} |") and "## NEXT" in tail, tail)
 
 story, source, _ = run(le.LLMCallError(le.LLMFailure.INFRA_OFFLINE, "down"))
 check("an offline curator: no story, a reason, no exception",
