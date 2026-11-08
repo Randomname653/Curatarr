@@ -53,35 +53,55 @@ def nearest(seed_vec, picks: list, mean, n: int = LIFT_MAX, min_fit: float = LIF
     return scored[:n]
 
 
-def _mark(ids: list, loved_title: str, now: datetime) -> None:
+SOURCES = ("swipe", "verdict")     # what gave a lift: a Loved swipe, a "Loved it" verdict
+
+
+def _mark(ids: list, loved_title: str, now: datetime, source: str,
+          user_id: Optional[int] = None, category: Optional[str] = None) -> int:
+    """Mark the lifted rows; returns how many. A swipe's lift is marked only
+    while that Loved answer still stands: the neighbours take a while to
+    find, and an Undo can land in between. The check and the mark share one
+    write, so an Undo either comes first (nothing is marked) or after (its
+    unlift clears the mark)."""
     from src.database.connection import get_db_session
-    from src.database.models import CachedRecommendation as R
+    from src.database.models import CachedRecommendation as R, SwipeRating as S
     with get_db_session() as db:
-        db.query(R).filter(R.id.in_(ids)).update(
-            {"lifted_at": now, "lifted_by": loved_title[:500]}, synchronize_session=False)
+        if source == "swipe" and not db.query(S.id).filter(
+                S.user_id == user_id, S.category == category, S.title == loved_title[:512],
+                S.seen.is_(True), S.stars == 10).first():
+            return 0
+        n = db.query(R).filter(R.id.in_(ids)).update(
+            {"lifted_at": now, "lifted_by": loved_title[:500], "lift_source": source},
+            synchronize_session=False)
         db.commit()
+    return n
 
 
-def unlift(user_id: int, category: str, loved_title: str) -> int:
-    """Take back the lift a Loved of ``loved_title`` gave (an undone Swipe
-    answer): its picks fall back to their match order. Returns how many.
+def unlift(user_id: int, category: str, loved_title: str, source: str = "swipe") -> int:
+    """Take back the lift a Loved of ``loved_title`` from ``source`` gave (an
+    undone Swipe answer): its picks fall back to their match order; a lift
+    the same title got from a chat verdict stays. Returns how many.
     Blocking."""
     from src.database.connection import get_db_session
     from src.database.models import CachedRecommendation as R
     with get_db_session() as db:
         n = (db.query(R).filter(R.user_id == user_id, R.category == category,
-                                R.lifted_by == loved_title[:500])
-             .update({"lifted_at": None, "lifted_by": None}, synchronize_session=False))
+                                R.lifted_by == loved_title[:500], R.lift_source == source)
+             .update({"lifted_at": None, "lifted_by": None, "lift_source": None},
+                     synchronize_session=False))
         db.commit()
     return n
 
 
 async def lift_near(user_id: int, category: str, loved_title: str,
-                    seed_doc_id: Optional[str] = None, now: Optional[datetime] = None) -> list[str]:
+                    seed_doc_id: Optional[str] = None, now: Optional[datetime] = None,
+                    source: str = "verdict") -> list[str]:
     """Lift the member's stored picks nearest ``loved_title`` (its vector by
-    ``seed_doc_id``, else by its enrichment key). Returns the lifted titles,
-    nearest first; [] when nothing is close, or anything is missing. Never
-    raises: the Loved itself is stored either way."""
+    ``seed_doc_id``, else by its enrichment key). ``source``: "swipe" or
+    "verdict", so an Undo takes back only its own lift. Returns the lifted
+    titles, nearest first; [] when nothing is close, anything is missing, or
+    the swipe was undone meanwhile. Never raises: the Loved itself is stored
+    either way."""
     from src.database.runner import run_read, run_write
     from src.services.swipe import _anchor_keys, corpus_mean
     from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
@@ -108,7 +128,9 @@ async def lift_near(user_id: int, category: str, loved_title: str,
         chosen = nearest(seed_vec, [c for c in cands if c[0] is not None], mean)
         if not chosen:
             return []
-        await run_write(_mark, [i for _, (i, _t) in chosen], loved_title, now or datetime.utcnow())
+        if not await run_write(_mark, [i for _, (i, _t) in chosen], loved_title, now or datetime.utcnow(),
+                               source, user_id, category):
+            return []
         titles = [t for _, (_i, t) in chosen]
         logger.info("[rec-lift] user %d: %s lifted %s", user_id, loved_title, titles)
         return titles

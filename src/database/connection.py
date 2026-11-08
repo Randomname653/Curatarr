@@ -243,6 +243,7 @@ def _migrate_columns() -> None:
         # A loved title moves its nearest picks up (services/rec_lift)
         ("cached_recommendations","lifted_at",   "DATETIME"),
         ("cached_recommendations","lifted_by",   "VARCHAR(500)"),
+        ("cached_recommendations","lift_source", "VARCHAR(16)"),
         # Music / Spotify enrichment columns
         ("watch_history",         "spotify_uri", "TEXT"),
         ("watch_history",         "source",      "TEXT"),

@@ -123,7 +123,7 @@ async def answer(body: SwipeAnswer, user: User = Depends(get_current_user)):
         # Loved: the member's stored picks nearest it move up now - the
         # Recommendations page and the next playlist push (services/rec_lift).
         from src.services.rec_lift import lift_near
-        out["lifted"] = await lift_near(uid, cat, body.title, seed_doc_id=body.doc_id)
+        out["lifted"] = await lift_near(uid, cat, body.title, seed_doc_id=body.doc_id, source="swipe")
     if body.want and body.title:
         # The same write chat makes for "I want to watch X": the user's own
         # plex.tv watchlist, so it shows in their Plex apps. Never raises;
@@ -148,7 +148,7 @@ async def undo(category: str = Query(...), user: User = Depends(get_current_user
     if last.get("seen") and last.get("stars") == 10 and last.get("title"):
         # A Loved taken back takes its lift back too (services/rec_lift).
         from src.services.rec_lift import unlift
-        out["unlifted"] = await run_write(unlift, user.id, cat, last["title"])
+        out["unlifted"] = await run_write(unlift, user.id, cat, last["title"], "swipe")
     return out
 
 
