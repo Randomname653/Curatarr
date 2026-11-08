@@ -16,8 +16,12 @@ keeps - verified data in, no model call, no new source:
   went to their watchlist).
 
 A title the member played since it was stored is dropped: the recommendation
-cache refreshes weekly, a play can come any evening. The block says when to
-use it; rule 8 of the chat prompt shapes the answer.
+cache refreshes weekly, a play can come any evening. The block rides only
+the evening question the UI starts (discuss_context kind "tonight": the
+clock chips, the Tonight card's "Ask the curator"); a typed message goes
+without it - measured on real data, the bare list made a targeted ask
+answer with the same stored pick every time, whatever the header said.
+Rule 8 of the chat prompt shapes the answer.
 """
 from datetime import datetime, timedelta
 from typing import Optional
@@ -232,6 +236,7 @@ _TEXT = {
         "want": "You wanted to watch {t}", "rediscover_sunday": "Sunday rewatch? {t}",
         "rediscover": "Back to an old favourite: {t}", "film_night": "{wd} - room for a film: {t}",
         "tonight": "For tonight: {t}",
+        "ask": "What should I watch tonight?", "ask_later": "What could I put on later today?",
         "why_series": "You are in the middle of it", "why_upto": "up to {where}",
         "season_ep": "season {s}, episode {e}", "ep": "episode {e}",
         "why_want": "You marked it 'Want to watch' in Swipe",
@@ -247,6 +252,7 @@ _TEXT = {
         "want": "Du wolltest {t} sehen", "rediscover_sunday": "Sonntag - Zeit für ein Wiedersehen? {t}",
         "rediscover": "Wieder mal ein alter Liebling: {t}", "film_night": "{wd} - Zeit für einen Film: {t}",
         "tonight": "Für heute Abend: {t}",
+        "ask": "Was soll ich heute Abend schauen?", "ask_later": "Was könnte ich später am Tag schauen?",
         "why_series": "Du bist mittendrin", "why_upto": "bis {where}",
         "season_ep": "Staffel {s}, Folge {e}", "ep": "Folge {e}",
         "why_want": "Du hast es in Swipe als 'Want to watch' markiert",
@@ -312,9 +318,11 @@ def member_why(c: dict, lang: str = "en") -> str:
 
 def tonight_card(user_id: int, now: Optional[datetime] = None, zone=None,
                  lang: Optional[str] = None) -> Optional[dict]:
-    """{"moment", "weekday", "label", "items": [...]} - the candidates ordered
-    for the member's moment, each with its ``headline`` and ``why`` in the
-    member's language; None without any. Blocking."""
+    """{"moment", "weekday", "label", "ask", "items": [...]} - the candidates
+    ordered for the member's moment, each with its ``headline`` and ``why``
+    in the member's language, and ``ask``: the question the card's "Ask the
+    curator" sends (as the evening question, kind "tonight"). None without
+    any. Blocking."""
     from src.services.chat_starters import local_now
     from src.services.user_language import user_language
     from src.services.user_time import user_zone_by_id
@@ -332,4 +340,6 @@ def tonight_card(user_id: int, now: Optional[datetime] = None, zone=None,
         items.append({"title": c["title"], "category": c["category"], "year": c.get("year"),
                       "kind": c.get("kind"), "key": c.get("key"),
                       "headline": headline(c, moment, weekday, lang), "why": member_why(c, lang)})
-    return {"moment": moment, "weekday": weekday, "label": _t(lang)["label"][moment], "items": items}
+    tx = _t(lang)
+    return {"moment": moment, "weekday": weekday, "label": tx["label"][moment],
+            "ask": tx["ask_later"] if moment == "later" else tx["ask"], "items": items}

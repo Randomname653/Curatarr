@@ -60,6 +60,7 @@ _CONTEXTS = [
     {"kind": "watched_title", "title": "x" * 120},
     {"kind": "watched_title", "title": "!!!"},
     {"kind": "something_new", "proposal_id": 1},
+    {"kind": "tonight"},
 ]
 
 
@@ -217,7 +218,7 @@ def _watchdog(script: dict, steps: list) -> list | None:
     chat = _read("chat.js")
     consts = "\n".join(re.findall(r"^const STREAM_(?:IDLE|HEADERS)_MS = [\d_]+;$", chat, re.M))
     assert consts.count("const") == 2, "the stream limits moved"
-    body = "\n".join([consts, "let _stream = null;", _function(chat, "abortActiveStream"),
+    body = "\n".join([consts, "let _stream = null;", "let _tonightAsk = false;", _function(chat, "abortActiveStream"),
                       _function(chat, "_busyStreaming"), _function(chat, "sendMessage")])
     drive = f"""
 SCRIPT = {json.dumps(script)};
@@ -354,6 +355,56 @@ def test_only_one_task_stream_opens():
     for name in ("auth.js", "curation.js"):
         src = _read(name)
         assert "stopTaskStream()" in src and "taskEventSource.close()" not in src, name
+
+
+# ── the evening question: only a chip or the Tonight card sends it ──────────
+
+def _sent_contexts(drive_js: str) -> list | None:
+    """Run the real fillPrompt / askTonight / sendMessage; return the
+    discuss_context of every request the turns sent."""
+    chat = _read("chat.js")
+    consts = "\n".join(re.findall(r"^const STREAM_(?:IDLE|HEADERS)_MS = [\d_]+;$", chat, re.M))
+    body = "\n".join([consts, "let _stream = null;", "let _tonightAsk = false;", "let _tonight = null;",
+                      _function(chat, "abortActiveStream"), _function(chat, "_busyStreaming"),
+                      _function(chat, "fillPrompt"), _function(chat, "askTonight"), _function(chat, "sendMessage")])
+    drive = f"""
+SCRIPT = {{headersAt: 10, frames: [[20, 'data: {{"done": true}}\\n']], endAt: 30}};
+const SENT = [];
+const _fetch = globalThis.fetch;
+globalThis.fetch = (url, opts) => {{ SENT.push(JSON.parse(opts.body).discuss_context || null); return _fetch(url, opts); }};
+async function turn(start) {{ const t = start(); await advance(100); await t; }}
+(async () => {{
+{drive_js}
+  process.stdout.write(JSON.stringify(SENT));
+}})();
+"""
+    out = _node(_RIG + body + drive)
+    return None if out is None else json.loads(out)
+
+
+def test_a_tonight_chip_sends_the_evening_question_once_then_typed_turns_send_nothing():
+    got = _sent_contexts("""
+  fillPrompt('What should I watch tonight?', 'tonight');
+  await turn(sendMessage);
+  DOM['chat-input'].value = 'and something lighter?';
+  await turn(sendMessage);
+  fillPrompt('I am in the mood for ', '');
+  DOM['chat-input'].value = 'I am in the mood for a heist';
+  await turn(sendMessage);
+""")
+    if got is None:
+        return
+    assert got == [{"kind": "tonight"}, None, None], got
+
+
+def test_the_tonight_cards_ask_sends_its_question_as_the_evening_question():
+    got = _sent_contexts("""
+  _tonight = {ask: 'Was soll ich heute Abend schauen?', items: [{}], at: 0};
+  await turn(askTonight);
+""")
+    if got is None:
+        return
+    assert got == [{"kind": "tonight"}], got
 
 
 if __name__ == "__main__":

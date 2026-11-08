@@ -9,7 +9,7 @@ import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, k
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
 import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, posterLoaded, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
-import { answerFollowup, correctChatAnchor, explainFollowup, hideMoment, hideTonight, momentPlaylist, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
+import { answerFollowup, askTonight, correctChatAnchor, explainFollowup, hideMoment, hideTonight, momentPlaylist, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { jellyfinConnectStart, jellyfinPasswordConnect, jellyfinPick, jellyfinShowPassword } from './jellyfin_connect.js';
 import { loadMediaServer, mediaServerCheck, mediaServerForget, mediaServerReconnect, mediaServerSwitch, mediaServerUndo } from './media_switch.js';
@@ -170,6 +170,7 @@ const actions = {
   openWrapupPeriod,
   titleKeep,
   titleWatchlist,
+  askTonight,
   tonightNext,
   tonightWatchlist,
   hideFollowup,

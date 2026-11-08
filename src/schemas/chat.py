@@ -11,7 +11,7 @@ class DiscussContext(BaseModel):
     action) are kept Optional for short-term frontend backward compat but
     ignored when ``kind`` + the matching ID are present.
     """
-    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle" | "watched_title" | "wrapup"
+    kind: Optional[str] = None         # "deletion_proposal" | "proactive_message" | "principle" | "watched_title" | "wrapup" | "tonight"
     type: Optional[str] = None         # alias spelling for `kind` (last-played contract uses it)
     proposal_id: Optional[int] = None  # FK → DeletionProposal.id
     message_id: Optional[int] = None   # FK → ProactiveMessage.id

@@ -75,9 +75,10 @@ check("tone_bench: the public cases are chat cases with an id, a language, a use
 from src.services import tonight as _tonight  # noqa: E402
 
 check("tone_bench: every public case's [TONIGHT CANDIDATES] block opens with the header the chat "
-      "sends today, and a targeted ask has a case of its own",
+      "sends today; a typed targeted ask has a case of its own and, as in the app, no block",
       all(c["tonight"].startswith(_tonight.HEADER) for c in pub["chat"] if c.get("tonight"))
-      and any(c["id"] == "pub_specific_ask_en" and c.get("tonight") for c in pub["chat"]))
+      and any(c["id"] == "pub_specific_ask_en" and not c.get("tonight") for c in pub["chat"])
+      and any(c["id"] == "pub_tonight_en" and c.get("tonight") for c in pub["chat"]))
 cb = _bench("curator_bench")
 ctx = 'You previously proposed deleting "Some Title" (anime series, 6 GB).'
 sp = cb.system_prompt(ctx)
