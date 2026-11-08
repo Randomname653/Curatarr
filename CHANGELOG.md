@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Delete & exit closes its own discussion.** The approve waits for the arr to delete the files;
+a discussion opened meanwhile was closed by its answer, its memories were flushed instead of the
+deleted title's, and the next message went to free chat without the title. The answer now acts
+on the deleted proposal's own thread only: a pane that moved on keeps its discussion and gets a
+toast.
+
 **A member's chat landing speaks to the member** (design record
 [docs/UX_RETENTION_DESIGN.md](docs/UX_RETENTION_DESIGN.md), stage 1). Beside the curator's
 openers the landing now offers chips in the member's own voice, built without a model from the
