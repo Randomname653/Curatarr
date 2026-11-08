@@ -27,6 +27,7 @@ claim cards:
 
 Pure: facts in, cards out; nothing is read or written.
 """
+import contextvars
 from typing import Optional
 
 FLOOR = 0.35
@@ -39,15 +40,43 @@ _FRACTIONS = ((0.25, "a quarter"), (1 / 3, "a third"), (0.5, "half"),
 
 
 # ── renderings ───────────────────────────────────────────────────────────────
+# In the story's language: ``mine(facts, lang=...)`` sets it for the miners
+# below, so the editor and the writer of a German story read "41,6 Stunden",
+# "zwei von fünf", "735 Tage" - an English rendering in the brief was copied
+# into the German text ("11.9 hours", "8 episodes"). English is the default
+# and reads exactly as before.
+_LANG: contextvars.ContextVar = contextvars.ContextVar("wrapup_lang", default="en")
+_WORDS_DE = {1: "ein", 2: "zwei", 3: "drei", 4: "vier", 5: "fünf", 6: "sechs", 7: "sieben", 8: "acht",
+             9: "neun", 10: "zehn", 11: "elf", 12: "zwölf"}
+_FRACTIONS_DE = ((0.25, "ein Viertel"), (1 / 3, "ein Drittel"), (0.5, "die Hälfte"),
+                 (2 / 3, "zwei Drittel"), (0.75, "drei Viertel"))
+_NOUNS_DE = {"plays": "Wiedergaben", "episodes": "Folgen", "titles": "Titel", "weeks": "Wochen",
+             "replays": "Wiederholungen", "votes": "Stimmen", "days": "Tage", "day": "Tag",
+             "points": "Punkte", "hours": "Stunden"}
+
+
+def _de() -> bool:
+    return _LANG.get() == "de"
+
 
 def _fmt(x) -> str:
-    """58.3 → '58.3', 20.0 → '20', 2100 → '2,100'."""
-    x = float(x or 0)
-    return f"{x:,.1f}".rstrip("0").rstrip(".") if round(x % 1, 1) else f"{int(round(x)):,}"
+    """58.3 → '58.3' ('58,3'), 20.0 → '20', 2100 → '2,100' ('2.100')."""
+    from src.services.wrapup_claims import num
+    return num(x, "de" if _de() else "en")
+
+
+def _int(n: int) -> str:
+    return f"{n:,}".replace(",", ".") if _de() else f"{n:,}"
 
 
 def say_count(n, noun: str = "") -> list:
     n = int(n or 0)
+    if _de():
+        if noun == "times":
+            return [f"{_int(n)}-mal"] + ([f"{_WORDS_DE[n]}mal"] if n in _WORDS_DE and n > 1 else [])
+        word = _NOUNS_DE.get(noun, noun)
+        tail = f" {word}" if word else ""
+        return [f"{_int(n)}{tail}"] + ([f"{_WORDS_DE[n]}{tail}"] if n in _WORDS_DE and n > 1 else [])
     tail = f" {noun}" if noun else ""
     out = [f"{n:,}{tail}"]
     if n in _WORDS:
@@ -56,43 +85,53 @@ def say_count(n, noun: str = "") -> list:
 
 
 def say_hours(h) -> list:
-    """58.3 → 58.3 hours, 58 hours, nearly 60 hours, two and a half days."""
+    """58.3 → 58.3 hours, 58 hours, nearly 60 hours, two and a half days
+    (German: 58,3 Stunden, 58 Stunden, fast 60 Stunden, zweieinhalb Tage)."""
     h = float(h or 0)
-    out = [f"{_fmt(round(h, 1))} hours"]
+    de = _de()
+    unit = " Stunden" if de else " hours"
+    out = [f"{_fmt(round(h, 1))}{unit}"]
     if h >= 2:
-        out.append(f"{round(h):,} hours")
+        out.append(f"{_int(round(h))}{unit}")
     if h >= 10:
         up, down = (int(h // 10) + 1) * 10, int(h // 10) * 10
         if up - h <= 3:
-            out.append(f"nearly {up:,} hours")
+            out.append(f"{'fast' if de else 'nearly'} {_int(up)}{unit}")
         elif h - down <= 3 and down:
-            out.append(f"just over {down:,} hours")
+            out.append(f"{'gut' if de else 'just over'} {_int(down)}{unit}")
     if h >= 48:
         days = h / 24
         half = round(days * 2) / 2
         whole = int(half)
-        words = _WORDS.get(whole, f"{whole:,}")
-        out.append(f"{words} and a half days" if half % 1 else f"{words} full days")
+        if de:
+            words = _WORDS_DE.get(whole, _int(whole))
+            out.append(f"{words}einhalb Tage" if half % 1 else f"{words} volle Tage")
+        else:
+            words = _WORDS.get(whole, f"{whole:,}")
+            out.append(f"{words} and a half days" if half % 1 else f"{words} full days")
     elif 1.5 <= h < 2.25:
-        out.append("about two hours")
+        out.append("etwa zwei Stunden" if de else "about two hours")
     return list(dict.fromkeys(out))
 
 
 def say_minutes(m) -> list:
     m = int(m or 0)
-    out = [f"{m} minutes"]
+    de = _de()
+    out = [f"{m} {'Minuten' if de else 'minutes'}"]
     if m >= 90:
         h = m / 60
-        out.append(f"nearly {int(h) + 1} hours" if (int(h) + 1) * 60 - m <= 10
-                   else f"{_fmt(round(h, 1))} hours")
+        unit = "Stunden" if de else "hours"
+        out.append(f"{'fast' if de else 'nearly'} {int(h) + 1} {unit}" if (int(h) + 1) * 60 - m <= 10
+                   else f"{_fmt(round(h, 1))} {unit}")
     return out
 
 
 def say_share(x) -> list:
-    """0.42 → 42%, two in five; 0.5 → half."""
+    """0.42 → 42%, two in five; 0.5 → half (German: 42 %, zwei von fünf, die Hälfte)."""
     x = float(x or 0)
-    out = [f"{round(x * 100)}%"]
-    for v, words in _FRACTIONS:
+    de = _de()
+    out = [f"{round(x * 100)}{' %' if de else '%'}"]
+    for v, words in (_FRACTIONS_DE if de else _FRACTIONS):
         if abs(x - v) <= 0.03:
             out.append(words)
             break
@@ -100,21 +139,29 @@ def say_share(x) -> list:
         for d in (5, 10):
             n = round(x * d)
             if 0 < n < d and abs(x - n / d) <= 0.02:
-                out.append(f"{_WORDS.get(n, n)} in {_WORDS.get(d, d)}")
+                if de:
+                    out.append(f"{_WORDS_DE.get(n, n) if n > 1 else 'eins'} von {_WORDS_DE.get(d, d)}")
+                else:
+                    out.append(f"{_WORDS.get(n, n)} in {_WORDS.get(d, d)}")
                 break
     return out
 
 
 def say_days(d) -> list:
     d = int(d or 0)
+    de = _de()
     out = say_count(d, "days" if d != 1 else "day")
+    words = _WORDS_DE if de else _WORDS
     if d >= 330:
         years = d / 365
-        out.append("over a year" if years < 1.5 else f"over {_WORDS.get(int(years), int(years))} years")
+        if de:
+            out.append("über ein Jahr" if years < 1.5 else f"über {words.get(int(years), int(years))} Jahre")
+        else:
+            out.append("over a year" if years < 1.5 else f"over {words.get(int(years), int(years))} years")
     elif d >= 50:
-        out.append(f"{_WORDS.get(round(d / 30), round(d / 30))} months")
+        out.append(f"{words.get(round(d / 30), round(d / 30))} {'Monate' if de else 'months'}")
     elif d >= 14:
-        out.append(f"{_WORDS.get(round(d / 7), round(d / 7))} weeks")
+        out.append(f"{words.get(round(d / 7), round(d / 7))} {'Wochen' if de else 'weeks'}")
     return list(dict.fromkeys(out))
 
 
@@ -124,12 +171,18 @@ def say_gb(gb) -> list:
     if gb >= 1000:
         out.append(f"{_fmt(round(gb / 1024, 1))} TB")
     elif gb >= 10:
-        out.append(f"{round(gb):,} GB")
+        out.append(f"{_int(round(gb))} GB")
     return list(dict.fromkeys(out))
 
 
 def say_score(x) -> list:
     return [f"{_fmt(round(float(x), 1))}/10", _fmt(round(float(x), 1))]
+
+
+def say_points(gap) -> list:
+    if _de():
+        return [f"{_fmt(gap)} Punkte"] + (["zweieinhalb Punkte"] if 2.4 <= gap <= 2.6 else [])
+    return [f"{_fmt(gap)} points"] + (["two and a half points"] if 2.4 <= gap <= 2.6 else [])
 
 
 # ── the miners ───────────────────────────────────────────────────────────────
@@ -146,12 +199,12 @@ def _card(kind, slide, score, key, slots, why, values=None, say=None, refs=None,
     ``private``: the claim names something the household named itself (a
     device: "the Living Room TV", "Anna's iPad") - fine on the member's own
     screen, never on a share image (wrapup_story.js)."""
-    from src.services.wrapup_claims import render
+    from src.services.wrapup_claims import render, why as why_in
     refs = [r for r in (refs or []) if r]
     # specificity: a card that names something beats one that does not
     score = _clamp(score + (0.08 if refs else 0))
     card = {"kind": kind, "slide": slide, "score": round(score, 2), "key": key, "slots": slots,
-            "claim": render(key, slots), "why": why, "values": values or {}, "say": say or {}, "refs": refs,
+            "claim": render(key, slots, _LANG.get()), "why": why_in(key, slots, _LANG.get(), why), "values": values or {}, "say": say or {}, "refs": refs,
             "media_type": media_type}
     if private:
         card["private"] = True
@@ -170,7 +223,7 @@ def _tempo(f) -> list:
             up = delta > 0
             out.append(_card(
                 "contrast", "open", 0.35 + _clamp(abs(delta) / 2) * 0.5,
-                "tempo_up" if up else "tempo_down", {"hours": h, "prev": prev},
+                "tempo_up" if up else "tempo_down", {"hours": h, "prev": prev, "change": abs(delta)},
                 f"{'more' if up else 'less'} than the span before by {round(abs(delta) * 100)}%",
                 {"hours": h, "prev_hours": prev, "delta": round(delta, 2)},
                 {"hours": say_hours(h), "prev_hours": say_hours(prev),
@@ -193,7 +246,8 @@ def _tempo(f) -> list:
         ratio = (bd.get("hours") or 0) / (h / active)
         if ratio >= 2.5:
             out.append(_card("moment", "moment", 0.3 + _clamp((ratio - 2.5) / 5) * 0.5,
-                             "big_day", {"date": bd["date"], "hours": bd["hours"], "plays": bd["plays"]},
+                             "big_day", {"date": bd["date"], "hours": bd["hours"], "plays": bd["plays"],
+                                         "ratio": round(ratio)},
                              f"about {round(ratio)} times a usual day",
                              {"date": bd["date"], "hours": bd["hours"], "ratio": round(ratio, 1)},
                              {"hours": say_hours(bd["hours"]), "ratio": say_count(round(ratio), "times")}))
@@ -209,7 +263,8 @@ def _top(f) -> list:
     lead = share / max(0.01, (top[1]["hours"] / t["hours"]) if len(top) > 1 else 0.01)
     return [_card("superlative", "reveal", 0.35 + _clamp(share * 1.5) * 0.4 + _clamp((lead - 1) / 4) * 0.2,
                   "top_title_clear" if len(top) == 1 or lead >= 2 else "top_title",
-                  {"title": first["title"], "hours": first["hours"], "share": share},
+                  {"title": first["title"], "hours": first["hours"], "share": share,
+                   "runner_up": top[1]["title"] if len(top) > 1 and lead >= 2 else None},
                   "the title that owned the period" + (f", well clear of {top[1]['title']}"
                                                        if len(top) > 1 and lead >= 2 else ""),
                   {"hours": first["hours"], "share": round(share, 2), "plays": first.get("plays")},
@@ -241,7 +296,7 @@ def _contrasts(f) -> list:
                          "the widest gap between you and everyone else",
                          {"you": c["you"], "community": c["community"], "gap": gap},
                          {"community": say_score(c["community"]),
-                          "gap": [f"{_fmt(gap)} points"] + (["two and a half points"] if 2.4 <= gap <= 2.6 else []),
+                          "gap": say_points(gap),
                           "votes": say_count(c["votes"], "votes")},
                          [c["title"]], c.get("media_type")))
     d = f.get("dismissal")
@@ -270,7 +325,7 @@ def _court(f) -> list:
                          "court_keep", {"score": bk["score"], "title": bk["title"]},
                          "you overruled the curator where it was surest",
                          {"score": bk["score"], "defiant": c.get("defiant")},
-                         {"score": [f"{bk['score']}%"], "defiant": say_count(c.get("defiant"), "titles")},
+                         {"score": [f"{bk['score']}{' %' if _de() else '%'}"], "defiant": say_count(c.get("defiant"), "titles")},
                          [bk["title"]], bk.get("media_type")))
     if (c.get("won") or 0) + (c.get("lost") or 0) >= 2:
         won, lost = c.get("won", 0), c.get("lost", 0)
@@ -352,7 +407,7 @@ def _identity(f) -> list:
         new = ds["new_share"]
         out.append(_card("identity", "identity", 0.3 + abs(new - 0.5) * 0.6,
                          "discovery_new" if new >= 0.7 else "discovery_old", {"share": new},
-                         "a scout" if new >= 0.7 else "a loyalist: old friends got the hours",
+                         "mostly titles that were new" if new >= 0.7 else "old friends got the hours",
                          {"new_share": new}, {"new_share": say_share(new)},
                          [ds.get("best_new")] if new >= 0.7 else None))
     return out
@@ -481,11 +536,17 @@ _MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _decad
            _devices, _narrative)
 
 
-def mine(facts: dict, floor: float = FLOOR, limit: int = MAX_CARDS) -> list:
-    """The cards worth saying, highest score first, numbered I01…"""
+def mine(facts: dict, floor: float = FLOOR, limit: int = MAX_CARDS, lang: str = "en") -> list:
+    """The cards worth saying, highest score first, numbered I01… - their
+    claims and renderings in ``lang`` (en/de; the order and the ids are the
+    same in every language)."""
     if not facts or facts.get("empty"):
         return []
-    cards = [c for miner in _MINERS for c in miner(facts)]
+    token = _LANG.set(lang if lang in ("en", "de") else "en")
+    try:
+        cards = [c for miner in _MINERS for c in miner(facts)]
+    finally:
+        _LANG.reset(token)
     cards = sorted((c for c in cards if c["score"] >= floor), key=lambda c: -c["score"])[:limit]
     for i, c in enumerate(cards, 1):
         c["id"] = f"I{i:02d}"

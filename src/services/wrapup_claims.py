@@ -283,3 +283,58 @@ def warm(card: dict, lang: str = "en") -> str:
     """The warm line that belongs to this fact, or '' where none fits."""
     t = _text(card.get("key") or "", lang)
     return (t[2] or "") if t else ""
+
+# The miner's note on why a fact is worth saying ("why"), for the editor and
+# the writer of a story in German: the English note was copied into the text
+# ("about 6 times a usual day"). English keeps the miner's own words.
+WHY_DE = {
+    "tempo_up": "{change:p} mehr als im Zeitraum davor",
+    "tempo_down": "{change:p} weniger als im Zeitraum davor",
+    "night_share": "bei den meisten endet das Schauen, bevor die Nacht beginnt",
+    "streak": "eine ungebrochene Reihe von Tagen",
+    "big_day": "etwa {ratio}-mal so viel wie an einem gewöhnlichen Tag",
+    "top_title": "der Titel, dem der Zeitraum gehörte",
+    "top_title_clear": "der Titel, dem der Zeitraum gehörte",
+    "binge": "noch eine Folge, immer wieder",
+    "contrarian_rated": "die größte Lücke zwischen dir und allen anderen",
+    "contrarian_rewatched": "die größte Lücke zwischen dir und allen anderen",
+    "dismissal": "das Lob hat nicht gehalten",
+    "comfort_replays": "ein Wohlfühltitel sagt mehr als eine Bestenliste",
+    "court_keep": "überstimmt, wo der Curator sich am sichersten war",
+    "court_debates": "wer meistens das Argument gewinnt",
+    "court_decided": "die Urteile des Zeitraums",
+    "balance": "was der Server gewann, gegen das, was er verlor",
+    "wait_longest": "was am längsten in der Warteschlange lag",
+    "same_week": "kein Stapel: Neues läuft, sobald es da ist",
+    "auteur_director": "die Regie hinter den meisten Stunden",
+    "auteur_studio": "das Studio hinter den meisten Stunden",
+    "auteur_actor": "das Gesicht hinter den meisten Stunden",
+    "drift": "der Zeitraum sah nicht aus wie die davor",
+    "taste_turn": "der Monat, der dem davor am wenigsten glich",
+    "discovery_new": "vor allem Titel, die neu waren",
+    "discovery_old": "alte Bekannte bekamen die Stunden",
+    "decade": "ein Jahrzehnt, das nicht dieses ist, bekam die meiste Zeit",
+    "decade_titled": "ein Jahrzehnt, das nicht dieses ist, bekam die meiste Zeit",
+    "on_repeat": "ein Track, in Dauerschleife, den ganzen Tag",
+    "skipped": "der Track, der immer wieder übersprungen wird",
+    "moods_split": "zwei Soundtracks, einen Tag auseinander",
+    "top_mood": "die Stimmung, zu der der Zeitraum immer wieder zurückkam",
+    "device_night": "wo die späten Stunden liefen",
+    "ritual_title": "derselbe Abend, dasselbe, Woche für Woche - ein Ritual",
+    "ritual_kind": "derselbe Abend, dasselbe, Woche für Woche - ein Ritual",
+    "comfort_genre": "Geborgenheit mit Form: nicht ein Titel, sondern eine Art Geschichte",
+    "of_the_month": "ein Titel, dem ein ganzer Monat gehörte",
+    "night_shift": "eine Serie für die Stunden, wenn alle anderen aufgehört haben",
+    "first_title": "das Erste, was im Zeitraum lief",
+}
+
+
+def why(key: str, slots: dict, lang: str, default: str) -> str:
+    """The note on why a fact matters, in ``lang``; ``default`` (the miner's
+    English) where there is none."""
+    if lang != "de" or key not in WHY_DE:
+        return default
+    out = _Formatter(lang).format(WHY_DE[key], **slots)
+    if key == "top_title_clear" and slots.get("runner_up"):
+        out += f", klar vor {slots['runner_up']}"
+    return out

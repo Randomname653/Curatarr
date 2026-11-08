@@ -70,7 +70,7 @@ def main() -> None:
     narrative = {k: facts[k] for k in ("ritual", "comfort_genre", "of_the_month", "night_shift") if k in facts}
     lines += ["## Narrative facts", "", "```json", json.dumps(narrative, indent=1, ensure_ascii=False) or "{}",
               "```", ""]
-    cards = mine(facts)
+    cards = mine(facts, lang=lang)    # in the story's language, as the editor and the writer get them
     lines += ["## Cards the writer is offered", ""]
     for c in cards:
         head, body = _template(c["id"], c, None, lang)

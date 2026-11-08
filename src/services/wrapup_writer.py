@@ -205,6 +205,8 @@ _SECTION = re.compile(r"^##\s*(I\d{2}|ROAST|TOAST|NEXT)\s*(?:\|\s*(.*?))?\s*$", 
 def _norm(n: str) -> str:
     if re.fullmatch(r"\d{1,3}(,\d{3})+", n):
         n = n.replace(",", "")
+    elif re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", n):
+        n = n.replace(".", "")              # German thousands: 2.100 is 2100 (no rendering has 3 decimals)
     n = n.replace(",", ".")
     return n.split(".")[0] if re.fullmatch(r"\d+\.0+", n) else n
 
@@ -520,6 +522,8 @@ cards. You choose; you do not write the story yet.
 - share_line: under 100 characters, something they would post.
 - next_pick: the U# pick to end on, or "" when there is none.
 - cluster_names: a 2-4 word name for each C# taste cluster, if any.
+- Write archetype_title, archetype_subhead, share_line and cluster_names in {language}, the
+  language of the story.
 - """ + WORK + """
 Answer with the JSON object only."""
 
@@ -566,7 +570,8 @@ def build_writer_brief(plan: list, cards_by_id: dict, edit: dict, picks: dict,
         lines.append("YOUR WORDS (things they told you in debates; quote at most one, exactly):")
         lines += [f"- about {q['title']}: \"{q['text']}\"" for q in quotes]
     lines.append(f"ARCHETYPE: {edit['archetype_title']} — {edit['archetype_subhead']}")
-    lines.append("\nBACKGROUND FACTS (for context; cite only cards):\n" + sheet)
+    if sheet:
+        lines.append("\nBACKGROUND FACTS (for context; cite only cards):\n" + sheet)
     return "\n".join(lines)
 
 
@@ -633,7 +638,7 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     # 1. the editor
     edit, edit_source = None, "fallback"
     try:
-        raw = await _ask([{"role": "system", "content": EDITOR_SYSTEM},
+        raw = await _ask([{"role": "system", "content": EDITOR_SYSTEM.format(language=LANG_NAMES.get(lang, "English"))},
                           {"role": "user", "content": "CARDS:\n" + "\n".join(_card_line(c) for c in cards)
                            + (f"\nTRAITS: {', '.join(traits)}" if traits else "")
                            + (f"\nPICKS: " + "; ".join(f"{k} {v['title']}" for k, v in picks.items())
@@ -667,7 +672,11 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     own.update({"ROAST": [edit["roast"]], "TOAST": [edit["toast"]],
                 "NEXT": [edit["next_pick"]] if edit.get("next_pick") else []})
     ev = evidence(cards, picks)
-    brief = build_writer_brief(edit["arc"], cards_by_id, edit, picks, list(quotes), sheet)
+    # The background sheet is English (facts as the code names them); a story
+    # in another language gets only its cards, already in that language - an
+    # English line in the brief was copied into the German text.
+    brief = build_writer_brief(edit["arc"], cards_by_id, edit, picks, list(quotes),
+                               sheet if lang == "en" else "")
     system = WRITER_SYSTEM.format(language=LANG_NAMES.get(lang, "English"))
 
     def judge(parsed: dict) -> dict:

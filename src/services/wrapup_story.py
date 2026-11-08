@@ -404,7 +404,7 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
     from src.routers.wrapup import attach_posters
     from src.services.task_monitor import task_monitor
     from src.services.wrapup_facts import build_wrapup_facts, taste_drift, taste_river
-    from src.services.wrapup_insights import mine
+    from src.services.wrapup_insights import MAX_CARDS, mine
     from src.services.wrapup_store import save_error, save_facts, save_story
     from src.services.wrapup_writer import write
 
@@ -431,9 +431,12 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         step(4)
         sheet, idx = render_fact_sheet(facts)
         # A week or a month tells a mini story: its strongest few cards.
-        cards = (mine(facts, limit=MINI_STORY_CARDS)
-                 if period_key.startswith(("week:", "month:")) else mine(facts))
+        limit = MINI_STORY_CARDS if period_key.startswith(("week:", "month:")) else MAX_CARDS
+        cards = mine(facts, limit=limit)
         lang, quotes = await run_read(_voice, user_id, cards)
+        if lang != "en":
+            # the same cards, said in the story's language for the editor and the writer
+            cards = mine(facts, limit=limit, lang=lang)
         story, source, model = await write(facts, sheet, idx, cards, quotes=quotes, lang=lang)
         step(5)
         if story is None:
