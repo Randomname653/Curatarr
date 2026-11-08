@@ -16,6 +16,15 @@ async def get_unread(seen: bool = False, user: User = Depends(get_current_user))
     return result
 
 
+@router.get("/followup")
+async def get_followup(user: User = Depends(get_current_user)):
+    """The chat landing's follow-up card: the newest unread "how did it
+    land?" message with its one-tap answers, or null."""
+    from src.database.runner import run_read
+    from src.services.proactive_messages import followup_card
+    return {"card": await run_read(followup_card, user.id)}
+
+
 @router.post("/{message_id}/read")
 async def read_message(message_id: int, user: User = Depends(get_current_user)):
     ok = await mark_message_read(message_id, user.id)

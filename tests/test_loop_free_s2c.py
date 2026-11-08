@@ -309,7 +309,7 @@ pm.is_game_running = lambda: False
 
 
 async def _starters():
-    out = await chat.get_starters(user=SimpleNamespace(id=1))
+    out = await chat.get_starters(user=SimpleNamespace(id=1, is_admin=False))
     tracked = [t for t in bg._BG_TASKS if t.get_name() == "starters_refill"]
     for t in tracked:
         await t
@@ -322,7 +322,7 @@ finally:
     cs.pick_starters, cs.pool_fresh_count, cs.generate_starters, pm.is_game_running = _saved_cs
 check("the refill runs as a tracked task named starters_refill", len(tracked) == 1)
 check("starters served and the pool refilled",
-      out == {"starters": [{"id": 1, "text": "hi"}]} and _refilled == [1]
+      out["starters"] == [{"id": 1, "text": "hi"}] and _refilled == [1]
       and 1 not in chat._starter_gen_running)
 
 

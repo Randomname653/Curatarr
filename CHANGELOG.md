@@ -4,6 +4,33 @@ Condensed release history, newest first.
 
 ---
 
+## Unreleased
+
+**A member's chat landing speaks to the member** (design record
+[docs/UX_RETENTION_DESIGN.md](docs/UX_RETENTION_DESIGN.md), stage 1). Beside the curator's
+openers the landing now offers chips in the member's own voice, built without a model from the
+same facts (their daypart and weekday, the series they are in, the music on rotation) and
+written in the language they talk to the curator in. The owner's clean-up chip and greeting
+line, the enrichment tile, the Knowledge Base and Activity entries, Recompute taste, Plex
+libraries, Re-fetch and the beta tag are the owner's only; the recommendations tile reads the
+cache and no longer starts a generation when it is empty. A member's chat error and queue lines
+say what happened in plain words; the owner still reads the job and the Ollama address. The
+newest unanswered "how did it land?" message (a watched recommendation, or a morning line about
+exactly one title) sits on the landing as a card with four one-tap answers instead of only
+behind the bell, and a
+returning visit opens on the landing with the last conversation folded behind "Continue our
+last conversation". The starters' daypart, weekday and day-named expiry and the morning line
+read the member's own time zone instead of the machine's (a UTC container put a Berlin evening
+an hour or two late). The chat gained one rule for recommendation turns: one or two titles with
+a reason each, then one question that narrows the next pick, a longer list only when asked;
+every other turn ends once it is answered, with no question tacked on.
+Notification labels judge the watching, not the person ("Started, not finished" for "Attention
+deficit", "Comfort picks" for "Guilty pleasures", ...), and the bell badge shows the label
+instead of the internal type. Swipe, Wrap-Up and History name Jellyfin on a Jellyfin install,
+and a Jellyfin member without a linked account is told so instead of "not found in Plex".
+
+---
+
 ## 2026-11-08 — v1.1.0: Wrap-Up for everyone, a tactile glass UI on desktop and phone, Curatarr on a NAS, one SQLite writer
 
 Four weeks after 1.1.0-beta, the first release without the suffix (the

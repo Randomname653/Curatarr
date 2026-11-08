@@ -1343,10 +1343,13 @@ _starter_gen_running: set[int] = set()
 
 @router.get("/starters")
 async def get_starters(user: User = Depends(get_current_user)):
-    from src.services.chat_starters import (pick_starters, pool_fresh_count,
+    from src.services.chat_starters import (chips_for, pick_starters, pool_fresh_count,
                                             generate_starters, POOL_TARGET)
     # pick_starters writes (impressions, retired day-named rows): the writer
     picks = await run_write(pick_starters, user.id)
+    # The user-voiced chips beside the openers: no model, the member's facts
+    # in their language; the owner's clean-up chip for the owner only.
+    chips = await run_read(chips_for, user.id, bool(user.is_admin))
     try:
         from src.services.process_monitor import is_game_running
         if (await run_read(pool_fresh_count, user.id) < POOL_TARGET // 2
@@ -1369,7 +1372,7 @@ async def get_starters(user: User = Depends(get_current_user)):
             track_task(_refill(user.id), name="starters_refill")
     except Exception as _e:
         logger.warning("[starters] refill check failed: %s", _e)
-    return {"starters": picks}
+    return {"starters": picks, "chips": chips}
 
 
 # Monotonic time of the last warm-up load attempt — server-wide, so several
@@ -3426,6 +3429,11 @@ async def _send_message_guarded(message: ChatMessage, user: User,
     # attribute read lazily re-opens a transaction on the request session
     # and holds a pooled connection for minutes of generation. Plain id
     # from here on.
+    # The owner reads the machine room in the status and error lines (which
+    # job holds the GPU, which Ollama address failed); a member reads plain
+    # words - the log keeps every detail (UX audit 2026-11-08, H4). Read with
+    # the id, before the stream: no ORM attribute is touched after this.
+    _owner = bool(user.is_admin)
     _uid = user.id
     _user_at = datetime.utcnow()
 
@@ -3464,7 +3472,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             # generation at a time, so we wait for the slot instead of
             # thrashing it.
             if curator_busy():
-                _holder = gate_owner()
+                _holder = gate_owner() if _owner else None
                 _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
                          if _holder else
                          "Curatarr is busy with another request — you are next in line…")
@@ -3675,8 +3683,12 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                               "Send it again - Curatarr answers on this server now.")
 
             except httpx.ConnectError:
+                logger.error("[chat] Ollama not reachable at %s", ollama_url)
                 error_text = (f"Ollama not reachable at {ollama_url}. Make sure Ollama is "
-                              f"running and '{settings.CURATOR_MODEL}' is pulled.")
+                              f"running and '{settings.CURATOR_MODEL}' is pulled."
+                              if _owner else
+                              "The curator cannot be reached right now - try again "
+                              "in a minute.")
 
             except (asyncio.CancelledError, GeneratorExit):
                 # Pass 46 (Bug 2): client closed the SSE connection mid-stream.

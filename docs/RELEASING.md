@@ -12,7 +12,8 @@ A release needs a plain `X.Y.Z` there (no `-beta` suffix): the release
 workflow refuses anything else, because the TrueNAS catalog's update bot
 (Renovate) follows plain semantic versions on its own and would need a
 custom rule for anything else. The "beta" badge next to the logo says that
-Curatarr is in beta.
+Curatarr is in beta; only the owner sees it (household members get the
+logo alone).
 
 - **Patch** (`1.1.1`): fixes only.
 - **Minor** (`1.2.0`): new features, settings keep working.

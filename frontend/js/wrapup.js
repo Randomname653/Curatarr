@@ -4,7 +4,7 @@
 // the server sent their section — an empty tile is a lie in a recap. Every
 // number on the page comes from the facts; the story only adds words.
 import { api } from './api.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
 import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
@@ -161,7 +161,7 @@ function _genButton(d) {
   const s = d.story;
   const label = !s ? 'Let the curator write it' : d.story_stale ? 'Numbers moved — rewrite' : 'Rewrite';
   const ask = s ? `<button type="button" class="btn btn-secondary btn-sm" ${act('askWrapup')}>Ask about it</button>` : '';
-  const pl = `<button type="button" class="btn btn-ghost btn-sm" ${act('pushWrapupPlaylist', EL)}>Make it a Plex playlist</button>`;
+  const pl = `<button type="button" class="btn btn-ghost btn-sm" ${act('pushWrapupPlaylist', EL)}>Make it a ${serverLabel()} playlist</button>`;
   const play = `<button type="button" class="btn btn-primary btn-sm" ${act('playWrapupStory')}>Play your wrap-up</button>`;
   return `${play}<button type="button" class="btn ${s ? 'btn-secondary' : 'btn-primary'} btn-sm" ${act('generateWrapup', EL)}>${label}</button>${ask}${pl}`;
 }
@@ -504,11 +504,11 @@ export async function pushWrapupPlaylist(btn) {
     const r = await api('/api/wrapup/playlist', 'POST', {scope: wu.scope, period: _periodKey()});
     const names = (r.pushed || []).map(p => `“${p.title}” (${p.items})`).join(' and ');
     haptic('medium');
-    toast(`On Plex now: ${names}${r.missing?.length ? ` · not found: ${r.missing.slice(0, 3).join(', ')}` : ''}`, 'success');
+    toast(`On ${serverLabel()} now: ${names}${r.missing?.length ? ` · not found: ${r.missing.slice(0, 3).join(', ')}` : ''}`, 'success');
     btnDone(btn, 'Playlist updated');
   } catch (e) {
     toast(_errMsg(e).slice(0, 200), 'danger');
-    btnDone(btn, 'Make it a Plex playlist');
+    btnDone(btn, `Make it a ${serverLabel()} playlist`);
   }
 }
 

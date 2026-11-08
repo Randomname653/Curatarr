@@ -74,6 +74,26 @@ def to_local(dt: datetime, zone: Optional[tzinfo] = None) -> datetime:
     return dt.replace(tzinfo=timezone.utc).astimezone(zone).replace(tzinfo=None)
 
 
+def to_utc(local: datetime, zone: Optional[tzinfo] = None) -> datetime:
+    """Naive wall clock of ``zone`` → naive UTC, the inverse of ``to_local``.
+    The offset is the one in force at that wall-clock time."""
+    zone = zone or server_zone()
+    return local.replace(tzinfo=zone).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def user_zone_by_id(user_id: int) -> tzinfo:
+    """``user_zone`` in a session of its own. Never raises: an unknown user or
+    a failed read is the machine's zone, as for a user who never stored one.
+    Blocking."""
+    from src.database.connection import get_db_session
+    try:
+        with get_db_session() as db:
+            return user_zone(db, user_id)
+    except Exception:  # noqa: BLE001 - the clock only shapes wording; the machine's is the old behaviour
+        logger.warning("[user_time] zone of user %s unreadable - using the machine's", user_id)
+        return server_zone()
+
+
 def _offset_at(zone: tzinfo, dt: datetime) -> timedelta:
     return dt.replace(tzinfo=timezone.utc).astimezone(zone).utcoffset() or timedelta(0)
 

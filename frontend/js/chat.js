@@ -54,13 +54,11 @@ export async function newChat() {
       // aria-live="off" keeps their late-loading tiles from being read out.
       msgs.innerHTML = `
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
+        <div id="followup-panel" aria-live="off"></div>
         <div id="glance-panel" aria-live="off"></div>
         <div id="last-played-panel" aria-live="off"></div>
-        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">
-          <button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?')}>What should I watch tonight?</button>
-          <button class="sp-chip" ${act('fillPrompt', 'What can I clean up in my library?')}>What can I clean up in my library?</button>
-          <button class="sp-chip" ${act('fillPrompt', 'What does my watch history say about my taste?')}>What does my watch history say about my taste?</button>
-        </div>`;
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">${_staticChipsHtml()}</div>`;
+      loadFollowupCard();
       loadGlancePanel();
       loadLastPlayed();
       loadStarters();
@@ -213,7 +211,8 @@ export async function sendMessage() {
   const text = inp.value.trim(); if (!text) return;
   inp.value = ''; inp.style.height = 'auto';
   inp.disabled = btn.disabled = true;
-  ['glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
+  ['followup-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
+  showEarlierChat();           // a send continues the thread: its history shows above it
   haptic('medium');
   addMsg(text, 'user');
   _follow(document.getElementById('messages'), true);
@@ -357,10 +356,14 @@ export async function loadGlancePanel() {
   if (!el) return;
   const isAdmin = !!state.currentUser?.is_admin;
 
+  // Enrichment coverage is the owner's machine room: a member's landing
+  // shows what is ready for them, not how far the pipeline got (UX audit
+  // 2026-11-08, H2). The recs count reads the cache only: an empty cache
+  // used to start a generation from this tile.
   const [enrich, overview, recs, dels, tasks] = await Promise.allSettled([
-    api('/api/enrichment/status?quick=true'),
-    api('/api/enrichment/overview'),
-    api('/api/recommendations/?source=cache&limit=1'),
+    isAdmin ? api('/api/enrichment/status?quick=true') : Promise.resolve(null),
+    isAdmin ? api('/api/enrichment/overview') : Promise.resolve(null),
+    api('/api/recommendations/?source=cache&cache_only=true&limit=1'),
     isAdmin ? api('/api/recommendations/deletions?refresh=false') : Promise.resolve(null),
     api('/api/tasks/history'),
   ]);
@@ -372,7 +375,7 @@ export async function loadGlancePanel() {
   // cards. The quick status divides by distinct WATCHED titles; that used to
   // be this tile's only figure and read "93%" next to cards saying 46/92/70/24.
   let libPct = null, watchedPct = null;
-  if (overview.status === 'fulfilled') {
+  if (overview.status === 'fulfilled' && overview.value) {
     let live = 0, of = 0;
     for (const c of Object.values(overview.value.categories || {})) {
       live += (c?.states?.enriched || 0) + (c?.states?.enriched_provisional || 0);
@@ -381,7 +384,7 @@ export async function loadGlancePanel() {
     if (of) libPct = Math.round(100 * live / of);
     _updateKbBadge(overview.value);
   }
-  if (enrich.status === 'fulfilled') {
+  if (enrich.status === 'fulfilled' && enrich.value) {
     let done = 0, total = 0;
     for (const c of Object.values(enrich.value.categories || {})) {
       done += c?.enriched || 0;
@@ -396,7 +399,7 @@ export async function loadGlancePanel() {
     tiles.push({num: watchedPct + '%', lbl: 'Watched titles enriched', view: 'enrich'});
   }
 
-  if (recs.status === 'fulfilled' && recs.value.recommendations) {
+  if (recs.status === 'fulfilled' && recs.value.recommendations?.length) {
     tiles.push({num: recs.value.recommendations.length, lbl: 'Recommendations ready', view: 'recs'});
   }
 
@@ -469,20 +472,72 @@ export function fillPrompt(text) {
   inp.value = text;
   inp.focus();
 }
+// ── CHAT LANDING "HOW DID IT LAND?" CARD ────────────────────────────────────
+// The newest unread follow-up (a watched recommendation, or a morning line
+// about exactly one title) as a card above the landing panels, with one-tap answers in the member's
+// language (services/proactive_messages.followup_card). Before 2026-11-08 it
+// waited behind the bell and answering meant typing. An answer is the same
+// as Respond + typing it: the message's own thread, the curator's line as the
+// opener, the answer sent as the member's message. Same lifecycle as the
+// other landing panels: gone on the first send.
+export async function loadFollowupCard() {
+  const el = document.getElementById('followup-panel');
+  if (!el) return;
+  try {
+    const { card } = await api('/api/messages/followup');
+    if (!card) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="card mt-14">
+      <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(card.label)}</span></div>
+      <p>${esc(card.message)}</p>
+      <div class="flex gap-8 flex-wrap mt-10">${card.replies.map(r =>
+        `<button type="button" class="sp-chip" ${act('answerFollowup', card.id, card.message, r)}>${esc(r)}</button>`).join('')}
+        <button type="button" class="btn btn-ghost btn-sm" title="Hide it here - it stays in the notifications" ${act('hideFollowup')}>Not now</button>
+      </div></div>`;
+  } catch { el.innerHTML = ''; } // best-effort nicety: the bell still has the message
+}
+export async function answerFollowup(id, msgText, reply) {
+  if (_busyStreaming()) return;
+  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST')
+    .catch(e => console.warn('[chat] follow-up mark-read failed', id, e));
+  if (!await enterThread({ kind: 'proactive_message', message_id: id },
+                         'Discussing a proactive message', msgText)) return;
+  const inp = document.getElementById('chat-input');
+  inp.value = reply;
+  loadUnreadMessages();
+  sendMessage();
+}
+export function hideFollowup() {
+  const el = document.getElementById('followup-panel');
+  if (el) el.innerHTML = '';
+}
+// The fallback before /starters answers (and if it fails): the static chips
+// of the page's initial HTML, the owner's clean-up chip for the owner only --
+// a member cannot open Deletions at all.
+function _staticChipsHtml() {
+  const chip = t => `<button class="sp-chip" ${act('fillPrompt', t)}>${esc(t)}</button>`;
+  return chip('What should I watch tonight?')
+    + (state.currentUser?.is_admin ? chip('What can I clean up in my library?') : '')
+    + chip('What does my watch history say about my taste?');
+}
 // Swaps the static #suggested-prompts chips (already in the DOM, written by
-// newChat()/the page's initial HTML) for curator-picked ones when the pool
-// has fresh material. Empty or failed GET -- e.g. a brand-new user with no
-// pool yet -- leaves the 3 static chips exactly as they were: no partial
-// replace, no empty panel.
+// newChat()/the page's initial HTML) for the server's: the curator's openers
+// first (useStarter -- the curator says the line), then the user-voiced
+// chips (fillPrompt -- the member's own words, built from their facts in the
+// language they write to the curator in; services/chat_starters.user_chips).
+// Nothing back, or a failed GET, leaves the static chips as they were: no
+// partial replace, no empty panel.
 export async function loadStarters() {
   const el = document.getElementById('suggested-prompts');
   if (!el) return;
   try {
     const r = await api('/api/chat/starters');
     const starters = (r.starters || []).slice(0, 3);
-    if (!starters.length) return;
+    const chips = (r.chips || []).slice(0, 3);
+    if (!starters.length && !chips.length) return;
     el.innerHTML = starters.map(s =>
-      `<button class="sp-chip" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
+      `<button class="sp-chip" title="Curatarr opens the conversation" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
+    ).join('') + chips.map(c =>
+      `<button class="sp-chip" ${act('fillPrompt', c.text)}>${esc(c.label || c.text)}</button>`
     ).join('');
   } catch {} // best-effort nicety, keep the static fallback -- fail silent
 }
@@ -645,8 +700,12 @@ export async function enterThread(ctx, banner, opener) {
   return _showThread(_threadIdForContext(ctx), opener);
 }
 
-// Boot: the free-chat history replaces the greeting, above the landing
-// panels (glance, last played, starters), which stay until the first send.
+// Boot: the free-chat history loads FOLDED above the greeting and the
+// landing panels (follow-up card, glance, last played, chips), which stay
+// until the first send. A returning member used to land in the tail of
+// yesterday's thread, scrolled to its bottom (UX audit 2026-11-08, H7): now
+// the landing is what they see, and "Continue our last conversation" (or the
+// first send - the curator reads that history either way) unfolds it.
 // Skipped once anything else owns the pane — a send, a discussion, + New.
 export async function restoreChatHistory() {
   const seq = ++_threadSeq;
@@ -664,9 +723,28 @@ export async function restoreChatHistory() {
   if (!history.length) return;
   _quietRepaint(msgs, () => {
     msgs.querySelector('.msg.load-err')?.remove();
-    msgs.querySelector('.msg.assistant')?.remove();
-    for (const m of history) msgs.insertBefore(_historyBubble(m), anchor);
+    const first = msgs.firstChild;
+    const fold = document.createElement('button');
+    fold.type = 'button';
+    fold.id = 'earlier-chat-btn';
+    fold.className = 'btn btn-ghost btn-sm';
+    fold.addEventListener('click', showEarlierChat);
+    fold.textContent = `Continue our last conversation · ${history.length} message${history.length === 1 ? '' : 's'}`;
+    msgs.insertBefore(fold, first);
+    for (const m of history) {
+      const b = _historyBubble(m);
+      b.classList.add('chat-earlier');
+      b.hidden = true;
+      msgs.insertBefore(b, first);
+    }
   });
+}
+// Unfolds the history restoreChatHistory loaded folded, and scrolls to its end.
+export function showEarlierChat() {
+  const msgs = document.getElementById('messages');
+  if (!msgs) return;
+  msgs.querySelectorAll('.chat-earlier').forEach(el => { el.hidden = false; el.classList.remove('chat-earlier'); });
+  document.getElementById('earlier-chat-btn')?.remove();
   _follow(msgs, true);
 }
 

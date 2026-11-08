@@ -78,7 +78,7 @@ export async function loadUnreadMessages(seen) {
       <div class="cursor-default msg-item">
         <div class="mi-text">${esc(m.message)}</div>
         <div class="inline-flex gap-6 mt-8">
-          <span class="mi-badge">${esc(m.trigger_type.replace('_',' '))}</span>
+          <span class="mi-badge">${esc(m.label || m.trigger_type.replaceAll('_', ' '))}</span>
           <span class="mi-time">${new Date(m.created_at).toLocaleString(loc())}</span>
         </div>
         <div class="flex gap-8 mt-10">

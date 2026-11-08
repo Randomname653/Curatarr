@@ -31,7 +31,9 @@ an ownership check, never a persisted fake assistant turn.
 
 Dayparts make "time-of-day dependent" cheap: starters are TAGGED at
 generation (a tonight-pick is an evening starter), and selection filters
-by the current hour — no per-request LLM anywhere.
+by the current hour — no per-request LLM anywhere. The hour, the weekday
+and "today" are the MEMBER's (``users.timezone``, services/user_time): the
+machine's clock put a Berlin evening in UTC on a Docker install.
 
 Batch surfaces speak English by the deterministic-language law
 (llm_utils.detect_user_language rule 3); the reply follows whatever
@@ -41,7 +43,7 @@ language the user answers in, as always.
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, tzinfo
 from typing import Optional
 
 import httpx
@@ -55,6 +57,7 @@ from src.database.models import ChatStarter, WatchHistoryEntry
 from src.services.llm_utils import strip_think_tags, curator_options, CURATOR_KEEP_ALIVE
 from src.services.viewing_sessions import rhythm as _viewing_rhythm, sittings as _sittings
 from src.services.http_client import tls_context
+from src.services.user_time import to_local, to_utc, user_zone_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +87,27 @@ def _named_day(text: str) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
-def _end_of_local_day_utc() -> datetime:
-    """Next local midnight, in the naive-UTC terms the pool compares with."""
-    local = datetime.now().astimezone()
+def _zone(user_id: int, zone: Optional[tzinfo]) -> tzinfo:
+    return zone if zone is not None else user_zone_by_id(user_id)
+
+
+def local_now(zone: tzinfo, now_utc: Optional[datetime] = None) -> datetime:
+    """The member's wall clock (naive) for a naive-UTC moment, default now."""
+    return to_local(now_utc or datetime.utcnow(), zone)
+
+
+def _end_of_local_day_utc(zone: tzinfo, now_utc: Optional[datetime] = None) -> datetime:
+    """The member's next local midnight, in the naive-UTC terms the pool
+    compares with."""
+    local = local_now(zone, now_utc)
     nxt = (local + timedelta(days=1)).replace(hour=0, minute=0,
                                               second=0, microsecond=0)
-    return nxt.astimezone(timezone.utc).replace(tzinfo=None)
+    return to_utc(nxt, zone)
 
 
-def current_daypart(now: Optional[datetime] = None) -> str:
-    h = (now or datetime.now()).hour
+def current_daypart(local: datetime) -> str:
+    """The daypart of a wall-clock time - the member's (``local_now``)."""
+    h = local.hour
     if 5 <= h < 11:
         return "morning"
     if 11 <= h < 17:
@@ -142,8 +156,11 @@ def _pause(video: list[dict], title: str, now: datetime) -> str:
             + ", other titles watched since")
 
 
-def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
+def collect_facts(user_id: int, now: Optional[datetime] = None,
+                  zone: Optional[tzinfo] = None) -> list[dict]:
     """Concrete hooks from the user's own watch log. No LLM, one query.
+    ``now`` is naive UTC; the weekday and daypart are read on the member's
+    clock (``zone``, default their stored one).
 
     Every fact is something a starter can NAME — the specificity is what
     keeps ten starters from sounding like one starter ten times.
@@ -258,10 +275,11 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
     for m in pending_announcements(user_id)[:2]:
         facts.append({"kind": "milestone", "milestone": phrase(m), "title": m.get("title"),
                       "reached_on": str(m.get("reached_at"))[:10]})
-    # Wall clock, not the UTC `now` of the query windows: between local
-    # midnight and 2am the UTC weekday is still yesterday's.
-    facts.append({"kind": "now", "weekday": datetime.now().strftime("%A"),
-                  "daypart": current_daypart()})
+    # The member's wall clock, not the UTC `now` of the query windows:
+    # between local midnight and 2am the UTC weekday is still yesterday's.
+    local = local_now(_zone(user_id, zone), now)
+    facts.append({"kind": "now", "weekday": local.strftime("%A"),
+                  "daypart": current_daypart(local)})
     return facts
 
 
@@ -431,6 +449,8 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
     seen_openings = {_opening(t) for t in await run_read(_recent_texts)}
     seen_forms: set = set()
     now = datetime.utcnow()
+    zone = await run_read(user_zone_by_id, user_id)
+    today = _DAY_NAMES[local_now(zone, now).weekday()]
     accepted = []
     for c in candidates:
         text = (c.get("text") or "").strip()
@@ -450,7 +470,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
         if daypart not in ("morning", "day", "evening", "night", "any"):
             daypart = "any"
         day = _named_day(text)
-        if day is not None and day not in _DAY_NAMES[datetime.now().weekday()]:
+        if day is not None and day not in today:
             continue                          # names a day that isn't today
         anchor = (c.get("anchor_title") or "").strip() or None
         anchor_mt = (c.get("anchor_media_type") or "").strip() or None
@@ -463,7 +483,7 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
             fact_used=fact[:200], created_at=now,
             anchor_title=anchor[:512] if anchor else None,
             anchor_media_type=anchor_mt,
-            expires_at=(_end_of_local_day_utc() if day
+            expires_at=(_end_of_local_day_utc(zone, now) if day
                         else now + timedelta(hours=STARTER_TTL_HOURS)),
         ))
 
@@ -488,6 +508,108 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
     return len(accepted)
 
 
+# ── user-voiced chips: no model, the member's own words ───────────────────
+#
+# The openers above are the CURATOR's lines. Beside them the landing shows
+# chips the USER can send (or edit first): before 2026-11-08 three fixed
+# placeholders, one of them the owner's ("What can I clean up in my
+# library?") for members who cannot open Deletions at all (UX audit H1,
+# C3). These are filled from the same facts as the openers, in the
+# language the member writes to the curator in (services/user_language),
+# and need nothing generated: a brand-new member gets the clock chips and
+# the mood chip from the first second. Only en and de are written; any
+# other language reads the English ones.
+
+_CHIPS = {
+    "en": {
+        "short_tonight": "Something under 30 minutes for tonight",
+        "film_tonight": "A film for tonight - surprise me",
+        "before_bed": "Something short before bed",
+        "for_later": "Something to put on later today",
+        "like_series": "Something in the spirit of {title}",
+        "like_title": "More like {title}",
+        "music": "More music like {artist}",
+        "mood": "I'm in the mood for ",
+        "taste": "What does my watch history say about my taste?",
+        "cleanup": "What can I clean up in my library?",
+    },
+    "de": {
+        "short_tonight": "Etwas unter 30 Minuten für heute Abend",
+        "film_tonight": "Ein Film für heute Abend - überrasch mich",
+        "before_bed": "Etwas Kurzes vor dem Schlafen",
+        "for_later": "Etwas für später am Tag",
+        "like_series": "Etwas in der Art von {title}",
+        "like_title": "Mehr in der Art von {title}",
+        "music": "Mehr Musik wie {artist}",
+        "mood": "Ich habe Lust auf ",
+        "taste": "Was sagt mein Verlauf über meinen Geschmack?",
+        "cleanup": "Was kann ich in meiner Bibliothek aufräumen?",
+    },
+}
+# Weekday() of Friday and Saturday: the evenings with room for a film.
+_FILM_EVENINGS = (4, 5)
+
+
+def user_chips(facts: list[dict], lang: str, is_admin: bool, limit: int = 3) -> list[dict]:
+    """Up to ``limit`` user-voiced chips from ``collect_facts`` output, in
+    ``lang``. Each is {"text": what goes into the input, "label": what the
+    chip shows}; they differ only where the text is a sentence to finish
+    (the mood chip ends in a space, its label in an ellipsis). Pure."""
+    t = _CHIPS.get(lang) or _CHIPS["en"]
+    by_kind: dict = {}
+    for f in facts:
+        by_kind.setdefault(f.get("kind"), f)
+    out: list[str] = []
+
+    clock = by_kind.get("now") or {}
+    part = clock.get("daypart")
+    weekday = _WEEKDAYS.get(str(clock.get("weekday", "")).lower())
+    if part == "evening":
+        out.append(t["film_tonight"] if weekday in _FILM_EVENINGS else t["short_tonight"])
+    elif part == "night":
+        out.append(t["before_bed"])
+    elif part in ("morning", "day"):
+        out.append(t["for_later"])
+
+    series = (by_kind.get("active_series") or {}).get("title")
+    last = by_kind.get("last_watched") or {}
+    if series:
+        out.append(t["like_series"].format(title=series))
+    elif last.get("title"):
+        key = "like_series" if last.get("media_type") in ("show", "anime") else "like_title"
+        out.append(t[key].format(title=last["title"]))
+
+    artist = (by_kind.get("music_rotation") or {}).get("artist")
+    if artist and len(out) < limit:
+        out.append(t["music"].format(artist=artist))
+    if is_admin and len(out) < limit:
+        out.append(t["cleanup"])
+    if len(out) < limit:
+        out.append(t["mood"])
+    if len(out) < limit:
+        out.append(t["taste"])
+
+    return [{"text": s, "label": (s.rstrip() + " …") if s.endswith(" ") else s}
+            for s in out[:limit]]
+
+
+_WEEKDAYS = {name: wd for wd, names in _DAY_NAMES.items() for name in names}
+
+
+def chips_for(user_id: int, is_admin: bool, now: Optional[datetime] = None,
+              zone: Optional[tzinfo] = None) -> list[dict]:
+    """``user_chips`` for a member, from their facts and language. Blocking.
+    Never raises: a failed read leaves the clock and mood chips."""
+    from src.services.user_language import user_language
+    try:
+        facts = collect_facts(user_id, now=now, zone=zone)
+    except Exception as e:  # noqa: BLE001 - chips are a nicety; the clock alone still fills them
+        logger.warning("[starters] chip facts for user %d unreadable: %s", user_id, e)
+        local = local_now(_zone(user_id, zone), now)
+        facts = [{"kind": "now", "weekday": local.strftime("%A"), "daypart": current_daypart(local)}]
+    return user_chips(facts, user_language(user_id), is_admin)
+
+
 # ── consumption ────────────────────────────────────────────────────────────
 
 def _fresh_filter(q, user_id: int, now: datetime):
@@ -505,11 +627,14 @@ def pool_fresh_count(user_id: int) -> int:
         return _fresh_filter(db.query(func.count(ChatStarter.id)), user_id, now).scalar()
 
 
-def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
-    """Up to ``limit`` fresh starters for the current daypart, forms as
-    distinct as the pool allows, least-shown first. Counts the impression."""
-    now = datetime.utcnow()
-    dp = current_daypart()
+def pick_starters(user_id: int, limit: int = 3, now: Optional[datetime] = None,
+                  zone: Optional[tzinfo] = None) -> list[dict]:
+    """Up to ``limit`` fresh starters for the member's current daypart, forms
+    as distinct as the pool allows, least-shown first. Counts the impression.
+    ``now`` is naive UTC (default now), ``zone`` the member's (default stored)."""
+    now = now or datetime.utcnow()
+    local = local_now(_zone(user_id, zone), now)
+    dp = current_daypart(local)
     with get_db_session() as db:
         pool = (_fresh_filter(db.query(ChatStarter), user_id, now)
                 .filter((ChatStarter.daypart.in_((dp, "any")))
@@ -519,7 +644,7 @@ def pick_starters(user_id: int, limit: int = 3) -> list[dict]:
                 .limit(limit * 4).all())
         # Day-named rows from before the midnight-expiry rule (or from a
         # DST edge) get retired here instead of shown a day late.
-        today = _DAY_NAMES[datetime.now().weekday()]
+        today = _DAY_NAMES[local.weekday()]
         alive = []
         for row in pool:
             d = _named_day(row.text)

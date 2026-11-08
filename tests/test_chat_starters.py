@@ -17,7 +17,14 @@ import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+from zoneinfo import ZoneInfo
+
 from src.services import chat_starters as cs
+
+# A fixed member clock: these tests never read the machine's. Berlin, a
+# Sunday: 2026-11-08 23:30 UTC is already Monday 00:30 for the member.
+BERLIN = ZoneInfo("Europe/Berlin")
+cs.user_zone_by_id = lambda uid: BERLIN
 
 
 def _src(rel: str) -> str:
@@ -109,7 +116,7 @@ def test_the_gate_drops_duplicate_forms_missing_facts_and_repeated_openings():
     orig_facts = cs.collect_facts
     cs.httpx.AsyncClient = _FakeClient
     cs.get_db_session = lambda: _FakeSession(rows=[])
-    cs.collect_facts = lambda uid, now=None: [
+    cs.collect_facts = lambda uid, now=None, zone=None: [
         {"kind": "stalled_series", "title": "Vinland Saga"},
         {"kind": "now", "weekday": "Monday", "daypart": "evening"}]
     try:
@@ -134,7 +141,7 @@ def test_an_unparseable_batch_inserts_nothing():
     orig_facts = cs.collect_facts
     cs.httpx.AsyncClient = _FakeClient
     cs.get_db_session = lambda: _FakeSession(rows=[])
-    cs.collect_facts = lambda uid, now=None: [
+    cs.collect_facts = lambda uid, now=None, zone=None: [
         {"kind": "last_watched", "title": "X"}, {"kind": "now"}]
     try:
         assert asyncio.run(cs.generate_starters(1)) == 0
@@ -154,17 +161,20 @@ def test_day_naming_detection_spares_habitual_plurals():
     assert cs._named_day("No day mentioned here at all.") is None
 
 
-def test_end_of_local_day_lies_within_the_next_24_utc_hours():
-    e = cs._end_of_local_day_utc()
-    now = dt.datetime.utcnow()
-    assert now < e <= now + dt.timedelta(hours=24, minutes=1)
+def test_end_of_local_day_is_the_members_midnight():
+    now = dt.datetime(2026, 11, 8, 20, 0)                      # 21:00 in Berlin
+    assert cs._end_of_local_day_utc(BERLIN, now) == dt.datetime(2026, 11, 8, 23, 0)
+    summer = dt.datetime(2026, 7, 14, 20, 0)                   # 22:00, summer time
+    assert cs._end_of_local_day_utc(BERLIN, summer) == dt.datetime(2026, 7, 14, 22, 0)
+    utc = ZoneInfo("UTC")
+    assert cs._end_of_local_day_utc(utc, now) == dt.datetime(2026, 11, 9, 0, 0)
 
 
 def test_the_gate_scopes_day_named_openers_to_their_day():
     import json as _json
-    today_en = cs._DAY_NAMES[dt.datetime.now().weekday()][0]
-    wrong = next(names[0] for wd, names in cs._DAY_NAMES.items()
-                 if wd != dt.datetime.now().weekday())
+    weekday = cs.local_now(BERLIN).weekday()
+    today_en = cs._DAY_NAMES[weekday][0]
+    wrong = next(names[0] for wd, names in cs._DAY_NAMES.items() if wd != weekday)
     batch = [
         {"text": f"It is {today_en.capitalize()} evening. Time for something dense.",
          "form": "tonight_pick", "daypart": "evening", "fact": "now"},
@@ -180,7 +190,7 @@ def test_the_gate_scopes_day_named_openers_to_their_day():
     orig_facts = cs.collect_facts
     cs.httpx.AsyncClient = _FakeClient
     cs.get_db_session = lambda: _FakeSession(rows=[])
-    cs.collect_facts = lambda uid, now=None: [
+    cs.collect_facts = lambda uid, now=None, zone=None: [
         {"kind": "stalled_series", "title": "X"},
         {"kind": "now", "weekday": today_en.capitalize(), "daypart": "evening"}]
     try:
@@ -200,16 +210,17 @@ def test_the_gate_scopes_day_named_openers_to_their_day():
 
 
 def test_pick_retires_day_mismatched_leftovers():
-    wrong = next(names[0] for wd, names in cs._DAY_NAMES.items()
-                 if wd != dt.datetime.now().weekday())
+    # Sunday 23:30 UTC is Monday 00:30 for a Berlin member: a "Sunday"
+    # opener is yesterday's for them, though the UTC date still says Sunday.
+    now = dt.datetime(2026, 11, 8, 23, 30)
     stale = cs.ChatStarter(id=1, user_id=1, form="tonight_pick", daypart="any",
-                           impressions=0, text=f"It is {wrong.capitalize()} evening.")
+                           impressions=0, text="It is Sunday evening.")
     fresh = cs.ChatStarter(id=2, user_id=1, form="challenge", daypart="any",
                            impressions=0, text="Pick a lane tonight.")
     orig_session = cs.get_db_session
     cs.get_db_session = lambda: _FakeSession(rows=[stale, fresh])
     try:
-        picked = cs.pick_starters(1, limit=3)
+        picked = cs.pick_starters(1, limit=3, now=now, zone=BERLIN)
     finally:
         cs.get_db_session = orig_session
     assert [p["id"] for p in picked] == [2]
@@ -229,7 +240,7 @@ def test_selection_decays_and_respects_the_daypart():
 def test_proactive_messages_gained_the_same_mortality():
     pm = _src("services/proactive_messages.py")
     # the shelf life moved into _expiry_for: a week by default, local noon for a morning line
-    assert "expires_at=_expiry_for(trigger, now)" in pm and "return now + timedelta(days=7)" in pm
+    assert "expires_at=_expiry_for(trigger, now, zone)" in pm and "return now + timedelta(days=7)" in pm
     # surfacing counts, and ignored-past-cap or expired messages retire
     assert "m.impressions = (m.impressions or 0) + 1" in pm
     assert "ProactiveMessage.impressions >= 40" in pm
@@ -288,7 +299,7 @@ def test_anchors_survive_the_gate_and_bad_ones_are_dropped():
     orig_facts = cs.collect_facts
     cs.httpx.AsyncClient = _FakeClient
     cs.get_db_session = lambda: _FakeSession(rows=[])
-    cs.collect_facts = lambda uid, now=None: [
+    cs.collect_facts = lambda uid, now=None, zone=None: [
         {"kind": "stalled_series", "title": "Psycho-Pass"}, {"kind": "now"}]
     try:
         assert asyncio.run(cs.generate_starters(1)) == 2
@@ -423,3 +434,24 @@ def test_a_stalled_series_rests_once_an_opener_was_about_it():
             {"created_at": now - dt.timedelta(days=cs.STALLED_REST_DAYS + 1)})
         db.commit()
     assert stalled()[0] == first, "after the rest it may come back"
+
+
+# ── the member's clock, not the machine's (UX audit 2026-11-08, H5) ───────
+
+def test_the_daypart_and_weekday_are_the_members():
+    # 16:30 UTC in November: a Berlin member's evening (17:30), still the
+    # afternoon on a UTC clock - the Docker default the starters used to read.
+    now = dt.datetime(2026, 11, 8, 16, 30)
+    assert cs.current_daypart(cs.local_now(BERLIN, now)) == "evening"
+    assert cs.current_daypart(cs.local_now(ZoneInfo("UTC"), now)) == "day"
+    # summer time: 03:30 UTC is 05:30 in Berlin - morning, not night
+    assert cs.current_daypart(cs.local_now(BERLIN, dt.datetime(2026, 7, 14, 3, 30))) == "morning"
+
+
+def test_the_now_fact_reads_the_members_clock():
+    late = dt.datetime(2026, 11, 8, 23, 30)                     # Monday 00:30 in Berlin
+    facts = cs.collect_facts(424242, now=late, zone=BERLIN)
+    clock = [f for f in facts if f["kind"] == "now"]
+    assert clock == [{"kind": "now", "weekday": "Monday", "daypart": "night"}], clock
+    utc = [f for f in cs.collect_facts(424242, now=late, zone=ZoneInfo("UTC")) if f["kind"] == "now"]
+    assert utc[0]["weekday"] == "Sunday"

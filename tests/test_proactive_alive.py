@@ -16,8 +16,13 @@ from datetime import datetime, timedelta, time
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+from zoneinfo import ZoneInfo  # noqa: E402
+
 from src.services import proactive_messages as pm  # noqa: E402
-from src.services.viewing_sessions import utc_offset  # noqa: E402
+from src.services.user_time import to_utc  # noqa: E402
+
+# A fixed member zone: the morning line must not depend on this machine's clock.
+BERLIN = ZoneInfo("Europe/Berlin")
 
 EP_MS = 1_422_083
 
@@ -97,7 +102,7 @@ def test_all_subject_keys_join_pattern_and_title_keys():
 
 
 def _local_to_utc(local_dt):
-    return local_dt - utc_offset()
+    return to_utc(local_dt, BERLIN)
 
 
 def test_the_morning_line_sums_up_last_night_and_only_in_the_morning():
@@ -111,18 +116,40 @@ def test_the_morning_line_sums_up_last_night_and_only_in_the_morning():
         _row("Old", "anime", _local_to_utc(datetime.combine(ev - timedelta(days=3), time(21, 0))), series="Old", ep=1),      # days ago
     ]
     morning = _local_to_utc(datetime.combine(today, time(8, 30)))
-    hit = pm.detect_last_night(entries, morning)
+    hit = pm.detect_last_night(entries, morning, zone=BERLIN)
     assert hit and hit["type"] == "last_night" and hit["date"] == "2026-09-22"
     assert "\"Frieren\": 2 episodes" in hit["summary"] and "the film \"Heat\"" in hit["summary"], hit["summary"]
     assert "Otis Redding" not in hit["summary"] and "Old" not in hit["summary"]
     assert hit["ended"] == "22:00" and hit["series"] == "Frieren"
-    assert pm.detect_last_night(entries, _local_to_utc(datetime.combine(today, time(14, 0)))) is None, "afternoon: no morning line"
+    assert hit["parts"] == 2 and hit["titles"] == 2, "a series and a film: two titles"
+    assert pm.detect_last_night(entries, _local_to_utc(datetime.combine(today, time(14, 0))), zone=BERLIN) is None, "afternoon: no morning line"
     asked = {"tracks": set(), "titles": set(), "series": {}, "subjects": {"last_night:2026-09-22": morning - timedelta(hours=1)}}
-    assert pm.detect_last_night(entries, morning, asked) is None, "one per day"
-    assert pm.detect_last_night([], morning) is None
-    exp = pm._expiry_for(hit, morning)
+    assert pm.detect_last_night(entries, morning, asked, zone=BERLIN) is None, "one per day"
+    assert pm.detect_last_night([], morning, zone=BERLIN) is None
+    exp = pm._expiry_for(hit, morning, BERLIN)
     assert exp == _local_to_utc(datetime.combine(today, time(12, 0))), "gone by local noon"
     assert pm._expiry_for({"type": "rewatch"}, morning) == morning + timedelta(days=7)
+
+
+def test_the_morning_line_is_the_members_morning_not_the_machines():
+    # 07:30 UTC in November is 08:30 in Berlin (morning) - but 07:30 on a UTC
+    # clock is morning too, so take 04:30 UTC: 05:30 in Berlin, night in UTC.
+    ev = datetime(2026, 11, 8)
+    entries = [_row("Ep 3", "anime", to_utc(datetime.combine(ev, time(21, 0)), BERLIN),
+                    series="Starfall Archive", ep=3)]
+    early = datetime(2026, 11, 9, 4, 30)
+    hit = pm.detect_last_night(entries, early, zone=BERLIN)
+    assert hit and hit["date"] == "2026-11-09" and hit["weekday"] == "Monday", hit
+    assert hit["ended"] == "21:00", "the play's time on the member's clock"
+    assert hit["parts"] == 1 and hit["titles"] == 1, "one series, nothing else: one title"
+    music = entries + [_row("Track", "music", to_utc(datetime.combine(ev, time(22, 0)), BERLIN),
+                            series="The Hollow Pines", dur=40 * 60_000)]
+    hit = pm.detect_last_night(music, early, zone=BERLIN)
+    assert hit["parts"] == 2 and hit["titles"] == 1, "music minutes are a part, not a title"
+    assert pm.detect_last_night(entries, early, zone=ZoneInfo("UTC")) is None, "04:30 is no morning in UTC"
+    # summer time: noon in Berlin is 10:00 UTC, not 11:00
+    summer = datetime(2026, 7, 14, 6, 0)
+    assert pm._expiry_for({"type": "last_night"}, summer, BERLIN) == datetime(2026, 7, 14, 10, 0)
 
 
 def test_the_pick_puts_the_morning_line_right_after_a_watched_recommendation():

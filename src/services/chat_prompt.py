@@ -143,6 +143,26 @@ EARLIER_CHATS_RULE = (
 )
 
 
+# A recommendation turn in free chat came back as a ranked list of ten with a
+# paragraph each: nothing in the rules said how many to offer or that the
+# user gets the next move, and num_predict leaves room for a catalogue
+# (UX audit 2026-11-08, docs/UX_RETENTION_DESIGN.md C1). Sent with every
+# turn: it binds only when the user asks for a pick, and a free-chat thread
+# keeps its last title as active_title, so gating it on that would drop it
+# from the very threads that ask "and what tonight?" after naming a title.
+# One line on purpose; the shape is the prompt's job, no filter on the reply.
+# The first wording leaked: the narrowing question landed on pushback, opinion
+# and small talk too (tone_bench 2026-11-08: 35/45 private replies ended in a
+# question, 9/45 without the rule). "Only when ... every other turn ends once
+# it is answered" measured 12/45, the pick cases kept theirs (tonight 6/6).
+CONVERSATION_RULE = (
+    "8. CONVERSATION: Only when the user asks what to watch or listen to, offer one or two "
+    "titles, each with one sentence on why it fits them, then one short question that narrows "
+    "the next pick, and a longer list only when they ask for one; every other turn ends once it "
+    "is answered, with no question tacked on."
+)
+
+
 def build_system_prompt(*, voice: str, user_lang: str, taste_context: str = "",
                         memory_context: str = "", rag_context: str = "",
                         discuss_block: str = "", active_title: str = "",
@@ -178,6 +198,7 @@ USER TESTIMONY: Claims the user makes about a work's content, scenes, creators o
 {NO_LIBRARY_ACTIONS_RULE}
 {NO_MONOLOGUE_RULE}
 {ANALYTICAL_INTEGRITY_RULE}
+{CONVERSATION_RULE}
 SIZE SENSE: Judge file size by MB-PER-MINUTE for its resolution/codec class, never raw GiB. A 4K film or a series with many episodes/specials is large in total GB but usually NORMAL per minute — do NOT call that bloat, hoarding, or "an affront to efficiency". Keeping a high-fidelity copy of content the user VALUES is not waste. Genuine bloat is a disproportionate bitrate for the resolution (e.g. a 1080p file carrying 4K-level MB/min), or redundant duplicate versions of one title. When a "[size: …]" tag appears next to a library item, trust it over your own size intuition. In ANY conversation, bloat argues a DOWNSCALE of the file, never deletion of a work — size decides WHICH FILE to keep; the pillars decide WHETHER.
 
 FORMATTING RULES:

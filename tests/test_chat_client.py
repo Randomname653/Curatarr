@@ -174,7 +174,8 @@ const state = {token: 't', pendingDiscussContext: null};
 const BUBBLE = el('bubble');
 const haptic = () => {}, addMsg = () => {}, _follow = () => {}, _atBottom = () => true,
       toast = () => {}, loadUnreadMessages = () => {}, renderMarkdown = s => s,
-      addThinkingMsg = () => BUBBLE, _threadIdForContext = () => 'general';
+      addThinkingMsg = () => BUBBLE, _threadIdForContext = () => 'general',
+      showEarlierChat = () => {};
 let WORK = 0;
 const modelWorkStarted = () => WORK++, modelWorkEnded = () => WORK--;
 const _statusTicker = () => ({push() {}, stop() {}});
