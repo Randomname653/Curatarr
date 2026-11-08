@@ -224,7 +224,8 @@ export async function sendMessage() {
   // exits the discussion, starts a new chat, or opens another one. The
   // payload gets a snapshot so clearing a one-shot flag below cannot reach
   // back into this turn.
-  const ctx = state.pendingDiscussContext;
+  const ctx = state.pendingDiscussContext || (_tonightAsk ? { kind: 'tonight' } : null);
+  _tonightAsk = false;           // one turn: the follow-up is typed free chat
   const payload = { message: text, ...(ctx && { discuss_context: { ...ctx } }) };
   const ctrl = new AbortController();
   const me = _stream = { ctrl, threadId: _threadIdForContext(ctx) };
@@ -470,9 +471,16 @@ export async function loadLastPlayed() {
 // Unlike discussLastPlayed()/discussInChat(), this only fills + focuses --
 // no auto-send -- since a suggested prompt is a starting point the user is
 // expected to tweak, not a specific-title primer that's already complete.
-export function fillPrompt(text) {
+// A chip that asks what to put on (kind 'tonight') starts its turn as the
+// evening question: the next send carries discuss_context {kind: 'tonight'},
+// the one turn that gets [TONIGHT CANDIDATES] (routers/chat). Free chat in
+// every other way - the general thread, no banner - so a follow-up stays in
+// the same history. A typed message carries nothing. No filter reads the text.
+let _tonightAsk = false;
+export function fillPrompt(text, kind) {
   const inp = document.getElementById('chat-input');
   inp.value = text;
+  _tonightAsk = kind === 'tonight';
   inp.focus();
 }
 // ── CHAT LANDING "HOW DID IT LAND?" CARD ────────────────────────────────────
@@ -565,8 +573,16 @@ function _paintTonight() {
       ${it.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(it.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
       ${canList ? `<button type="button" class="btn btn-secondary btn-sm" ${act('tonightWatchlist', EL)}>+ Watchlist</button>` : ''}
       ${_tonight.items.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" ${act('tonightNext')}>Something else</button>` : ''}
+      ${_tonight.ask ? `<button type="button" class="btn btn-ghost btn-sm" ${act('askTonight')}>Ask the curator</button>` : ''}
       <button type="button" class="btn btn-ghost btn-sm" ${act('hideTonight')}>Not now</button>
     </div></div>`;
+}
+// "Ask the curator": the card's own question, in the member's language, sent
+// as the evening question (kind 'tonight').
+export function askTonight() {
+  if (!_tonight?.ask || _busyStreaming()) return;
+  fillPrompt(_tonight.ask, 'tonight');
+  sendMessage();
 }
 export function tonightNext() {
   if (!_tonight) return;
@@ -599,7 +615,7 @@ export function hideFollowup() {
 // a member cannot open Deletions at all.
 function _staticChipsHtml() {
   const chip = t => `<button class="sp-chip" ${act('fillPrompt', t)}>${esc(t)}</button>`;
-  return chip('What should I watch tonight?')
+  return `<button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?', 'tonight')}>What should I watch tonight?</button>`
     + (state.currentUser?.is_admin ? chip('What can I clean up in my library?') : '')
     + chip('What does my watch history say about my taste?');
 }
@@ -621,7 +637,7 @@ export async function loadStarters() {
     el.innerHTML = starters.map(s =>
       `<button class="sp-chip" title="Curatarr opens the conversation" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
     ).join('') + chips.map(c =>
-      `<button class="sp-chip" ${act('fillPrompt', c.text)}>${esc(c.label || c.text)}</button>`
+      `<button class="sp-chip" ${act('fillPrompt', c.text, c.kind || '')}>${esc(c.label || c.text)}</button>`
     ).join('');
   } catch {} // best-effort nicety, keep the static fallback -- fail silent
 }

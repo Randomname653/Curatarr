@@ -4,7 +4,7 @@
     {
       "id": "pub_tonight_en",
       "lang": "en",
-      "catch": "Rule 8: one or two picks, one sentence of fit each, then one narrowing question. Not a ranked list. The picks come from [TONIGHT CANDIDATES] with their stated reason.",
+      "catch": "Rule 8: one or two picks, one sentence of fit each, then one narrowing question. Not a ranked list. The picks come from [TONIGHT CANDIDATES] with their stated reason. The turn is the chip's evening question (discuss_context kind tonight), the one that carries the block.",
       "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10; dropped loud action comedies early.",
       "history": [],
       "user": "What should I watch tonight?",
@@ -13,10 +13,10 @@
     {
       "id": "pub_tonight_de",
       "lang": "de",
-      "catch": "Rule 8 in German: one or two picks, a short reason each, one question back. The length budget the user names is respected.",
+      "catch": "The German clock chip, sent as the evening question with its block: rule 8 in German, one or two picks with a short reason each, one question back; the 30 minutes it names are respected.",
       "taste": "TASTE SUMMARY (show): character-driven anime, found family, gentle humour; watched Starfall Archive episodes 1-6 this week.",
       "history": [],
-      "user": "Was kann ich heute Abend schauen? Gern was Kurzes, ich bin ziemlich müde.",
+      "user": "Etwas unter 30 Minuten für heute Abend",
       "tonight": "[TONIGHT CANDIDATES] Titles the user can start tonight from their own library: the series they are in the middle of, their stored recommendations (with the reason stored for each) and what they marked 'want to watch' in Swipe. When they ask what to watch or listen to without saying what they want, pick from these first and give the reason shown; when they name a mood, genre or title to match, use one only if its stored reason matches it, never claim more fit than that reason, and otherwise answer as you would without this list; on any other turn leave them out.\n- Starfall Archive (anime) - in progress: watched 4 episodes, furthest is season 1, episode 4 (whether the series is finished is unknown - do NOT assume they reached the end); last watched yesterday\n- The Lantern Room (2019, film) - recommended because they watched Gull Point, Tide Clock and Salt Road: A patient coastal mystery that lets its ensemble breathe.\n- North Signal (2021, film) - recommended, from their library: A quiet thriller told from a lighthouse.\n- Tide Clock (film) - marked 'want to watch' in Swipe"
     },
     {
@@ -55,7 +55,7 @@
     {
       "id": "pub_pushback_en",
       "lang": "en",
-      "catch": "No narrowing pick question tacked on; answer the point and stop. The [TONIGHT CANDIDATES] block stays unused.",
+      "catch": "No narrowing pick question tacked on; answer the point and stop. A typed turn carries no [TONIGHT CANDIDATES].",
       "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10.",
       "history": [
         [
@@ -67,15 +67,13 @@
           "**Gull Point** is pleasant but thin: the mystery is settled by the midpoint, and the second half coasts on its scenery."
         ]
       ],
-      "user": "I don't agree. The second half is the point - it's about the town after the answer, not the answer.",
-      "tonight": "[TONIGHT CANDIDATES] Titles the user can start tonight from their own library: the series they are in the middle of, their stored recommendations (with the reason stored for each) and what they marked 'want to watch' in Swipe. When they ask what to watch or listen to without saying what they want, pick from these first and give the reason shown; when they name a mood, genre or title to match, use one only if its stored reason matches it, never claim more fit than that reason, and otherwise answer as you would without this list; on any other turn leave them out.\n- Starfall Archive (anime) - in progress: watched 4 episodes, furthest is season 1, episode 4 (whether the series is finished is unknown - do NOT assume they reached the end); last watched yesterday\n- The Lantern Room (2019, film) - recommended because they watched Gull Point, Tide Clock and Salt Road: A patient coastal mystery that lets its ensemble breathe.\n- North Signal (2021, film) - recommended, from their library: A quiet thriller told from a lighthouse.\n- Tide Clock (film) - marked 'want to watch' in Swipe"
+      "user": "I don't agree. The second half is the point - it's about the town after the answer, not the answer."
     },
     {
       "id": "pub_specific_ask_en",
       "lang": "en",
-      "catch": "Answers from general knowledge or the library; does not force a candidate or refuse.",
+      "catch": "A typed targeted ask carries no [TONIGHT CANDIDATES] (only the UI's evening question does): answers from general knowledge or the library, does not refuse.",
       "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10.",
-      "tonight": "[TONIGHT CANDIDATES] Titles the user can start tonight from their own library: the series they are in the middle of, their stored recommendations (with the reason stored for each) and what they marked 'want to watch' in Swipe. When they ask what to watch or listen to without saying what they want, pick from these first and give the reason shown; when they name a mood, genre or title to match, use one only if its stored reason matches it, never claim more fit than that reason, and otherwise answer as you would without this list; on any other turn leave them out.\n- Starfall Archive (anime) - in progress: watched 4 episodes, furthest is season 1, episode 4; last watched yesterday\n- Harbour Lights (2022, series) - recommended, from their library: A warm small-town comedy about a family running a seaside café.\n- Tide Clock (film) - marked 'want to watch' in Swipe",
       "history": [],
       "user": "I'd like a film like Glass Meridian - cold, paranoid, an office where nobody remembers why they are there."
     }

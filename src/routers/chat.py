@@ -2979,6 +2979,16 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                                 _rl, thread_id: str) -> StreamingResponse:
     """send_message body, run while CHAT_IN_FLIGHT is held for the user.
     Returns a response whose generator releases the guard when it ends."""
+    # The evening question the UI starts - the "tonight" chips, the Tonight
+    # card's "Ask the curator" - sends discuss_context kind "tonight". It is
+    # free chat in every way (the general thread, no banner, no discuss
+    # block), but its turn carries [TONIGHT CANDIDATES]. A typed message
+    # does not: measured on the owner's data, the bare list made a targeted
+    # ask ("a film like X") answer with the same stored pick every time.
+    _ctx = message.discuss_context
+    tonight_ask = bool(_ctx and (_ctx.kind or _ctx.type) == "tonight")
+    if tonight_ask:
+        message = message.model_copy(update={"discuss_context": None})
     # One host for the whole turn: its window budgets the history and the
     # answer, its url takes the request.
     chat_host = host_for("chat")
@@ -3397,14 +3407,12 @@ async def _send_message_guarded(message: ChatMessage, user: User,
 
     # What the member could start tonight (services/tonight): their series in
     # progress, stored recommendations and Swipe wants - so "what should I
-    # watch?" is answered from them, not from the vector neighbours of that
-    # sentence. Every turn outside a deletion, principle or Wrap-Up
-    # discussion: no filter guesses which message is a pick question; the
-    # block itself says when to use it (UX audit 2026-11-08, C2).
+    # watch tonight?" is answered from them, not from the vector neighbours
+    # of that sentence (UX audit 2026-11-08, C2). Only for the turn the UI
+    # started as that question (``tonight_ask`` above); no filter reads the
+    # message text.
     tonight_context = ""
-    _dkind = ((message.discuss_context.kind or message.discuss_context.type)
-              if message.discuss_context else None)
-    if _dkind not in ("deletion_proposal", "principle", "wrapup"):
+    if tonight_ask:
         try:
             from src.services.tonight import tonight_block
             tonight_context = await run_read(tonight_block, user.id, domain)

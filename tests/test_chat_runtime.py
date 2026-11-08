@@ -658,31 +658,36 @@ def test_an_ollama_error_is_shown_but_never_persisted():
         assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
 
 
-def test_tonight_candidates_ride_every_turn_but_deletion_principle_and_wrapup_talks():
-    # UX audit 2026-11-08, C2: "what should I watch?" was answered from the
-    # vector neighbours of that sentence. The member's own candidates go into
-    # the system prompt of every turn - no filter guesses the pick question -
-    # except a deletion, principle or Wrap-Up discussion.
+def test_tonight_candidates_ride_only_the_evening_question_the_ui_starts():
+    # UX audit 2026-11-08, C2, and the owner's measurement on real data: the
+    # candidates help the open "what tonight?", but with the bare list a
+    # targeted ask ("a film like X", "ein Film wie Y") answered with the same
+    # stored pick every time. So only a turn the UI starts as the evening
+    # question (discuss_context kind "tonight": the chips, the Tonight card)
+    # carries them; a typed message does not, and no filter reads its text.
     import src.services.tonight as tonight
+    from src.routers.chat import _thread_id_for
     from src.schemas.chat import DiscussContext
     real = tonight.tonight_block
     tonight.tonight_block = lambda uid, domain=None, now=None: "[TONIGHT CANDIDATES] TONIGHT-X"
+    sent = {}
     try:
-        with _stream_rig(_OK) as rig:
-            asyncio.run(_drain(rig.start("what should I watch tonight?")))
-            free = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
-        held_out = {}
-        for kind, ctx in (("deletion_proposal", DiscussContext(kind="deletion_proposal", proposal_id=999_999)),
-                          ("principle", DiscussContext(kind="principle", principle_id=999_999)),
-                          ("wrapup", DiscussContext(kind="wrapup", wrapup_scope="all", wrapup_period="30d"))):
+        for name, text, ctx in (("typed", "what should I watch tonight?", None),
+                                ("targeted", "a film like The Lantern Room", None),
+                                ("evening", "What should I watch tonight?", DiscussContext(kind="tonight")),
+                                ("deletion", "and this one?", DiscussContext(kind="deletion_proposal",
+                                                                             proposal_id=999_999))):
             with _stream_rig(_OK) as rig:
-                asyncio.run(_drain(rig.start("and this one?", ctx=ctx)))
-                held_out[kind] = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
+                asyncio.run(_drain(rig.start(text, ctx=ctx)))
+                sent[name] = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
     finally:
         tonight.tonight_block = real
-    assert free and "TONIGHT-X" in free[0], "free chat carries the candidates"
-    for kind, sent in held_out.items():
-        assert sent and "TONIGHT-X" not in sent[0], f"a {kind} discussion does not"
+    assert sent["evening"] and "TONIGHT-X" in sent["evening"][0], "the evening question carries the candidates"
+    for name in ("typed", "targeted", "deletion"):
+        assert sent[name] and "TONIGHT-X" not in sent[name][0], f"a {name} turn does not"
+    assert _thread_id_for(DiscussContext(kind="tonight")) == "general", "it is free chat: the general thread"
+    assert sent["evening"][0].replace("[TONIGHT CANDIDATES] TONIGHT-X", "") == \
+        sent["typed"][0], "otherwise the same prompt as free chat: no discussion block, no banner context"
 
 
 def test_a_reply_ends_with_actions_for_its_library_titles():

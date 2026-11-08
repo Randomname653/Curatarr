@@ -50,13 +50,16 @@ their fifth seen-it answer builds their first taste profile, plays or not.
 
 **"What should I watch tonight?" is answered from what the member can start tonight.** Free chat
 used to search the vector store for that sentence and hand the curator its five nearest library
-items, watched or not. Every chat turn outside a deletion, principle or Wrap-Up discussion now
+items, watched or not. The evening question the page starts - the "What should I watch tonight?"
+chip and its daytime and German siblings, and the Tonight card's new "Ask the curator" - now
 carries a `[TONIGHT CANDIDATES]` block, built without a model from what Curatarr already keeps:
 the series the member is in the middle of and how far they are, up to four stored
 recommendations from the because, library and rediscover lanes with their stored reason, and up
 to two Swipe "want to watch" answers. Anything played since it was recommended drops out, music
-only joins when the chat is about music, and the block's own header tells the curator to use it
-only for a pick question.
+only joins when the chat is about music. A typed message goes without it, as before: measured on
+real data, the bare list made a targeted ask ("a film like …") answer with the same stored pick
+every time, whatever its header said. The turn is ordinary free chat otherwise, so the follow-up
+stays in the same thread.
 
 **A one-tap "how did it land?" now shapes the taste** (design record stage 2, the owner's
 decision). The landing's follow-up card stores the member's verdict (Loved it / Liked it / It

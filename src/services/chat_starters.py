@@ -574,7 +574,8 @@ _FILM_EVENINGS = (4, 5)
 def user_chips(facts: list[dict], lang: str, is_admin: bool, limit: int = 3) -> list[dict]:
     """Up to ``limit`` user-voiced chips from ``collect_facts`` output, in
     ``lang``. Each is {"text": what goes into the input, "label": what the
-    chip shows}; they differ only where the text is a sentence to finish
+    chip shows}, plus ``kind`` "tonight" for a chip that asks what to put
+    on; text and label differ only where the text is a sentence to finish
     (the mood chip ends in a space, its label in an ellipsis). Pure."""
     t = _CHIPS.get(lang) or _CHIPS["en"]
     by_kind: dict = {}
@@ -610,7 +611,12 @@ def user_chips(facts: list[dict], lang: str, is_admin: bool, limit: int = 3) -> 
     if len(out) < limit:
         out.append(t["taste"])
 
-    return [{"text": s, "label": (s.rstrip() + " …") if s.endswith(" ") else s}
+    # The clock chips ask what to put on: sent, they start the turn as the
+    # evening question (kind "tonight"), which alone carries [TONIGHT
+    # CANDIDATES] (routers/chat._send_message_guarded).
+    asks = {t[k] for k in ("short_tonight", "film_tonight", "before_bed", "for_later")}
+    return [{"text": s, "label": (s.rstrip() + " …") if s.endswith(" ") else s,
+             **({"kind": "tonight"} if s in asks else {})}
             for s in out[:limit]]
 
 

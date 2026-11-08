@@ -152,6 +152,9 @@ check("a German member reads the card in German: label, line and facts",
       and {i["title"]: i["why"] for i in de["items"]}["The Lantern Room"]
       == "Weil du Gull Point, Tide Clock und Salt Road geschaut hast · 2019", de["items"][:2])
 check("an English member's label", tue["label"] == "Tonight")
+check("the card's 'Ask the curator' question in the member's language, the daytime one for later",
+      tue["ask"] == "What should I watch tonight?" and de["ask"] == "Was soll ich heute Abend schauen?"
+      and card_at(datetime(2026, 11, 10, 8, 0))["ask"] == "What could I put on later today?")
 fri = card_at(datetime(2026, 11, 13, 19, 0))
 check("Friday evening: a film first", fri["items"][0]["category"] == "movie"
       and fri["items"][0]["headline"] == "Friday - room for a film: **The Lantern Room**", fri["items"][0])
