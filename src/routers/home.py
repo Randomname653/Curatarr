@@ -3,6 +3,7 @@ actions every member surface shares (UX audit 2026-11-08, §2.1 A, §2.3 D).
 
 * GET /tonight - one pick for this moment of the member's week
   (services/tonight.tonight_card), with a link into their media server;
+* GET /moments - the Wrap-Up's cards for the moment (services/wrapup_cards);
 * POST /watchlist - a title onto the member's own watchlist (the Swipe
   "Want to watch" write), from the Tonight card, a chat reply or a
   recommendation card;
@@ -37,6 +38,16 @@ async def tonight(user: User = Depends(get_current_user)):
         for it in card["items"]:
             it.pop("key", None)          # the link is what the client needs
     return {"card": card}
+
+
+@router.get("/moments")
+async def moments(user: User = Depends(get_current_user)):
+    """The Wrap-Up's small moments for the landing (services/wrapup_cards):
+    "Your week" from Sunday evening to Monday, on the member's clock.
+    {"cards": [...]}, empty most of the time."""
+    from src.services.wrapup_cards import week_card
+    cards = [c for c in [await run_read(week_card, user.id)] if c]
+    return {"cards": cards}
 
 
 class WatchlistBody(BaseModel):

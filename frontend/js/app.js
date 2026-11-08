@@ -9,7 +9,7 @@ import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, k
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
 import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, posterLoaded, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
-import { answerFollowup, correctChatAnchor, explainFollowup, hideTonight, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
+import { answerFollowup, correctChatAnchor, explainFollowup, hideMoment, hideTonight, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
 import { jellyfinConnectStart, jellyfinPasswordConnect, jellyfinPick, jellyfinShowPassword } from './jellyfin_connect.js';
 import { loadMediaServer, mediaServerCheck, mediaServerForget, mediaServerReconnect, mediaServerSwitch, mediaServerUndo } from './media_switch.js';
@@ -20,7 +20,7 @@ import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcTo
 import { hideYearAgo, loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { renderLedger } from './report.js';
 import { answerWrapupStory, closeWrapupStory, nextWrapupSlide, prevWrapupSlide } from './wrapup_story.js';
-import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, setWrapupSeason, toggleMilestoneKind, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
+import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, openWrapupPeriod, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, setWrapupSeason, toggleMilestoneKind, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
 import { loadSwipe, swipeCategory, swipeExact, swipeNextDeck, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
@@ -165,6 +165,8 @@ const actions = {
   answerFollowup,
   explainFollowup,
   hideTonight,
+  hideMoment,
+  openWrapupPeriod,
   titleKeep,
   titleWatchlist,
   tonightNext,
