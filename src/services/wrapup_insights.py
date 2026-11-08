@@ -296,8 +296,9 @@ def _balance(f) -> list:
         verdict = v.get("verdict")
         out.append(_card("balance", "balance", 0.35 + _clamp(abs(net) / big) * 0.45,
                          "balance", {"gb_in": v["gb_in"], "gb_out": v["gb_out"],
-                                     "verdict": ("a pruner" if verdict == "pruner" else "a hoarder"
-                                                 if verdict == "hoarder" else "in balance")},
+                                     # the server, not the person: no "a hoarder", no "a pruner"
+                                     "verdict": ("the server got lighter" if verdict == "pruner"
+                                                 else "the server grew" if verdict == "hoarder" else "in balance")},
                          "what the server gained against what it lost",
                          {"gb_in": v["gb_in"], "gb_out": v["gb_out"], "net_gb": net},
                          {"gb_in": say_gb(v["gb_in"]), "gb_out": say_gb(v["gb_out"]),
@@ -491,6 +492,26 @@ def mine(facts: dict, floor: float = FLOOR, limit: int = MAX_CARDS) -> list:
     return cards
 
 
+def say_line(say: dict) -> str:
+    """A card's approved renderings for the model: "85% | four in five;
+    12 hours | just over 10 hours" - the values only. The slot names
+    ("new_share: 85%") were copied into a story as words."""
+    return "; ".join(" | ".join(v) for v in (say or {}).values() if v)
+
+
+def placeholders(cards: list) -> set:
+    """The machine names a story must never say: the cards' keys and the
+    names of their slots, values and renderings ("new_share", "top_title") -
+    the ones that are no word of their own (they hold an underscore)."""
+    out = set()
+    for c in cards or []:
+        for part in ("say", "values", "slots"):
+            out |= {k for k in (c.get(part) or {}) if "_" in k}
+        if "_" in (c.get("key") or ""):
+            out.add(c["key"])
+    return out
+
+
 def sheet_block(cards: list) -> str:
     """The ranked block the fact sheet ends with: what is worth saying, why,
     and the renderings each number may take."""
@@ -498,7 +519,7 @@ def sheet_block(cards: list) -> str:
         return ""
     lines = ["WORTH SAYING (ranked — build the story from the top; the rest is background):"]
     for c in cards:
-        say = "; ".join(f"{k}: " + " | ".join(v) for k, v in c["say"].items() if v)
+        say = say_line(c["say"])
         lines.append(f"{c['id']} [{c['slide']}, {c['score']}] {c['claim']} — why: {c['why']}."
                      + (f" Say: {say}." if say else ""))
     return "\n".join(lines)

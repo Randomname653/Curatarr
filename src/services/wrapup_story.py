@@ -256,7 +256,8 @@ def render_fact_sheet(f: dict) -> tuple:
             fact(f"You talked the curator out of deleting {item(t['title'], t.get('media_type'))} {t['title']}.")
     v = f.get("velocity") or {}
     if v:
-        fact(f"Server: {v['gb_in']} GB arrived, {v['gb_out']} GB left ({v['verdict']}).")
+        grew = {"hoarder": "the server grew", "pruner": "the server got lighter"}.get(v.get("verdict"), "in balance")
+        fact(f"Server: {v['gb_in']} GB arrived, {v['gb_out']} GB left ({grew}).")
     t = f.get("time_to_watch") or {}
     if t:
         lo = t["longest"]

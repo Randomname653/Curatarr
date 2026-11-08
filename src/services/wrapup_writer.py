@@ -357,14 +357,28 @@ def _sentences(text: str) -> list:
     return out + [(p, []) for p in pending]
 
 
-def check_section(text: str, headline: str, own: list, ev: dict, known_titles: list) -> list:
+def stray_placeholders(text: str, names) -> list:
+    """The machine names (``wrapup_insights.placeholders``) and template
+    braces that ended up in a text - a slot copied in as a word ("Du
+    verbringst eine new_share: 85% ...")."""
+    found = sorted(n for n in names or () if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", text or ""))
+    if "{" in (text or "") or "}" in (text or ""):
+        found.append("{...}")
+    return found
+
+
+def check_section(text: str, headline: str, own: list, ev: dict, known_titles: list,
+                  placeholders=()) -> list:
     """The faults of one written section. Strict on truth: each sentence's
     numerals must be its cited cards' (or the section's own card's), and a
-    library title it names must be on one of them. ``own``: the ids the
-    section is about (its card, or the pick)."""
+    library title it names must be on one of them; no machine name of a
+    card (``placeholders``) is said. ``own``: the ids the section is about
+    (its card, or the pick)."""
     faults = []
     if not text.strip():
         return ["the section is empty"]
+    for n in stray_placeholders(f"{headline}\n{text}", placeholders):
+        faults.append(f"\"{n}\" is a field name, not a word: say the fact itself")
     if len(text) > _TEXT_MAX:
         faults.append(f"too long ({len(text)} characters, at most {_TEXT_MAX})")
     own_ev = [ev[i] for i in own if i in ev]
@@ -485,10 +499,13 @@ def check_edit(e: dict, cards: list, traits: list, picks: dict, clusters: dict) 
 # ── the brief ───────────────────────────────────────────────────────────────
 
 def _card_line(c: dict) -> str:
-    say = "; ".join(f"{k}: " + " | ".join(v) for k, v in c["say"].items() if v)
+    from src.services.wrapup_insights import say_line
+    say = say_line(c["say"])
     return (f"{c['id']} [{c['slide']}] {c['claim']} — why: {c['why']}."
             + (f" Say: {say}." if say else ""))
 
+
+from src.services.curator_voice import WORK  # noqa: E402 - the shared voice law
 
 EDITOR_SYSTEM = """You are Curatarr's editor, planning ONE person's wrap-up from ranked insight
 cards. You choose; you do not write the story yet.
@@ -498,10 +515,12 @@ cards. You choose; you do not write the story yet.
   their strongest taste. Either may also be in the arc.
 - archetype_trait: one of the TRAITS. archetype_title: 2-4 words, a role they earned from
   it, concrete and a little pointed ("The Midnight Completionist"); never Enthusiast, Lover,
-  Fan, Buff, Aficionado. archetype_subhead: one sentence that earns it from the cards.
+  Fan, Buff, Aficionado. archetype_subhead: one sentence that earns it from the cards - about
+  what they watched and how, never a verdict on who they are.
 - share_line: under 100 characters, something they would post.
 - next_pick: the U# pick to end on, or "" when there is none.
 - cluster_names: a 2-4 word name for each C# taste cluster, if any.
+- """ + WORK + """
 Answer with the JSON object only."""
 
 WRITER_SYSTEM = """You are Curatarr, the household's media curator, writing ONE person's wrap-up
@@ -527,6 +546,7 @@ RULES
   "Say" renderings. Never compute one.
 - Name a title only when a cited card has it.
 - Wit comes from putting two real facts side by side, not from adjectives.
+- """ + WORK + """ A roast teases a choice, never the person.
 - If YOUR WORDS are given, you may quote one back to them where it fits — exactly, in quotes.
 No preamble, no closing remark: only the sections."""
 
@@ -633,11 +653,13 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     except (ValueError, TypeError) as e:
         logger.info("[wrapup] editor answer was not JSON: %s", e)
     edit = edit or default_edit(cards, traits, picks, lang)
+    from src.services.wrapup_insights import placeholders as _placeholders
+    slots = _placeholders(cards)
     names = known_titles
     allowed_head = set().union(*(numerals(_card_line(c)) for c in cards)) | _small()
     for k in ("archetype_title", "archetype_subhead", "share_line"):
         edit[k] = fix_style(edit.get(k) or "", names, lang)
-        if numerals(edit[k]) - allowed_head:
+        if numerals(edit[k]) - allowed_head or stray_placeholders(edit[k], slots):
             edit[k] = default_edit(cards, traits, picks, lang)[k]
 
     sections = [*edit["arc"], "ROAST", "TOAST"] + (["NEXT"] if edit.get("next_pick") else [])
@@ -654,7 +676,7 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
             head, text = parsed.get(s, ("", ""))
             text = fix_style(tuck_cites(text), names, lang)
             head = fix_style(head, names, lang)
-            faults = check_section(text, head, own[s], ev, known_titles) if text else ["missing"]
+            faults = check_section(text, head, own[s], ev, known_titles, slots) if text else ["missing"]
             out[s] = (head, text, faults)
         return out
 
