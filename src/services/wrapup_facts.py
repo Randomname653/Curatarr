@@ -66,7 +66,9 @@ _ELIGIBLE_HOURS = 3
 # 14: week: and month: periods on the member's clock.
 # 15: the narrative facts - ritual, comfort genre, of the month, night shift
 #     (services/wrapup_narrative).
-FACTS_VERSION = 15
+# 16: the comfort genre without a rewatch, the night shift as the series that
+#     held the nights, ISO weeks for the ritual (real months found none)
+FACTS_VERSION = 16
 
 
 @dataclass(frozen=True)
