@@ -12,6 +12,74 @@ deleted title's, and the next message went to free chat without the title. The a
 on the deleted proposal's own thread only: a pane that moved on keeps its discussion and gets a
 toast.
 
+**Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
+library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
+explicit form of "keep this": written and confirmed at once, where the keep-detector's outcome
+used to arrive later in the bell (it still runs as before). For the owner it is a protection;
+for a member a household voice the owner's protection rules weigh, and the button says so. A name
+the library holds as a film and as a series gets a row for each. Owned
+recommendation cards gained "Open in …" and "+ Watchlist" next to Discuss. Links go through
+app.plex.tv on Plex, so they work for a shared account away from home. The match is exact
+library names and the library ledger's server key; a title the reply did not set in bold, or one
+the library does not hold, gets no row.
+
+**A Tonight card on the chat landing.** Above the chat a member now finds one pick for this
+moment of their own week, from their series in progress, stored recommendations and Swipe wants:
+on a weeknight the series they are in the middle of, on Friday and Saturday evening a film, on a
+Sunday afternoon a rewatch, during the day something they wanted to watch "for later". The lines
+are templates of facts in the member's time zone and language (English or German, as they write
+to the curator), no model; the second line is facts too (the titles a pick is close to, year and
+genres, Rediscover's own line), never the stored recommendation text. A series in progress
+opens on the series, not on the episode already watched. "Open in Plex" (through
+app.plex.tv, so it works away from home) or "Open in Jellyfin" opens it on their server, "+
+Watchlist" puts a stored pick on their watchlist in one tap, and "Something else" steps through
+the other candidates (`GET /api/home/tonight`).
+
+**A "Loved" shows at once.** A Loved answer in Swipe, or "Loved it" on the landing card, fed the
+taste rebuild, and the Recommendations page and the TV's "Curatarr Recommended" rows showed
+nothing of it until the weekly regeneration. Now the member's stored picks nearest the loved
+title (at most three, from the library and because lanes) move up: first in their lane, marked
+"moved up" on the card, and first in the next playlist push, which the lift makes due. The
+answer says how many moved, and says nothing when none were close. Undoing a Loved swipe takes
+its lift back.
+
+**Swipe comes in decks of ten, with a reason you can read in two seconds.** The stack refilled
+for ever and its ring counted only seen-it answers toward the next taste refresh, so it barely
+moved. Now the ring counts the deck, and after ten answers a screen says what went on the
+watchlist and what you loved, with "Another 10" or "Done for tonight". Each card names one
+reason: the title you loved (a "Loved it" on the landing card, a Rediscover title) or watched
+recently that sits nearest it, instead of a taste cluster's three strongest titles. Cards show
+one line of the synopsis, all of it on a tap, and the stack no longer runs three of one genre in
+a row. A member with no profile in a category no longer reads "watch a few titles first": they
+get a calibration deck of the category's most central library titles, best-rated first, and
+their fifth seen-it answer builds their first taste profile, plays or not.
+
+**"What should I watch tonight?" is answered from what the member can start tonight.** Free chat
+used to search the vector store for that sentence and hand the curator its five nearest library
+items, watched or not. The evening question the page starts - the "What should I watch tonight?"
+chip and its daytime and German siblings, and the Tonight card's new "Ask the curator" - now
+carries a `[TONIGHT CANDIDATES]` block, built without a model from what Curatarr already keeps:
+the series the member is in the middle of and how far they are, up to four stored
+recommendations from the because, library and rediscover lanes with their stored reason, and up
+to two Swipe "want to watch" answers. Anything played since it was recommended drops out, music
+only joins when the chat is about music. A typed message goes without it, as before: measured on
+real data, the bare list made a targeted ask ("a film like …") answer with the same stored pick
+every time, whatever its header said. The turn is ordinary free chat otherwise, so the follow-up
+stays in the same thread.
+
+**A one-tap "how did it land?" now shapes the taste** (design record stage 2, the owner's
+decision). The landing's follow-up card stores the member's verdict (Loved it / Liked it / It
+was okay / Not for me) in a new table, `post_watch_verdicts`, instead of sending it as a chat
+message that only memory extraction read. The taste rebuild weighs the play that is already in
+the history by it, never a second row: a film by its play's key, a series by its title. It
+replaces the completion and drop guesses for that play, and "Not for me" pushes the vector away,
+where any positive weight on a finished film would still have pulled it closer. The answer
+rebuilds that category's vector in the background without the curator's summaries (the rebuild
+a tenth Swipe answer starts), and "Tell the curator why" opens the message's thread for the
+words a tap cannot carry. The card now asks only about one film or series: music follow-ups and
+morning lines about several things stay in the bell. The Plex/Jellyfin rebind carries the
+verdicts' play keys over.
+
 **A member's chat landing speaks to the member** (design record
 [docs/UX_RETENTION_DESIGN.md](docs/UX_RETENTION_DESIGN.md), stage 1). Beside the curator's
 openers the landing now offers chips in the member's own voice, built without a model from the

@@ -41,6 +41,12 @@ check("a brand-new member (only the clock) still gets chips: tonight, the mood, 
                    "What does my watch history say about my taste?"], texts(c))
 check("the mood chip is a sentence to finish: the input gets a trailing space, the chip an ellipsis",
       c[1]["label"] == "I'm in the mood for …" and c[0]["label"] == c[0]["text"])
+check("a chip that asks what to put on starts the evening question (kind 'tonight'); the others do not",
+      c[0].get("kind") == "tonight" and "kind" not in c[1] and "kind" not in c[2]
+      and all(x.get("kind") == "tonight" for x in (
+          cs.user_chips([clock("Friday", "evening")], "de", False)[0],
+          cs.user_chips([clock("Monday", "night")], "en", False)[0],
+          cs.user_chips([clock("Monday", "morning")], "de", False)[0])), c)
 check("Friday and Saturday evenings offer a film instead",
       texts(cs.user_chips([clock("Friday", "evening")], "en", False))[0] == "A film for tonight - surprise me")
 check("night and day have their own clock chip",
@@ -123,7 +129,8 @@ finally:
     cs.generate_starters, pmon.is_game_running = _saved
 check("GET /starters returns the user-voiced chips beside the curator's openers",
       as_member["starters"] == [] and len(as_member["chips"]) == 3
-      and all(set(c) == {"text", "label"} for c in as_member["chips"]), as_member)
+      and all(set(c) - {"kind"} == {"text", "label"} for c in as_member["chips"])
+      and as_member["chips"][0]["kind"] == "tonight", as_member)
 check("the owner flag comes from the signed-in user: the clean-up chip for the owner only",
       not any("aufräumen" in c["text"] for c in as_member["chips"])
       and any("aufräumen" in c["text"] for c in as_owner["chips"]), (as_member, as_owner))

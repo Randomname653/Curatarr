@@ -166,7 +166,8 @@ CONVERSATION_RULE = (
 def build_system_prompt(*, voice: str, user_lang: str, taste_context: str = "",
                         memory_context: str = "", rag_context: str = "",
                         discuss_block: str = "", active_title: str = "",
-                        pillar_framework: str = "", hidden_metadata_context: str = "") -> str:
+                        pillar_framework: str = "", hidden_metadata_context: str = "",
+                        tonight_context: str = "") -> str:
     """The system message of a chat turn in ``voice`` for a user writing in
     ``user_lang``, around the context blocks the router (or a bench) built."""
     topic_lock_rule = TOPIC_LOCK_RULE if active_title else ""
@@ -179,6 +180,8 @@ def build_system_prompt(*, voice: str, user_lang: str, taste_context: str = "",
 
 RELEVANT LIBRARY ITEMS:
 {rag_context if rag_context else ""}
+
+{tonight_context}
 
 {discuss_block}
 {f"CURRENT FOCUS: The title under discussion is '{active_title}'." if active_title else ""}

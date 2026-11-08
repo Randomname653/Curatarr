@@ -411,10 +411,17 @@ def _library_recs(user_id: int, category: str, limit: int) -> list[dict]:
                 .filter(CachedRecommendation.user_id == user_id,
                         CachedRecommendation.category == category,
                         CachedRecommendation.lane == "library")
-                .order_by(CachedRecommendation.confidence.desc())
+                .order_by(CachedRecommendation.lifted_at.desc(),
+                          CachedRecommendation.confidence.desc())
                 .limit(limit).all())
         return [{"title": r.title, "key": r.plex_rating_key, "category": r.category,
-                 "cached_at": r.cached_at} for r in rows]
+                 "cached_at": _changed_at(r)} for r in rows]
+
+
+def _changed_at(r):
+    """When a pick last changed for the push: its caching, or a member's
+    "Loved" lifting it (services/rec_lift) - either makes the playlist due."""
+    return max((t for t in (r.cached_at, r.lifted_at) if t), default=None)
 
 
 def _because_recs(user_id: int, limit: int = 15) -> list[dict]:
@@ -427,10 +434,11 @@ def _because_recs(user_id: int, limit: int = 15) -> list[dict]:
                 .filter(CachedRecommendation.user_id == user_id,
                         CachedRecommendation.category.in_(("movie", "show", "anime")),
                         CachedRecommendation.lane == "because")
-                .order_by(CachedRecommendation.confidence.desc())
+                .order_by(CachedRecommendation.lifted_at.desc(),
+                          CachedRecommendation.confidence.desc())
                 .limit(limit).all())
         return [{"title": r.title, "key": r.plex_rating_key, "category": r.category,
-                 "cached_at": r.cached_at} for r in rows]
+                 "cached_at": _changed_at(r)} for r in rows]
 
 
 async def push_user_playlists(user) -> dict:

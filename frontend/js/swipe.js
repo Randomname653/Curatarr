@@ -13,6 +13,13 @@
 // same flight. A loved title chains a few of its nearest neighbours into
 // the stack; undo flies the last card back in from where it left.
 //
+// Decks (UX audit 2026-11-08, S1/S2): answers come in decks of DECK_SIZE.
+// The ring counts this deck, and its end is a screen of its own - what went
+// on the watchlist, what was loved, how far the next taste refresh is - with
+// "Another 10" and "Done for tonight". The stack behind it keeps filling as
+// before. A member with no profile in a category gets a calibration deck
+// first (reason "calibration"): central library titles, "seen it anywhere?".
+//
 // Gestures: ← not seen, → want to watch, ↑ loved, ↓ disliked (Meh and
 // Liked are buttons / M, L).
 // Keys: ← N not seen · → W want to watch · ↓ D disliked · M meh · L liked ·
@@ -60,6 +67,7 @@ const DRAG_DECIDE_PX = 110;   // drag this far along one axis and it commits
 const FLICK_PX_MS = 0.5;      // ...or throw it this fast past FLICK_MIN_PX
 const FLICK_MIN_PX = 36;
 const DECK_DEPTH = 3;
+const DECK_SIZE = 10;
 // A decision you can feel (Android; silent under reduced motion): loved
 // gets a double pulse, everything else one short tap.
 const BUZZ = {notseen: 10, want: 12, disliked: 14, meh: 8, liked: 14, loved: [12, 50, 18], seen: 10};
@@ -76,6 +84,11 @@ let _history = [];            // [{card, cat, kind, seen, stars, want}] this ses
 let _progress = {since: 0, every: 10};
 let _ambIdx = 0, _ambUrl = null;
 let _uid = 0;
+let _deck = _newDeck();
+let _calibrating = 0;          // the seen answers a first profile needs, while calibrating
+
+function _newDeck() { return {n: 0, wantOk: 0, loved: [], chained: false, lifted: 0, start: Date.now()}; }
+function _deckDone() { return _deck.n >= DECK_SIZE; }
 
 function _el(id) { return document.getElementById(id); }
 function _active() { return !!_el('swipe-view')?.classList.contains('active'); }
@@ -94,6 +107,8 @@ export async function loadSwipe() {
   }
   _gen += 1;
   _queue = [];
+  _deck = _newDeck();
+  _calibrating = 0;
   _closeExact();
   _renderTabs();
   _renderReactions();
@@ -172,21 +187,27 @@ async function _loadStats() {
   }
 }
 
+// The ring counts THIS deck: the taste-refresh count moved to the deck's
+// end screen - it only moves on seen-it answers, most answers are not seen,
+// and a ring that never moves is no progress (UX audit S2).
 function _renderProgress(refreshing) {
   const el = _el('swipe-progress');
   if (!el) return;
-  const {since, every} = _progress;
-  const frac = refreshing ? 1 : Math.min(1, since / every);
+  const n = Math.min(_deck.n, DECK_SIZE);
+  const frac = refreshing ? 1 : n / DECK_SIZE;
   el.classList.toggle('is-refreshing', !!refreshing);
+  const sub = _calibrating
+    ? `calibrating: ${Math.max(0, _calibrating - _progress.since)} seen-it answers to your first taste profile`
+    : 'in this deck';
   el.innerHTML = `
-    <div class="swipe-ring" role="img" aria-label="${refreshing ? 'Taste profile refreshing' : `${since} of ${every} answers until the next taste refresh`}">
+    <div class="swipe-ring" role="img" aria-label="${refreshing ? 'Taste profile refreshing' : `${n} of ${DECK_SIZE} answered in this deck`}">
       <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="swipe-ring-bg" cx="18" cy="18" r="15.9"/>
         <circle class="swipe-ring-fg" cx="18" cy="18" r="15.9" pathLength="100"/></svg>
-      <span>${refreshing ? '✓' : `${since}/${every}`}</span>
+      <span>${refreshing ? '✓' : `${n}/${DECK_SIZE}`}</span>
     </div>
     <div class="swipe-progress-t">${refreshing
       ? '<b>Refreshing your taste</b><span>Your answers are being folded in.</span>'
-      : `<b>${every - since} to go</b><span>seen-it answers until your taste profile refreshes</span>`}</div>`;
+      : `<b>${DECK_SIZE - n} to go</b><span>${esc(sub)}</span>`}</div>`;
   el.querySelector('.swipe-ring-fg')?.style.setProperty('stroke-dasharray', `${Math.round(frac * 100)} 100`);
 }
 
@@ -264,6 +285,10 @@ async function _fill() {
   try {
     const r = await api(`/api/swipe/next?category=${encodeURIComponent(cat)}&n=8${_skipParam()}`);
     if (gen !== _gen) return;
+    if (r.reason === 'calibration' && !_calibrating) {
+      _calibrating = r.first_build_after || 5;
+      _renderProgress();
+    }
     _add(r.cards);
     if (!_queue.length) {
       _deckMsg(r.reason === 'no_taste'
@@ -271,7 +296,7 @@ async function _fill() {
         : _doneHtml());
       return;
     }
-    _layout();
+    if (!_deckDone()) _layout();
   } catch (e) {
     if (gen === _gen && !_queue.length) _deckMsg(_errHtml(e, act('loadSwipe')));
   } finally {
@@ -290,6 +315,37 @@ function _doneHtml() {
     <h2>You've been through everything near your taste in ${esc(label)}.</h2>
     ${here.length ? `<p>${here.length} answered this session${loved.length ? ` · loved ${loved.map(t => `<b>${esc(t)}</b>`).join(', ')}` : ''}.</p>` : ''}
     <div class="row swipe-done-cta">${others}</div></div>`;
+}
+
+function _fmtTime(ms) {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function _deckEndHtml() {
+  const {since, every} = _progress;
+  const left = Math.max(0, every - since);
+  const loved = _deck.loved.slice(-2);
+  return `<div class="swipe-done" role="status">
+    <div class="swipe-done-ic">${ICON.star}</div>
+    <h2>Deck done - ${_deck.n} answered in ${_fmtTime(Date.now() - _deck.start)}</h2>
+    ${_deck.wantOk ? `<p><b>${_deck.wantOk}</b> now on your ${esc(_watchlistName())}.</p>` : ''}
+    ${loved.length ? `<p>You loved ${loved.map(t => `<b>${esc(t)}</b>`).join(' and ')}${_deck.chained ? ' - titles like it lead the next deck' : ''}.</p>` : ''}
+    ${_deck.lifted ? `<p><b>${_deck.lifted}</b> of your recommendations moved up for it.</p>` : ''}
+    <p class="fs-12 t3">${_calibrating
+      ? `${left} more seen-it answer${left === 1 ? '' : 's'} and your first taste profile is built.`
+      : `${left} more seen-it answer${left === 1 ? '' : 's'} until your taste profile refreshes.`}</p>
+    <div class="row swipe-done-cta">
+      <button class="btn btn-primary btn-sm" ${act('swipeNextDeck')}>Another ${DECK_SIZE}</button>
+      <button class="btn btn-secondary btn-sm" ${act('goToView', 'chat')}>Done for tonight</button>
+    </div></div>`;
+}
+
+export function swipeNextDeck() {
+  _deck = _newDeck();
+  _renderProgress();
+  if (_queue.length) _layout();
+  else { _deckMsg('<p class="loading" role="status">Finding more titles…</p>'); _fill(); }
 }
 
 function _deckMsg(html) {
@@ -379,11 +435,20 @@ function _cardNode(c) {
     d.cast?.length ? `<dt>Starring</dt><dd>${esc(d.cast.join(', '))}</dd>` : '',
     d.mood?.length ? `<dt>Mood</dt><dd>${esc(d.mood.join(', '))}</dd>` : '',
   ].join('');
+  // One reason, readable at a glance: the title just loved, else the one
+  // loved or recently watched title nearest this card (services/swipe
+  // attach_anchors), else the cluster's strongest titles.
   const why = c.chain_from
     ? `<div class="swipe-ribbon">${ICON.loved}Because you loved <b>${esc(c.chain_from)}</b></div>`
-    : c.because?.length
-      ? `<div class="swipe-because">Near your taste for ${c.because.map(t => `<b>${esc(t)}</b>`).join(', ')}</div>`
-      : '';
+    : c.anchor
+      ? `<div class="swipe-ribbon">${c.anchor.kind === 'loved' ? ICON.loved : ICON.seen}Because you ${c.anchor.kind === 'loved' ? 'loved' : 'watched'} <b>${esc(c.anchor.title)}</b></div>`
+      : c.calibration
+        ? '<div class="swipe-because">Getting to know you: seen it anywhere? Rate it. Not seen? Swipe left.</div>'
+        : c.because?.length
+          ? `<div class="swipe-because">Near your taste for ${c.because.map(t => `<b>${esc(t)}</b>`).join(', ')}</div>`
+          : '';
+  const full = c.synopsis || 'No synopsis on file.';
+  const short = c.pitch && c.pitch !== full ? c.pitch : full;
   const pct = Math.round(((c.chain_from ? c.likeness : c.fit) || 0) * 100);
   const poster = c.poster_url
     ? `<img class="swipe-poster" src="${esc(proxyImg(c.poster_url))}" alt="" draggable="false">`
@@ -399,10 +464,10 @@ function _cardNode(c) {
       <h2 id="${id}" class="swipe-title">${esc(c.title)}</h2>
       ${meta ? `<div class="swipe-meta">${meta}</div>` : ''}
       ${tags ? `<div class="swipe-tags">${tags}</div>` : ''}
-      <p class="swipe-synopsis" title="Click to read it all">${esc(c.synopsis || 'No synopsis on file.')}</p>
+      <p class="swipe-synopsis" title="Click to read it all">${esc(short)}</p>
       ${people ? `<dl class="swipe-people">${people}</dl>` : ''}
-      <div class="swipe-fit"><span>${c.chain_from ? `Like ${esc(c.chain_from)}` : 'Taste fit'}</span>
-        <span class="swipe-meter"><i></i></span><b>${pct}%</b></div>
+      ${c.calibration ? '' : `<div class="swipe-fit"><span>${c.chain_from ? `Like ${esc(c.chain_from)}` : 'Taste fit'}</span>`}
+        ${c.calibration ? '' : `<span class="swipe-meter"><i></i></span><b>${pct}%</b></div>`}
     </div>
     ${ORDER.map(k =>
       `<div class="swipe-stamp" data-kind="${k}" data-pos="${REACT[k].dir || 'none'}" aria-hidden="true">${esc(REACT[k].stamp)}</div>`).join('')}`;
@@ -411,7 +476,10 @@ function _cardNode(c) {
   img?.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('div'),
     {className: 'swipe-poster swipe-poster-ph', textContent: (c.title || '?').slice(0, 1)})));
   n.querySelector('.swipe-synopsis')?.addEventListener('click', e => {
-    if (!n._moved) e.currentTarget.classList.toggle('open');
+    if (n._moved) return;
+    const p = e.currentTarget;
+    const open = p.classList.toggle('open');
+    p.textContent = open ? full : short;      // the one line first, all of it on a tap
   });
   _bindDrag(n);
   return n;
@@ -419,19 +487,19 @@ function _cardNode(c) {
 
 // ── reactions ──────────────────────────────────────────────────────────────
 export function swipeReact(kind) {
-  if (!REACT[kind] || !_queue.length) return;
+  if (!REACT[kind] || !_queue.length || _deckDone()) return;
   return _submit(!UNSEEN.has(kind), REACT[kind].stars, kind);
 }
 
 export function swipeStars(n) {
-  if (!_queue.length) return;
+  if (!_queue.length || _deckDone()) return;
   const stars = n == null ? null : Math.max(1, Math.min(10, Number(n)));
   return _submit(true, stars, reactionOf(true, stars));
 }
 
 export function swipeExact() {
   if (_exactOpen) { _closeExact(); return; }
-  if (!_queue.length) return;
+  if (!_queue.length || _deckDone()) return;
   const el = _el('swipe-exact');
   if (!el) return;
   _exactOpen = true;
@@ -470,7 +538,10 @@ async function _submit(seen, stars, kind, gesture) {
   haptic(BUZZ[kind] ?? 10);
   _flyOut(_top(), kind, gesture);
   _queue.shift();
-  _layout();
+  _deck.n += 1;
+  if (kind === 'loved') _deck.loved.push(c.title);
+  if (_deckDone()) _deckMsg(_deckEndHtml());
+  else _layout();
   _flash(kind);
   const want = kind === 'want';
   const entry = {card: c, cat, kind, seen, stars, want};
@@ -487,6 +558,8 @@ async function _submit(seen, stars, kind, gesture) {
   } catch (e) {
     _history = _history.filter(h => h !== entry);
     if (gen === _gen) {
+      _deck.n = Math.max(0, _deck.n - 1);
+      if (kind === 'loved') _deck.loved = _deck.loved.filter(t => t !== c.title);
       _queue.unshift(c);          // not saved: the card comes back
       _layout(REACT[kind]?.dir ?? null);
       _renderRecent();
@@ -497,6 +570,13 @@ async function _submit(seen, stars, kind, gesture) {
   }
   if (gen !== _gen) return;
   _progress = {since: r.since_rebuild ?? _progress.since + 1, every: r.rebuild_every || _progress.every};
+  if (r.watchlist?.ok) { _deck.wantOk += 1; entry.wantOk = true; }
+  if (r.taste_rebuild && _calibrating) _calibrating = 0;   // the first profile is being built
+  // The end screen went up before the answer came back: show its counts.
+  if (_deckDone() && _el('swipe-deck')?.querySelector('.swipe-done')) {
+    _deckMsg(_deckEndHtml());
+    _loadStats();                 // the all-time line counts this deck too, once it is saved
+  }
   if (r.taste_rebuild) {
     _renderProgress(true);
     _say('Your answers are being folded into your taste profile.');
@@ -512,22 +592,33 @@ async function _submit(seen, stars, kind, gesture) {
   } else if (r.watchlist) {
     _say(`Saved as Want to watch; ${c.title} is not on your ${_watchlistName()}.`);
   }
-  if (kind === 'loved') _chain(c, gen);
+  const lifted = (r.lifted || []).length;
+  _deck.lifted += lifted;
+  if (kind === 'loved') _chain(c, gen, lifted);
 }
 
 // A loved title pulls a few of its nearest neighbours to the front of the
 // stack (after the card already showing, so nothing jumps under the pointer).
-async function _chain(c, gen) {
+// ``lifted``: how many of the member's stored picks this Loved moved up
+// (services/rec_lift) - said in the same note, only when some did.
+function _liftedText(n) { return n ? `${n} of your recommendations moved up` : ''; }
+
+async function _chain(c, gen, lifted = 0) {
   try {
     const r = await api(`/api/swipe/next?category=${encodeURIComponent(_cat)}&n=3&seed=${encodeURIComponent(c.doc_id)}${_skipParam()}`);
     if (gen !== _gen) return;
     const added = _add(r.cards, Math.min(1, _queue.length));
-    if (!added.length) return;
-    _layout();
-    _note(`${ICON.loved}<span>${added.length} more like <b>${esc(c.title)}</b> coming up</span>`);
-    _say(`${added.length} more titles like ${c.title} added next.`);
+    if (!added.length) {
+      if (lifted) _note(`${ICON.loved}<span>${_liftedText(lifted)} for <b>${esc(c.title)}</b></span>`);
+      return;
+    }
+    _deck.chained = true;
+    if (!_deckDone()) _layout();
+    _note(`${ICON.loved}<span>${added.length} more like <b>${esc(c.title)}</b> coming up${lifted ? ` · ${_liftedText(lifted)}` : ''}</span>`);
+    _say(`${added.length} more titles like ${c.title} added next.${lifted ? ` ${_liftedText(lifted)}.` : ''}`);
   } catch (e) {
     console.debug('[swipe] chain failed', e);
+    if (lifted) _note(`${ICON.loved}<span>${_liftedText(lifted)} for <b>${esc(c.title)}</b></span>`);
   }
 }
 
@@ -544,6 +635,11 @@ export async function swipeUndo() {
     _closeExact();
     if (i >= 0) {
       const h = _history.splice(i, 1)[0];
+      _deck.n = Math.max(0, _deck.n - 1);
+      if (h.kind === 'loved') _deck.loved = _deck.loved.filter(t => t !== h.card.title);
+      if (h.wantOk) _deck.wantOk = Math.max(0, _deck.wantOk - 1);
+      _deck.lifted = Math.max(0, _deck.lifted - (r.unlifted || 0));   // its lift went back too
+      _renderProgress();
       _queue = _queue.filter(q => q.doc_id !== h.card.doc_id);
       _queue.unshift(h.card);
       _layout(REACT[h.kind]?.dir ?? null);

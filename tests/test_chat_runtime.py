@@ -536,8 +536,10 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
                 yield chunk
 
     async def handler(request):
-        events.append(("request", str(request.url),
-                       json.loads(request.content).get("options", {}).get("num_ctx")))
+        sent = json.loads(request.content)
+        events.append(("request", str(request.url), sent.get("options", {}).get("num_ctx")))
+        events.append(("system", next((m.get("content") for m in sent.get("messages") or []
+                                       if m.get("role") == "system"), "")))
         if fail_first is not None and sum(1 for e in events if e[0] == "request") == 1:
             fail_first(request)
         # Ollama sends its headers with the first token: a load or a long
@@ -579,13 +581,13 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
     for obj, name, value in patches:
         setattr(obj, name, value)
 
-    async def start(text="hi", admin=False):
+    async def start(text="hi", admin=False, ctx=None):
         from src.schemas.chat import ChatMessage
         rl.CHAT_IN_FLIGHT.leave(_UID)
         rl.CHAT_IN_FLIGHT.enter_or_409(_UID)
         user = types.SimpleNamespace(id=_UID, is_admin=admin)
         return await chat._send_message_guarded(
-            ChatMessage(message=text), user, rl, "general")
+            ChatMessage(message=text, discuss_context=ctx), user, rl, "general")
 
     def rows():
         s = Session()
@@ -654,6 +656,71 @@ def test_an_ollama_error_is_shown_but_never_persisted():
         _, frames = _frames(rig, admin=True)
         assert "Ollama not reachable" in _tokens(frames)
         assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
+
+
+def test_tonight_candidates_ride_only_the_evening_question_the_ui_starts():
+    # UX audit 2026-11-08, C2, and the owner's measurement on real data: the
+    # candidates help the open "what tonight?", but with the bare list a
+    # targeted ask ("a film like X", "ein Film wie Y") answered with the same
+    # stored pick every time. So only a turn the UI starts as the evening
+    # question (discuss_context kind "tonight": the chips, the Tonight card)
+    # carries them; a typed message does not, and no filter reads its text.
+    import src.services.tonight as tonight
+    from src.routers.chat import _thread_id_for
+    from src.schemas.chat import DiscussContext
+    real = tonight.tonight_block
+    tonight.tonight_block = lambda uid, domain=None, now=None: "[TONIGHT CANDIDATES] TONIGHT-X"
+    sent = {}
+    try:
+        for name, text, ctx in (("typed", "what should I watch tonight?", None),
+                                ("targeted", "a film like The Lantern Room", None),
+                                ("evening", "What should I watch tonight?", DiscussContext(kind="tonight")),
+                                ("deletion", "and this one?", DiscussContext(kind="deletion_proposal",
+                                                                             proposal_id=999_999))):
+            with _stream_rig(_OK) as rig:
+                asyncio.run(_drain(rig.start(text, ctx=ctx)))
+                sent[name] = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
+    finally:
+        tonight.tonight_block = real
+    assert sent["evening"] and "TONIGHT-X" in sent["evening"][0], "the evening question carries the candidates"
+    for name in ("typed", "targeted", "deletion"):
+        assert sent[name] and "TONIGHT-X" not in sent[name][0], f"a {name} turn does not"
+    assert _thread_id_for(DiscussContext(kind="tonight")) == "general", "it is free chat: the general thread"
+    assert sent["evening"][0].replace("[TONIGHT CANDIDATES] TONIGHT-X", "") == \
+        sent["typed"][0], "otherwise the same prompt as free chat: no discussion block, no banner context"
+
+
+def test_a_reply_ends_with_actions_for_its_library_titles():
+    # UX audit 2026-11-08, C4: a reply's bold library titles get a row of
+    # one-tap actions - a frame after the reply's last token, before done.
+    import src.services.server_links as sl
+    import src.services.title_actions as ta
+    real = (ta.for_reply, sl.attach_links)
+    ta.for_reply = lambda uid, reply, index: [{"title": "Hello", "category": "movie", "key": "4711",
+                                              "protected": False}]
+
+    async def links(items, key_field="key"):
+        for it in items:
+            it["link"] = "https://app.plex.tv/x"
+    sl.attach_links = links
+    try:
+        with _stream_rig(_OK) as rig:
+            frames = asyncio.run(_drain(rig.start("what should I watch?")))
+        ta.for_reply = lambda uid, reply, index: []
+        with _stream_rig(_OK) as rig:
+            plain = asyncio.run(_drain(rig.start("hi")))
+    finally:
+        ta.for_reply, sl.attach_links = real
+    rows = [json.loads(f[6:]) for f in frames if f.startswith("data: ") and '"titles"' in f]
+    assert rows == [{"titles": [{"title": "Hello", "category": "movie", "protected": False,
+                                 "link": "https://app.plex.tv/x"}]}], rows
+    assert frames.index(next(f for f in frames if '"titles"' in f)) < frames.index('data: {"done": true}\n\n')
+    assert not any('"titles"' in f for f in plain), "no library titles, no frame"
+
+
+async def _drain(start):
+    resp = await start
+    return [f async for f in resp.body_iterator]
 
 
 def test_a_failed_write_warns_and_still_finishes_the_turn():

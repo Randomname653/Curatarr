@@ -85,7 +85,8 @@ export function _recCard(rec, key) {
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span class="badge muted badge-sm">${esc(g)}</span>`).join('');
   const isLib = ['library', 'because', 'rediscover'].includes(rec.lane);
-  const laneBadge = `<span class="badge muted badge-sm" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`;
+  const laneBadge = `<span class="badge muted badge-sm" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`
+    + (rec.lifted_by ? `<span class="badge amber badge-sm" title="${escAttr(`Moved up because you loved ${rec.lifted_by}`)}">moved up</span>` : '');
   return `
   <div class="card mb-12">
     <div class="poster-card">
@@ -94,6 +95,8 @@ export function _recCard(rec, key) {
         <div class="panel-item-head">
           <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null && rec.lane !== 'rediscover' ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}${why.btn}</div>
           <div class="panel-actions">
+            ${isLib && rec.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(rec.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
+            ${isLib && rec.category !== 'music' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('titleWatchlist', rec.title, rec.category, EL)}>+ Watchlist</button>` : ''}
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
               ? `<button type="button" class="btn btn-primary btn-sm" ${act('onAddRecToArr', EL)} data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`

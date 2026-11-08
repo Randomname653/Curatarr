@@ -34,6 +34,15 @@ with conn.get_db_session() as db:
     db.add(member)
     db.commit()
     UID = member.id
+    from src.database.models import WatchHistoryEntry
+    # The plays the follow-up messages ask about: a card is only offered
+    # for a title a verdict can land on.
+    db.add(WatchHistoryEntry(user_id=UID, plex_user_id="lr-1", plex_item_id="p1", title="The Lantern Room",
+                             media_type="movie", completed=True, viewed_at=datetime.utcnow()))
+    db.add(WatchHistoryEntry(user_id=UID, plex_user_id="lr-1", plex_item_id="p2", title="Episode 1",
+                             series_title="Starfall Archive", media_type="anime", completed=True,
+                             viewed_at=datetime.utcnow()))
+    db.commit()
 
 # ── the recommendations tile never generates ────────────────────────────────
 
@@ -86,41 +95,62 @@ check("the bell's message carries its label", unread["message"]["label"] == "Com
 
 # ── the follow-up card ──────────────────────────────────────────────────────
 
+import json  # noqa: E402
+
+from src.services import post_watch  # noqa: E402
+
+
+def rec(title, category="movie"):
+    return json.dumps({"type": "recommendation_followup", "title": title, "category": category})
+
+
+def night(parts, titles, subject=None, subject_type=None):
+    td = {"type": "last_night", "parts": parts, "titles": titles}
+    if subject:
+        td.update(subject=subject, subject_type=subject_type)
+    return json.dumps(td)
+
+
 check("no follow-up message: no card", pm.followup_card(UID) is None)
 with conn.get_db_session() as db:
     db.add_all([
         ProactiveMessage(user_id=UID, trigger_type="last_night", message="Old morning line.",
+                         trigger_data=night(1, 1, "Gull Point", "movie"),
                          read=False, created_at=now - timedelta(days=1, hours=2),
                          expires_at=now - timedelta(hours=20)),                     # expired
         ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
                          message="You tried The Lantern Room. How did it land?",
+                         trigger_data=rec("The Lantern Room"),
                          read=False, created_at=now - timedelta(hours=2),
                          expires_at=now + timedelta(days=7)),
         ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
-                         message="Already answered.", read=True,
+                         message="Already answered.", trigger_data=rec("Gull Point"), read=True,
                          created_at=now - timedelta(hours=1), expires_at=now + timedelta(days=7)),
+        ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
+                         message="An album you tried.", trigger_data=rec("The Hollow Pines", "music"),
+                         read=False, created_at=now - timedelta(minutes=50),
+                         expires_at=now + timedelta(days=7)),                       # music: bell only
     ])
     db.commit()
 card = pm.followup_card(UID)
-check("the card is the newest unread, unexpired follow-up - not the expired morning line, "
-      "not the read one, not another trigger",
+check("the card is the newest unread, unexpired follow-up about one film or series - not the "
+      "expired morning line, not the read one, not the music one",
       card and card["message"] == "You tried The Lantern Room. How did it land?"
-      and card["label"] == "Recommendation follow-up", card)
-check("an English writer gets English answers", card["replies"] == list(pm.FOLLOWUP_REPLIES["en"]))
+      and card["title"] == "The Lantern Room" and card["label"] == "Recommendation follow-up", card)
+check("an English writer gets the four verdicts with English labels",
+      [a["verdict"] for a in card["answers"]] == list(post_watch.VERDICTS)
+      and card["answers"][0]["label"] == "Loved it", card["answers"])
 
 # A morning line gets the card only when it is about exactly one title:
 # "Loved it" on two series and an hour of music answers nothing.
-import json  # noqa: E402
-
 with conn.get_db_session() as db:
     db.query(ProactiveMessage).filter(ProactiveMessage.user_id == UID,
                                       ProactiveMessage.trigger_type == "recommendation_followup"
                                       ).update({"read": True})
     db.add_all([
         ProactiveMessage(user_id=UID, trigger_type="last_night", message="Two series and music.",
-                         trigger_data=json.dumps({"type": "last_night", "parts": 3, "titles": 2}),
-                         read=False, created_at=now - timedelta(minutes=30),
-                         expires_at=now + timedelta(hours=3)),
+                         trigger_data=night(3, 2), read=False,
+                         created_at=now - timedelta(minutes=30), expires_at=now + timedelta(hours=3)),
         ProactiveMessage(user_id=UID, trigger_type="last_night", message="Stored before the count.",
                          trigger_data=json.dumps({"type": "last_night", "summary": "x"}),
                          read=False, created_at=now - timedelta(minutes=20),
@@ -132,18 +162,27 @@ check("a morning line about several things, or stored before the count, gets no 
 with conn.get_db_session() as db:
     db.add(ProactiveMessage(user_id=UID, trigger_type="last_night",
                             message="Three episodes of Starfall Archive last night.",
-                            trigger_data=json.dumps({"type": "last_night", "parts": 1, "titles": 1}),
+                            trigger_data=night(1, 1, "Starfall Archive", "anime"),
                             read=False, created_at=now - timedelta(minutes=40),
                             expires_at=now + timedelta(hours=3)))
     db.commit()
 one = pm.followup_card(UID)
 check("a morning line about exactly one title gets the card, even under newer ones that do not",
-      one and one["message"] == "Three episodes of Starfall Archive last night.", one)
+      one and one["title"] == "Starfall Archive", one)
 with conn.get_db_session() as db:
-    db.query(ProactiveMessage).filter(ProactiveMessage.user_id == UID,
-                                      ProactiveMessage.message == "You tried The Lantern Room. How did it land?"
-                                      ).update({"read": False})
+    db.add(ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
+                            message="A film never played here.", trigger_data=rec("Gull Point"),
+                            read=False, created_at=now - timedelta(minutes=5),
+                            expires_at=now + timedelta(days=7)))
+    db.add(ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
+                            message="The series, filed as a show.",
+                            trigger_data=rec("Starfall Archive", "show"), read=False,
+                            created_at=now - timedelta(minutes=4), expires_at=now + timedelta(days=7)))
     db.commit()
+newest = pm.followup_card(UID)
+check("a title with no play to weigh gets no card (it would come back on every load); a series "
+      "filed as show while its plays are anime still does",
+      newest and newest["message"] == "The series, filed as a show.", newest)
 
 with conn.get_db_session() as db:
     for text in ("Was soll ich heute Abend schauen? Gern etwas Ruhiges.",
@@ -152,12 +191,12 @@ with conn.get_db_session() as db:
         db.add(ConversationMessage(user_id=UID, role="user", content=text))
     db.commit()
 ul._cache.clear()
-check("a German writer gets the answers in German (they are sent as the member's own words)",
-      pm.followup_card(UID)["replies"] == list(pm.FOLLOWUP_REPLIES["de"]))
-check("every language has four answers", all(len(r) == 4 for r in pm.FOLLOWUP_REPLIES.values()))
+check("a German writer gets the labels in German, the verdicts unchanged",
+      [a["label"] for a in pm.followup_card(UID)["answers"]][0] == "Hat mir sehr gefallen"
+      and set(post_watch.LABELS["de"]) == set(post_watch.VERDICTS))
 got = asyncio.run(messages_router.get_followup(user=SimpleNamespace(id=UID)))
 check("GET /api/messages/followup answers the card", got["card"] is not None
-      and got["card"]["trigger_type"] in pm.FOLLOWUP_TYPES, got)
+      and got["card"]["title"] == "Starfall Archive", got)
 
 # ── the Wrap-Up playlist names the server that answered ─────────────────────
 

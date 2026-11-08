@@ -2979,6 +2979,16 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                                 _rl, thread_id: str) -> StreamingResponse:
     """send_message body, run while CHAT_IN_FLIGHT is held for the user.
     Returns a response whose generator releases the guard when it ends."""
+    # The evening question the UI starts - the "tonight" chips, the Tonight
+    # card's "Ask the curator" - sends discuss_context kind "tonight". It is
+    # free chat in every way (the general thread, no banner, no discuss
+    # block), but its turn carries [TONIGHT CANDIDATES]. A typed message
+    # does not: measured on the owner's data, the bare list made a targeted
+    # ask ("a film like X") answer with the same stored pick every time.
+    _ctx = message.discuss_context
+    tonight_ask = bool(_ctx and (_ctx.kind or _ctx.type) == "tonight")
+    if tonight_ask:
+        message = message.model_copy(update={"discuss_context": None})
     # One host for the whole turn: its window budgets the history and the
     # answer, its url takes the request.
     chat_host = host_for("chat")
@@ -3395,6 +3405,20 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             # The discussion then argues without the rules its verdict rests on.
             logger.warning("[chat] learned-principles injection failed: %s", _pe)
 
+    # What the member could start tonight (services/tonight): their series in
+    # progress, stored recommendations and Swipe wants - so "what should I
+    # watch tonight?" is answered from them, not from the vector neighbours
+    # of that sentence (UX audit 2026-11-08, C2). Only for the turn the UI
+    # started as that question (``tonight_ask`` above); no filter reads the
+    # message text.
+    tonight_context = ""
+    if tonight_ask:
+        try:
+            from src.services.tonight import tonight_block
+            tonight_context = await run_read(tonight_block, user.id, domain)
+        except Exception as _te:  # noqa: BLE001 - the chat answers without it, as before
+            logger.warning("[chat] tonight candidates unreadable: %s", _te)
+
     # The user's voice (Settings > Account): identity and tone; the
     # guardrails come with every voice (services/curator_voice). The app
     # map, the rules and the layout are in services/chat_prompt.
@@ -3406,7 +3430,8 @@ async def _send_message_guarded(message: ChatMessage, user: User,
         memory_context=memory_context, rag_context=rag_context,
         discuss_block=discuss_block, active_title=active_title,
         pillar_framework=pillar_framework,
-        hidden_metadata_context=hidden_metadata_context)
+        hidden_metadata_context=hidden_metadata_context,
+        tonight_context=tonight_context)
 
     # 3. Build message list with history
     messages = [{"role": "system", "content": system_prompt}]
@@ -3735,6 +3760,21 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                     yield f"data: {json.dumps({'warning': 'This reply could not be saved to the conversation history.', 'severity': 'moderate'})}\n\n"
                 else:
                     _schedule_post_turn(_uid, thread_id, message.message, reply, domain)
+                # One-tap actions for the reply's bold library titles: open
+                # on the server, watchlist, keep (services/title_actions).
+                # After the reply, so nothing delays a word of it; a failure
+                # costs the row, never the turn.
+                try:
+                    from src.services.server_links import attach_links
+                    from src.services.title_actions import for_reply
+                    _acts = await run_read(for_reply, _uid, reply, _library_title_index)
+                    if _acts:
+                        await attach_links(_acts)
+                        for _a in _acts:
+                            _a.pop("key", None)
+                        yield f"data: {json.dumps({'titles': _acts})}\n\n"
+                except Exception as _ae:  # noqa: BLE001 - the action row is a convenience
+                    logger.warning("[chat] title actions unavailable: %s", _ae)
             yield f"data: {json.dumps({'done': True})}\n\n"
         finally:
             _rl.CHAT_IN_FLIGHT.leave(_uid)

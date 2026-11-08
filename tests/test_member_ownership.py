@@ -75,6 +75,17 @@ def seed_message(owner):
     return _add(ProactiveMessage(user_id=owner, trigger_type="test", message="hi"))
 
 
+def seed_followup(owner):
+    """A watched-recommendation follow-up and the play it asks about."""
+    import json
+    from datetime import datetime
+    from src.database.models import WatchHistoryEntry
+    _add(WatchHistoryEntry(user_id=owner, plex_user_id=str(owner), plex_item_id=f"f{owner}",
+                           title="Some Film", media_type="movie", viewed_at=datetime(2026, 11, 1)))
+    return _add(ProactiveMessage(user_id=owner, trigger_type="recommendation_followup", message="hi",
+                                 trigger_data=json.dumps({"title": "Some Film", "category": "movie"})))
+
+
 def seed_starter(owner):
     return _add(ChatStarter(user_id=owner, text="Ask me about Heat"))
 
@@ -93,6 +104,11 @@ def read(uid, mid):
     return lambda: asyncio.run(messages.read_message(mid, who(uid)))
 
 
+def verdict(uid, mid):
+    return lambda: asyncio.run(messages.post_verdict(mid, messages.VerdictBody(verdict="liked"),
+                                                     who(uid)))
+
+
 def starter(uid, sid):
     return lambda: chat.starter_used(sid, who(uid))
 
@@ -108,6 +124,7 @@ def wstatus(uid, tid):
 # (label, seed, act, an id that does not exist, the household owner may act too)
 OWNED = [
     ("proactive message read", seed_message, read, 999_999, False),
+    ("follow-up verdict", seed_followup, verdict, 999_999, False),
     ("chat starter used", seed_starter, starter, 999_999, False),
     ("music wish removal", seed_wish, wish, 999_999, True),       # owner decision 2026-10-20
     ("wrap-up generation status", seed_wrapup_task, wstatus, "wrapup-3-all-30d", False),
@@ -142,6 +159,7 @@ OWNED_ROUTES = {
     "chat POST /starters/{starter_id}/used",
     "library DELETE /wish/{wish_id}",
     "messages POST /{message_id}/read",
+    "messages POST /{message_id}/verdict",
     "wrapup GET /status/{task_id}",
 }
 

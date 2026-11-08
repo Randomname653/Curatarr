@@ -35,8 +35,17 @@ SWIPE_CATEGORIES = ("movie", "show", "anime")
 SWIPE_MAX_WEIGHT = 1.5
 SWIPE_SEEN_UNRATED_WEIGHT = 0.5
 REBUILD_EVERY = 10
+# Seen answers that build a FIRST profile from a calibration deck (a member
+# with no taste vector in the category yet): a member's first ten minutes
+# should end with a profile, not with "come back later".
+CALIBRATION_FIRST_BUILD = 5
 # How many neighbours of the taste vector to look through for one stack.
 _POOL = 200
+# A card's "Because you loved X": the anchor nearest the card, by centred
+# cosine (because_recs), named only from this close.
+HOOK_MIN = 0.15
+_MEAN_TTL_S = 6 * 3600
+_mean_cache: dict = {}       # category -> (monotonic time, corpus mean or None)
 
 
 def star_weight(seen: bool, stars: Optional[int]) -> float:
@@ -193,6 +202,50 @@ async def _attach_bits(category: str, cards: list) -> None:
         c["details"] = {k: v for k, v in b.items() if k not in ("synopsis", "tmdb_id") and v}
 
 
+def _first_genre(hit) -> str:
+    g = ((hit[2] or {}).get("genres") or "").split(",")[0].strip().lower()
+    return g
+
+
+def diverse(walked: list, n: int, window: int = 12) -> list:
+    """``_walk`` hits re-ranked so a stack does not run in a rut: no three in
+    a row share their first genre, and after four in a row from one taste
+    cluster the next comes from another when one is within ``window``. The
+    nearest hit is taken whenever no rule speaks against it. Pure."""
+    pool, out = list(walked), []
+    while pool and len(out) < n:
+        last2 = [_first_genre(x) for x in out[-2:]]
+        last4 = [x[3] for x in out[-4:]]
+        stuck = len(last4) == 4 and len(set(last4)) == 1
+        other = stuck and any(c[3] != last4[0] for c in pool[:window])
+        take = 0
+        for i, cand in enumerate(pool[:window]):
+            g = _first_genre(cand)
+            if len(last2) == 2 and g and last2[0] == last2[1] == g:
+                continue
+            if other and cand[3] == last4[0]:
+                continue
+            take = i
+            break
+        out.append(pool.pop(take))
+    return out
+
+
+def pitch(synopsis: Optional[str], limit: int = 140) -> str:
+    """The card's one line: the synopsis' first sentence when it fits in
+    ``limit`` characters, else its first ``limit`` cut at a word. Pure."""
+    t = " ".join((synopsis or "").split())
+    if not t:
+        return ""
+    for end in (". ", "! ", "? "):
+        i = t.find(end)
+        if 0 < i < limit:
+            return t[:i + 1]
+    if len(t) <= limit:
+        return t
+    return t[:limit - 1].rsplit(" ", 1)[0].rstrip(",;:-") + "…"
+
+
 def _walk(res: dict, ex_ids: set, ex_titles: set) -> list:
     """Vector-store hits → [(dist, doc_id, meta, query index)], nearest
     first, one per title, excluded ids / titles left out."""
@@ -236,14 +289,155 @@ async def next_cards(user_id: int, category: str, n: int = 8,
     res = await run_chroma(get_chroma_db().query, query_embeddings=taste["queries"],
                            n_results=_POOL, where=domain_where(category))
     cards = []
-    for dist, doc_id, meta, qi in _walk(res, ex_ids, ex_titles)[:n]:
+    for dist, doc_id, meta, qi in diverse(_walk(res, ex_ids, ex_titles), n):
         c = _card(doc_id, meta, taste)
         c["fit"] = round(max(0.0, 1.0 - float(dist)), 3)
         # the cluster this card sits nearest; one average has nothing to name
         c["because"] = taste["because"][qi] if qi < len(taste["because"]) else []
         cards.append(c)
     await _attach_bits(category, cards)
+    await attach_anchors(user_id, category, cards)
     return cards
+
+
+# ── "Because you loved X": one anchor per card ─────────────────────────────
+
+async def corpus_mean(category: str):
+    """The category's corpus mean (taste_engine._domain_corpus_mean), kept
+    six hours: it reads up to 30k vectors, and a stack asks every 8 cards."""
+    import time
+    from src.services.taste_engine import _domain_corpus_mean
+    from src.vector_store.chromadb_wrapper import run_chroma
+    hit = _mean_cache.get(category)
+    if hit and time.monotonic() - hit[0] < _MEAN_TTL_S:
+        return hit[1]
+    mean = await run_chroma(_domain_corpus_mean, category)
+    _mean_cache[category] = (time.monotonic(), mean)
+    return mean
+
+
+def anchor_titles(user_id: int, category: str) -> list[tuple]:
+    """[(title, kind)] a card may be hung on: what the member loved - a
+    "Loved it" verdict (post_watch_verdicts), a Rediscover title they
+    finished long ago (rediscover_recs.loved_long_ago) - and what they
+    watched recently (because_recs.recent_titles, the lane's anchors).
+    A title in both reads as loved. Blocking."""
+    from src.database.connection import get_db_session
+    from src.database.models import PostWatchVerdict
+    from src.services.because_recs import recent_titles
+    from src.services.rediscover_recs import loved_long_ago
+    out: dict = {}
+    with get_db_session() as db:
+        for (t,) in (db.query(PostWatchVerdict.title)
+                     .filter(PostWatchVerdict.user_id == user_id,
+                             PostWatchVerdict.category == category,
+                             PostWatchVerdict.verdict == "loved")):
+            out.setdefault(t.lower(), (t, "loved"))
+    long_ago = sorted(loved_long_ago(user_id, category).values(), key=lambda d: -d["times"])
+    for d in long_ago[:10]:
+        out.setdefault(d["title"].lower(), (d["title"], "loved"))
+    for t in recent_titles(user_id, category)[:6]:
+        out.setdefault(t.lower(), (t, "watched"))
+    return list(out.values())
+
+
+def _anchor_keys(category: str, titles: list) -> dict:
+    """{lower-case title: its enrichment key} - the doc id its vector is
+    stored under (a series' own key, not an episode's). Blocking."""
+    from sqlalchemy import func
+    from src.database.connection import get_db_session
+    from src.database.models import EnrichmentStatus as E
+    if not titles:
+        return {}
+    low = [t.lower() for t in titles]
+    with get_db_session() as db:
+        rows = (db.query(func.lower(E.title), E.plex_rating_key)
+                .filter(E.media_category == category, E.enriched == True,  # noqa: E712
+                        func.lower(E.title).in_(low), E.plex_rating_key.isnot(None)).all())
+    return {t: k for t, k in rows}
+
+
+def nearest_anchor(card_vec, anchors: list, mean, min_fit: float = HOOK_MIN):
+    """(title, kind, fit) of the anchor nearest ``card_vec`` by centred
+    cosine, or None below ``min_fit``. ``anchors``: [(title, kind, vec)]. Pure."""
+    from src.services.because_recs import _centred, _unit
+    c = _centred(_unit(card_vec), mean)
+    if c is None:
+        return None
+    best = None
+    for title, kind, vec in anchors:
+        a = _centred(_unit(vec), mean)
+        if a is None or a.shape != c.shape:
+            continue
+        fit = float(a @ c)
+        if fit >= min_fit and (best is None or fit > best[2]):
+            best = (title, kind, fit)
+    return best
+
+
+async def attach_anchors(user_id: int, category: str, cards: list) -> None:
+    """Set ``card["anchor"] = {"title", "kind", "fit"}`` on the cards that sit
+    close to something the member loved or watched recently. Without a
+    corpus mean, or no anchor that close, the card keeps its cluster line."""
+    from src.database.runner import run_read
+    from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
+    todo = [c for c in cards if not c.get("chain_from")]
+    if not todo:
+        return
+    anchors = await run_read(anchor_titles, user_id, category)
+    keys = await run_read(_anchor_keys, category, [t for t, _ in anchors])
+    if not keys:
+        return
+    mean = await corpus_mean(category)
+    if mean is None:
+        return
+    embs = await run_chroma(get_chroma_db().get_by_ids,
+                            list(keys.values()) + [c["doc_id"] for c in todo])
+    vecs = [(t, kind, (embs.get(keys[t.lower()]) or {}).get("embedding"))
+            for t, kind in anchors if t.lower() in keys]
+    vecs = [v for v in vecs if v[2] is not None]
+    for c in todo:
+        e = (embs.get(c["doc_id"]) or {}).get("embedding")
+        if e is None:
+            continue
+        mine = [v for v in vecs if v[0].lower() != c["title"].lower()]
+        hit = nearest_anchor(e, mine, mean)
+        if hit:
+            c["anchor"] = {"title": hit[0], "kind": hit[1], "fit": round(hit[2], 3)}
+
+
+# ── calibration: a first deck for a member with no profile yet ─────────────
+
+async def calibration_cards(user_id: int, category: str, n: int = 8,
+                            skip: Optional[set] = None) -> list[dict]:
+    """For a member with no taste vector in the category: library titles
+    most central to the category (nearest its corpus mean, so the familiar
+    kind rather than the odd one out), the best-rated of them first, genres
+    mixed. "Seen it?" answers build the first profile. Uses no other
+    member's history. [] without a corpus. ``skip``: doc ids in the stack."""
+    from src.database.runner import run_read
+    from src.vector_store.chromadb_wrapper import domain_where, get_chroma_db, run_chroma
+    mean = await corpus_mean(category)
+    if mean is None:
+        return []
+    ex_ids, ex_titles = await run_read(_exclusions, user_id, category)
+    ex_ids |= set(skip or ())
+    res = await run_chroma(get_chroma_db().query, query_embeddings=[[float(x) for x in mean]],
+                           n_results=_POOL, where=domain_where(category))
+    hits = _walk(res, ex_ids, ex_titles)[:40]
+    if not hits:
+        return []
+    taste = {"genres": {}, "themes": {}}
+    cards = [_card(doc_id, meta, taste) for _, doc_id, meta, _ in hits]
+    await _attach_bits(category, cards)
+    by_id = {c["doc_id"]: c for c in cards}
+    ranked = sorted(hits, key=lambda h: -((by_id[h[1]].get("details") or {}).get("score") or 0))
+    out = []
+    for _, doc_id, _, _ in diverse(ranked, n):
+        c = by_id[doc_id]
+        c["fit"], c["because"], c["calibration"] = None, [], True
+        out.append(c)
+    return out
 
 
 async def chain_cards(user_id: int, category: str, seed_doc_id: str, n: int = 3,

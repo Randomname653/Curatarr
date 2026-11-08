@@ -1,7 +1,7 @@
 // ── CHAT ──────────────────────────────────────────────────────────────────────
-import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, haptic, proxyImg, renderMarkdown, toast } from './ui.js';
+import { EL, EVENT, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, esc, escAttr, haptic, proxyImg, renderMarkdown, toast } from './ui.js';
 import { api } from './api.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { _updateKbBadge } from './kb.js';
 import { showView } from './nav.js';
 import { _deleteBody, deleteFateLines } from './deletions.js';
@@ -55,10 +55,12 @@ export async function newChat() {
       msgs.innerHTML = `
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
         <div id="followup-panel" aria-live="off"></div>
+        <div id="tonight-panel" aria-live="off"></div>
         <div id="glance-panel" aria-live="off"></div>
         <div id="last-played-panel" aria-live="off"></div>
         <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">${_staticChipsHtml()}</div>`;
       loadFollowupCard();
+      loadTonightCard();
       loadGlancePanel();
       loadLastPlayed();
       loadStarters();
@@ -211,7 +213,7 @@ export async function sendMessage() {
   const text = inp.value.trim(); if (!text) return;
   inp.value = ''; inp.style.height = 'auto';
   inp.disabled = btn.disabled = true;
-  ['followup-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
+  ['followup-panel', 'tonight-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
   showEarlierChat();           // a send continues the thread: its history shows above it
   haptic('medium');
   addMsg(text, 'user');
@@ -222,7 +224,8 @@ export async function sendMessage() {
   // exits the discussion, starts a new chat, or opens another one. The
   // payload gets a snapshot so clearing a one-shot flag below cannot reach
   // back into this turn.
-  const ctx = state.pendingDiscussContext;
+  const ctx = state.pendingDiscussContext || (_tonightAsk ? { kind: 'tonight' } : null);
+  _tonightAsk = false;           // one turn: the follow-up is typed free chat
   const payload = { message: text, ...(ctx && { discuss_context: { ...ctx } }) };
   const ctrl = new AbortController();
   const me = _stream = { ctrl, threadId: _threadIdForContext(ctx) };
@@ -307,6 +310,7 @@ export async function sendMessage() {
           full += data.token;
           if (!rafId) rafId = requestAnimationFrame(paint);
         }
+        if (data.titles) _titleRow(bubble, data.titles);
         if (data.done) { gotDone = true; break; }
       }
     }
@@ -467,19 +471,27 @@ export async function loadLastPlayed() {
 // Unlike discussLastPlayed()/discussInChat(), this only fills + focuses --
 // no auto-send -- since a suggested prompt is a starting point the user is
 // expected to tweak, not a specific-title primer that's already complete.
-export function fillPrompt(text) {
+// A chip that asks what to put on (kind 'tonight') starts its turn as the
+// evening question: the next send carries discuss_context {kind: 'tonight'},
+// the one turn that gets [TONIGHT CANDIDATES] (routers/chat). Free chat in
+// every other way - the general thread, no banner - so a follow-up stays in
+// the same history. A typed message carries nothing. No filter reads the text.
+let _tonightAsk = false;
+export function fillPrompt(text, kind) {
   const inp = document.getElementById('chat-input');
   inp.value = text;
+  _tonightAsk = kind === 'tonight';
   inp.focus();
 }
 // ── CHAT LANDING "HOW DID IT LAND?" CARD ────────────────────────────────────
-// The newest unread follow-up (a watched recommendation, or a morning line
-// about exactly one title) as a card above the landing panels, with one-tap answers in the member's
-// language (services/proactive_messages.followup_card). Before 2026-11-08 it
-// waited behind the bell and answering meant typing. An answer is the same
-// as Respond + typing it: the message's own thread, the curator's line as the
-// opener, the answer sent as the member's message. Same lifecycle as the
-// other landing panels: gone on the first send.
+// The newest unread follow-up about one film or series (a watched
+// recommendation, or a morning line about exactly one title) as a card above
+// the landing panels (services/proactive_messages.followup_card). One tap is
+// a verdict on that play (POST /api/messages/{id}/verdict,
+// services/post_watch): the taste rebuild weighs the play by it, and the
+// message retires. "Tell the curator why" opens the message's own thread for
+// the words a tap cannot carry. Same lifecycle as the other landing panels:
+// gone on the first send.
 export async function loadFollowupCard() {
   const el = document.getElementById('followup-panel');
   if (!el) return;
@@ -489,22 +501,110 @@ export async function loadFollowupCard() {
     el.innerHTML = `<div class="card mt-14">
       <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(card.label)}</span></div>
       <p>${esc(card.message)}</p>
-      <div class="flex gap-8 flex-wrap mt-10">${card.replies.map(r =>
-        `<button type="button" class="sp-chip" ${act('answerFollowup', card.id, card.message, r)}>${esc(r)}</button>`).join('')}
+      <div class="flex gap-8 flex-wrap mt-10">${card.answers.map(a =>
+        `<button type="button" class="sp-chip" ${act('answerFollowup', card.id, a.verdict, card.message, EL)}>${esc(a.label)}</button>`).join('')}
         <button type="button" class="btn btn-ghost btn-sm" title="Hide it here - it stays in the notifications" ${act('hideFollowup')}>Not now</button>
       </div></div>`;
   } catch { el.innerHTML = ''; } // best-effort nicety: the bell still has the message
 }
-export async function answerFollowup(id, msgText, reply) {
+export async function answerFollowup(id, verdict, msgText, btn) {
+  const el = document.getElementById('followup-panel');
+  if (!el) return;
+  el.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  try {
+    const r = await api(`/api/messages/${encodeURIComponent(id)}/verdict`, 'POST', { verdict });
+    haptic('light');
+    el.innerHTML = `<div class="card mt-14" role="status">
+      <p>${(r.lifted || []).length
+        ? `Got it - ${r.lifted.length} of your recommendations near <b>${esc(r.title)}</b> moved up.`
+        : `Got it - your taste profile now weighs <b>${esc(r.title)}</b> by that.`}</p>
+      <div class="flex gap-8 flex-wrap mt-10">
+        <button type="button" class="btn btn-secondary btn-sm" ${act('explainFollowup', id, msgText)}>Tell the curator why</button>
+        <button type="button" class="btn btn-ghost btn-sm" ${act('hideFollowup')}>Done</button>
+      </div></div>`;
+    loadUnreadMessages();
+  } catch (e) {
+    el.querySelectorAll('button').forEach(b => { b.disabled = false; });
+    toast(`Not saved: ${_errMsg(e)}`, 'danger');
+    btn?.focus();
+  }
+}
+// After a verdict: the message's own thread, the curator's line as the opener,
+// the input left to the member's words.
+export async function explainFollowup(id, msgText) {
   if (_busyStreaming()) return;
-  await api(`/api/messages/${encodeURIComponent(id)}/read`, 'POST')
-    .catch(e => console.warn('[chat] follow-up mark-read failed', id, e));
   if (!await enterThread({ kind: 'proactive_message', message_id: id },
                          'Discussing a proactive message', msgText)) return;
   const inp = document.getElementById('chat-input');
-  inp.value = reply;
-  loadUnreadMessages();
+  if (inp) { inp.value = ''; inp.focus(); }
+}
+// ── CHAT LANDING "TONIGHT" CARD ─────────────────────────────────────────────
+// One pick for this moment of the member's week (GET /api/home/tonight,
+// services/tonight.tonight_card): their series in progress on a weeknight, a
+// film on Friday and Saturday, a rewatch on Sunday, a "for later" from their
+// Swipe wants in the day. No model: the line is a template of facts. "Something
+// else" steps through the other candidates; a stored pick goes onto the
+// watchlist in one tap; the link opens it on their own server.
+const _TONIGHT_LABEL = {weeknight: 'Tonight', film_night: 'Film night', sunday: 'Sunday', late: 'Late', later: 'For later'};
+let _tonight = null;
+export async function loadTonightCard() {
+  const el = document.getElementById('tonight-panel');
+  if (!el) return;
+  try {
+    const { card } = await api('/api/home/tonight');
+    _tonight = card && card.items?.length ? { ...card, at: 0 } : null;
+    _paintTonight();
+  } catch { el.innerHTML = ''; } // best-effort nicety: the chat works without it
+}
+function _bold(text) {
+  return esc(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+function _paintTonight() {
+  const el = document.getElementById('tonight-panel');
+  if (!el) return;
+  const it = _tonight?.items[_tonight.at];
+  if (!it) { el.innerHTML = ''; return; }
+  const canList = ['because', 'library', 'rediscover'].includes(it.kind);
+  el.innerHTML = `<div class="card mt-14">
+    <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(_tonight.label || _TONIGHT_LABEL[_tonight.moment] || 'Tonight')}</span></div>
+    <p>${_bold(it.headline)}</p>
+    <p class="fs-12 t3 mt-4">${esc(it.why)}</p>
+    <div class="flex gap-8 flex-wrap mt-10">
+      ${it.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(it.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
+      ${canList ? `<button type="button" class="btn btn-secondary btn-sm" ${act('tonightWatchlist', EL)}>+ Watchlist</button>` : ''}
+      ${_tonight.items.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" ${act('tonightNext')}>Something else</button>` : ''}
+      ${_tonight.ask ? `<button type="button" class="btn btn-ghost btn-sm" ${act('askTonight')}>Ask the curator</button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" ${act('hideTonight')}>Not now</button>
+    </div></div>`;
+}
+// "Ask the curator": the card's own question, in the member's language, sent
+// as the evening question (kind 'tonight').
+export function askTonight() {
+  if (!_tonight?.ask || _busyStreaming()) return;
+  fillPrompt(_tonight.ask, 'tonight');
   sendMessage();
+}
+export function tonightNext() {
+  if (!_tonight) return;
+  _tonight.at = (_tonight.at + 1) % _tonight.items.length;
+  _paintTonight();
+}
+export async function tonightWatchlist(btn) {
+  const it = _tonight?.items[_tonight.at];
+  if (!it) return;
+  btnBusy(btn, 'Adding…');
+  try {
+    const r = await api('/api/home/watchlist', 'POST', { title: it.title, category: it.category, year: it.year || null });
+    if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
+    else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
+  } catch (e) {
+    btnDone(btn, '+ Watchlist');
+    toast(`Not added: ${_errMsg(e)}`, 'danger');
+  }
+}
+export function hideTonight() {
+  _tonight = null;
+  _paintTonight();
 }
 export function hideFollowup() {
   const el = document.getElementById('followup-panel');
@@ -515,7 +615,7 @@ export function hideFollowup() {
 // a member cannot open Deletions at all.
 function _staticChipsHtml() {
   const chip = t => `<button class="sp-chip" ${act('fillPrompt', t)}>${esc(t)}</button>`;
-  return chip('What should I watch tonight?')
+  return `<button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?', 'tonight')}>What should I watch tonight?</button>`
     + (state.currentUser?.is_admin ? chip('What can I clean up in my library?') : '')
     + chip('What does my watch history say about my taste?');
 }
@@ -537,7 +637,7 @@ export async function loadStarters() {
     el.innerHTML = starters.map(s =>
       `<button class="sp-chip" title="Curatarr opens the conversation" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
     ).join('') + chips.map(c =>
-      `<button class="sp-chip" ${act('fillPrompt', c.text)}>${esc(c.label || c.text)}</button>`
+      `<button class="sp-chip" ${act('fillPrompt', c.text, c.kind || '')}>${esc(c.label || c.text)}</button>`
     ).join('');
   } catch {} // best-effort nicety, keep the static fallback -- fail silent
 }
@@ -591,6 +691,66 @@ export async function discussLastPlayed(i) {
   } : null;
   if (!await enterThread(ctx, ctx ? `Discussing "${title}"` : null)) return;
   discussInChat('custom', {message: `I recently ${isMusic ? 'listened to' : 'watched'} "${title}" — what do you think about it, or what should I know?`});
+}
+
+// ── ONE-TAP ACTIONS UNDER A REPLY ───────────────────────────────────────────
+// The reply's bold library titles (services/title_actions), each with Open on
+// the server, + Watchlist and Keep - the reply stops being text only. Keep is
+// the explicit form of "never delete this": a protection written now, said
+// now, instead of a detector's guess reported later in the bell.
+// Keep, for the owner, is a protection their own rules honour; for a member it
+// is a household voice the owner's protection rules weigh - the words say so.
+function _keepTip() {
+  return state.currentUser?.is_admin
+    ? 'Never propose it for deletion'
+    : "Tell the household you want to keep it - the owner's protection rules decide";
+}
+function _titleRow(bubble, titles) {
+  if (!bubble?.isConnected || !Array.isArray(titles) || !titles.length) return;
+  const msgs = bubble.parentElement;
+  const stick = msgs ? _atBottom(msgs) : false;
+  // A film and a series of one name both get a row: say which is which.
+  const twice = new Set(titles.map(t => t.title).filter((n, i, all) => all.indexOf(n) !== i));
+  const noun = {movie: 'film', show: 'series', anime: 'anime', music: 'music'};
+  const row = document.createElement('div');
+  row.className = 'msg-actions';
+  row.setAttribute('aria-live', 'off');
+  row.innerHTML = titles.map(t => {
+    const video = ['movie', 'show', 'anime'].includes(t.category);
+    return `<div class="msg-actions-item" role="group" aria-label="${escAttr(t.title)}">
+      <span class="msg-actions-t">${esc(t.title)}${twice.has(t.title) ? ` · ${esc(noun[t.category] || t.category)}` : ''}</span>
+      ${t.link ? `<a class="btn btn-secondary btn-sm" href="${escAttr(t.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
+      ${video ? `<button type="button" class="btn btn-ghost btn-sm" ${act('titleWatchlist', t.title, t.category, EL)}>+ Watchlist</button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" title="${escAttr(_keepTip())}" ${t.protected ? 'disabled' : ''} ${act('titleKeep', t.title, t.category, EL)}>${t.protected ? 'Kept' : 'Keep'}</button>
+    </div>`;
+  }).join('');
+  bubble.after(row);
+  if (msgs) _follow(msgs, false, stick);   // the row, too, comes into view when the reply did
+}
+export async function titleWatchlist(title, category, btn) {
+  btnBusy(btn, 'Adding…');
+  try {
+    const r = await api('/api/home/watchlist', 'POST', { title, category });
+    if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
+    else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
+  } catch (e) {
+    btnDone(btn, '+ Watchlist');
+    toast(`Not added: ${_errMsg(e)}`, 'danger');
+  }
+}
+export async function titleKeep(title, category, btn) {
+  btnBusy(btn, 'Keeping…');
+  try {
+    await api('/api/home/keep', 'POST', { title, category });
+    btnDone(btn, 'Kept');
+    btn.disabled = true;
+    toast(state.currentUser?.is_admin
+      ? `Kept: ${title} will not be proposed for deletion`
+      : `Noted: you want to keep ${title} - the owner's protection rules weigh it`, 'success');
+  } catch (e) {
+    btnDone(btn, 'Keep');
+    toast(`Not kept: ${_errMsg(e)}`, 'danger');
+  }
 }
 
 export function addMsg(text,role) {
