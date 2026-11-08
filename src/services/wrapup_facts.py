@@ -63,7 +63,8 @@ _ELIGIBLE_HOURS = 3
 # 12: episodes marked as played one at a time are no viewings, a started-then-marked
 #     play counts its own minutes (plex_sync.mark_unwitnessed, schema generation 3).
 # 13: eras carry each decade's hours and leading titles ("your decades").
-FACTS_VERSION = 13
+# 14: week: and month: periods on the member's clock.
+FACTS_VERSION = 14
 
 
 @dataclass(frozen=True)
@@ -73,13 +74,19 @@ class Period:
     end: datetime
     label: str
     closed: bool            # a past calendar year: its facts never change
+    # The window before it, where a plain "same length earlier" is wrong: the
+    # month before a month (28 to 31 days), on the member's clock.
+    prev: Optional[tuple] = None
 
     @property
     def previous(self) -> Optional[tuple]:
         """The window just before this one, for "vs last time" — the same
-        calendar span a year earlier for a year, the same length otherwise."""
+        calendar span a year earlier for a year, the calendar month before a
+        month, the same length otherwise."""
         if self.key == "all":
             return None
+        if self.prev is not None:
+            return self.prev
         if self.key.startswith("year:"):
             y = self.start.year - 1
             return datetime(y, 1, 1), self.end.replace(year=y)
@@ -95,8 +102,56 @@ def season_key(at: datetime) -> str:
     return f"season:{at.year}-{name}"
 
 
-def resolve_period(key: str, now: Optional[datetime] = None) -> Period:
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December")
+
+
+def week_key(local: datetime) -> str:
+    """The ISO week a wall-clock time falls in: "week:2026-W45"."""
+    y, w, _ = local.isocalendar()
+    return f"week:{y}-W{w:02d}"
+
+
+def month_key(local: datetime) -> str:
+    return f"month:{local.year}-{local.month:02d}"
+
+
+def _local_window(start_local: datetime, end_local: datetime, zone) -> tuple:
+    """A wall-clock window of the member's -> naive UTC, each end with the
+    offset in force at it (a week across the DST change is 167 or 169 hours)."""
+    from src.services.user_time import to_utc
+    return to_utc(start_local, zone), to_utc(end_local, zone)
+
+
+def resolve_period(key: str, now: Optional[datetime] = None, zone=None) -> Period:
+    """``key`` -> its window in naive UTC. ``week:YYYY-Www`` (ISO) and
+    ``month:YYYY-MM`` run midnight to midnight on the member's clock
+    (``zone``, services/user_time; the machine's without one); the other
+    periods are as they always were."""
     now = now or datetime.utcnow()
+    wm = re.fullmatch(r"week:(\d{4})-W(\d{2})", key or "")
+    if wm:
+        from datetime import date as _date
+        try:
+            monday = _date.fromisocalendar(int(wm.group(1)), int(wm.group(2)), 1)
+        except ValueError:
+            raise ValueError(f"unknown period {key!r}") from None
+        s_local = datetime(monday.year, monday.month, monday.day)
+        start, end = _local_window(s_local, s_local + timedelta(days=7), zone)
+        ps, _ = _local_window(s_local - timedelta(days=7), s_local, zone)
+        if start <= now and monday.year >= 2000:
+            return Period(key, start, min(end, now), f"Week {int(wm.group(2))}, {wm.group(1)}",
+                          end <= now, (ps, start))
+    mm = re.fullmatch(r"month:(\d{4})-(\d{2})", key or "")
+    if mm and 1 <= int(mm.group(2)) <= 12 and int(mm.group(1)) >= 2000:
+        y, m = int(mm.group(1)), int(mm.group(2))
+        s_local = datetime(y, m, 1)
+        e_local = datetime(y + (m == 12), m % 12 + 1, 1)
+        p_local = datetime(y - (m == 1), (m - 2) % 12 + 1, 1)
+        start, end = _local_window(s_local, e_local, zone)
+        ps, _ = _local_window(p_local, s_local, zone)
+        if start <= now:
+            return Period(key, start, min(end, now), f"{_MONTHS[m - 1]} {y}", end <= now, (ps, start))
     sm = re.fullmatch(r"season:(\d{4})-(winter|spring|summer|fall)", key or "")
     if sm and 2000 <= int(sm.group(1)) <= now.year:
         y, m = int(sm.group(1)), SEASONS[sm.group(2)]
@@ -250,7 +305,8 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
     from src.services import wrapup_sections as _sections
 
     now = now or datetime.utcnow()
-    period = resolve_period(period_key, now)
+    from src.services.user_time import user_zone_by_id
+    period = resolve_period(period_key, now, user_zone_by_id(user_id))
     types = scope_types(scope)
     ms = played_ms_sql(W)
     base = (W.user_id == user_id, W.viewed_at >= period.start,
@@ -1224,7 +1280,8 @@ async def taste_drift(user_id: int, scope: str, period_key: str) -> dict:
     from src.database.runner import run_read
     from src.vector_store.chromadb_wrapper import run_chroma
 
-    period = resolve_period(period_key)
+    from src.services.user_time import user_zone_by_id
+    period = resolve_period(period_key, zone=await run_read(user_zone_by_id, user_id))
     now_rows, past_rows = await run_read(_drift_rows, user_id, scope, period)
     if len(now_rows) < _DRIFT_MIN_NOW or len(past_rows) < _DRIFT_MIN_PAST:
         return {}
@@ -1252,7 +1309,8 @@ async def taste_river(user_id: int, scope: str, period_key: str) -> list:
     from src.database.runner import run_read
     from src.services.taste_snapshots import series
     from src.vector_store.chromadb_wrapper import run_chroma
-    period = resolve_period(period_key)
+    from src.services.user_time import user_zone_by_id
+    period = resolve_period(period_key, zone=await run_read(user_zone_by_id, user_id))
     lo, hi = period.start.strftime("%Y-%m"), period.end.strftime("%Y-%m")
     months = [m for m in await run_read(series, user_id, scope) if lo <= m["month"] <= hi]
     if sum(1 for m in months if m["mean"]) < _RIVER_MIN_MONTHS:

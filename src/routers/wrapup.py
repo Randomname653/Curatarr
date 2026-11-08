@@ -22,14 +22,22 @@ _FRESH = timedelta(minutes=15)
 _POSTER_MAX = 16
 
 
-def _period(scope: str, period: str):
+def _period(scope: str, period: str, zone=None):
+    """The period, its window on the member's clock (``zone``: week and
+    month run midnight to midnight there); 400 for an unknown one."""
     from src.services.wrapup_facts import SCOPES, resolve_period
     if scope not in SCOPES:
         raise HTTPException(400, "unknown scope")
     try:
-        return resolve_period(period)
+        return resolve_period(period, zone=zone)
     except ValueError:
         raise HTTPException(400, "unknown period")
+
+
+async def _zone(user):
+    from src.database.runner import run_read
+    from src.services.user_time import user_zone_by_id
+    return await run_read(user_zone_by_id, user.id)
 
 
 def poster_wants(facts: dict) -> dict:
@@ -134,7 +142,7 @@ async def current_facts(user: User, scope: str, period: str) -> tuple:
     from src.services.wrapup_facts import FACTS_VERSION, build_wrapup_facts
     from src.services.wrapup_store import load, save_facts
 
-    p = _period(scope, period)
+    p = _period(scope, period, await _zone(user))
     if period.startswith("season:"):
         # the anime season's "finished" reads the series' aired episodes
         from src.services.proactive_messages import _get_sonarr_index
@@ -200,8 +208,10 @@ def _milestones(user_id: int, period: str) -> dict:
     period (the story's slide), the whole history (the page's timeline),
     with each one's phrase, and the kinds and the ones switched off."""
     from src.services import milestones as ms
+    from src.services.user_time import user_zone_by_id
     from src.services.wrapup_facts import resolve_period
-    p = resolve_period(period)
+    p = resolve_period(period, zone=user_zone_by_id(user_id))
+
     def dress(m):
         return {**m, "phrase": ms.phrase(m)}
     return {"period": [dress(m) for m in ms.in_period(user_id, p.start, p.end)],
@@ -247,7 +257,7 @@ async def start_wrapup(body: dict, user: User = Depends(get_current_user)):
 
     scope = str(body.get("scope") or "all")
     period = str(body.get("period") or "30d")
-    _period(scope, period)
+    _period(scope, period, await _zone(user))
     # No await between this check and create(): on the one event loop the
     # check-and-claim is atomic, and the task registry dies with the process,
     # so a crash leaves no stale claim behind (an app_state lock would).
@@ -313,7 +323,7 @@ async def push_playlist(body: dict, user: User = Depends(get_current_user)):
 
     scope = str(body.get("scope") or "all")
     period = str(body.get("period") or "30d")
-    p = _period(scope, period)
+    p = _period(scope, period, await _zone(user))
     row = await run_read(load, user.id, scope, period)
     facts = (row or {}).get("facts") or {}
     if not facts or facts.get("empty"):
