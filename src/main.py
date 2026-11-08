@@ -205,6 +205,10 @@ async def lifespan(app: FastAPI):
             # History tier A (docs/JELLYFIN_DESIGN.md §4.1): what plays right now.
             from src.services.media_server.jellyfin_history import start_session_poller
             start_session_poller()
+        # Plex: a play that ended is fetched within minutes (services/plex_sessions);
+        # the loop idles on a Jellyfin install and wakes after a switch to Plex.
+        from src.services.plex_sessions import start_session_watch
+        start_session_watch()
         if settings.AUTO_BUILD_MODELS:
             # The container's start.bat step: missing bakes are pulled and
             # built in the background while the server already answers.

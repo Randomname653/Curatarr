@@ -27,6 +27,9 @@ from src.services.media_server.base import (
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 30.0
+# Collection listings and creates: over 20 s on a server where Kometa keeps
+# hundreds of collections, and a show collection's create starts metadata work.
+_SLOW = 90.0
 _PAGE = 400
 
 # Plex's own type numbers and names → ours. "show" is a series.
@@ -150,8 +153,8 @@ class PlexAdapter:
         self._server_id: Optional[str] = None
 
     # ── plumbing ────────────────────────────────────────────────────────────
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, transport=self._transport)
+    def _client(self, timeout: float = _TIMEOUT) -> httpx.AsyncClient:
+        return httpx.AsyncClient(verify=tls_context(), timeout=timeout, transport=self._transport)
 
     def _headers(self, extra: Optional[dict] = None) -> dict:
         return {"Accept": "application/json", "X-Plex-Token": self._token, **(extra or {})}
@@ -308,8 +311,25 @@ class PlexAdapter:
     async def user_states(self, user, *, since=None):
         raise NotImplementedError("Plex user states move behind the seam in phase 3")
 
-    async def live_sessions(self):
-        return []                            # capabilities.now_playing is False
+    async def live_sessions(self) -> list:
+        """What plays on the server now (/status/sessions, the server token):
+        services/plex_sessions notices an ended play with it. Curatarr shows
+        no "now playing" for Plex, so capabilities.now_playing stays False."""
+        from src.services.media_server.base import LiveSession
+        async with self._client() as c:
+            mc = await self._get(c, "/status/sessions")
+        out = []
+        for m in mc.get("Metadata") or []:
+            sk, ik = str(m.get("sessionKey") or ""), str(m.get("ratingKey") or "")
+            if not (sk and ik):
+                continue
+            user, player = m.get("User") or {}, m.get("Player") or {}
+            out.append(LiveSession(
+                session_key=sk, user_key=str(user.get("id") or ""), item_key=ik,
+                position_ms=int(m.get("viewOffset") or 0), duration_ms=int(m.get("duration") or 0) or None,
+                paused=player.get("state") == "paused",
+                device=player.get("title") or None, client=player.get("product") or None))
+        return out
 
     async def plays(self, user, *, since=None):
         raise NotImplementedError("Plex plays move behind the seam in phase 3")
@@ -318,7 +338,103 @@ class PlexAdapter:
         raise NotImplementedError("Plex writes move behind the seam in phase 4")
 
     async def upsert_collection(self, library, title, keys):
-        raise NotImplementedError("Plex writes move behind the seam in phase 4")
+        return await self.write_collection(library, title, keys)
+
+    # ── collections (the designer's shelves; section-wide, every account) ──
+    async def _send(self, client: httpx.AsyncClient, method: str, path: str, *,
+                    params: Optional[dict] = None, ok=(200,)) -> Optional[dict]:
+        try:
+            r = await client.request(method, f"{self._base}{path}", params=params, headers=self._headers())
+        except httpx.HTTPError as e:
+            raise PlexError(f"Plex {path}: {type(e).__name__}") from e
+        if r.status_code not in ok:
+            raise PlexError(f"Plex {path}: HTTP {r.status_code}")
+        return (r.json().get("MediaContainer") or {}) if r.content else None
+
+    async def _machine_id(self) -> str:
+        if not self._server_id:
+            await self.ping()
+        if not self._server_id:
+            raise PlexError("Plex machineIdentifier unavailable")
+        return self._server_id
+
+    def _uri(self, mid: str, keys: Sequence[str]) -> str:
+        return f"server://{mid}/com.plexapp.plugins.library/library/metadata/{','.join(keys)}"
+
+    async def collections(self, prefix: str = "", *, library_key: str) -> list[dict]:
+        """The collections of one library whose title starts with ``prefix``:
+        ``{"key", "title", "summary"}``, oldest first (the order Curatarr's
+        shelves were made in, so each keeps its slot)."""
+        async with self._client(_SLOW) as c:
+            mc = await self._get(c, f"/library/sections/{library_key}/collections")
+        out = [{"key": str(m["ratingKey"]), "title": str(m.get("title") or ""),
+                "summary": str(m.get("summary") or "")}
+               for m in mc.get("Metadata") or [] if m.get("ratingKey")
+               and str(m.get("title") or "").startswith(prefix)]
+        return sorted(out, key=lambda x: int(x["key"]) if x["key"].isdigit() else 0)
+
+    async def write_collection(self, library: Library, title: str, keys: Sequence[str], *,
+                               summary: str = "", reuse_key: Optional[str] = None) -> str:
+        """The collection ``title`` in ``library`` holding exactly ``keys``.
+        With ``reuse_key`` that collection object is renamed and edited in
+        place, so its place and visibility on the home screens stay; else a
+        new one is made. Series keys stay series in a collection (no episode
+        explosion, unlike a playlist)."""
+        keys = [k for k in keys if is_plex_key(k)]
+        if not keys:
+            raise PlexError(f"collection {title!r}: no Plex keys")
+        mid = await self._machine_id()
+        ptype = _TYPE_NUM["series" if library.kind == "show" else "movie" if library.kind == "movie" else "artist"]
+        async with self._client(_SLOW) as c:
+            if reuse_key:
+                key = reuse_key
+                kids = await self._get(c, f"/library/collections/{key}/children")
+                have = [str(m["ratingKey"]) for m in kids.get("Metadata") or [] if m.get("ratingKey")]
+                want = set(keys)
+                for k in [k for k in have if k not in want]:
+                    await self._send(c, "DELETE", f"/library/collections/{key}/items/{k}")
+                add = [k for k in keys if k not in set(have)]
+                if add:
+                    await self._send(c, "PUT", f"/library/collections/{key}/items",
+                                     params={"uri": self._uri(mid, add)})
+            else:
+                mc = await self._send(c, "POST", "/library/collections", params={
+                    "type": str(ptype), "smart": "0", "title": title,
+                    "sectionId": str(library.key), "uri": self._uri(mid, keys)})
+                meta = ((mc or {}).get("Metadata") or [{}])[0]
+                key = str(meta.get("ratingKey") or "")
+                if not key:
+                    raise PlexError(f"collection {title!r}: Plex returned no key")
+            # Title and summary through the library's edit endpoint (type 18 =
+            # collection); locked, so a metadata refresh does not undo them.
+            await self._send(c, "PUT", f"/library/sections/{library.key}/all", params={
+                "type": "18", "id": key, "title.value": title, "title.locked": "1",
+                "summary.value": summary or "", "summary.locked": "1"})
+        return key
+
+    async def remove_collection(self, key: str) -> None:
+        """Deletes the collection object only; its titles stay."""
+        if is_plex_key(key):
+            async with self._client() as c:
+                await self._send(c, "DELETE", f"/library/collections/{key}")
+
+    async def show_collection(self, library_key: str, key: str, *, own_home: bool,
+                              shared_home: bool, recommended: bool) -> None:
+        """Where Plex shows a collection as a row (Manage Recommendations):
+        the owner's home, every other account's home (friends and Plex Home
+        members alike; Plex has no per-account choice), and the library's
+        Recommended tab."""
+        flags = {"promotedToOwnHome": "1" if own_home else "0",
+                 "promotedToSharedHome": "1" if shared_home else "0",
+                 "promotedToRecommended": "1" if recommended else "0"}
+        ident = f"custom.collection.{library_key}.{key}"
+        async with self._client() as c:
+            hubs = (await self._get(c, f"/hubs/sections/{library_key}/manage")).get("Hub") or []
+            if any(h.get("identifier") == ident for h in hubs):
+                await self._send(c, "PUT", f"/hubs/sections/{library_key}/manage/{ident}", params=flags)
+            else:
+                await self._send(c, "POST", f"/hubs/sections/{library_key}/manage",
+                                 params={"metadataItemId": key, **flags})
 
     async def mark_played(self, user, key):
         raise NotImplementedError("Plex writes move behind the seam in phase 4")

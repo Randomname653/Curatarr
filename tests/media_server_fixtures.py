@@ -39,6 +39,8 @@ def plex_transport(token: str = "plex-token", log: list = None) -> httpx.MockTra
             name = "library_sections.json"
         elif path == "/accounts":
             name = "accounts.json"
+        elif path == "/status/sessions":
+            name = "status_sessions.json"
         elif path.startswith("/library/sections/") and path.endswith("/all"):
             sec = path.split("/")[3]
             name = f"section_{sec}_type_{params.get('type')}.json"
@@ -60,14 +62,17 @@ JELLYFIN_LIBRARIES = {                    # library ItemId -> CollectionType
 
 
 def jellyfin_transport(api_key: str = "jf-key", log: list = None, played: dict = None,
-                       report: bool = True, sessions: list = None) -> httpx.MockTransport:
+                       report: bool = True, sessions: list = None,
+                       activity: list = None) -> httpx.MockTransport:
     """Answers the Jellyfin paths the adapter reads; 401 unless the
     MediaBrowser header carries the key, 404 for anything not recorded.
     ``/Items?Ids=`` and ``/Items?ParentId=`` (no Recursive) are answered
     from the recorded library walks. ``played`` (user id -> items with
     UserData) replaces Items_played_{user}.json, so a test can move counts
     between polls; ``report=False`` answers the Playback Reporting query with
-    404 (no plugin); ``sessions`` replaces Sessions.json."""
+    404 (no plugin); ``sessions`` replaces Sessions.json; ``activity`` is the
+    core activity log (/System/ActivityLog/Entries, newest first as the
+    server sends it; without it 404)."""
     def every_item() -> list:
         out = []
         for p in sorted((FIXTURES / "jellyfin").glob("*.json")):
@@ -86,6 +91,11 @@ def jellyfin_transport(api_key: str = "jf-key", log: list = None, played: dict =
             if not report or request.method != "POST":
                 return httpx.Response(404)
             return httpx.Response(200, json=load("jellyfin", "PlaybackReporting_query.json"))
+        if path == "/System/ActivityLog/Entries" and activity is not None:
+            rows = sorted(activity, key=lambda e: e["Date"], reverse=True)
+            start, limit = int(q.get("StartIndex", 0)), int(q.get("Limit", 500))
+            return httpx.Response(200, json={"Items": rows[start:start + limit],
+                                             "TotalRecordCount": len(rows), "StartIndex": start})
         if path == "/Sessions" and sessions is not None:
             return httpx.Response(200, json=sessions)
         uid = q.get("userId")
@@ -101,6 +111,9 @@ def jellyfin_transport(api_key: str = "jf-key", log: list = None, played: dict =
                     found = [{**i, "UserData": {"Played": False, "PlayCount": 0}}
                              for i in every_item() if i["Id"] in want]
                 return httpx.Response(200, json={"Items": found, "TotalRecordCount": len(found)})
+            if q.get("SortBy") == "DatePlayed":      # newest first, as the server sorts
+                mine = sorted(mine, key=lambda i: (i.get("UserData") or {}).get("LastPlayedDate") or "",
+                              reverse=q.get("SortOrder") == "Descending")
             start, limit = int(q.get("StartIndex", 0)), int(q.get("Limit", 500))
             return httpx.Response(200, json={"Items": mine[start:start + limit],
                                              "TotalRecordCount": len(mine), "StartIndex": start})
@@ -191,6 +204,9 @@ class JellyfinWriteServer:
         self.playlists, self.collections = {}, {}
         self.played, self.deleted, self.calls = set(), set(), []
         self.likes, self.dislikes = {}, {}          # user id -> item ids (POST /UserItems/{id}/Rating)
+        # Jellyfin adds the "Collections" library with the first collection,
+        # but its folder item (and so the view) only after a library scan.
+        self.collections_ready, self.refreshes = False, 0
         self._n = 0
         self.lib_of, self.items = {}, {}
         for p in sorted((FIXTURES / "jellyfin").glob("*.json")):
@@ -283,6 +299,12 @@ class JellyfinWriteServer:
                 self.playlists[pid] = {"name": body["Name"], "user": body["UserId"], "media": body.get("MediaType"),
                                        "items": list(body.get("Ids") or [])}
                 return httpx.Response(200, json={"Id": pid})
+            if m == "POST" and path.startswith("/Playlists/") and path.count("/") == 2:
+                pl = self.playlists.get(path.split("/")[2])
+                if pl is None:
+                    return httpx.Response(404)
+                pl["name"] = body.get("Name") or pl["name"]       # UpdatePlaylist (10.9+)
+                return httpx.Response(204)
             if path.startswith("/Playlists/") and path.endswith("/Items"):
                 pid = path.split("/")[2]
                 pl = self.playlists.get(pid)
@@ -306,6 +328,25 @@ class JellyfinWriteServer:
                 ids = [i for i in q["ids"].split(",") if i]
                 coll["items"] = (coll["items"] + ids) if m == "POST" else [i for i in coll["items"] if i not in ids]
                 return httpx.Response(204)
+            if m == "POST" and path == "/Library/Refresh":
+                self.refreshes += 1
+                self.collections_ready = True
+                return httpx.Response(204)
+            if m == "GET" and path == "/Library/VirtualFolders" and self.collections:
+                folders = load("jellyfin", "Library_VirtualFolders.json")
+                return httpx.Response(200, json=folders + [{
+                    "Name": "Collections", "CollectionType": "boxsets", "Locations": ["/config/data/collections"],
+                    "ItemId": "c0" * 16 if self.collections_ready else None}])
+            if path.startswith("/Items/") and path.split("/")[2] in self.collections and m in ("GET", "POST"):
+                coll = self.collections[path.split("/")[2]]
+                if m == "POST":           # Jellyfin takes the whole record back
+                    if body.get("Id") != path.split("/")[2] or "Name" not in body:
+                        return httpx.Response(400)
+                    coll["overview"], coll["locked"] = body.get("Overview"), body.get("LockedFields") or []
+                    return httpx.Response(204)
+                return httpx.Response(200, json={"Id": path.split("/")[2], "Name": coll["name"], "Type": "BoxSet",
+                                                 "Overview": coll.get("overview"),
+                                                 "LockedFields": coll.get("locked") or []})
             if m == "POST" and path.startswith("/UserPlayedItems/"):
                 self.played.add(path.split("/")[2])
                 return httpx.Response(200, json={"Played": True})

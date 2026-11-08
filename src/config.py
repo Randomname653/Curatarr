@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # How often the live sessions are read (history tier A): a play is seen
     # when its session ends past 80 %. Backs off to 5 min after a quiet day.
     JELLYFIN_SESSION_POLL_S: int = 45
+    # Plex: how often to look whether a play ended, so its history is fetched
+    # within minutes instead of at the daily sync (services/plex_sessions).
+    # Tripled when nothing played for an hour; 0 = off.
+    PLEX_SESSION_POLL_S: int = 300
 
     @field_validator("PLEX_URL", "JELLYFIN_URL", "MEDIA_SERVER_TYPE", mode="before")
     @classmethod
@@ -107,6 +111,12 @@ class Settings(BaseSettings):
     # pool): the Deletions view pages through them ten at a time, and a run
     # judges only as many new titles as the pool lacks. Clamped to 10-200.
     DELETION_POOL_SIZE: int = 50
+    # Where the designer's collections show as rows on Plex: "all" = the
+    # owner's home and every other account's home (Plex has no per-account
+    # choice), "owner" = the owner's home only, "off" = only in the
+    # library's Collections tab. The library's Recommended tab shows them
+    # unless "off".
+    COLLECTIONS_ON_HOME: str = "all"
     # Autonomous self-learning: capture generalizable curation principles from
     # the owner's DEBATES with the curator (shadow), novelty-check them, and
     # inject the ACTIVE ones into the judge. On by default — a captured

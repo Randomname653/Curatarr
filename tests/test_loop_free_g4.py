@@ -217,16 +217,16 @@ check("the served memory's access is stamped", access == 1)
 print("plex write helpers")
 
 
-async def _no_collections(section_key):
-    return []
+class _NoShelves:
+    async def collections(self, prefix="", *, library_key):
+        return []
 
 
-pc.list_collections = _no_collections
 app_state.set_state("curatarr_collections", json.dumps({"designs": [{"section_key": "1"}]}))
-res, err, sites = run_guarded(lambda: pc.push_collections([]))
+res, err, sites = run_guarded(lambda: pc.push_collections([], adapter=_NoShelves()))
 check("push_collections runs with no statement on the loop", ok(res, err, sites))
 snap = json.loads(app_state.get_state("curatarr_collections") or "{}")
-check("...and replaces the snapshot", res == {"created": 0, "deleted": 0, "failed": 0}
+check("...and replaces the snapshot", res == {"created": 0, "new": 0, "edited": 0, "deleted": 0, "failed": 0}
       and snap.get("designs") == [] and "pushed_at" in snap)
 
 app_state.set_state("plex_machine_identifier", "mid-123")

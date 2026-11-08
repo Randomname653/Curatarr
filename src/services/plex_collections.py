@@ -7,9 +7,11 @@ verified against the live server (scripts/dev/probe_plex_collections.py,
 2026-08-13):
 
 - they are SECTION-scoped and visible to EVERY account → this is household
-  curation, pushed once with the OWNER token (no per-user sets);
+  curation, pushed once with the OWNER token (no per-user sets). As home
+  rows Plex knows the owner's home and "shared" (every other account), no
+  per-account choice (Manage Recommendations, COLLECTIONS_ON_HOME);
 - a series ratingKey stays a series (childCount counts shows, no episode
-  explosion), and DELETE /library/collections/{key} removes ONLY the
+  explosion), and deleting a collection (PlexAdapter.remove_collection) removes ONLY the
   collection — the media items stay untouched.
 
 The server also runs Kometa with hundreds of its own collections, so every
@@ -21,88 +23,36 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Optional
-
-import httpx
-
-from src.services.plex_playlists import (_base, _headers, _owner_token,
-                                         get_machine_identifier)
-from src.services.http_client import tls_context
 
 logger = logging.getLogger(__name__)
-
-_TIMEOUT = 60.0   # section collection listings + creates both exceed 20s on
-                  # this server (Kometa keeps hundreds of collections around)
 
 COLLECTION_PREFIX = "Curatarr · "
 
 
-async def list_collections(section_key: str) -> list[dict]:
-    token = _owner_token()
-    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
-        r = await c.get(f"{_base()}/library/sections/{section_key}/collections",
-                        headers=_headers(token))
-    if r.status_code != 200:
-        raise RuntimeError(f"collection list HTTP {r.status_code}")
-    return (r.json().get("MediaContainer") or {}).get("Metadata") or []
-
-
-async def delete_collection(rating_key: str) -> None:
-    token = _owner_token()
-    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
-        await c.delete(f"{_base()}/library/collections/{rating_key}",
-                       headers=_headers(token))
-
-
-async def create_collection(section_key: str, plex_type: int, title: str,
-                            keys: list[str]) -> Optional[dict]:
-    """Create a dumb collection from item ratingKeys (movies type=1,
-    shows/anime type=2 with SERIES keys). Returns the collection metadata
-    or None; a 400 refetches the machineIdentifier once (server reinstall).
-
-    Generous timeout: show-collection creates kick off server-side metadata
-    work and can exceed the module default (a 20s timeout dropped one of
-    four shelves on the first live run)."""
-    token = _owner_token()
-    if not token or not keys:
-        return None
-    mid = await get_machine_identifier()
-    if not mid:
-        # Was a silent None (= "nothing created") after the cleanup had
-        # already deleted the old shelves.
-        raise RuntimeError("Plex machineIdentifier unavailable")
-    async with httpx.AsyncClient(verify=tls_context(), timeout=60.0) as c:
-        def params(m):
-            uri = (f"server://{m}/com.plexapp.plugins.library"
-                   f"/library/metadata/{','.join(keys)}")
-            return {"type": str(plex_type), "smart": "0", "title": title,
-                    "sectionId": str(section_key), "uri": uri}
-        r = await c.post(f"{_base()}/library/collections",
-                         headers=_headers(token), params=params(mid))
-        if r.status_code == 400:
-            mid = await get_machine_identifier(force=True)
-            if mid:
-                r = await c.post(f"{_base()}/library/collections",
-                                 headers=_headers(token), params=params(mid))
-    if r.status_code != 200:
-        raise RuntimeError(f"collection create HTTP {r.status_code}")
-    meta = (r.json().get("MediaContainer") or {}).get("Metadata") or [{}]
-    return meta[0]
-
-
-async def push_collections(designs: list[dict]) -> dict:
-    """Find-delete-recreate the whole "Curatarr · " collection set.
+async def push_collections(designs: list[dict], *, adapter=None) -> dict:
+    """The designer's shelves into Plex, each library's shelves edited in
+    place.
 
     designs: [{section_key, plex_type, title (WITH prefix), keys, description}]
-    Cleans ALL sections passed in *plus* any sections named in the previous
-    push snapshot, so an emptied category doesn't strand orphans. Snapshot
-    lands in app_state "curatarr_collections"."""
-    from src.services.media_server import active_kind
+
+    The designer names every rotation anew, so a shelf is matched by its
+    SLOT, not its title: a library's Curatarr collections, oldest first,
+    are renamed, re-described and re-filled by the new designs in order.
+    The collection objects (and their rows on the home screens) stay; only
+    a library with fewer designs than before loses its surplus shelves, and
+    one with more gains new ones. Nothing is deleted before the new shelves
+    are written, so a failed push leaves last week's in place. Sections
+    named in the previous snapshot are cleaned too, so an emptied category
+    strands no shelves. Snapshot in app_state "curatarr_collections"."""
+    from src.config import settings
+    from src.database.runner import run_read, run_write
+    from src.services.app_state import get_state, set_state
+    from src.services.media_server import active_kind, get_adapter
+    from src.services.media_server.base import Library
     if active_kind() == "jellyfin":
         from src.services.media_server import jellyfin_writes
         return await jellyfin_writes.push_collections(designs)
-    from src.database.runner import run_read, run_write
-    from src.services.app_state import get_state, set_state
+    adapter = adapter or get_adapter()
 
     sections = {str(d["section_key"]) for d in designs}
     try:
@@ -110,43 +60,58 @@ async def push_collections(designs: list[dict]) -> dict:
         sections |= {str(d.get("section_key")) for d in prev.get("designs", [])
                      if d.get("section_key")}
     except (ValueError, TypeError, AttributeError):
-        pass   # no usable snapshot: clean the sections passed in only
+        pass   # no usable snapshot: the sections passed in only
     except Exception as e:
         logger.warning("[collections] previous push snapshot unreadable - "
                        "orphans in other sections may stay: %s", e)
 
-    deleted = 0
-    for sec in sections:
+    home = (settings.COLLECTIONS_ON_HOME or "all").strip().lower()
+    flags = {"own_home": home in ("all", "owner"), "shared_home": home == "all",
+             "recommended": home != "off"}
+    created = edited = failed = deleted = 0
+    results = []
+    for sec in sorted(sections):
+        mine = [d for d in designs if str(d["section_key"]) == sec]
         try:
-            for coll in await list_collections(sec):
-                if (coll.get("title") or "").startswith(COLLECTION_PREFIX):
-                    await delete_collection(str(coll.get("ratingKey")))
-                    deleted += 1
-        except Exception as e:
-            logger.warning("[collections] cleanup of section %s failed: %s", sec, e)
-
-    created, failed, results = 0, 0, []
-    for d in designs:
-        try:
-            meta = await create_collection(d["section_key"], d["plex_type"],
-                                           d["title"], d["keys"])
-            if meta:
-                created += 1
-                results.append({"title": d["title"],
-                                "section_key": str(d["section_key"]),
-                                "count": len(d["keys"]),
-                                "rating_key": meta.get("ratingKey")})
-                logger.info("[collections] created %r (%d items)",
-                            d["title"], len(d["keys"]))
-            else:
+            slots = await adapter.collections(COLLECTION_PREFIX, library_key=sec)
+        except Exception as e:  # noqa: BLE001 - this library's shelves stay as they were; the others go on; logged
+            logger.warning("[collections] shelves of section %s not read: %s", sec, e)
+            failed += len(mine)
+            continue
+        kind = "show" if any(int(d.get("plex_type") or 1) == 2 for d in mine) else "movie"
+        lib = Library(key=sec, title="", kind=kind)
+        for i, d in enumerate(mine):
+            reuse = slots[i]["key"] if i < len(slots) else None
+            try:
+                key = await adapter.write_collection(lib, d["title"], d["keys"],
+                                                     summary=d.get("description") or "", reuse_key=reuse)
+            except Exception as e:  # noqa: BLE001 - one shelf's failure must not cost the others; counted
                 failed += 1
-                logger.warning("[collections] create %r produced nothing", d.get("title"))
-        except Exception as e:
-            failed += 1
-            logger.warning("[collections] create %r failed: %s", d.get("title"), e)
+                logger.warning("[collections] %r not written: %s", d.get("title"), e)
+                continue
+            if reuse:
+                edited += 1
+            else:
+                created += 1
+            try:
+                await adapter.show_collection(sec, key, **flags)
+            except Exception as e:  # noqa: BLE001 - the shelf exists; only its home row is missing; logged
+                logger.warning("[collections] %r written, its home-screen row not set: %s", d.get("title"), e)
+            results.append({"title": d["title"], "section_key": sec,
+                            "count": len(d["keys"]), "rating_key": key})
+            logger.info("[collections] %s %r (%d items)", "edited" if reuse else "created",
+                        d["title"], len(d["keys"]))
+        if len([r for r in results if r["section_key"] == sec]) == len(mine):
+            for extra in slots[len(mine):]:
+                try:
+                    await adapter.remove_collection(extra["key"])
+                    deleted += 1
+                except Exception as e:  # noqa: BLE001 - a surplus shelf stays one more week; logged
+                    logger.warning("[collections] surplus shelf %r not removed: %s", extra["title"], e)
 
     await run_write(set_state, "curatarr_collections", json.dumps({
         "pushed_at": datetime.utcnow().isoformat(),
         "designs": results,
     }))
-    return {"created": created, "deleted": deleted, "failed": failed}
+    return {"created": created + edited, "new": created, "edited": edited,
+            "deleted": deleted, "failed": failed}

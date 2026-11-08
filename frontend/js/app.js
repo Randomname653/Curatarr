@@ -17,10 +17,10 @@ import { finishSetup, handleSpotifyDrop, runSpotifyImport, uploadSpotify, dropzo
 import { loadArrProfiles, loadLibrarySettings, saveArrConfig, saveArrDefaults, testArr } from './library_settings.js';
 import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './history.js';
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
-import { loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
+import { hideYearAgo, loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { renderLedger } from './report.js';
 import { answerWrapupStory, closeWrapupStory, nextWrapupSlide, prevWrapupSlide } from './wrapup_story.js';
-import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
+import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, setWrapupSeason, toggleMilestoneKind, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
 import { loadSwipe, swipeCategory, swipeExact, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
 import { pickerFreePin, pickerPin, pickerReject, removeFixMatch, freePinOnEnter } from './picker.js';
@@ -226,6 +226,8 @@ const actions = {
   pushWrapupPlaylist,
   toggleWrapupQuotes,
   toggleWrapupHousehold,
+  toggleMilestoneKind,
+  setWrapupSeason,
   playWrapupStory,
   answerWrapupStory,
   closeWrapupStory,
@@ -277,6 +279,7 @@ const actions = {
   refreshModelRecs,
   onSetupCuratorChange,
   regenerateRecs,
+  hideYearAgo,
   rejectDelete,
   reloadDeletions,
   reloadPage,

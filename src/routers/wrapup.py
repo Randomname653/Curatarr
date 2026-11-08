@@ -135,6 +135,10 @@ async def current_facts(user: User, scope: str, period: str) -> tuple:
     from src.services.wrapup_store import load, save_facts
 
     p = _period(scope, period)
+    if period.startswith("season:"):
+        # the anime season's "finished" reads the series' aired episodes
+        from src.services.proactive_messages import _get_sonarr_index
+        await _get_sonarr_index()
     row = await run_read(load, user.id, scope, period)
     facts = row and row.get("facts")
     if facts and facts.get("facts_version") != FACTS_VERSION:
@@ -173,8 +177,48 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
         # opt-in, worked out on every open and never stored
         # (services/household_compare)
         "household": await run_read(compare, user.id, scope, period, facts),
+        "milestones": await run_read(_milestones, user.id, period),
+        "decades_prev": await run_read(_decades_prev, user.id, scope, period),
         **(await run_read(available, user.id)),
     }
+
+
+def _decades_prev(user_id: int, scope: str, period: str):
+    """The decade shares of the year before, for a year's wrap-up whose
+    previous year was built; None otherwise."""
+    import re
+    from src.services.wrapup_store import load
+    m = re.fullmatch(r"year:(\d{4})", period or "")
+    if not m:
+        return None
+    f = (load(user_id, scope, f"year:{int(m.group(1)) - 1}") or {}).get("facts") or {}
+    return (f.get("eras") or {}).get("decades") or None
+
+
+def _milestones(user_id: int, period: str) -> dict:
+    """The member's milestones (services/milestones): those reached in this
+    period (the story's slide), the whole history (the page's timeline),
+    with each one's phrase, and the kinds and the ones switched off."""
+    from src.services import milestones as ms
+    from src.services.wrapup_facts import resolve_period
+    p = resolve_period(period)
+    def dress(m):
+        return {**m, "phrase": ms.phrase(m)}
+    return {"period": [dress(m) for m in ms.in_period(user_id, p.start, p.end)],
+            "history": [dress(m) for m in ms.history(user_id)],
+            "kinds": list(ms.KINDS), "off": sorted(ms.kinds_off(user_id))}
+
+
+@router.post("/milestones/kinds")
+async def set_milestone_kind(body: dict, user: User = Depends(get_current_user)):
+    """Switch one kind of milestone on or off for this member."""
+    from src.database.runner import run_write
+    from src.services import milestones as ms
+    kind = str(body.get("kind") or "")
+    if kind not in ms.KINDS:
+        raise HTTPException(400, "unknown milestone kind")
+    off = await run_write(ms.set_kind, user.id, kind, bool(body.get("on")))
+    return {"off": sorted(off)}
 
 
 def _quotes_allowed(user_id: int) -> bool:

@@ -403,11 +403,15 @@ and [the NAS move](docs/NAS_MOVE.md).
 On **Jellyfin**, pick it in the wizard's media-server step and enter the server
 URL and an API key (Dashboard → API Keys). Members sign in with Quick
 Connect or their Jellyfin password; the first account must be a Jellyfin
-administrator. Play history needs no plugin; the Webhook and Playback
-Reporting plugins make it more exact and add the history from before
-Curatarr. An install that already runs on Plex moves to Jellyfin, or back,
+administrator. Play history needs no plugin; when Curatarr does not run all
+the time, start it at least once every two weeks, so the times of plays made
+meanwhile are still in Jellyfin's activity log (30 days). The Webhook and
+Playback Reporting plugins are optional: they add the device of such plays
+and the history from before Curatarr. An install that already runs on Plex moves to Jellyfin, or back,
 with `scripts/rebind_server.py`, keeping its history
-([docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md) §8).
+([docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md) §8). What each server
+can and cannot do, and which optional plugin closes which gap:
+[docs/MEDIA_SERVERS.md](docs/MEDIA_SERVERS.md).
 
 Curatarr is useful right away and gets better as enrichment catches up
 with your library, which takes hours to days.
@@ -473,9 +477,11 @@ These are the options most people change:
 | `BASE_SUMMARIZER_MODEL` | Model baked into the `curatarr-summarizer` tag |
 | `LLM_PROFILE`, `CURATOR_NUM_CTX`, `CURATOR_NUM_GPU` | The curator's profile (`large` / `small`), context window and GPU layers; the setup writes the bench's values for your card |
 | `DELETION_POOL_SIZE` | Open deletion proposals each category keeps (default 50) |
+| `COLLECTIONS_ON_HOME` | Curatarr's collections as home-screen rows on Plex: `all` (default), `owner`, `off` |
 | `RADARR_URL` / `SONARR_URL` / `LIDARR_URL` (+ API keys) | \*arr connections |
 | `TMDB_API_KEY` | Primary metadata source |
 | `SYNC_INTERVAL_HOURS` | Plex history pull cadence (default 24) |
+| `PLEX_SESSION_POLL_S` | Plex: seconds between looks whether a play ended, so it is fetched within minutes (default 300, tripled when idle; 0 = off) |
 | `ENRICHMENT_TTL_DAYS` | How long an enriched profile stays fresh (default 90) |
 | `EXTRA_GAME_PROCESSES` | Extra `.exe` names that should pause the LLM |
 | `ALLOWED_HOSTS` | Opt-in guard against DNS rebinding: the host names Curatarr answers to ([SECURITY.md](SECURITY.md#first-run-setup)) |
@@ -487,6 +493,7 @@ These are the options most people change:
 | Document | What's in it |
 |---|---|
 | [Usage guide](docs/USAGE.md) | Day-to-day operations, maintenance commands, troubleshooting |
+| [Media servers](docs/MEDIA_SERVERS.md) | What works on Plex, Jellyfin and (planned) Emby, the limits, and the optional plugins |
 | [Moving onto a NAS](docs/NAS_MOVE.md) | Curatarr in a container, with the main PC as a second GPU |
 | [Benchmarks](docs/BENCHMARKS.md) | How the models were chosen — method, data, and the raw scores |
 | [How the curator judges](docs/CURATOR_EXAMPLES.md) | The recommended models judging the same fictional library, word for word |

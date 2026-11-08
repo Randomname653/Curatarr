@@ -127,6 +127,7 @@ export function _kbRefresh() {
 const KB_STATE_DEFS = {
   enriched:             'A full profile was written and its cache entry is live.',
   enriched_provisional: 'Profile from the fast pass; the slow sources are still merging in the background.',
+  credit:               'A collaboration credit nobody knows as an act; its plays count for the artists it names.',
   enriched_dead:        'The flag says enriched but the cached profile is gone — re-queued automatically.',
   rule_based:           'Heuristic profile without the LLM — retried for an upgrade.',
   awaiting_llm:         'API data cached, LLM polish paused (game mode).',
@@ -155,7 +156,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   // open rows are waiting for. The raw-layer counts sit quietly at the foot.
   const STATE_CHIPS = [['Dead', ['enriched_dead']], ['Partial', ['rule_based', 'awaiting_llm']],
     ['Retry due', ['retry_due']], ['Not found', ['not_found']], ['Queued', ['queued', 'processing_error']],
-    ['Never', ['never_processed']], ['Ignored', ['ignored']]];
+    ['Never', ['never_processed']], ['Ignored', ['ignored']], ['Credits', ['credit']]];
   const cards = order.filter(c => cats[c]).map(cat => {
     const c = cats[cat], d = c.denominator, s = c.states, op = c.open || {};
     const n = k => s[k] || 0;

@@ -109,6 +109,20 @@ export function balance(v) {
 }
 
 /** The court: debates won and lost as two bars, and the boldest keep. */
+// Your decades: one bar per decade, the leading one in amber (SVG, by class).
+export function decades(e) {
+  const d = Object.entries(e?.decades || {});
+  if (d.length < 2) return '';
+  const max = Math.max(...d.map(([, v]) => v)) || 1, W = 300, row = 26;
+  const bars = d.map(([k, v], i) => {
+    const y = i * row, w = Math.max(2, Math.round((W - 110) * v / max));
+    return `<text x="0" y="${y + 13}" class="wus-dec-k${v === max ? ' is-lead' : ''}" dominant-baseline="middle">${_s(k)}</text>
+      <rect x="60" y="${y + 6}" width="${w}" height="14" rx="4" class="wus-dec-bar${v === max ? ' is-lead' : ''}"><title>${_s(k)} · ${Math.round(100 * v)}%</title></rect>
+      <text x="${66 + w}" y="${y + 13}" class="wus-dec-v" dominant-baseline="middle">${Math.round(100 * v)}%</text>`;
+  }).join('');
+  return `<svg class="wus-dec" viewBox="0 0 ${W} ${d.length * row}" role="img" aria-label="Hours by decade of release">${bars}</svg>`;
+}
+
 export function court(c) {
   if (!c) return '';
   const tot = Math.max(1, (c.won || 0) + (c.lost || 0));
@@ -270,6 +284,7 @@ function build(d) {
   for (const sl of slides) {
     let visual = '';
     if (sl.beat === 'court') visual = court(f.court);
+    else if (sl.beat === 'decades') visual = decades(f.eras);
     else if (sl.beat === 'balance' && f.velocity) visual = balance(f.velocity);
     out.push({cls: `beat beat-${esc(sl.beat || '')}`, share: sl.headline || sl.text,
       html: `${sl.headline ? `<h2 class="wus-h">${_s(sl.headline)}</h2>` : ''}${_posters(f, sl.item_refs, s)}${visual}
@@ -301,6 +316,25 @@ function build(d) {
     out.push({cls: 'identity', share: `${title}${s.share_line && s.share_line !== title ? ` — ${s.share_line}` : ''}`,
       html: `<div class="wus-eyebrow">${period} · who you were</div>${radar(f, d.household?.radar_median)}
         <h2 class="wus-arch">${_s(title)}</h2>${s.archetype_subhead ? `<p class="wus-text">${_s(s.archetype_subhead)}</p>` : ''}`});
+  }
+  // The anime season: started, finished, dropped (wrapup_facts._anime_season).
+  const as = f.anime_season;
+  if (as && (as.started?.length || as.finished?.length)) {
+    out.push({cls: 'anime-season', share: `${period}: ${as.started.length} started, ${as.finished.length} finished`,
+      html: `<div class="wus-eyebrow">${period}</div>
+        <h2 class="wus-h">${_s(as.started.length)} started · ${_s(as.finished.length)} finished${as.dropped?.length ? ` · ${_s(as.dropped.length)} dropped` : ''}</h2>
+        ${as.finished?.length ? `<p class="wus-text">Finished: ${as.finished.slice(0, 4).map(x => _s(x.title)).join(', ')}.</p>` : ''}
+        ${as.dropped?.length ? `<p class="wus-text">Left behind: ${as.dropped.slice(0, 3).map(x => _s(x.title)).join(', ')}.</p>` : ''}`});
+  }
+  // Milestones reached in this period (services/milestones), one slide.
+  const ms = d.milestones?.period || [];
+  if (ms.length) {
+    const lead = ms[ms.length - 1];
+    const cap = t => String(t || '').replace(/^./, c => c.toUpperCase());
+    out.push({cls: 'milestone', share: `${cap(lead.phrase)}${lead.title ? `: ${lead.title}` : ''}`,
+      html: `<div class="wus-eyebrow">${ms.length > 1 ? `${ms.length} milestones` : 'A milestone'}</div>
+        <h2 class="wus-h">${_s(cap(lead.phrase))}</h2>${lead.title ? `<p class="wus-text">${_s(lead.title)}</p>` : ''}
+        ${ms.length > 1 ? `<ul class="wus-ms">${ms.slice(0, -1).reverse().slice(0, 4).map(x => `<li>${_s(x.phrase)}${x.title ? ` · ${_s(x.title)}` : ''}</li>`).join('')}</ul>` : ''}`});
   }
   const hook = s?.look_ahead_hook;
   const pick = hook?.item_ref && s?.refs?.[hook.item_ref];

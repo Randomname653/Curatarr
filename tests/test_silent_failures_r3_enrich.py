@@ -436,26 +436,34 @@ def test_plex_writes_raise_on_transient_errors():
         check("playlist push: Plex down raises (custodian keeps it due), not {'pushed': []}",
               res == "raised")
 
-    with patched(pc, _owner_token=lambda: "tok", get_machine_identifier=no_mid):
-        check("create_collection: unknown server identity raises (was None)",
-              raises(lambda: asyncio.run(pc.create_collection("1", 1, "Curatarr · A", ["1"]))))
+    from src.services.media_server.plex_adapter import PlexAdapter
 
-    async def lc(sec):
-        return [{"title": "Curatarr · Old", "ratingKey": "9"}]
+    def no_identity(req):
+        return httpx.Response(200, json={"MediaContainer": {}})
+    plex = PlexAdapter("http://plex.lan", "tok", transport=httpx.MockTransport(no_identity))
+    from src.services.media_server.base import Library
+    check("write_collection: unknown server identity raises (was None)",
+          raises(lambda: asyncio.run(plex.write_collection(Library(key="1", title="", kind="movie"),
+                                                           "Curatarr · A", ["1"]))))
 
-    async def dc(key):
-        return None
+    removed = []
 
-    async def cc(*a, **k):
-        raise httpx.ConnectError("plex down")
+    class Down:
+        async def collections(self, prefix="", *, library_key):
+            return [{"key": "9", "title": "Curatarr · Old", "summary": ""}]
+
+        async def write_collection(self, *a, **k):
+            raise httpx.ConnectError("plex down")
+
+        async def remove_collection(self, key):
+            removed.append(key)
     state = {}
     designs = [{"section_key": "1", "plex_type": 1, "title": "Curatarr · A", "keys": ["1"]},
                {"section_key": "1", "plex_type": 1, "title": "Curatarr · B", "keys": ["2"]}]
-    with patched(pc, list_collections=lc, delete_collection=dc, create_collection=cc), \
-            patched(app_state, get_state=state.get, set_state=state.__setitem__):
-        res = asyncio.run(pc.push_collections(designs))
-    check("push_collections: failed creates are counted", res.get("failed") == 2
-          and res["created"] == 0)
+    with patched(app_state, get_state=state.get, set_state=state.__setitem__):
+        res = asyncio.run(pc.push_collections(designs, adapter=Down()))
+    check("push_collections: failed writes are counted, and last week's shelf stays",
+          res.get("failed") == 2 and res["created"] == 0 and removed == [])
 
     import src.services.collection_designer as cd
     import src.services.data_custodian as dcu

@@ -62,7 +62,8 @@ _ELIGIBLE_HOURS = 3
 # 6: hours per day for the story mode's heatmap.
 # 12: episodes marked as played one at a time are no viewings, a started-then-marked
 #     play counts its own minutes (plex_sync.mark_unwitnessed, schema generation 3).
-FACTS_VERSION = 12
+# 13: eras carry each decade's hours and leading titles ("your decades").
+FACTS_VERSION = 13
 
 
 @dataclass(frozen=True)
@@ -85,8 +86,24 @@ class Period:
         return self.start - (self.end - self.start), self.start
 
 
+# The anime seasons (the industry's: January, April, July, October).
+SEASONS = {"winter": 1, "spring": 4, "summer": 7, "fall": 10}
+
+
+def season_key(at: datetime) -> str:
+    name = next(n for n, m in sorted(SEASONS.items(), key=lambda kv: -kv[1]) if at.month >= m)
+    return f"season:{at.year}-{name}"
+
+
 def resolve_period(key: str, now: Optional[datetime] = None) -> Period:
     now = now or datetime.utcnow()
+    sm = re.fullmatch(r"season:(\d{4})-(winter|spring|summer|fall)", key or "")
+    if sm and 2000 <= int(sm.group(1)) <= now.year:
+        y, m = int(sm.group(1)), SEASONS[sm.group(2)]
+        start = datetime(y, m, 1)
+        end = datetime(y + 1, 1, 1) if m == 10 else datetime(y, m + 3, 1)
+        if start <= now:
+            return Period(key, start, min(end, now), f"{sm.group(2).capitalize()} {y} season", end <= now)
     if key == "30d":
         return Period(key, now - timedelta(days=30), now, "Last 30 days", False)
     if key == "6m":
@@ -325,8 +342,60 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
             out["velocity"] = _sections.library_velocity(db, period, types)
         out["look_ahead"] = _look_ahead(db, user_id, types)
 
+    if period.key.startswith("season:") and "anime" in types:
+        with get_db_session() as db:
+            out["anime_season"] = _anime_season(db, user_id, period, now)
+
     out["traits"] = derive_traits(out, now)
     return _finish({k: v for k, v in out.items() if v not in (None, {}, [])})
+
+
+_DROPPED_AFTER = timedelta(days=30)
+
+
+def _anime_season(db, user_id: int, period: Period, now: datetime) -> dict:
+    """The anime season: what the member started (a first episode this
+    season), finished (the last aired episode of a season of it, from
+    Sonarr), and dropped (begun, not finished, untouched for a month at the
+    season's end, or now)."""
+    from src.database.models import WatchHistoryEntry as W
+    from src.services.proactive_messages import _resolve_sonarr_stats, _sonarr_index_cache
+    index = _sonarr_index_cache.get("data") or None
+    series = {s for (s,) in db.query(W.series_title).filter(
+        W.user_id == user_id, W.media_type == "anime", W.series_title.isnot(None),
+        W.viewed_at >= period.start, W.viewed_at < period.end).distinct()}
+    if not series:
+        return {}
+    started, finished, dropped = [], [], []
+    cut = min(period.end, now)
+    for name in sorted(series):
+        plays = (db.query(W.viewed_at, W.season, W.episode, W.completed)
+                 .filter(W.user_id == user_id, W.media_type == "anime", W.series_title == name)
+                 .order_by(W.viewed_at).all())
+        first = plays[0][0]
+        in_period = [p for p in plays if period.start <= p[0] < period.end]
+        eps = {(s or 1, e) for _, s, e, c in plays if c and e and (s or 1) >= 1 and _ < period.end}
+        if period.start <= first < period.end:
+            started.append({"title": name, "episodes": len({(s, e) for _, s, e, c in in_period if c and e})})
+        st = _resolve_sonarr_stats(index, None, name, "anime") if index else None
+        done_season = None
+        for season, total in sorted(((st or {}).get("per_season") or {}).items()):
+            got = [p for p in plays if p[3] and (p[1] or 1) == season and p[2]]
+            if total and len({p[2] for p in got}) >= total:
+                last = max(p[0] for p in got)
+                if period.start <= last < period.end:
+                    done_season = season
+        if done_season is not None:
+            finished.append({"title": name, "season": done_season,
+                             "series_done": bool(st and st.get("status") == "ended"
+                                                 and len(eps) >= (st.get("total_episodes") or 10 ** 9))})
+            continue
+        last = plays[-1][0]
+        total = (st or {}).get("total_episodes")
+        if cut - last >= _DROPPED_AFTER and (not total or len(eps) < total):
+            dropped.append({"title": name, "episodes": len(eps), "of": total})
+    return {"started": started, "finished": finished, "dropped": dropped,
+            "series": len(series)}
 
 
 def _finish(out: dict) -> dict:
@@ -622,14 +691,18 @@ def _eras(titles, enriched, period) -> dict:
             break
     total = sum(h for _, h, _ in pts) or 1
     dec, split = Counter(), Counter()
-    for y, h, _ in pts:
+    tops: dict = {}
+    for y, h, title in pts:
         dec[f"{y // 10 * 10}s"] += h
+        tops.setdefault(f"{y // 10 * 10}s", []).append((h, title))
         age = period.end.year - y
         split["fresh" if age <= 1 else "recent" if age <= 7 else "catalogue"] += h
     out = {"viewing_age_year": median,
            "oldest": {"title": pts[0][2], "year": pts[0][0]},
            "newest": {"title": pts[-1][2], "year": pts[-1][0]},
            "decades": {k: round(v / total, 2) for k, v in sorted(dec.items())},
+           "decade_hours": {k: round(v, 1) for k, v in sorted(dec.items())},
+           "decade_top": {k: [t for _, t in sorted(v, key=lambda x: -x[0])[:3]] for k, v in sorted(tops.items())},
            "split": {k: round(split[k] / total, 2) for k in ("fresh", "recent", "catalogue")}}
     films = sorted((enriched[t["title"]]["runtime_min"], t["title"]) for t in titles
                    if t["media_type"] == "movie" and (enriched.get(t["title"]) or {}).get("runtime_min"))
@@ -1119,8 +1192,13 @@ def available(user_id: int) -> dict:
                  .distinct() if t in SCOPES]
         years = sorted({int(y) for (y,) in db.query(func.strftime("%Y", W.viewed_at))
                         .filter(W.user_id == user_id).distinct() if y}, reverse=True)
+        anime_months = [m for (m,) in db.query(func.strftime("%Y-%m", W.viewed_at))
+                        .filter(W.user_id == user_id, W.media_type == "anime").distinct() if m]
     scopes = (["all"] if len(types) > 1 else []) + [s for s in SCOPES[1:] if s in types]
-    return {"scopes": scopes or ["all"], "years": years}
+    # The anime seasons with anime plays, newest first, the last eight.
+    seasons = sorted({season_key(datetime.strptime(m, "%Y-%m")) for m in anime_months}, reverse=True,
+                     key=lambda k: (k[7:11], SEASONS[k.split("-")[1]]))[:8]
+    return {"scopes": scopes or ["all"], "years": years, "seasons": seasons}
 
 
 # ── taste drift (vectors) ───────────────────────────────────────────────────

@@ -1082,6 +1082,10 @@ async def compute_taste_vector_for_user(
                 ur = user_rating_by_item.get(str(e.get("plex_item_id") or ""))
                 if ur is not None and (d["ur"] is None or ur > d["ur"]):
                     d["ur"] = ur
+        # "A feat. B" nobody knows as an act: its plays count for A and B
+        # (services/music_credits, the owner's rule).
+        from src.services.music_credits import fold_credits
+        credits = fold_credits(by_artist, {t.casefold(): t for t in music_key_by_artist})
         followed_new = 0
         if signals:
             heard = {norm_name(a) for a in by_artist}
@@ -1106,9 +1110,10 @@ async def compute_taste_vector_for_user(
             }))
         artist_entries.sort(key=lambda x: abs(x[0]), reverse=True)
         logger.info("Music: %d listened artists → %d with enrichment docs "
-                    "(was %d play rows); %d carry a SoulSync follow/like, %d "
+                    "(was %d play rows; %d collaboration credits counted for their "
+                    "artists); %d carry a SoulSync follow/like, %d "
                     "followed without a play yet", len(by_artist) - followed_new,
-                    len(artist_entries), len(entries), signalled, followed_new)
+                    len(artist_entries), len(entries), credits, signalled, followed_new)
         top_entries = artist_entries[:EMBED_CAP]
 
     # ── SHOW / ANIME: aggregate to SERIES level (see _series_entries) ────────

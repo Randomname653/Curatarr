@@ -15,9 +15,14 @@ an audio-playlist uri expands to all its tracks — so the music playlist is
 token = their listen state).
 
 Mechanics, probe-verified against the live server (2026-08-16):
-- playlists are ACCOUNT-private → created with the USER's own token
-  (users.plex_token, captured at PIN login; NULL → user is skipped until
-  their next login).
+- playlists are ACCOUNT-private → created with the user's token FOR THIS
+  SERVER (``server_token``): plex.tv's resources list hands it out for the
+  account token captured at PIN login (users.plex_token; NULL → user is
+  skipped until their next login). The account token itself is not enough:
+  the server answered a Plex Home member's account token with the OWNER's
+  playlists and view state (probe 2026-11-08: the member's weekly push had
+  been replacing the owner's Shows and Anime playlists, and "next episode"
+  read the owner's progress).
 - create: POST /playlists?type=video&smart=0&title=…&uri=server://{machine
   Identifier}/com.plexapp.plugins.library/library/metadata/{k1,k2,…}
 - a SERIES ratingKey in the uri expands to ALL its episodes (12/12 in the
@@ -29,8 +34,10 @@ Mechanics, probe-verified against the live server (2026-08-16):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -93,6 +100,62 @@ async def get_machine_identifier(force: bool = False) -> Optional[str]:
         return None
 
 
+# user id -> (account token digest, machineIdentifier, server token, fetched at)
+_SERVER_TOKENS: dict = {}
+_SERVER_TOKEN_TTL_S = 6 * 3600
+
+
+async def server_token(user) -> Optional[str]:
+    """The token that acts as ``user`` on THIS Plex server, or None when the
+    account has no access to it (or its sign-in was revoked: skipped until
+    the next login). The owner writes with the server's own token. A member's
+    comes from plex.tv's resources list, matched by machineIdentifier; it is
+    never the account token, which a Plex Home member's writes would land
+    in the owner's account with. Raises on transient errors, so the
+    custodian task stays due."""
+    if getattr(user, "is_admin", False):
+        return _owner_token() or getattr(user, "plex_token", None) or None
+    account = (getattr(user, "plex_token", None) or "").strip()
+    if not account:
+        return None
+    mid = await get_machine_identifier()
+    if not mid:
+        raise RuntimeError("Plex machineIdentifier unavailable")
+    digest = hashlib.sha256(account.encode()).hexdigest()
+    hit = _SERVER_TOKENS.get(user.id)
+    if hit and hit[0] == digest and hit[1] == mid and time.monotonic() - hit[3] < _SERVER_TOKEN_TTL_S:
+        return hit[2]
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
+        r = await c.get("https://plex.tv/api/v2/resources", params={"includeHttps": "1"},
+                        headers={**_headers(account), "X-Plex-Product": "Curatarr",
+                                 "X-Plex-Client-Identifier": settings.PLEX_CLIENT_ID})
+    if r.status_code in (401, 403):
+        logger.info("[playlists] %s: plex.tv refused the stored sign-in; skipped until "
+                    "the next login", getattr(user, "plex_username", user.id))
+        return None
+    if r.status_code != 200:
+        raise RuntimeError(f"plex.tv resources HTTP {r.status_code}")
+    for res in r.json() or []:
+        if res.get("clientIdentifier") == mid and res.get("accessToken"):
+            _SERVER_TOKENS[user.id] = (digest, mid, res["accessToken"], time.monotonic())
+            return res["accessToken"]
+    logger.info("[playlists] %s: this server is not shared with the account; skipped",
+                getattr(user, "plex_username", user.id))
+    return None
+
+
+async def music_section_keys() -> list[str]:
+    """The music sections mapped in Libraries, else every artist-type
+    section Plex has: an install whose music lives in the Plex index only
+    maps no music library (the owner's, since Lidarr went off), and the
+    music playlist found no artist at all."""
+    mapped = await run_read(_section_keys, "music")
+    if mapped:
+        return mapped
+    from src.services.media_server import get_adapter
+    return [lib.key for lib in await get_adapter().libraries() if lib.kind == "music"]
+
+
 async def list_playlists(token: str, playlist_type: str = "video") -> list[dict]:
     async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         r = await c.get(f"{_base()}/playlists", headers=_headers(token),
@@ -104,6 +167,14 @@ async def list_playlists(token: str, playlist_type: str = "video") -> list[dict]
 
 async def list_video_playlists(token: str) -> list[dict]:
     return await list_playlists(token, "video")
+
+
+async def rename_playlist(token: str, rating_key: str, title: str) -> None:
+    """A playlist's new name; its id, items and pins stay."""
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
+        r = await c.put(f"{_base()}/playlists/{rating_key}", headers=_headers(token), params={"title": title})
+    if r.status_code not in (200, 204):
+        raise RuntimeError(f"playlist rename HTTP {r.status_code}")
 
 
 async def delete_playlist(token: str, rating_key: str) -> None:
@@ -284,9 +355,12 @@ def _heal_rec_key(user_id: int, category: str, title: str, new_key: str) -> None
 
 async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[str]:
     """The user's next episode of a series (view state is per-account, hence
-    the USER token). Falls back to the plain first leaf, then to None —
-    a None drops the series from this push rather than exploding the
-    playlist into every episode (probe: a series key expands to ALL leaves)."""
+    the user's server token). Specials (season 0) come first in Plex's
+    order and are no start (a series' S0E1 led a playlist, 2026-11-08): the first
+    regular episode wins, a special only when the series has nothing else.
+    Falls back to the plain first leaf, then to None - a None drops the
+    series from this push rather than exploding the playlist into every
+    episode (probe: a series key expands to ALL leaves)."""
     async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         for params in ({"unwatched": 1}, {}):
             try:
@@ -294,11 +368,12 @@ async def first_unwatched_episode_key(token: str, series_key: str) -> Optional[s
                     f"{_base()}/library/metadata/{series_key}/allLeaves",
                     headers={**_headers(token),
                              "X-Plex-Container-Start": "0",
-                             "X-Plex-Container-Size": "1"},
+                             "X-Plex-Container-Size": "60"},
                     params=params)
                 leaves = (r.json().get("MediaContainer") or {}).get("Metadata") or []
-                if leaves:
-                    return str(leaves[0].get("ratingKey"))
+                regular = [x for x in leaves if str(x.get("parentIndex", "")) not in ("0", "")]
+                if regular or leaves:
+                    return str((regular or leaves)[0].get("ratingKey"))
             except Exception as e:
                 log_topup_failure(logger, "[playlists] allLeaves", series_key, e)
     return None
@@ -338,7 +413,23 @@ def _library_recs(user_id: int, category: str, limit: int) -> list[dict]:
                         CachedRecommendation.lane == "library")
                 .order_by(CachedRecommendation.confidence.desc())
                 .limit(limit).all())
-        return [{"title": r.title, "key": r.plex_rating_key,
+        return [{"title": r.title, "key": r.plex_rating_key, "category": r.category,
+                 "cached_at": r.cached_at} for r in rows]
+
+
+def _because_recs(user_id: int, limit: int = 15) -> list[dict]:
+    """The user's "because you watched" picks of every video category
+    (services/because_recs), the closest first, as plain dicts."""
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation
+    with get_db_session() as db:
+        rows = (db.query(CachedRecommendation)
+                .filter(CachedRecommendation.user_id == user_id,
+                        CachedRecommendation.category.in_(("movie", "show", "anime")),
+                        CachedRecommendation.lane == "because")
+                .order_by(CachedRecommendation.confidence.desc())
+                .limit(limit).all())
+        return [{"title": r.title, "key": r.plex_rating_key, "category": r.category,
                  "cached_at": r.cached_at} for r in rows]
 
 
@@ -355,10 +446,18 @@ async def push_user_playlists(user) -> dict:
                     "after their next login; skipped.", user.plex_username)
         return {"pushed": [], "skipped": "no_token"}
 
+    from src.services.playlist_names import name as playlist_name, names as playlist_names
+    from src.services.user_language import user_language
     snap = await run_read(_load_snapshot, user.id)
+    lang = await run_read(user_language, user.id)
     pushed = []
-    for category, title in PLAYLIST_TITLES.items():
-        rows = await run_read(_library_recs, user.id, category, 10)
+    token = None
+    # The three category playlists, then "Because you watched" (all three
+    # categories in one playlist, services/because_recs).
+    for category in [*PLAYLIST_TITLES, "because"]:
+        title = playlist_name(category, lang)
+        rows = (await run_read(_because_recs, user.id) if category == "because"
+                else await run_read(_library_recs, user.id, category, 10))
         if not rows:
             continue
 
@@ -378,7 +477,11 @@ async def push_user_playlists(user) -> dict:
             except (ValueError, TypeError):
                 pass
 
-        video_sections = await run_read(_section_keys, category)
+        if token is None:
+            token = await server_token(user)
+            if not token:
+                return {"pushed": [], "skipped": "no_server_access"}
+        sections_of: dict = {}
 
         keys: list[str] = []
         titles: list[str] = []
@@ -386,26 +489,30 @@ async def push_user_playlists(user) -> dict:
             if not r["key"]:
                 continue   # resolver couldn't place it — logged at cache time
             key = r["key"]
+            cat = r.get("category") or category
+            if cat not in sections_of:
+                sections_of[cat] = await run_read(_section_keys, cat)
+            video_sections = sections_of[cat]
             # Stale-key self-heal (SoulSync rescue pattern): Plex re-keys
             # items on a metadata refresh/optimize, and the cached key then
             # 404s — the item silently vanished from the push. Probe (≤10
             # cheap GETs per push) and re-resolve by title, healing the
             # cached row so the next push is fast again.
-            if not await key_exists(_owner_token() or user.plex_token, key):
-                healed = await resolve_video_key(r["title"], category, sections=video_sections)
+            if not await key_exists(_owner_token() or token, key):
+                healed = await resolve_video_key(r["title"], cat, sections=video_sections)
                 if healed:
                     logger.info("[playlists] %r: stale key %s → %s (healed)",
                                 r["title"], key, healed)
-                    await run_write(_heal_rec_key, user.id, category, r["title"], healed)
+                    await run_write(_heal_rec_key, user.id, cat, r["title"], healed)
                     key = healed
                 else:
                     logger.info("[playlists] %r: key %s stale, no re-resolve "
                                 "— skipped this push", r["title"], key)
                     continue
-            if category in ("show", "anime"):
+            if cat in ("show", "anime"):
                 # series keys expand to ALL episodes — push the user's next
                 # unwatched episode instead (their token = their view state)
-                key = await first_unwatched_episode_key(user.plex_token, key)
+                key = await first_unwatched_episode_key(token, key)
                 if not key:
                     continue
             keys.append(key)
@@ -424,26 +531,30 @@ async def push_user_playlists(user) -> dict:
         # deletes the playlist and the recreate cannot run.
         if not await get_machine_identifier():
             raise RuntimeError("Plex machineIdentifier unavailable")
-        existing = [pl for pl in await list_video_playlists(user.plex_token)
-                    if pl.get("title") == title]
+        # Any language's name: a member who now writes German keeps the
+        # playlist (and its pins), renamed.
+        existing = [pl for pl in await list_video_playlists(token)
+                    if pl.get("title") in playlist_names(category)]
         meta = None
         if existing:
             keep_key = str(existing[0].get("ratingKey"))
             for pl in existing[1:]:
-                await delete_playlist(user.plex_token, str(pl.get("ratingKey")))
-            if await reconcile_playlist(user.plex_token, keep_key, keys):
+                await delete_playlist(token, str(pl.get("ratingKey")))
+            if await reconcile_playlist(token, keep_key, keys):
                 meta = {"ratingKey": keep_key, "leafCount": len(keys)}
+                if existing[0].get("title") != title:
+                    await rename_playlist(token, keep_key, title)
                 try:
                     meta["leafCount"] = len(
-                        await playlist_items(user.plex_token, keep_key))
+                        await playlist_items(token, keep_key))
                 except Exception:  # noqa: BLE001 - count only; falls back to the pushed key count
                     pass
             else:
                 logger.warning("[playlists] reconcile failed for '%s' — "
                                "recreating this once", title)
-                await delete_playlist(user.plex_token, keep_key)
+                await delete_playlist(token, keep_key)
         if meta is None:
-            meta = await create_playlist(user.plex_token, title, keys)
+            meta = await create_playlist(token, title, keys)
         leaf = (meta or {}).get("leafCount")
         if leaf is not None and int(leaf) < len(keys):
             # restricted library sharing can silently drop items for
@@ -478,7 +589,7 @@ async def resolve_artist_key(name: str, sections: Optional[list[str]] = None) ->
         return None
 
     if sections is None:
-        sections = await run_read(_section_keys, "music")
+        sections = await music_section_keys()
 
     return await _search_sections(token, sections, {"type": "8", "title": name},
                                   f"artist {name!r}")
@@ -549,7 +660,13 @@ async def push_user_music_playlist(user) -> dict:
         except (ValueError, TypeError):
             pass
 
-    music_sections = await run_read(_section_keys, "music")
+    token = await server_token(user)
+    if not token:
+        return {"pushed": [], "skipped": "no_server_access"}
+    from src.services.playlist_names import name as playlist_name, names as playlist_names
+    from src.services.user_language import user_language
+    title = playlist_name("music", await run_read(user_language, user.id))
+    music_sections = await music_section_keys()
 
     keys, titles = [], []
     for a in artists:
@@ -558,7 +675,7 @@ async def push_user_music_playlist(user) -> dict:
             logger.info("[playlists] %s/music: %r not found in Plex — skipped.",
                         user.plex_username, a["title"])
             continue
-        album_key = await pick_album_key(user.plex_token, artist_key)
+        album_key = await pick_album_key(token, artist_key)
         if album_key:
             keys.append(album_key)
             titles.append(a["title"])
@@ -570,17 +687,17 @@ async def push_user_music_playlist(user) -> dict:
     # Identity before the delete: a create that cannot run must not follow it.
     if not await get_machine_identifier():
         raise RuntimeError("Plex machineIdentifier unavailable")
-    for pl in await list_playlists(user.plex_token, "audio"):
-        if pl.get("title") == MUSIC_PLAYLIST_TITLE:
-            await delete_playlist(user.plex_token, str(pl.get("ratingKey")))
-    meta = await create_playlist(user.plex_token, MUSIC_PLAYLIST_TITLE, keys,
+    for pl in await list_playlists(token, "audio"):
+        if pl.get("title") in playlist_names("music"):
+            await delete_playlist(token, str(pl.get("ratingKey")))
+    meta = await create_playlist(token, title, keys,
                                  playlist_type="audio")
     snap["music"] = {"pushed_at": datetime.utcnow().isoformat(),
                      "playlist_key": (meta or {}).get("ratingKey"),
                      "titles": titles}
     await run_write(_save_snapshot, user.id, snap)
     logger.info("[playlists] %s: pushed '%s' (%d albums, %s tracks)",
-                user.plex_username, MUSIC_PLAYLIST_TITLE, len(keys),
+                user.plex_username, title, len(keys),
                 (meta or {}).get("leafCount"))
     return {"pushed": ["music"]}
 
@@ -601,7 +718,7 @@ async def resolve_track_key(track: str, artist: str, sections: Optional[list[str
     if not token or not track:
         return None
     if sections is None:
-        sections = await run_read(_section_keys, "music")
+        sections = await music_section_keys()
     want = (artist or "").casefold()
     async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT) as c:
         for sec in sections:
@@ -627,6 +744,9 @@ async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: lis
         return {"skipped": "no_token"}
     if not await get_machine_identifier():
         raise RuntimeError("Plex machineIdentifier unavailable")
+    token = await server_token(user)
+    if not token:
+        return {"skipped": "no_server_access"}
     title = WRAPUP_PLAYLIST_PREFIX + label
     pushed, missing = [], []
 
@@ -640,13 +760,13 @@ async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: lis
             sections[cat] = await run_read(_section_keys, cat)
         key = await resolve_video_key(v["title"], cat, sections=sections[cat])
         if key and cat in ("show", "anime"):
-            key = await first_unwatched_episode_key(user.plex_token, key)
+            key = await first_unwatched_episode_key(token, key)
         if key:
             video_keys.append(key)
         else:
             missing.append(v["title"])
     track_keys = []
-    music_sections = await run_read(_section_keys, "music") if tracks else []
+    music_sections = await music_section_keys() if tracks else []
     for t in tracks[:_MAX_WRAPUP_ITEMS]:
         key = await resolve_track_key(t["track"], t.get("artist"), sections=music_sections)
         if key:
@@ -658,10 +778,10 @@ async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: lis
         if not keys:
             continue
         name = title + (suffix if video_keys and track_keys else "")
-        for pl in await list_playlists(user.plex_token, kind):
+        for pl in await list_playlists(token, kind):
             if pl.get("title") == name:
-                await delete_playlist(user.plex_token, str(pl.get("ratingKey")))
-        meta = await create_playlist(user.plex_token, name, keys, playlist_type=kind)
+                await delete_playlist(token, str(pl.get("ratingKey")))
+        meta = await create_playlist(token, name, keys, playlist_type=kind)
         pushed.append({"title": name, "items": int((meta or {}).get("leafCount") or len(keys))})
         logger.info("[playlists] %s: pushed wrap-up '%s' (%d items)", user.plex_username, name, len(keys))
     return {"pushed": pushed, "missing": missing}

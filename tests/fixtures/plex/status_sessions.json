@@ -1,0 +1,11 @@
+{
+ "MediaContainer": {
+  "size": 2,
+  "Metadata": [
+   {"sessionKey": "41", "ratingKey": "1001", "type": "movie", "title": "Heat", "viewOffset": 5400000, "duration": 10200000,
+    "User": {"id": "1", "title": "jane"}, "Player": {"title": "Living Room TV", "product": "Plex for Android (TV)", "state": "playing"}},
+   {"sessionKey": "42", "ratingKey": "2003", "type": "episode", "title": "Secrets", "viewOffset": 60000, "duration": 3000000,
+    "User": {"id": "2", "title": "sam"}, "Player": {"title": "Pixel 8", "product": "Plex for Android", "state": "paused"}}
+  ]
+ }
+}

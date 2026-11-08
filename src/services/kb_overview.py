@@ -135,6 +135,23 @@ def has_external_id(it: dict) -> bool:
     return it.get("source") == "plex" or any(it.get(k) for k in _ID_FIELDS)
 
 
+def _mark_credits(items: list) -> None:
+    """A music item no source knew ("not found", "retry due") that is a
+    credit of known artists becomes state "credit", with ``credit_of``
+    naming them (services/music_credits): it is covered by their profiles,
+    not open and not on Needs attention."""
+    from src.services.music_credits import credit_members
+    known = {it["title"].casefold(): it["title"] for it in items
+             if it["category"] == "music" and it["state"] in DONE_STATES and it["title"]}
+    for it in items:
+        if (it["category"] == "music" and it["state"] in ("not_found", "retry_due")
+                and not it.get("mbid")):
+            members = credit_members(it["title"], known)
+            if members:
+                it["state"] = "credit"
+                it["credit_of"] = members
+
+
 async def classified_items() -> list[dict]:
     """Every arr item with its ONE state — the list behind every KB number.
 
@@ -259,6 +276,8 @@ async def classified_items() -> list[dict]:
                 )
             item["state"] = state
             items.append(item)
+
+    _mark_credits(items)
 
     _ITEMS.update(at=now, items=items)
     return items

@@ -333,16 +333,26 @@ async def _fake_scrobble(url, token, key, *, transport=None):
     scrobbled.append((token, key))
 
 
-saved_scrobble = rebind._plex_scrobble
-rebind._plex_scrobble = _fake_scrobble
+import src.services.plex_playlists as _pp  # noqa: E402
+
+
+async def _fake_server_token(user):
+    # plex.tv's resources list: the server's own token for this account
+    return f"srv-{user.plex_token}" if user.plex_token else None
+
+
+saved_scrobble, saved_server_token = rebind._plex_scrobble, _pp.server_token
+rebind._plex_scrobble, _pp.server_token = _fake_scrobble, _fake_server_token
 try:
     st = run(rebind.sync_watched_state(back_plan, plex, backup_root=_TMP / "b2"))
 finally:
-    rebind._plex_scrobble = saved_scrobble
-check("towards Plex: a finished Jellyfin-period play is marked played with its member's own token",
-      ("tok-sam", "1002") in scrobbled and st["marked_played"] == len(scrobbled))
+    rebind._plex_scrobble, _pp.server_token = saved_scrobble, saved_server_token
+check("towards Plex: a finished Jellyfin-period play is marked played with its member's server token "
+      "(a Plex Home member's account token would mark it in the owner's account)",
+      ("srv-tok-sam", "1002") in scrobbled and st["marked_played"] == len(scrobbled)
+      and not any(t == "tok-sam" for t, _k in scrobbled))
 check("...not a play from before the move to Jellyfin, not an unfinished one",
-      not any(k in ("2003",) for _t, k in scrobbled) and scrobbled.count(("tok-sam", "1001")) == 0)
+      not any(k in ("2003",) for _t, k in scrobbled) and scrobbled.count(("srv-tok-sam", "1001")) == 0)
 check("...and a member without a Plex sign-in is counted, not marked", st["no_plex_sign_in"] == 1)
 check("...and a play Plex itself recorded is not marked again", not any(k == "1003" for _t, k in scrobbled))
 from src.services.app_state import get_state  # noqa: E402

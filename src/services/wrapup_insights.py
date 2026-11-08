@@ -401,7 +401,27 @@ def _devices(f) -> list:
                   {"share": say_share(n["share"]), "hours": say_hours(n["hours"])})]
 
 
-_MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _music, _moods, _devices)
+def _decades(f) -> list:
+    """"Your 1980s": the decade that held the most hours, when it held a
+    real share and is not simply this one (nostalgia is the news); the
+    curator writes the line, from the decade and its leading titles."""
+    e = f.get("eras") or {}
+    shares, tops = e.get("decades") or {}, e.get("decade_top") or {}
+    if len(shares) < 2:
+        return []
+    lead, share = max(shares.items(), key=lambda kv: kv[1])
+    end_year = int(str((f.get("period") or {}).get("end") or "2026")[:4] or 2026)
+    if share < 0.25 or lead == f"{end_year // 10 * 10}s":
+        return []
+    titles = tops.get(lead) or []
+    return [_card("identity", "decades", 0.35 + _clamp((share - 0.25) / 0.5) * 0.45,
+                  f"Your {lead}: {round(share * 100)}% of the hours went to titles from the {lead}"
+                  f"{' (' + ', '.join(titles[:3]) + ')' if titles else ''}.",
+                  "a decade that is not this one held the most time",
+                  {"decade": lead, "share": share}, {"share": say_share(share)}, titles[:3])]
+
+
+_MINERS = (_tempo, _top, _binge, _contrasts, _court, _balance, _identity, _decades, _music, _moods, _devices)
 
 
 def mine(facts: dict, floor: float = FLOOR, limit: int = MAX_CARDS) -> list:

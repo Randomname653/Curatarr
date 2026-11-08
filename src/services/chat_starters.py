@@ -252,6 +252,12 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                 facts.append({"kind": "music_rotation", "artist": top,
                               "plays_14d": plays})
 
+    # A milestone reached in the last two weeks, offered until an opener
+    # took it (services/milestones); the ones a first run finds are history.
+    from src.services.milestones import pending_announcements, phrase
+    for m in pending_announcements(user_id)[:2]:
+        facts.append({"kind": "milestone", "milestone": phrase(m), "title": m.get("title"),
+                      "reached_on": str(m.get("reached_at"))[:10]})
     # Wall clock, not the UTC `now` of the query windows: between local
     # midnight and 2am the UTC weekday is still yesterday's.
     facts.append({"kind": "now", "weekday": datetime.now().strftime("%A"),
@@ -469,6 +475,14 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
                 db.commit()
 
         await run_write(_insert)
+        # A milestone an opener took is offered once, never again.
+        from src.services.milestones import _mkey, mark_announced, pending_announcements, phrase
+        used = " ".join(f"{r.fact_used} {r.text}" for r in accepted).lower()
+        taken = [_mkey(m) for m in await run_read(pending_announcements, user_id)
+                 if f"{int(m['value']):,}" in used and m["kind"].rstrip("s") in used
+                 or phrase(m).lower() in used]
+        if taken:
+            await run_write(mark_announced, user_id, taken)
     logger.info("[starters] user %d: %d/%d candidates accepted",
                 user_id, len(accepted), len(candidates))
     return len(accepted)

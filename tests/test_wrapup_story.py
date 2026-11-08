@@ -226,6 +226,13 @@ async def _sections(fn, *a):
 pp.get_machine_identifier, pp.resolve_video_key, pp.first_unwatched_episode_key = _mid, _video_key, _next_ep
 pp.resolve_track_key, pp.list_playlists, pp.delete_playlist, pp.create_playlist = _track_key, _list, _delete, _create
 pp.run_read = _sections
+
+
+async def _server_token(u):
+    return u.plex_token
+
+
+pp.server_token = _server_token
 user = type("U", (), {"plex_token": "t", "plex_username": "owner"})()
 out = asyncio.run(pp.push_wrapup_playlist(
     user, "Last 30 days",

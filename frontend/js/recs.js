@@ -3,7 +3,7 @@
 // Moved state._recsPollTimer to state
 // Moved state._recsPollKillswitch to state
 import { serverLabel, state } from './state.js';
-import { EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
 import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
 import { _whyButton } from './deletions.js';
@@ -18,7 +18,51 @@ export function _stopRecsPoll() {
 const _LANE_META = {
   library:   { title: 'From your library', sub: 'you own it · still unwatched' },
   discovery: { title: 'Discover new',      sub: 'not in your library · worth acquiring' },
+  because:   { title: 'Because you watched', sub: 'close to all three · from your library' },
+  rediscover:{ title: 'Rediscover', sub: 'loved once · untouched for two years · in your library' },
 };
+
+const _CAT_NOUN = { movie: 'film', show: 'series', anime: 'anime' };
+
+// "A year ago": what the member finished around today's date last year
+// (services/on_this_day). Only on days that have one; each title can be
+// hidden for good. No curator text, no push.
+async function _yearAgoRow(category) {
+  let items = [];
+  try { items = (await api('/api/recommendations/on-this-day')).items || []; } catch { return ''; }
+  if (category) items = items.filter(x => x.category === category);
+  if (!items.length) return '';
+  const rows = items.map(x => `<div class="panel-item">
+      <div class="panel-item-head">
+        <div class="panel-item-title">${esc(x.title)} <span class="t3 fs-12">· ${esc(_CAT_NOUN[x.category] || x.category)}${x.episodes > 1 ? ` · ${x.episodes} episodes` : ''} · <span title="${escAttr(_fmtAbs(x.viewed_at))}">${esc(new Date(x.viewed_at).toLocaleDateString(loc(), { day: 'numeric', month: 'short', year: 'numeric' }))}</span></span></div>
+        <button type="button" class="btn btn-ghost btn-sm" title="Never show this title here again" ${act('hideYearAgo', x.title, EL)}>Hide</button>
+      </div></div>`).join('');
+  return `<div class="list-head"><span>A year ago</span><span class="fw-400 fs-12 t3">· what you finished around this date last year · ${items.length}</span></div>${rows}`;
+}
+
+export async function hideYearAgo(title, btn) {
+  try {
+    await api('/api/recommendations/on-this-day/hide', 'POST', { title });
+    toast('Hidden for good');
+    loadRecs(state.currentRecsCategory);
+  } catch (e) { toast(`Not hidden: ${e.message || e}`, 'error'); }
+}
+
+// "Because you watched A, B and C": one section per category, headed by its
+// three titles (score_factors.anchors, services/because_recs).
+function _becauseSections(recs) {
+  const groups = new Map();
+  for (const r of recs) {
+    const a = r.score_factors?.anchors || [];
+    const k = `${r.category}|${a.join('|')}`;
+    if (!groups.has(k)) groups.set(k, { anchors: a, recs: [] });
+    groups.get(k).recs.push(r);
+  }
+  const names = a => a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : (a[0] || '');
+  return [...groups.values()].map(g =>
+    `<div class="list-head"><span>Because you watched ${esc(names(g.anchors))}</span><span class="fw-400 fs-12 t3">· ${esc(_LANE_META.because.sub)} · ${g.recs.length}</span></div>`
+    + g.recs.map((r, i) => _recCard(r, `because-${r.category}-${i}`)).join('')).join('');
+}
 
 // "Why?" on a rec card: the signals it was picked on
 // (engine.recommendation_score_factors). The button, its toggle and Escape are
@@ -40,7 +84,7 @@ export function _recCard(rec, key) {
   const why = _recWhy(rec, key);
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span class="badge muted badge-sm">${esc(g)}</span>`).join('');
-  const isLib = rec.lane === 'library';
+  const isLib = ['library', 'because', 'rediscover'].includes(rec.lane);
   const laneBadge = `<span class="badge muted badge-sm" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`;
   return `
   <div class="card mb-12">
@@ -48,7 +92,7 @@ export function _recCard(rec, key) {
       <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
-          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}${why.btn}</div>
+          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null && rec.lane !== 'rediscover' ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}${why.btn}</div>
           <div class="panel-actions">
             <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
@@ -224,8 +268,12 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
       ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">Cached ${_fmtRel(r.cached_at)}</span> · <button type="button" class="link-num t-amber" ${act('regenerateRecs')}>Regenerate now</button></div>`
       : '';
     const library   = r.recommendations.filter(x => x.lane === 'library');
-    const discovery = r.recommendations.filter(x => x.lane !== 'library');
-    let body = '';
+    const because   = r.recommendations.filter(x => x.lane === 'because');
+    const rediscover = r.recommendations.filter(x => x.lane === 'rediscover');
+    const discovery = r.recommendations.filter(x => !['library', 'because', 'rediscover'].includes(x.lane));
+    let body = laneFilter === 'all' ? await _yearAgoRow(category) : '';
+    if (laneFilter === 'all' || laneFilter === 'because')   body += _becauseSections(because);
+    if (laneFilter === 'all' || laneFilter === 'rediscover') body += _recSection('rediscover', rediscover);
     if (laneFilter === 'all' || laneFilter === 'library')   body += _recSection('library', library);
     if (laneFilter === 'all' || laneFilter === 'discovery') body += _recSection('discovery', discovery);
     if (!body) body = emptyHtml('Nothing in this lane yet — regenerate, or switch lane above.', 'Regenerate', act('regenerateRecs'));
@@ -237,7 +285,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
 export function setRecLane(lane, btn) {
   state.currentRecsLane = lane;
   tabToHash('recs', lane);    // #recs/library survives a reload
-  for (const [id, val] of [['lane-all-btn','all'], ['lane-lib-btn','library'], ['lane-disc-btn','discovery']]) {
+  for (const [id, val] of [['lane-all-btn','all'], ['lane-because-btn','because'], ['lane-rediscover-btn','rediscover'], ['lane-lib-btn','library'], ['lane-disc-btn','discovery']]) {
     const b = document.getElementById(id);
     if (b) b.classList.toggle('active', lane === val);
   }
@@ -246,7 +294,7 @@ export function setRecLane(lane, btn) {
 
 // The lane as the in-view tab of #recs (nav.js registerTabRoute). showView has
 // just loaded the view on the current lane, so only a different lane reloads.
-export const REC_LANES = ['all', 'library', 'discovery'];
+export const REC_LANES = ['all', 'because', 'rediscover', 'library', 'discovery'];
 export function openRecLane(lane) {
   if ((state.currentRecsLane || 'all') !== lane) setRecLane(lane);
 }
@@ -312,7 +360,7 @@ async function _startRefresh(cat) {
 }
 
 export function _laneParam() {
-  return (state.currentRecsLane === 'library' || state.currentRecsLane === 'discovery') ? `&lane=${ state.currentRecsLane }` : '';
+  return ['library', 'discovery', 'because', 'rediscover'].includes(state.currentRecsLane) ? `&lane=${ state.currentRecsLane }` : '';
 }
 
 export async function regenerateRecs() {

@@ -51,6 +51,29 @@ _TMDB_CACHE: dict[str, tuple] = {}  # {f"{title}:{category}": (poster_url, synop
 _TMDB_CACHE_TTL = 86_400            # 24 hours
 
 
+class _HideBody(BaseModel):
+    title: str
+
+
+@router.get("/on-this-day")
+async def on_this_day(user: User = Depends(get_current_user)):
+    """What this member finished around today's date a year ago
+    (services/on_this_day); an empty list on most days."""
+    from src.services.on_this_day import a_year_ago
+    return {"items": await run_read(a_year_ago, user.id)}
+
+
+@router.post("/on-this-day/hide")
+async def on_this_day_hide(body: _HideBody, user: User = Depends(get_current_user)):
+    """Never show this title in the member's "a year ago" row again."""
+    from src.services.on_this_day import hide
+    title = (body.title or "").strip()[:500]
+    if not title:
+        raise HTTPException(400, "title is required")
+    await run_write(hide, user.id, title)
+    return {"ok": True}
+
+
 @router.get("/")
 async def get_recommendations(
     category: Optional[str] = Query(None),
@@ -117,11 +140,11 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
                 q = db.query(CachedRecommendation).filter(CachedRecommendation.user_id == user.id)
                 if category and category in CATEGORIES:
                     q = q.filter(CachedRecommendation.category == category)
-                if lane in ("library", "discovery"):
+                if lane in ("library", "discovery", "because", "rediscover"):
                     q = q.filter(CachedRecommendation.lane == lane)
-                # Generous cap: up to two lanes × ~10 each per category, so neither
+                # Generous cap: up to three lanes × ~10 each per category, so no
                 # lane gets truncated. Ordered by lane then confidence (best-first).
-                cap = limit * (4 if category else 16)
+                cap = limit * (8 if category else 32)
                 cached = q.order_by(CachedRecommendation.lane.asc(),
                                     CachedRecommendation.confidence.desc()).limit(cap).all()
                 return [{"title": r.title, "reason": r.reason, "confidence": r.confidence,

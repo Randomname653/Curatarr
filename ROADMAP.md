@@ -1,31 +1,45 @@
 # Curatarr — Roadmap
 
-_Last updated: 2026-10-23. This is the working plan, not a promise — items
+_Last updated: 2026-11-08. This is the working plan, not a promise — items
 move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.md)._
 
 ---
 
 ## Now (in progress / upcoming)
 
-**Settling in after the NAS move**
+**Plays while Curatarr is off** (done for both servers, see below)
 
-Curatarr now runs around the clock in a container, with the gaming PC's card
-as a second host. Both cards work at once, and both installs update from the
-app. What the first days of that setup still have to show:
+Curatarr may run only a few hours a day on a PC, without a NAS. Plex keeps
+one history event per play on the server, so the next sync picks up
+everything played meanwhile. Jellyfin keeps only each item's current state
+(played, how often, when last), so what the delta poll recovers after a gap
+is coarser:
 
-- **Memory floor.** The growth came from the facet writer (fixed). What is
-  left after a restart is mostly the facet index (~1.2 GB, about 40% of it
-  dead slots). Watch that it stays flat; if it still climbs per enrichment
-  item, measure the live enrichment path. The offline measurement could not
-  reproduce its network clients.
-- **Needs attention down to the real cases.** The weekly audit clears the
-  false wrong-entity findings, and Plex-index music no longer counts as
-  "no id". What remains are AniList entries for another work, and anime no
-  source knows under their English title.
+- a title played twice while Curatarr was off counts twice, but only the
+  last play has its date and time; the device is unknown;
+- a film stopped halfway is not marked played on the server and is not seen
+  at all.
+
+The Playback Reporting plugin stores every play, but Curatarr reads it only
+once per member, for the time before Curatarr. Reading it again for the
+window Curatarr was off closes the gap for households that have the plugin.
+Plex in turn sees running sessions only through the daily sync; polling
+`/status/sessions` would give it the live view Jellyfin already has.
+
+**Playlists and collections, checked against the live server**
+- How reliably the "Curatarr Recommended" playlists and the designed
+  collections follow the recommendations (they refresh weekly, the
+  playlists earlier when the sync finds a member's picks all sampled),
+  where they show up in Plex and
+  Jellyfin, and whether collections should be promoted to the home screen.
+
+**Still being watched after the NAS move**
+- **Needs attention down to the real cases.** What remains are AniList
+  entries for another work, and anime no source knows under their English
+  title.
 - **Game detection on the PC.** A new game is caught by its share of the
   card's 3D engine, but one idling in its menu draws too little for the
-  threshold. Classifying it covers that. Tune the threshold on real games
-  before lowering it.
+  threshold. Tune the threshold on real games before lowering it.
 
 **Search stage 2 — LLM facets**
 - Extend the enrichment schema with three targeted facet texts
@@ -33,8 +47,7 @@ app. What the first days of that setup still have to show:
   distinctions ("commercial kitsch" vs. "transgressive art", otome trash
   vs. subversion) become searchable. Stage 1 (theme facets as individual
   vectors) is live; stage 2 runs only where stage-1 measurement says the
-  register gap is real. Weigh it against the facet index's memory, see
-  below.
+  register gap is real.
 
 **Remaining external-eval half-fixes**
 - Memory decay clock semantics, the dormant loved-recommendation detector,
@@ -44,23 +57,14 @@ app. What the first days of that setup still have to show:
 
 ## Next
 
-**Needs attention, the rest automated**
-- Collaboration credits from the Plex index ("A & B", "A feat. B") folded
-  into the member artists, so they stop counting as artists of their own in
-  the Knowledge Base.
-
 **Discovery features on the taste-vector stack** (SoulSync-inspired)
-- **Decade time machine** — "my taste, but the 1980s": taste-similarity
-  partitioned by era, one lane per decade.
-- **Consensus recommendations** — "because you watched A, B and C":
-  scored from taste-vector distances, the curator narrates the connection.
-- **Seasonal collections** — a seasonal hint for the collection designer
-  (October → horror, December → cozy) — one context line, rotates
-  automatically.
 
 **Taste engine stage 3**
-- Per-facet taste centroids (the multi-centroid machinery exists) for
-  deletion scoring and recommendations.
+- Per-facet taste centroids. Today a member's taste in a category is one
+  to five centroids over whole-title embeddings. Per facet means separate
+  centres for what a title is about, how it feels and how it looks, so
+  deletion scoring and recommendations can match on the facet that
+  carries the taste instead of on a blend of all of them.
 
 ## Later
 
@@ -71,17 +75,13 @@ app. What the first days of that setup still have to show:
 - **German locale** as a global UI/curator language setting.
 - **Movie-night ballot** — household nomination/vote/watch flow
   (SoulSync-inspired), a project of its own.
-- **Jellyfin support** — one install talks to Plex *or* Jellyfin (10.9+),
-  behind one media-server seam, and can switch between them both ways
-  without losing history (`rebind-server`, with a permanent id memory).
-  Per-play history works without plugins (live session polling); the
-  Webhook and Playback Reporting plugins add precision and backfill.
-  Phases 1–6 (seam, adapters, id memory, sign-in, play history, writes,
-  the rebind tool, parity: music index, moods, likes, subtitles) are built;
-  live-server checks remain. Design and build order in
-  [docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md).
 - **Tautulli importer** — full historical watch attribution for setups
   that have it.
+- **Emby** — a third adapter behind the media-server seam, only with a
+  test server to build against. Jellyfin forked from Emby, but the
+  adapter uses the 10.9 routes Emby does not have, Emby has no Quick
+  Connect, and its numeric item ids look like Plex keys, so the id memory
+  would have to store the server kind with every key.
 - **Deeper music enrichment** — give the curator the same depth of
   knowledge about music that it has about films and shows. Music awards
   (Grammys) from Wikidata belong here. So do MusicBrainz relationship
@@ -99,6 +99,29 @@ app. What the first days of that setup still have to show:
   wants.
 - **Stronger remote sign-in** — hardware keys through the identity
   provider in front of the public address.
+
+## Done since the last update
+
+- **Jellyfin** — one install runs on Plex *or* Jellyfin 10.9+ and moves
+  between them from Settings, both ways, keeping its history. Tested
+  against a live Jellyfin (sign-in, all play-history tiers, writes, the
+  move and its undo). Design in [docs/JELLYFIN_DESIGN.md](docs/JELLYFIN_DESIGN.md).
+- **Memory floor after the NAS move** — stayed flat after the facet index
+  went to one point per phrase.
+- **Curator tone per member** — friendly, neutral or sharp, with the same
+  rules on facts and on the user's own account for all three.
+- **Because you watched A, B and C** — a recommendation lane and a
+  playlist per member; **Rediscover** and **A year ago** rows beside it.
+- **Milestones** with a history, **Your decades** and the **anime season**
+  in the Wrap-Up.
+- **Collaboration credits** count for their artists (first-billed artist
+  known, the credit itself unknown); the Knowledge Base files them as credits.
+- **Collections** edited in place and shown on the home screens (Plex),
+  with a season shelf per library (the household's calendar and language).
+- **Playlists** in each member's own account (the server token per
+  account), and the music playlist without a mapped music library.
+- **Jellyfin plays while Curatarr is off** caught up at once, without any
+  plugin; Playback Reporting adds times and devices.
 
 ## Decided against
 

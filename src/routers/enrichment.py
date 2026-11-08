@@ -7,7 +7,6 @@ Category-specific metadata enrichment with progress tracking.
 import asyncio
 import json
 import logging
-import re
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -248,15 +247,7 @@ def _history_dedupe_key(cat: str, series_title, title) -> Optional[str]:
 # ("A & B", "A feat. B", "A x B", "A vs. B", "A, B", "A presents B") or a
 # stray tag with no letters ("00", ".dev"). Only consulted AFTER the full
 # name missed: "Simon & Garfunkel" is found as itself first.
-_CREDIT_SEP = re.compile(r"\s(?:&|\+|x|vs\.?|feat\.?|ft\.?|featuring|pres\.?|presents|and|with)\s|,\s|\s/\s",
-                         re.IGNORECASE)
-
-
-def _looks_like_credit(name: str) -> bool:
-    s = (name or "").strip()
-    if not any(ch.isalpha() for ch in s) or s.startswith("."):
-        return True
-    return bool(_CREDIT_SEP.search(s))
+from src.services.music_credits import looks_like_credit as _looks_like_credit  # noqa: E402
 
 
 def _source_answered(raw: Optional[dict]) -> bool:

@@ -88,10 +88,10 @@ class FakeAdapter:
     async def next_episode(self, who, key):
         return self.next_ep
 
-    async def playlist_keys(self, who, title):
+    async def playlist_keys(self, who, title, aliases=()):
         return []
 
-    async def upsert_playlist(self, who, title, keys, media_type="Video"):
+    async def upsert_playlist(self, who, title, keys, media_type="Video", aliases=()):
         self.upserts.append(list(keys))
         return "playlistid"
 
