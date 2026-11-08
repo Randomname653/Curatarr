@@ -38,6 +38,7 @@ else.
 |---|---|
 | [WRAPUP_DESIGN.md](WRAPUP_DESIGN.md) | Wrap-Up v1: research, decisions and the design. **Implemented** 2026-10-23; its header lists where the shipped code differs from the draft |
 | [JELLYFIN_DESIGN.md](JELLYFIN_DESIGN.md) | Jellyfin as an alternative to Plex: the owner's decisions, feature mapping, four-tier play history, the media-server seam, the `Plex ⇄ Jellyfin` rebind tool, and the key audit. **Accepted**; phase 1 built (`src/services/media_server/`) |
+| [UX_RETENTION_DESIGN.md](UX_RETENTION_DESIGN.md) | What a household member sees in Home, Chat, Swipe, Wrap-Up and the bell, audited at `38b3f28`, with the concept for a member "living room", a TV ⇄ Curatarr follow-up loop and a three-stage plan. **Proposed** 2026-11-08; nothing built yet |
 | [WRAPUP_V2_BLUEPRINT.md](WRAPUP_V2_BLUEPRINT.md) | Wrap-Up v2: research and telemetry plan, with the owner's decisions. **In progress**: the data groundwork (every play its own row, the library ledger, each user's own clock, the credits index) has landed and is marked *Done* in place; the v2 features themselves are not built yet |
 
 ## Audit reports — dated snapshots
