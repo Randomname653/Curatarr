@@ -56,27 +56,19 @@ BEAT_HEADLINES = {"open": "Your hours", "reveal": "Where the hours went",
 # ── the template, for a slide the writer could not write (UX design record,
 # stage 3.7). It used to read "<claim> <the editor's reason>." - the reason
 # is a note to the editor ("the widest gap between you and everyone else"),
-# cold on a slide. Now: the claim, and a warm line for its kind of card, in
-# the story's language. The claim itself is a fact sentence of the miner and
-# stays English (the UI language project, 3.8, is a later round).
+# cold on a slide. Now: the claim, the headline and the warm line of that
+# very fact (services/wrapup_claims, by the card's key - a line chosen by
+# the kind of card did not fit its claim), all in the story's language. A
+# fact with no fitting warm line gets none. The beat headlines below stand
+# in only for a card without a key.
 _HEADLINES_DE = {"open": "Deine Stunden", "reveal": "Wohin die Stunden gingen",
                  "rhythm": "Dein Rhythmus", "moment": "Der Tag, an dem es passierte",
                  "twist": "Die Wendung", "court": "Vor Gericht", "balance": "Rein und raus",
                  "identity": "Ganz dein Ding", "music": "In Dauerschleife", "decades": "Deine Jahrzehnte"}
 _CLOSERS = {
-    "en": {"superlative": "Nothing else came close.", "streak": "Once it started, it kept going.",
-           "rhythm": "A rhythm all your own.", "moment": "One worth remembering.",
-           "identity": "Right up your street.", "court": "The court had its say.",
-           "contrast": "You and the crowd, happily apart.", "confession": "No judgement, only numbers.",
-           "balance": "The shelves kept moving.",
-           "ROAST": "Said with love.", "TOAST": "Here's to more of that.",
+    "en": {"ROAST": "Said with love.", "TOAST": "Here's to more of that.",
            "NEXT": "Next, if you feel like it: {title}."},
-    "de": {"superlative": "Nichts anderes kam heran.", "streak": "Einmal angefangen, lief es weiter.",
-           "rhythm": "Ein ganz eigener Takt.", "moment": "Das bleibt.",
-           "identity": "Genau nach deinem Geschmack.", "court": "Das Gericht hat gesprochen.",
-           "contrast": "Du und die anderen, angenehm verschieden.", "confession": "Kein Urteil, nur Zahlen.",
-           "balance": "Die Regale blieben in Bewegung.",
-           "ROAST": "Liebevoll gemeint.", "TOAST": "Auf mehr davon.",
+    "de": {"ROAST": "Liebevoll gemeint.", "TOAST": "Auf mehr davon.",
            "NEXT": "Als Nächstes, wenn du magst: {title}."},
 }
 
@@ -584,16 +576,20 @@ def _model_name() -> str:
 
 def _template(section: str, card: Optional[dict], pick: Optional[dict], lang: str = "en") -> tuple:
     """(headline, text) for a section the writer could not write: the
-    card's claim and a warm line for its kind, in ``lang`` (en/de)."""
+    card's claim with the headline and warm line of that fact, in ``lang``
+    (en/de; services/wrapup_claims)."""
+    from src.services import wrapup_claims as wc
     tx = _CLOSERS.get(lang) or _CLOSERS["en"]
     if section == "NEXT":
         if not pick:
             return "", ""
         why = f" {pick['reason'].rstrip('.')}." if pick.get("reason") and lang == "en" else ""
         return "", tx["NEXT"].format(title=pick["title"]) + why
-    head = beat_headline(card["slide"], lang) if section.startswith("I") else ""
-    closer = tx.get(section) or tx.get(card["kind"]) or ""
-    return head, f"{card['claim']} {closer}".strip()
+    head = ""
+    if section.startswith("I"):
+        head = wc.headline(card, lang) or beat_headline(card["slide"], lang)
+    closer = tx.get(section) or wc.warm(card, lang)
+    return head, f"{wc.claim(card, lang)} {closer}".strip()
 
 
 async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list = (),

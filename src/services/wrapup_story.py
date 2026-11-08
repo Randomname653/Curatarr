@@ -351,6 +351,7 @@ def fallback_story(f: dict, idx: dict, lang: str = "en") -> dict:
     """The same shape, written from the facts alone: archetype from the
     strongest trait, chapters from the top titles, every sentence a fact,
     in the story's language."""
+    from src.services.wrapup_claims import num
     tx = _FALLBACK.get(lang) or _FALLBACK["en"]
     traits = f.get("traits") or []
     key = traits[0]["key"] if traits else None
@@ -362,8 +363,8 @@ def fallback_story(f: dict, idx: dict, lang: str = "en") -> dict:
         refs = [by_title[t["title"]] for t in top[:2] if t["title"] in by_title]
         lead = top[0]
         chapters.append({"title": tx["where"], "kicker": tx["led"].format(title=lead["title"]),
-                         "commentary": tx["took"].format(title=lead["title"], hours=lead["hours"],
-                                                         plays=lead["plays"]),
+                         "commentary": tx["took"].format(title=lead["title"], hours=num(lead["hours"], lang),
+                                                         plays=num(lead["plays"], lang)),
                          "item_refs": refs, "fact_refs": []})
     rest = [by_title[t["title"]] for t in top[2:5] if t["title"] in by_title]
     if rest:

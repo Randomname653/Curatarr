@@ -86,7 +86,8 @@ check("refs resolve to title + artwork for the page", done["refs"][T["Dark"]]["p
 fb = st.fallback_story(FACTS, idx)
 check("fallback names the strongest trait", fb["archetype_title"] == "The Contrarian")
 check("fallback chapters anchor on the top titles", fb["era_chapters"][0]["item_refs"][0] == T["Dark"])
-check("fallback says only facts", "5.0 hours" in fb["era_chapters"][0]["commentary"])
+check("fallback says only facts, its numbers as people write them",
+      fb["era_chapters"][0]["commentary"] == "Dark: 5 hours over 6 plays.", fb["era_chapters"][0])
 check("fallback hook is an owned-unwatched pick", fb["look_ahead_hook"]["item_ref"] in idx["picks"])
 
 calls = []

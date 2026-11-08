@@ -47,8 +47,10 @@ def _t(lang: str) -> dict:
     return _TEXT.get(lang) or _TEXT["en"]
 
 
-def _num(h: float) -> str:
-    return f"{h:.0f}" if h >= 10 or float(h).is_integer() else f"{h:.1f}"
+def _num(h: float, lang: str = "en") -> str:
+    """8.4 → '8.4' / '8,4'; 12.6 → '13': a card rounds to whole hours from ten."""
+    from src.services.wrapup_claims import num
+    return num(round(h) if h >= 10 else round(h, 1), lang)
 
 
 def week_due(local: datetime) -> Optional[datetime]:
@@ -86,10 +88,10 @@ def week_card(user_id: int, now: Optional[datetime] = None, zone=None,
     lang = lang or user_language(user_id)
     tx = _t(lang)
     tempo = facts.get("tempo") or {}
-    lines = [tx["week_line"].format(hours=_num(tempo.get("hours") or 0), days=tempo.get("active_days") or 0)]
+    lines = [tx["week_line"].format(hours=_num(tempo.get("hours") or 0, lang), days=tempo.get("active_days") or 0)]
     top = (facts.get("top") or [None])[0]
     if top and top.get("hours"):
-        lines.append(tx["most"].format(title=top["title"], hours=_num(top["hours"])))
+        lines.append(tx["most"].format(title=top["title"], hours=_num(top["hours"], lang)))
     new = ((facts.get("genres") or {}).get("first_time") or [None])[0]
     if new:
         lines.append(tx["new"].format(genre=new))

@@ -57,6 +57,9 @@ de = wc.week_card(UID, now=monday, zone=BERLIN, lang="de")
 check("in German for a German writer",
       de["label"] == "Deine Woche" and de["lines"][0] == "6 Std · an 6 Tagen lief etwas"
       and de["lines"][1] == "Am meisten: **Starfall Archive** (6 Std)", de)
+check("the card's numbers the member's way: 8,4 Std in German, whole hours from ten",
+      wc._num(8.4, "de") == "8,4" and wc._num(8.4, "en") == "8.4" and wc._num(12.6, "de") == "13"
+      and wc._num(6.0, "de") == "6")
 check("on a Tuesday there is no week card",
       wc.week_card(UID, now=datetime(2026, 11, 10, 18, 0), zone=BERLIN, lang="en") is None)
 check("a week under the Wrap-Up's threshold gets no card - no small number, no 'only'",

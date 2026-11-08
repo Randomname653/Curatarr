@@ -138,16 +138,20 @@ def _clamp(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
-def _card(kind, slide, score, claim, why, values=None, say=None, refs=None,
+def _card(kind, slide, score, key, slots, why, values=None, say=None, refs=None,
           media_type: Optional[str] = None, private: bool = False) -> dict:
-    """``private``: the claim names something the household named itself (a
+    """``key`` names the fact and ``slots`` hold its parts: the claim is
+    rendered from them (services/wrapup_claims), in English for the editor
+    and in the story's language for a slide the writer could not write.
+    ``private``: the claim names something the household named itself (a
     device: "the Living Room TV", "Anna's iPad") - fine on the member's own
     screen, never on a share image (wrapup_story.js)."""
+    from src.services.wrapup_claims import render
     refs = [r for r in (refs or []) if r]
     # specificity: a card that names something beats one that does not
     score = _clamp(score + (0.08 if refs else 0))
-    card = {"kind": kind, "slide": slide, "score": round(score, 2), "claim": claim,
-            "why": why, "values": values or {}, "say": say or {}, "refs": refs,
+    card = {"kind": kind, "slide": slide, "score": round(score, 2), "key": key, "slots": slots,
+            "claim": render(key, slots), "why": why, "values": values or {}, "say": say or {}, "refs": refs,
             "media_type": media_type}
     if private:
         card["private"] = True
@@ -166,7 +170,7 @@ def _tempo(f) -> list:
             up = delta > 0
             out.append(_card(
                 "contrast", "open", 0.35 + _clamp(abs(delta) / 2) * 0.5,
-                f"{_fmt(h)} hours, against {_fmt(prev)} in the same span before.",
+                "tempo_up" if up else "tempo_down", {"hours": h, "prev": prev},
                 f"{'more' if up else 'less'} than the span before by {round(abs(delta) * 100)}%",
                 {"hours": h, "prev_hours": prev, "delta": round(delta, 2)},
                 {"hours": say_hours(h), "prev_hours": say_hours(prev),
@@ -174,13 +178,13 @@ def _tempo(f) -> list:
     night = (t.get("dayparts") or {}).get("night", 0)
     if night >= 0.25:
         out.append(_card("rhythm", "rhythm", 0.3 + night,
-                         f"{round(night * 100)}% of it after 23:00.",
+                         "night_share", {"share": night},
                          "most people's viewing ends before the night begins",
                          {"night": night}, {"night": say_share(night)}))
     streak = t.get("longest_streak_days") or 0
     if streak >= 5:
         out.append(_card("streak", "rhythm", 0.25 + _clamp(streak / 21) * 0.65,
-                         f"A {streak}-day run without a day off.",
+                         "streak", {"days": streak},
                          "an unbroken run of days is effort made visible",
                          {"days": streak}, {"days": say_days(streak)}))
     bd = t.get("biggest_day") or {}
@@ -189,7 +193,7 @@ def _tempo(f) -> list:
         ratio = (bd.get("hours") or 0) / (h / active)
         if ratio >= 2.5:
             out.append(_card("moment", "moment", 0.3 + _clamp((ratio - 2.5) / 5) * 0.5,
-                             f"{bd['date']}: {_fmt(bd['hours'])} hours in one day, {bd['plays']} plays.",
+                             "big_day", {"date": bd["date"], "hours": bd["hours"], "plays": bd["plays"]},
                              f"about {round(ratio)} times a usual day",
                              {"date": bd["date"], "hours": bd["hours"], "ratio": round(ratio, 1)},
                              {"hours": say_hours(bd["hours"]), "ratio": say_count(round(ratio), "times")}))
@@ -204,7 +208,8 @@ def _top(f) -> list:
     share = (first.get("hours") or 0) / t["hours"]
     lead = share / max(0.01, (top[1]["hours"] / t["hours"]) if len(top) > 1 else 0.01)
     return [_card("superlative", "reveal", 0.35 + _clamp(share * 1.5) * 0.4 + _clamp((lead - 1) / 4) * 0.2,
-                  f"{first['title']} took {_fmt(first['hours'])} hours, {round(share * 100)}% of the time.",
+                  "top_title_clear" if len(top) == 1 or lead >= 2 else "top_title",
+                  {"title": first["title"], "hours": first["hours"], "share": share},
                   "the title that owned the period" + (f", well clear of {top[1]['title']}"
                                                        if len(top) > 1 and lead >= 2 else ""),
                   {"hours": first["hours"], "share": round(share, 2), "plays": first.get("plays")},
@@ -217,7 +222,7 @@ def _binge(f) -> list:
     s = b.get("deepest_sitting")
     if s:
         out.append(_card("streak", "moment", 0.25 + _clamp(s["episodes"] / 12) * 0.6,
-                         f"{s['episodes']} episodes of {s['series']} in one sitting on {s['date']}.",
+                         "binge", {"episodes": s["episodes"], "series": s["series"], "date": s["date"]},
                          "one more episode, again and again", {"episodes": s["episodes"]},
                          {"episodes": say_count(s["episodes"], "episodes")},
                          [s["series"]], s.get("media_type")))
@@ -231,9 +236,8 @@ def _contrasts(f) -> list:
         gap = c.get("gap") or 0
         rated = c.get("basis") == "rated"
         out.append(_card("contrast", "twist", (0.3 + _clamp(gap / 3.5) * 0.6) * (1 if rated else 0.7),
-                         f"You {'rated' if rated else 'kept rewatching'} {c['title']}"
-                         f"{' ' + _fmt(c['you']) if rated else ''}; the community gives it "
-                         f"{c['community']} ({c['votes']:,} votes).",
+                         "contrarian_rated" if rated else "contrarian_rewatched",
+                         {"title": c["title"], "you": c["you"], "community": c["community"], "votes": c["votes"]},
                          "the widest gap between you and everyone else",
                          {"you": c["you"], "community": c["community"], "gap": gap},
                          {"community": say_score(c["community"]),
@@ -243,14 +247,13 @@ def _contrasts(f) -> list:
     d = f.get("dismissal")
     if d:
         out.append(_card("contrast", "twist", 0.45 + _clamp((d["community"] - 7.8) / 1.2) * 0.4,
-                         f"You walked away from {d['title']} ({d['how']}); the community gives it "
-                         f"{d['community']}.",
+                         "dismissal", {"title": d["title"], "how": d["how"], "community": d["community"]},
                          "acclaim did not keep you there", {"community": d["community"]},
                          {"community": say_score(d["community"])}, [d["title"]], d.get("media_type")))
     cf = f.get("comfort")
     if cf and (cf.get("replays") or 0) >= 3:
         out.append(_card("confession", "moment", 0.25 + _clamp(cf["replays"] / 8) * 0.5,
-                         f"{cf['title']} again: {cf['replays']} replays.",
+                         "comfort_replays", {"title": cf["title"], "replays": cf["replays"]},
                          "a comfort title says more than a top list", {"replays": cf["replays"]},
                          {"replays": say_count(cf["replays"], "replays")},
                          [cf["title"]], cf.get("media_type")))
@@ -264,7 +267,7 @@ def _court(f) -> list:
     bk = c.get("boldest_keep")
     if bk:
         out.append(_card("court", "court", 0.55 + _clamp((bk["score"] - 80) / 20) * 0.35,
-                         f"The judge was {bk['score']}% sure {bk['title']} should go. It stayed.",
+                         "court_keep", {"score": bk["score"], "title": bk["title"]},
                          "you overruled the curator where it was surest",
                          {"score": bk["score"], "defiant": c.get("defiant")},
                          {"score": [f"{bk['score']}%"], "defiant": say_count(c.get("defiant"), "titles")},
@@ -272,14 +275,13 @@ def _court(f) -> list:
     if (c.get("won") or 0) + (c.get("lost") or 0) >= 2:
         won, lost = c.get("won", 0), c.get("lost", 0)
         out.append(_card("court", "court", 0.45 + _clamp(abs(won - lost) / 5) * 0.35,
-                         f"Debates: you talked the curator out of {won}, it talked you into {lost}.",
+                         "court_debates", {"won": won, "lost": lost},
                          "who usually wins the argument", {"won": won, "lost": lost},
                          {"won": say_count(won), "lost": say_count(lost)},
                          [x["title"] for x in (c.get("talked_out_of"), c.get("talked_into")) if x]))
     elif c.get("decided", 0) >= 3:
         out.append(_card("court", "court", 0.4,
-                         f"{c['decided']} titles decided: {c['kept']} kept, {c['deleted']} deleted, "
-                         f"{c['overrides']} over the curator's objection.",
+                         "court_decided", {k: c[k] for k in ("decided", "kept", "deleted", "overrides")},
                          "the year's verdicts", {k: c[k] for k in ("decided", "kept", "deleted", "overrides")},
                          {k: say_count(c[k]) for k in ("decided", "kept", "deleted", "overrides")}))
     return out
@@ -293,8 +295,9 @@ def _balance(f) -> list:
         big = max(v.get("gb_in") or 0, v.get("gb_out") or 0) or 1
         verdict = v.get("verdict")
         out.append(_card("balance", "balance", 0.35 + _clamp(abs(net) / big) * 0.45,
-                         f"{_fmt(v['gb_in'])} GB in, {_fmt(v['gb_out'])} GB out — "
-                         f"{'a pruner' if verdict == 'pruner' else 'a hoarder' if verdict == 'hoarder' else 'in balance'}.",
+                         "balance", {"gb_in": v["gb_in"], "gb_out": v["gb_out"],
+                                     "verdict": ("a pruner" if verdict == "pruner" else "a hoarder"
+                                                 if verdict == "hoarder" else "in balance")},
                          "what the server gained against what it lost",
                          {"gb_in": v["gb_in"], "gb_out": v["gb_out"], "net_gb": net},
                          {"gb_in": say_gb(v["gb_in"]), "gb_out": say_gb(v["gb_out"]),
@@ -304,15 +307,14 @@ def _balance(f) -> list:
     if t:
         lo = t["longest"]
         out.append(_card("confession", "balance", 0.3 + _clamp(lo["days"] / 400) * 0.6,
-                         f"{lo['title']} waited {lo['days']} days on the server before you pressed play.",
+                         "wait_longest", {"title": lo["title"], "days": lo["days"]},
                          "the longest anything sat in the queue",
                          {"days": lo["days"], "median_days": t["median_days"]},
                          {"days": say_days(lo["days"]), "median_days": say_days(t["median_days"])},
                          [lo["title"]], lo.get("media_type")))
         if t.get("same_week_share", 0) >= 0.6:
             out.append(_card("rhythm", "balance", 0.3 + (t["same_week_share"] - 0.6),
-                             f"{round(t['same_week_share'] * 100)}% of the new titles played within a week "
-                             "of arriving.", "no backlog: things are watched as they land",
+                             "same_week", {"share": t["same_week_share"]}, "no backlog: things are watched as they land",
                              {"share": t["same_week_share"]}, {"share": say_share(t["same_week_share"])}))
     return out
 
@@ -325,8 +327,8 @@ def _identity(f) -> list:
         if x:
             out.append(_card("identity", "identity", 0.3 + _clamp((x["count"] - 1) / 4) * 0.4
                              + _clamp(x["hours"] / 40) * 0.2,
-                             f"Your {label}: {x['name']}, {x['count']} titles, {_fmt(x['hours'])} hours "
-                             f"({', '.join(x['titles'][:3])}).",
+                             f"auteur_{role}", {"name": x["name"], "count": x["count"], "hours": x["hours"],
+                                                "titles": x["titles"][:3]},
                              f"the {label} behind most of the hours",
                              {"count": x["count"], "hours": x["hours"]},
                              {"count": say_count(x["count"], "titles"), "hours": say_hours(x["hours"])},
@@ -334,22 +336,21 @@ def _identity(f) -> list:
     d = f.get("drift") or {}
     if d.get("label") in ("shifting", "new direction"):
         out.append(_card("identity", "identity", 0.55 if d["label"] == "shifting" else 0.8,
-                         f"Taste against your own past: {d['label']}.",
+                         "drift", {"label": d["label"]},
                          "the period did not look like the ones before it", {"drift": d.get("drift")}))
     river = [m for m in (f.get("river") or []) if m.get("similarity") is not None]
     if river:
         turn = min(river, key=lambda m: m["similarity"])
         if turn["similarity"] < 0.5:
             out.append(_card("moment", "identity", 0.45 + _clamp((0.5 - turn["similarity"]) / 0.5) * 0.4,
-                             f"{turn['month']} was the month it turned: "
-                             f"{', '.join(turn['top_titles'][:2])}.",
+                             "taste_turn", {"month": turn["month"], "titles": turn["top_titles"][:2]},
                              "the month least like the one before it", {"month": turn["month"]},
                              refs=turn["top_titles"][:2]))
     ds = f.get("discovery") or {}
     if ds and (ds.get("new_share", 0.5) >= 0.7 or ds.get("new_share", 0.5) <= 0.2):
         new = ds["new_share"]
         out.append(_card("identity", "identity", 0.3 + abs(new - 0.5) * 0.6,
-                         f"{round(new * 100)}% of the time on titles new to you.",
+                         "discovery_new" if new >= 0.7 else "discovery_old", {"share": new},
                          "a scout" if new >= 0.7 else "a loyalist: old friends got the hours",
                          {"new_share": new}, {"new_share": say_share(new)},
                          [ds.get("best_new")] if new >= 0.7 else None))
@@ -361,13 +362,14 @@ def _music(f) -> list:
     r = m.get("on_repeat")
     if r:
         out.append(_card("moment", "music", 0.3 + _clamp(r["plays"] / 15) * 0.55,
-                         f"'{r['track']}' by {r['artist']}, {r['plays']} times on {r['date']}.",
+                         "on_repeat", {"track": r["track"], "artist": r["artist"], "plays": r["plays"],
+                                       "date": r["date"]},
                          "one track, on repeat, all day", {"plays": r["plays"]},
                          {"plays": say_count(r["plays"], "times")}, [r["artist"]], "music"))
     sk = m.get("most_skipped")
     if sk:
         out.append(_card("confession", "music", 0.35 + _clamp(sk["skips"] / 15) * 0.4,
-                         f"'{sk['track']}' by {sk['artist']}: skipped {sk['skips']} times.",
+                         "skipped", {"track": sk["track"], "artist": sk["artist"], "skips": sk["skips"]},
                          "the track you keep not wanting", {"skips": sk["skips"]},
                          {"skips": say_count(sk["skips"], "times")}, [sk["artist"]], "music"))
     return out
@@ -383,7 +385,7 @@ def _moods(f) -> list:
         (dp, dx), (lp, lx) = max(day, key=lambda x: x[1]["hours"]), max(late, key=lambda x: x[1]["hours"])
         if dx["mood"] != lx["mood"]:
             out.append(_card("contrast", "music", 0.4 + _clamp((dx["share"] + lx["share"]) / 2) * 0.4,
-                             f"{dp.capitalize()}s ran {dx['mood']}, {lp}s {lx['mood']}.",
+                             "moods_split", {"day": dp, "day_mood": dx["mood"], "late": lp, "late_mood": lx["mood"]},
                              "the same person, two soundtracks a day apart",
                              {"day_share": dx["share"], "late_share": lx["share"]},
                              {"day_share": say_share(dx["share"]), "late_share": say_share(lx["share"])},
@@ -391,7 +393,7 @@ def _moods(f) -> list:
     top = (mo.get("top_moods") or [None])[0]
     if top and top["share"] >= 0.3:
         out.append(_card("identity", "music", 0.25 + _clamp(top["share"]) * 0.45,
-                         f"{round(top['share'] * 100)}% of the tagged listening was {top['mood']}.",
+                         "top_mood", {"share": top["share"], "mood": top["mood"]},
                          "the mood the year kept coming back to", {"share": top["share"]},
                          {"share": say_share(top["share"])}, media_type="music"))
     return out
@@ -402,7 +404,7 @@ def _devices(f) -> list:
     if not n or n["share"] < 0.5:
         return []
     return [_card("rhythm", "rhythm", 0.3 + _clamp(n["share"]) * 0.4 + _clamp(n["hours"] / 50) * 0.15,
-                  f"After 23:00 it was the {n['player']}: {round(n['share'] * 100)}% of {_fmt(n['hours'])} night hours.",
+                  "device_night", {"player": n["player"], "share": n["share"], "hours": n["hours"]},
                   "where the late hours were spent", {"share": n["share"], "hours": n["hours"]},
                   {"share": say_share(n["share"]), "hours": say_hours(n["hours"])}, private=True)]
 
@@ -421,8 +423,7 @@ def _decades(f) -> list:
         return []
     titles = tops.get(lead) or []
     return [_card("identity", "decades", 0.35 + _clamp((share - 0.25) / 0.5) * 0.45,
-                  f"Your {lead}: {round(share * 100)}% of the hours went to titles from the {lead}"
-                  f"{' (' + ', '.join(titles[:3]) + ')' if titles else ''}.",
+                  "decade_titled" if titles else "decade", {"decade": lead, "share": share, "titles": titles[:3]},
                   "a decade that is not this one held the most time",
                   {"decade": lead, "share": share}, {"share": say_share(share)}, titles[:3])]
 
@@ -435,10 +436,10 @@ def _narrative(f) -> list:
     out = []
     r = f.get("ritual") or {}
     if r:
-        what = r["title"] or {"movie": "films", "show": "series", "anime": "anime",
-                              "music": "music"}.get(r["media_type"], r["media_type"])
         out.append(_card("rhythm", "rhythm", 0.4 + _clamp(r["weeks"] / max(1, r["of_weeks"])) * 0.4,
-                         f"{r['weekday']} {r['daypart']}s were {what}: {r['weeks']} of {r['of_weeks']} weeks.",
+                         "ritual_title" if r["title"] else "ritual_kind",
+                         {"weekday": r["weekday"], "daypart": r["daypart"], "title": r["title"],
+                          "kind": r["media_type"], "weeks": r["weeks"], "of_weeks": r["of_weeks"]},
                          "the same evening and the same thing, week after week - a ritual, not a habit",
                          {"weeks": r["weeks"], "of_weeks": r["of_weeks"], "hours": r["hours"]},
                          {"weeks": say_count(r["weeks"], "weeks"), "hours": say_hours(r["hours"])},
@@ -446,24 +447,22 @@ def _narrative(f) -> list:
     cg = f.get("comfort_genre") or {}
     if cg:
         out.append(_card("identity", "identity", 0.35 + _clamp(cg["plays"] / 15) * 0.35,
-                         f"The genre you came back to: {cg['genre']}, {cg['plays']} plays across "
-                         f"{', '.join(cg['titles'])}.",
+                         "comfort_genre", {"genre": cg["genre"], "plays": cg["plays"], "titles": cg["titles"]},
                          "comfort with a shape: not one title but a kind of story",
                          {"plays": cg["plays"]}, {"plays": say_count(cg["plays"], "plays")}, cg["titles"]))
     months = f.get("of_the_month") or []
     if months:
         m = max(months, key=lambda x: (x["share"], x["hours"]))
         out.append(_card("superlative", "moment", 0.35 + _clamp((m["share"] - 0.35) / 0.5) * 0.45,
-                         f"{m['label']} belonged to {m['title']}: {round(m['share'] * 100)}% of the month's "
-                         f"hours, {_fmt(m['hours'])} hours.",
+                         "of_the_month", {"month": m["month"], "title": m["title"], "share": m["share"],
+                                          "hours": m["hours"]},
                          "one title that owned a whole month", {"share": m["share"], "hours": m["hours"]},
                          {"share": say_share(m["share"]), "hours": say_hours(m["hours"])},
                          [m["title"]], m["media_type"]))
     n = f.get("night_shift") or {}
     if n:
         out.append(_card("rhythm", "rhythm", 0.35 + _clamp(n["share"] - 0.5) * 0.6 + _clamp(n["plays"] / 30) * 0.1,
-                         f"{n['title']} was the after-midnight series: {n['night_plays']} of its "
-                         f"{n['plays']} plays after 23:00.",
+                         "night_shift", {"title": n["title"], "night_plays": n["night_plays"], "plays": n["plays"]},
                          "a series kept for the hours after everyone else stopped",
                          {"night_plays": n["night_plays"], "plays": n["plays"], "share": n["share"]},
                          {"night_plays": say_count(n["night_plays"], "plays"), "share": say_share(n["share"])},
@@ -471,7 +470,7 @@ def _narrative(f) -> list:
     key = (f.get("period") or {}).get("key") or ""
     first = ((f.get("first_last") or {}).get("first")) or {}
     if first.get("title") and not key.startswith("week:") and key != "all":
-        out.append(_card("moment", "open", 0.36, f"It started with {first['title']}.",
+        out.append(_card("moment", "open", 0.36, "first_title", {"title": first["title"]},
                          "the first thing played in the period", {}, {}, [first["title"]],
                          first.get("media_type")))
     return out
