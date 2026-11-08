@@ -1,12 +1,17 @@
-"""Read a member's Wrap-Up texts from a database copy, without saving anything.
+"""Read a member's Wrap-Up texts from a database copy, saving none of them.
 
 For the owner, before a merge that touches the wrap-up's facts or texts
 (UX design record, stage 3.2 / 3.7): what the narrative facts found, the
 cards the writer is offered, the fallback text each card falls back to
 (the templates), and - with --write, on a machine with the curator - the
-story the editor and writer make of them. Nothing is stored: the facts are
-computed and printed, the story is printed, the database copy is not
-written to.
+story the editor and writer make of them. Nothing of the Wrap-Up is
+stored: the facts are computed and printed, the story is printed.
+
+The one write: the copy is first brought to this checkout's schema - the
+same migration Curatarr runs when it starts (``init_db``: new tables and
+columns, retired ones dropped) - so a copy taken before a merge that adds a
+column (``cached_recommendations.lifted_at``) can be read. Run it on a
+COPY, never on the live database.
 
     DATABASE_URL=sqlite:///path/to/copy.db python scripts/wrapup_read.py \\
         --user Member --period month:2026-10 [--scope all] [--lang de] [--write] [--out read.md]
@@ -46,6 +51,9 @@ def main() -> None:
     ap.add_argument("--write", action="store_true", help="also run the editor and the writer (needs the curator)")
     ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args()
+
+    from src.database.connection import init_db
+    init_db()                       # the copy at this checkout's schema - the only write
 
     from src.services.user_language import user_language
     from src.services.wrapup_facts import build_wrapup_facts
