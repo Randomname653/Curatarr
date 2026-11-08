@@ -11,7 +11,8 @@ folder). Two kinds:
 
 Invented cases live in tests/benchmarks/tone_cases_public.json (committed,
 every title made up); ``run`` reads both files, each case's "catch" goes
-into the report above its replies.
+into the report above its replies. A case's optional "tonight" is the
+[TONIGHT CANDIDATES] block its turn would carry (services/tonight).
 
 Built 2026-11-06 from a copy of the owner's database: the turns where the
 old persona read motives into viewing, argued with the user's own account
@@ -81,8 +82,9 @@ def _call(url, model, messages, temperature, num_predict):
     return r.json()["message"]["content"].strip(), round(time.time() - t, 1)
 
 
-def chat_system(voice: str, taste: str, lang: str) -> str:
-    return build_system_prompt(voice=voice, user_lang=lang, taste_context=taste)
+def chat_system(voice: str, taste: str, lang: str, tonight: str = "") -> str:
+    return build_system_prompt(voice=voice, user_lang=lang, taste_context=taste,
+                               tonight_context=tonight)
 
 
 def run(a) -> Path:
@@ -105,7 +107,8 @@ def run(a) -> Path:
                         print("starters", c["id"], v, rep, s, "s", flush=True)
                 if a.only in (None, "chat"):
                     for c in cases.get("chat", []):
-                        msgs = [{"role": "system", "content": chat_system(v, c.get("taste", ""), c.get("lang", "en"))}]
+                        msgs = [{"role": "system", "content": chat_system(
+                            v, c.get("taste", ""), c.get("lang", "en"), c.get("tonight", ""))}]
                         msgs += [{"role": r, "content": t} for r, t in c.get("history", [])]
                         msgs.append({"role": "user", "content": c["user"]})
                         text, s = _call(a.ollama, a.model, msgs, 0.7, 700)

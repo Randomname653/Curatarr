@@ -156,6 +156,28 @@ def _pause(video: list[dict], title: str, now: datetime) -> str:
             + ", other titles watched since")
 
 
+def active_series(video: list[dict], now: datetime) -> list[tuple]:
+    """The series the user is in the middle of: three or more plays, the last
+    within a week. [(title, {"plays", "last", "media_type"})], most played
+    first. ``video`` is newest-first play dicts with series_title / title /
+    media_type / viewed_at. The openers' active_series fact and the chat's
+    [TONIGHT CANDIDATES] (services/tonight) read the same rule."""
+    series: dict = {}
+    for r in video:
+        if (r["media_type"] not in ("show", "anime")
+                or not (r["series_title"] or r["title"])):
+            continue
+        key = r["series_title"] or r["title"]
+        agg = series.setdefault(key, {"plays": 0, "last": None,
+                                      "media_type": r["media_type"]})
+        agg["plays"] += 1
+        if agg["last"] is None or (r["viewed_at"] and r["viewed_at"] > agg["last"]):
+            agg["last"] = r["viewed_at"]
+    active = [(k, v) for k, v in series.items()
+              if v["last"] and (now - v["last"]).days <= 7 and v["plays"] >= 3]
+    return sorted(active, key=lambda kv: -kv[1]["plays"])
+
+
 def collect_facts(user_id: int, now: Optional[datetime] = None,
                   zone: Optional[tzinfo] = None) -> list[dict]:
     """Concrete hooks from the user's own watch log. No LLM, one query.
@@ -231,13 +253,12 @@ def collect_facts(user_id: int, now: Optional[datetime] = None,
         agg["plays"] += 1
         if agg["last"] is None or (r["viewed_at"] and r["viewed_at"] > agg["last"]):
             agg["last"] = r["viewed_at"]
-    active = [(k, v) for k, v in series.items()
-              if v["last"] and (now - v["last"]).days <= 7 and v["plays"] >= 3]
+    active = active_series(video, now)
     stalled = [(k, v) for k, v in series.items()
                if v["last"] and 21 <= (now - v["last"]).days <= 120 and v["plays"] >= 3
                and k not in asked]
     if active:
-        k, v = max(active, key=lambda kv: kv[1]["plays"])
+        k, v = active[0]
         # Sittings from the plays' own timestamps. The fact used to be named
         # current_binge for any series with three plays in a week, and the
         # model obliged: an episode or two an evening became "your Tokyo

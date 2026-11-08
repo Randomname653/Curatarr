@@ -6,6 +6,16 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**"What should I watch tonight?" is answered from what the member can start tonight.** Free chat
+used to search the vector store for that sentence and hand the curator its five nearest library
+items, watched or not. Every chat turn outside a deletion, principle or Wrap-Up discussion now
+carries a `[TONIGHT CANDIDATES]` block, built without a model from what Curatarr already keeps:
+the series the member is in the middle of and how far they are, up to four stored
+recommendations from the because, library and rediscover lanes with their stored reason, and up
+to two Swipe "want to watch" answers. Anything played since it was recommended drops out, music
+only joins when the chat is about music, and the block's own header tells the curator to use it
+only for a pick question.
+
 **A one-tap "how did it land?" now shapes the taste** (design record stage 2, the owner's
 decision). The landing's follow-up card stores the member's verdict (Loved it / Liked it / It
 was okay / Not for me) in a new table, `post_watch_verdicts`, instead of sending it as a chat

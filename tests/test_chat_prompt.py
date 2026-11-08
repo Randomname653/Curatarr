@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 blocks = dict(taste_context="TASTE-BLOCK", memory_context="[MEMORIES] m", rag_context="RAG-BLOCK",
               discuss_block="DISCUSS-BLOCK", pillar_framework="PILLAR-BLOCK",
-              hidden_metadata_context="HIDDEN-BLOCK")
+              hidden_metadata_context="HIDDEN-BLOCK", tonight_context="TONIGHT-BLOCK")
 
 for v in cv.VOICES:
     sp = cp.build_system_prompt(voice=v, user_lang="de", active_title="Some Title", **blocks)

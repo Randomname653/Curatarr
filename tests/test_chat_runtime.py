@@ -536,8 +536,10 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
                 yield chunk
 
     async def handler(request):
-        events.append(("request", str(request.url),
-                       json.loads(request.content).get("options", {}).get("num_ctx")))
+        sent = json.loads(request.content)
+        events.append(("request", str(request.url), sent.get("options", {}).get("num_ctx")))
+        events.append(("system", next((m.get("content") for m in sent.get("messages") or []
+                                       if m.get("role") == "system"), "")))
         if fail_first is not None and sum(1 for e in events if e[0] == "request") == 1:
             fail_first(request)
         # Ollama sends its headers with the first token: a load or a long
@@ -579,13 +581,13 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
     for obj, name, value in patches:
         setattr(obj, name, value)
 
-    async def start(text="hi", admin=False):
+    async def start(text="hi", admin=False, ctx=None):
         from src.schemas.chat import ChatMessage
         rl.CHAT_IN_FLIGHT.leave(_UID)
         rl.CHAT_IN_FLIGHT.enter_or_409(_UID)
         user = types.SimpleNamespace(id=_UID, is_admin=admin)
         return await chat._send_message_guarded(
-            ChatMessage(message=text), user, rl, "general")
+            ChatMessage(message=text, discuss_context=ctx), user, rl, "general")
 
     def rows():
         s = Session()
@@ -654,6 +656,34 @@ def test_an_ollama_error_is_shown_but_never_persisted():
         _, frames = _frames(rig, admin=True)
         assert "Ollama not reachable" in _tokens(frames)
         assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
+
+
+def test_tonight_candidates_ride_every_turn_but_a_deletion_debate():
+    # UX audit 2026-11-08, C2: "what should I watch?" was answered from the
+    # vector neighbours of that sentence. The member's own candidates go into
+    # the system prompt of every turn - no filter guesses the pick question -
+    # except a deletion, principle or Wrap-Up discussion.
+    import src.services.tonight as tonight
+    from src.schemas.chat import DiscussContext
+    real = tonight.tonight_block
+    tonight.tonight_block = lambda uid, domain=None, now=None: "[TONIGHT CANDIDATES] TONIGHT-X"
+    try:
+        with _stream_rig(_OK) as rig:
+            asyncio.run(_drain(rig.start("what should I watch tonight?")))
+            free = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
+        with _stream_rig(_OK) as rig:
+            asyncio.run(_drain(rig.start("keep it", ctx=DiscussContext(kind="deletion_proposal",
+                                                                         proposal_id=999_999))))
+            debate = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
+    finally:
+        tonight.tonight_block = real
+    assert free and "TONIGHT-X" in free[0], "free chat carries the candidates"
+    assert debate and "TONIGHT-X" not in debate[0], "a deletion debate does not"
+
+
+async def _drain(start):
+    resp = await start
+    return [f async for f in resp.body_iterator]
 
 
 def test_a_failed_write_warns_and_still_finishes_the_turn():

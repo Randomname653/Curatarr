@@ -4,10 +4,11 @@
     {
       "id": "pub_tonight_en",
       "lang": "en",
-      "catch": "Rule 8: one or two picks, one sentence of fit each, then one narrowing question. Not a ranked list.",
+      "catch": "Rule 8: one or two picks, one sentence of fit each, then one narrowing question. Not a ranked list. The picks come from [TONIGHT CANDIDATES] with their stated reason.",
       "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10; dropped loud action comedies early.",
       "history": [],
-      "user": "What should I watch tonight?"
+      "user": "What should I watch tonight?",
+      "tonight": "[TONIGHT CANDIDATES] Titles the user can start tonight from their own library: the series they are in the middle of, their stored recommendations (with the reason stored for each) and what they marked 'want to watch' in Swipe. When they ask what to watch or listen to, pick from these first and give the reason shown; otherwise leave them out.\n- Starfall Archive (anime) - in progress: watched 4 episodes, furthest is season 1, episode 4 (whether the series is finished is unknown - do NOT assume they reached the end); last watched yesterday\n- The Lantern Room (2019, film) - recommended because they watched Gull Point, Tide Clock and Salt Road: A patient coastal mystery that lets its ensemble breathe.\n- North Signal (2021, film) - recommended, from their library: A quiet thriller told from a lighthouse.\n- Tide Clock (film) - marked 'want to watch' in Swipe"
     },
     {
       "id": "pub_tonight_de",
@@ -15,7 +16,8 @@
       "catch": "Rule 8 in German: one or two picks, a short reason each, one question back. The length budget the user names is respected.",
       "taste": "TASTE SUMMARY (show): character-driven anime, found family, gentle humour; watched Starfall Archive episodes 1-6 this week.",
       "history": [],
-      "user": "Was kann ich heute Abend schauen? Gern was Kurzes, ich bin ziemlich müde."
+      "user": "Was kann ich heute Abend schauen? Gern was Kurzes, ich bin ziemlich müde.",
+      "tonight": "[TONIGHT CANDIDATES] Titles the user can start tonight from their own library: the series they are in the middle of, their stored recommendations (with the reason stored for each) and what they marked 'want to watch' in Swipe. When they ask what to watch or listen to, pick from these first and give the reason shown; otherwise leave them out.\n- Starfall Archive (anime) - in progress: watched 4 episodes, furthest is season 1, episode 4 (whether the series is finished is unknown - do NOT assume they reached the end); last watched yesterday\n- The Lantern Room (2019, film) - recommended because they watched Gull Point, Tide Clock and Salt Road: A patient coastal mystery that lets its ensemble breathe.\n- North Signal (2021, film) - recommended, from their library: A quiet thriller told from a lighthouse.\n- Tide Clock (film) - marked 'want to watch' in Swipe"
     },
     {
       "id": "pub_followup_en",
@@ -53,7 +55,7 @@
     {
       "id": "pub_pushback_en",
       "lang": "en",
-      "catch": "No narrowing pick question tacked on; answer the point and stop.",
+      "catch": "No narrowing pick question tacked on; answer the point and stop. The [TONIGHT CANDIDATES] block stays unused.",
       "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10.",
       "history": [
         [
@@ -65,7 +67,8 @@
           "**Gull Point** is pleasant but thin: the mystery is settled by the midpoint, and the second half coasts on its scenery."
         ]
       ],
-      "user": "I don't agree. The second half is the point - it's about the town after the answer, not the answer."
+      "user": "I don't agree. The second half is the point - it's about the town after the answer, not the answer.",
+      "tonight": "[TONIGHT CANDIDATES] Titles the user can start tonight from their own library: the series they are in the middle of, their stored recommendations (with the reason stored for each) and what they marked 'want to watch' in Swipe. When they ask what to watch or listen to, pick from these first and give the reason shown; otherwise leave them out.\n- Starfall Archive (anime) - in progress: watched 4 episodes, furthest is season 1, episode 4 (whether the series is finished is unknown - do NOT assume they reached the end); last watched yesterday\n- The Lantern Room (2019, film) - recommended because they watched Gull Point, Tide Clock and Salt Road: A patient coastal mystery that lets its ensemble breathe.\n- North Signal (2021, film) - recommended, from their library: A quiet thriller told from a lighthouse.\n- Tide Clock (film) - marked 'want to watch' in Swipe"
     }
   ]
 }

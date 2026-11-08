@@ -3395,6 +3395,22 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             # The discussion then argues without the rules its verdict rests on.
             logger.warning("[chat] learned-principles injection failed: %s", _pe)
 
+    # What the member could start tonight (services/tonight): their series in
+    # progress, stored recommendations and Swipe wants - so "what should I
+    # watch?" is answered from them, not from the vector neighbours of that
+    # sentence. Every turn outside a deletion, principle or Wrap-Up
+    # discussion: no filter guesses which message is a pick question; the
+    # block itself says when to use it (UX audit 2026-11-08, C2).
+    tonight_context = ""
+    _dkind = ((message.discuss_context.kind or message.discuss_context.type)
+              if message.discuss_context else None)
+    if _dkind not in ("deletion_proposal", "principle", "wrapup"):
+        try:
+            from src.services.tonight import tonight_block
+            tonight_context = await run_read(tonight_block, user.id, domain)
+        except Exception as _te:  # noqa: BLE001 - the chat answers without it, as before
+            logger.warning("[chat] tonight candidates unreadable: %s", _te)
+
     # The user's voice (Settings > Account): identity and tone; the
     # guardrails come with every voice (services/curator_voice). The app
     # map, the rules and the layout are in services/chat_prompt.
@@ -3406,7 +3422,8 @@ async def _send_message_guarded(message: ChatMessage, user: User,
         memory_context=memory_context, rag_context=rag_context,
         discuss_block=discuss_block, active_title=active_title,
         pillar_framework=pillar_framework,
-        hidden_metadata_context=hidden_metadata_context)
+        hidden_metadata_context=hidden_metadata_context,
+        tonight_context=tonight_context)
 
     # 3. Build message list with history
     messages = [{"role": "system", "content": system_prompt}]
