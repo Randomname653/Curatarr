@@ -19,7 +19,7 @@ import { loadHistoryStatus, recomputeTaste, showTasteTab, syncHistory } from './
 import { loadReclassify, moveReclassify, rcClearSelection, rcPickUncertain, rcToggleSection, updateReclassifyCount } from './reclassify.js';
 import { hideYearAgo, loadRecs, onAddRecToArr, onWishRec, regenerateRecs, reloadRecs, searchLibrary, setRecLane, discussRecCard } from './recs.js';
 import { renderLedger } from './report.js';
-import { answerWrapupStory, closeWrapupStory, nextWrapupSlide, prevWrapupSlide } from './wrapup_story.js';
+import { answerWrapupStory, closeWrapupStory, nextWrapupSlide, prevWrapupSlide, shareWrapupSlide } from './wrapup_story.js';
 import { answerWrapupQuiz, askWrapup, discussWrapupChapter, discussWrapupHook, generateWrapup, loadWrapup, openWrapupPeriod, pushWrapupPlaylist, setWrapupLayout, setWrapupPeriod, setWrapupScope, setWrapupYear, shareWrapup, shareWrapupTile, playWrapupStory, setWrapupSeason, toggleMilestoneKind, toggleWrapupHousehold, toggleWrapupQuotes, toggleWrapupSnapshot } from './wrapup.js';
 import { loadSwipe, swipeCategory, swipeExact, swipeNextDeck, swipeReact, swipeStars, swipeUndo } from './swipe.js';
 import { loadUsers, toggleUser, loadProfilesOnEnter } from './admin.js';
@@ -253,6 +253,7 @@ const actions = {
   closeWrapupStory,
   nextWrapupSlide,
   prevWrapupSlide,
+  shareWrapupSlide,
   setWrapupLayout,
   setWrapupPeriod,
   setWrapupScope,

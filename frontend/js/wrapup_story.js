@@ -358,6 +358,7 @@ function _show() {
   const stage = el.querySelector('.wus-stage');
   stage.className = `wus-stage wus-s-${sl.cls}${REDUCED.matches ? '' : ' is-in'}`;
   stage.innerHTML = sl.html;
+  el.querySelector('.wus-share-btn')?.toggleAttribute('hidden', !sl.share);
   stage.querySelectorAll('.wus-n[data-count]').forEach(n => { n.textContent = '0'; countTo(n, +n.dataset.count, 900); });
   if (st.answered != null && sl.cls === 'quiz') _quizResult();
   if (!sl.hold && !st.paused && !REDUCED.matches) st.timer = setTimeout(nextWrapupSlide, dwellMs(sl.html));
@@ -376,6 +377,89 @@ function _hold(on) {
   else if (st.el && !st.slides[st.i]?.hold && !REDUCED.matches) st.timer = setTimeout(nextWrapupSlide, dwellMs(st.slides[st.i].html));
 }
 
+// ── a slide as an image (UX design record, stage 3.6) ──────────────────────
+// Every slide carries a ``share`` line (build() above); "Share this slide"
+// draws it on a 1080x1920 canvas IN THE BROWSER - the period, the line, the
+// wordmark - and hands the PNG to the system share sheet, or saves it. Nothing
+// is uploaded, and the picture carries no server name and no user name: only
+// the slide's own line and the period's label go on it.
+const SHARE_W = 1080, SHARE_H = 1920;
+
+/** The lines a share image says, wrapped to ``width`` characters at most:
+ *  the period's label, then the slide's share line. Pure. */
+export function shareCardLines(share, label, width = 22) {
+  const words = String(share || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if (cur && (cur + ' ' + w).length > width) { lines.push(cur); cur = w; }
+    else cur = cur ? `${cur} ${w}` : w;
+  }
+  if (cur) lines.push(cur);
+  return {eyebrow: String(label || ''), lines: lines.slice(0, 9)};
+}
+
+/** The file name of a slide's image. Pure. */
+export function shareFileName(label, i) {
+  const slug = String(label || 'wrap-up').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `curatarr-${slug || 'wrap-up'}-${i + 1}.png`;
+}
+
+function _token(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+function _slideImage(sl, label) {
+  const c = document.createElement('canvas');
+  c.width = SHARE_W; c.height = SHARE_H;
+  const g = c.getContext('2d');
+  const bg = _token('--bg', '#1a1d23'), text = _token('--text', '#c8cdd8'), amber = _token('--amber', '#e5a00d');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, SHARE_W, SHARE_H);
+  const glow = g.createRadialGradient(SHARE_W * 0.7, SHARE_H * 0.25, 40, SHARE_W * 0.7, SHARE_H * 0.25, SHARE_W);
+  glow.addColorStop(0, amber + '33');
+  glow.addColorStop(1, 'transparent');
+  g.fillStyle = glow;
+  g.fillRect(0, 0, SHARE_W, SHARE_H);
+  const {eyebrow, lines} = shareCardLines(sl.share, label);
+  g.textBaseline = 'top';
+  g.fillStyle = amber;
+  g.font = '600 44px system-ui, sans-serif';
+  g.fillText(eyebrow.toUpperCase(), 96, 300);
+  g.fillStyle = text;
+  g.font = '700 92px system-ui, sans-serif';
+  lines.forEach((l, k) => g.fillText(l, 96, 420 + k * 116));
+  g.fillStyle = amber;
+  g.font = '700 52px system-ui, sans-serif';
+  g.fillText('Curatarr', 96, SHARE_H - 200);
+  return new Promise(res => c.toBlob(res, 'image/png'));
+}
+
+export async function shareWrapupSlide() {
+  const sl = st.slides[st.i];
+  if (!sl?.share) return;
+  const label = st.data?.facts?.period?.label || '';
+  _hold(true);
+  try {
+    const blob = await _slideImage(sl, label);
+    if (!blob) return;
+    const file = new File([blob], shareFileName(label, st.i), {type: 'image/png'});
+    if (navigator.canShare?.({files: [file]})) {
+      await navigator.share({files: [file], text: sl.share});
+    } else {
+      const a = Object.assign(document.createElement('a'), {href: URL.createObjectURL(blob), download: file.name});
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }
+  } catch (e) {
+    if (e?.name !== 'AbortError') console.warn('[wrapup] slide image not shared', e);
+  } finally {
+    _hold(false);
+  }
+}
+
 /** Open the story for this wrap-up's data (the page's GET /api/wrapup answer). */
 export function playStory(data) {
   if (!data?.facts || data.facts.empty) return;
@@ -392,6 +476,7 @@ export function playStory(data) {
   el.tabIndex = -1;
   el.innerHTML = `<div class="wus-bars" aria-hidden="true"></div>
     <button type="button" class="wus-close" aria-label="Close" ${act('closeWrapupStory')}>×</button>
+    <button type="button" class="wus-share-btn" aria-label="Share this slide as an image" title="Share this slide as an image" ${act('shareWrapupSlide')}>Share</button>
     <div class="wus-stage" aria-live="polite"></div>
     <button type="button" class="wus-zone wus-prev" aria-label="Previous" ${act('prevWrapupSlide', 'tap')}></button>
     <button type="button" class="wus-zone wus-next" aria-label="Next" ${act('nextWrapupSlide', 'tap')}></button>`;
