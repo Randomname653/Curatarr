@@ -273,6 +273,11 @@ from src.services.curator_voice import WORK  # noqa: E402
 check("the editor and the writer carry the voice's law: the work, never the person (the archetype too)",
       WORK in ww.EDITOR_SYSTEM and WORK in ww.WRITER_SYSTEM.format(language="German")
       and "never a verdict on who they are" in ww.EDITOR_SYSTEM)
+_w = ww.WRITER_SYSTEM.format(language="German")
+check("...the writer's law frames the voice, before the sections, and each headline and roast says it where it "
+      "is written (inline, as the archetype's: headlines judged the person where the law came last)",
+      _w.index(WORK) < _w.index("## I03 |") and _w.count(WORK) == 1
+      and "never a verdict\non the person or on their choices>" in _w and "tease the choice, never the person>" in _w)
 
 story, source, _ = run(le.LLMCallError(le.LLMFailure.INFRA_OFFLINE, "down"))
 check("an offline curator: no story, a reason, no exception",
