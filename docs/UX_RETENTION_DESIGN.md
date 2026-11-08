@@ -1,7 +1,7 @@
 # Curatarr — Feeling at home: UX, retention and habit design
 
 _Design record, **Proposed** 2026-11-08; **stage 1 built** the same day
-(see CHANGELOG); **stage 2 built** the same day. Where it differs from §2.2/§2.3: the deck end has no play button (Swipe cards carry no server key); Undo still leaves the watchlist entry; the chat's action row offers Open / + Watchlist / Keep (no Discuss - it is the chat); "Play" is "Open in …", the server's own page. The calibration deck ranks by the corpus centre and public score, not by other members' plays. Owner's decisions since: the post-watch verdict
+(see CHANGELOG); **stage 2 built** the same day; **stage 3 (3.1–3.7) built** the same day, 3.8 left for the UI language round. Stage 3 as built: the moment cards live on the chat landing (`wrapup_cards.py`, `GET /api/home/moments`), not in `tonight.py`; the month and year cards appear only once their story is stored, and the custodian writes the month ahead on the 1st; "first of the period" is not said of a week or of all time; the template fallback's headlines and warm lines are en/de, its fact sentences still English. Where it differs from §2.2/§2.3: the deck end has no play button (Swipe cards carry no server key); Undo still leaves the watchlist entry; the chat's action row offers Open / + Watchlist / Keep (no Discuss - it is the chat); "Play" is "Open in …", the server's own page. The calibration deck ranks by the corpus centre and public score, not by other members' plays. Owner's decisions since: the post-watch verdict
 gets its own table `post_watch_verdicts` and weighs the existing play row
 (like `user_rating_by_item` for music), never a second row; model work for
 stage 3 runs only through the custodian with the game lock; the member UI

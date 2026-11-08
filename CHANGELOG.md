@@ -6,6 +6,46 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**A week and a month of your own in the Wrap-Up.** Next to 30 days, 6 months and the year, the
+Wrap-Up now has "This week" (Monday to Sunday) and "This month", both on the member's own clock:
+a week starts at their Monday midnight, not the server's. Earlier weeks and months open by key
+(`week:2026-W45`, `month:2026-10`).
+
+**The Wrap-Up tells the shape of the period, not only its totals.** Code finds a ritual (the same
+evening and daypart, most weeks), the genre a member came back to, the title a month belonged
+to, the series kept for after midnight and what the period started with; the editor is offered
+them as cards like every other fact. A week or a month tells a mini story of its five strongest
+cards. To read what the writer makes of them before a merge, `scripts/wrapup_read.py` prints the
+facts, the cards and their fallback texts from a database copy (with `--write`, the story too)
+and stores nothing.
+
+**Your week, your month, your year, when they are ready.** From Sunday 17:00 to the end of
+Monday the chat landing shows "Your week": its hours, the days with something on, what most of
+it was and a genre new to the member. It is facts only, no model, and only for a week that
+reached the Wrap-Up's own threshold; a quiet week gets no card. In a month's first seven days
+"Your October is ready" appears once the custodian has written the month's mini story (it now
+does so on the 1st, one generation at a time under the game lock; opening the page never writes
+one), and from 1 December to 14 January "Your 2026 is ready". No streaks, no counts of what was
+missed; every card has "Not now". The words come in English or German, as the member writes to
+the curator.
+
+**A Wrap-Up playlist you can press play on.** "Make it a playlist" answers with a play card
+that opens the playlist on the member's server, on Plex (through app.plex.tv) as on Jellyfin.
+A week's and a month's playlist is one rolling playlist each, "Curatarr · Your Week" /
+"Curatarr · Deine Woche", replaced in place each time rather than piling up. A member whose account cannot write
+playlists on the server is told so, not "nothing found".
+
+**Share a slide as a picture.** Every slide of the story has "Share": its share line, the
+period's label and the wordmark drawn as an image in the browser and handed to the phone's share
+sheet, or saved. Nothing is uploaded, and no server, user or household name is on it.
+
+**Warmer words when the writer falls short.** A slide the writer could not write used to say
+its fact followed by the editor's note on why it mattered. Now it says the fact and a warm line
+for its kind, the next pick is an offer ("Next, if you feel like it: …") instead of "you have
+not played it yet", and headlines, warm lines, archetype names and the stand-in story without
+the curator come in English or German like the story. The fact sentences themselves are still
+English for a German story until the UI language round.
+
 **Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
 library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
 explicit form of "keep this": written and confirmed at once, where the keep-detector's outcome
