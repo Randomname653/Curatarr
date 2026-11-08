@@ -49,6 +49,14 @@ AniDB entry (one link per cour where AniDB splits a season) or skips it (western
 cartoons filed as anime). Nothing runs
 without the two settings.
 
+**Ready for the TrueNAS app catalog.** `deploy/truenas/catalog/curatarr` is the app in the
+official catalog's format (made from its Tautulli app): settings form, compose template on the
+catalog's library, test values, readme; `SUBMITTING.md` lists the steps to propose it. A new
+workflow runs it through the catalog's own test script on every change (ports against the
+whole catalog, the template rendered, the app started until its health check passes). A
+release tag `vX.Y.Z` now also publishes the image as `:X.Y.Z`, the fixed tag a catalog app
+pins, after checking it matches `VERSION` (`docs/RELEASING.md`).
+
 **Jellyfin plays while Curatarr is off.** Curatarr may run only a few hours a day on a PC, and
 Jellyfin itself keeps only each item's current state. The live-session poller now notices
 when it saw nothing for more than 15 minutes (the app off, the PC asleep, Jellyfin out of

@@ -16,6 +16,7 @@ else.
 | Document | What it covers |
 |---|---|
 | [README](../README.md) | Requirements, installation (Windows, Linux/macOS, Docker), first run, updating |
+| [RELEASING.md](RELEASING.md) | How a version is released: `VERSION`, the tag, the fixed image tag the TrueNAS catalog pins |
 | [USAGE.md](USAGE.md) | Day-to-day operation, where things are in the UI, changing models, the container, tuning, troubleshooting |
 | [MEDIA_SERVERS.md](MEDIA_SERVERS.md) | What works on Plex, Jellyfin and (planned) Emby: the shared features, each server's additions and limits, and the optional plugins |
 | [NAS_MOVE.md](NAS_MOVE.md) | Moving an install onto a NAS, with the gaming PC as a second GPU host |
