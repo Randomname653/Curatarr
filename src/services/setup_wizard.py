@@ -291,6 +291,17 @@ async def test_arr(url: str, api_key: str, service: str) -> dict:
         return _test_failed(service.capitalize(), e)
 
 
+async def test_shoko(url: str, api_key: str) -> dict:
+    """Shoko answers, and every key (comma-separated) names its user."""
+    if (refused := await _refused_target("Shoko", url)):
+        return refused
+    from src.services.shoko_client import test_connection
+    try:
+        return await test_connection(url, api_key)
+    except Exception as e:
+        return _test_failed("Shoko", e)
+
+
 async def test_tmdb(api_key: str) -> dict:
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
@@ -388,7 +399,7 @@ def _restrict_env_acl(path) -> None:
 SECRET_KEYS = frozenset({
     "plex_token", "jellyfin_api_key", "jwt_secret", "radarr_api_key", "sonarr_api_key",
     "lidarr_api_key", "tmdb_api_key", "omdb_api_key", "lastfm_api_key",
-    "spotify_client_secret", "soulsync_api_key", "listenbrainz_token",
+    "spotify_client_secret", "soulsync_api_key", "shoko_api_key", "listenbrainz_token",
     "opensubtitles_api_key", "opensubtitles_password", "mal_client_id",
 })
 
@@ -434,6 +445,8 @@ def current_env_config() -> dict:
         "lidarr_api_key":        s.LIDARR_API_KEY or "",
         "soulsync_url":          s.SOULSYNC_URL or "",
         "soulsync_api_key":      s.SOULSYNC_API_KEY or "",
+        "shoko_url":             getattr(s, "SHOKO_URL", None) or "",
+        "shoko_api_key":         getattr(s, "SHOKO_API_KEY", None) or "",
         "tmdb_api_key":          s.TMDB_API_KEY or "",
         "omdb_api_key":          s.OMDB_API_KEY or "",
         "mal_client_id":         s.MAL_CLIENT_ID or "",
@@ -601,6 +614,8 @@ def write_env(config: dict) -> None:
         "# Optional integrations",
         f"SOULSYNC_URL={config.get('soulsync_url', _live_settings().SOULSYNC_URL or '')}",
         f"SOULSYNC_API_KEY={config.get('soulsync_api_key', _live_settings().SOULSYNC_API_KEY or '')}",
+        f"SHOKO_URL={config.get('shoko_url', getattr(_live_settings(), 'SHOKO_URL', None) or '')}",
+        f"SHOKO_API_KEY={config.get('shoko_api_key', getattr(_live_settings(), 'SHOKO_API_KEY', None) or '')}",
         "",
         "# Metadata APIs",
         f"TMDB_API_KEY={config.get('tmdb_api_key', '')}",
@@ -1316,6 +1331,23 @@ SETUP_FIELDS = [
         "id": "soulsync_api_key",
         "label": "SoulSync API Key",
         "placeholder": "xxxxxxxxxxxxxxxxxxxx",
+        "required": False,
+        "category": "metadata",
+        "secret": True,
+    },
+    {
+        "id": "shoko_url",
+        "label": "Shoko URL",
+        "placeholder": "http://192.168.1.100:8111",
+        "required": False,
+        "help": "Optional. A Shoko Server on your LAN gets every anime episode you finish reported as watched, with the day you watched it.",
+        "used_for": ["anime"],
+        "category": "metadata",
+    },
+    {
+        "id": "shoko_api_key",
+        "label": "Shoko API Key",
+        "placeholder": "one key per Shoko user, comma-separated",
         "required": False,
         "category": "metadata",
         "secret": True,

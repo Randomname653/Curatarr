@@ -365,6 +365,25 @@ class MusicWish(Base):
     soulsync = Column(Text, nullable=True)
 
 
+class ShokoWatchSync(Base):
+    """One finished anime play and what Shoko made of it (services/
+    shoko_sync). status: "sent" (Shoko holds it as watched), "already"
+    (Shoko had it watched on that day or later), "unmatched" (no Shoko
+    episode for the file yet; retried while attempts last). A play is
+    reported once; a re-watch is its own play and its own row."""
+    __tablename__ = "shoko_watch_sync"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    watch_history_id = Column(Integer, ForeignKey("watch_history.id"), nullable=False,
+                              unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    status = Column(String(16), nullable=False)
+    shoko_episode_ids = Column(String(200), nullable=True)   # comma-joined
+    matched_by = Column(String(8), nullable=True)            # path | tmdb
+    attempts = Column(Integer, default=0)
+    last_attempt_at = Column(DateTime, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
+
+
 class ProtectedMedia(Base):
     """Permanent whitelist for media that should never be proposed for deletion."""
     __tablename__ = "protected_media"

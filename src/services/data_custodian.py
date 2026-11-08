@@ -504,6 +504,14 @@ async def _run_music_catalog_sync(deep: bool = False, task=None) -> bool:
     return bool(res.get("ok"))
 
 
+async def _run_shoko_watched(task=None) -> bool:
+    """Finished anime episodes reported to Shoko as watched (services/
+    shoko_sync). No-op without Shoko; False while plays are still waiting."""
+    from src.services.shoko_sync import sync_watched
+    res = await sync_watched(task=task)
+    return bool(res.get("done", True))
+
+
 async def _run_deletion_returns(task=None) -> bool:
     """Deleted items back in the library, and SoulSync bans of deleted music
     that never held (src/services/deletion_returns.py; the retry is the
@@ -896,6 +904,10 @@ def _registry() -> list[Task]:
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
              _run_music_catalog_sync, takes_task=True),
+        # Anime watched here goes to Shoko as watched, with its own date.
+        # No-op without Shoko configured; no model.
+        Task("shoko_watched", "Anime watched, reported to Shoko", 6.0,
+             _run_shoko_watched, takes_task=True),
         # Deleted items that came back (an arr list, a request, SoulSync's
         # playlist sync), shown in the Deletions view; first the SoulSync
         # bans a music delete could not set.

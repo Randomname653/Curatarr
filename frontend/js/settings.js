@@ -226,6 +226,12 @@ const INTEGRATION_CARDS = [
     {id: 'soulsync_url', label: 'SoulSync URL (LAN, read-only)', placeholder: 'http://192.168.1.100:12279'},
     {id: 'soulsync_api_key', label: 'SoulSync API key', secret: true},
   ]},
+  {key: 'shoko', title: 'Shoko (anime)', test: 'shoko',
+   hint: 'Every anime episode you finish is reported to Shoko as watched, with the day you watched it. One API key per Shoko user, comma-separated; each goes to the Curatarr user named in its Shoko user\'s Plex usernames.',
+   fields: [
+    {id: 'shoko_url', label: 'Shoko URL (LAN)', placeholder: 'http://192.168.1.100:8111'},
+    {id: 'shoko_api_key', label: 'Shoko API key(s)', secret: true},
+  ]},
   {key: 'subtitles', title: 'Subtitles (dialogue evidence)', fields: [
     {id: 'opensubtitles_api_key', label: 'OpenSubtitles API key', secret: true},
     {id: 'opensubtitles_username', label: 'OpenSubtitles username'},
@@ -398,6 +404,7 @@ export async function testIntegration(cardKey, btn) {
   else if (cardKey === 'jellyfin') body = {service: 'jellyfin', url: val('jellyfin_url'), api_key: val('jellyfin_api_key')};
   else if (cardKey === 'models') body = {service: 'ollama', url: val('ollama_endpoint')};
   else if (cardKey === 'metadata') body = {service: 'tmdb', api_key: val('tmdb_api_key')};
+  else if (cardKey === 'shoko') body = {service: 'shoko', url: val('shoko_url'), api_key: val('shoko_api_key')};
   else if (cardKey === 'music') body = val('spotify_client_id') || val('spotify_client_secret')
     ? {service: 'spotify', client_id: val('spotify_client_id'), client_secret: val('spotify_client_secret')}
     : {service: 'lastfm', api_key: val('lastfm_api_key')};

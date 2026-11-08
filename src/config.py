@@ -231,6 +231,14 @@ class Settings(BaseSettings):
     # album). Read-only consumer — Curatarr never triggers downloads.
     SOULSYNC_URL: Optional[str] = None           # e.g. http://192.168.1.100:12279
     SOULSYNC_API_KEY: Optional[str] = None       # sk_… from SoulSync settings
+    # Shoko Server (optional LAN neighbour, the anime library manager): every
+    # finished anime episode is reported there as watched, with the date it
+    # was watched (services/shoko_sync.py). Shoko keeps watched state per
+    # Shoko user and a key acts as its user, so the key field takes one key
+    # per Shoko user, comma-separated; each is matched to a Curatarr user by
+    # the Plex usernames set on that Shoko user. Without both, nothing runs.
+    SHOKO_URL: Optional[str] = None              # e.g. http://192.168.1.100:8111
+    SHOKO_API_KEY: Optional[str] = None
     # AniList: no key needed (public GraphQL)
     # MusicBrainz: no key needed
     # Plex login accepts only accounts the configured server knows (owner,

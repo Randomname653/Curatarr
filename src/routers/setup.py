@@ -23,7 +23,7 @@ from src.routers.auth import require_admin_or_first_run, require_admin
 from src.services.endpoint_policy import (
     NEW_ADDRESS_NEEDS_KEY, resolved_refusal, secret_for_target, validate_service_url)
 from src.services.setup_wizard import (
-    test_plex, test_jellyfin, test_ollama, test_arr, test_tmdb, test_lastfm, test_spotify,
+    test_plex, test_jellyfin, test_ollama, test_arr, test_shoko, test_tmdb, test_lastfm, test_spotify,
     write_env, build_ollama_models, SETUP_FIELDS,
     endpoint_privacy_note,   # Pass 97
 )
@@ -31,7 +31,7 @@ from src.services.setup_wizard import (
 logger = logging.getLogger(__name__)
 
 _URL_FIELDS = ("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
-               "lidarr_url", "soulsync_url")
+               "lidarr_url", "soulsync_url", "shoko_url")
 
 
 async def _refuse_resolved(values: dict) -> None:
@@ -85,7 +85,7 @@ def get_setup_fields():
 
 
 class TestRequest(BaseModel):
-    service: str       # plex / ollama / radarr / sonarr / lidarr / tmdb / lastfm / spotify
+    service: str       # plex / ollama / radarr / sonarr / lidarr / shoko / tmdb / lastfm / spotify
     url: Optional[str] = None
     token: Optional[str] = None
     api_key: Optional[str] = None
@@ -141,6 +141,10 @@ async def test_connection(
                                 _secret(req.api_key, _stored(f"{up}_URL"),
                                         _stored(f"{up}_API_KEY")),
                                 req.service)
+    elif req.service == "shoko":
+        result = await test_shoko(req.url or _stored("SHOKO_URL"),
+                                  _secret(req.api_key, _stored("SHOKO_URL"),
+                                          _stored("SHOKO_API_KEY")))
     elif req.service == "tmdb":
         result = await test_tmdb(req.api_key or _stored("TMDB_API_KEY"))
     elif req.service == "lastfm":
@@ -154,7 +158,7 @@ async def test_connection(
     # Only the endpoint-style services have a URL to classify. TMDB /
     # Last.fm / Spotify go to fixed public hostnames by design — no
     # warning makes sense there.
-    if req.service in ("plex", "jellyfin", "ollama", "radarr", "sonarr", "lidarr"):
+    if req.service in ("plex", "jellyfin", "ollama", "radarr", "sonarr", "lidarr", "shoko"):
         url = req.url or (settings.effective_ollama if req.service == "ollama" else "")
         warn = endpoint_privacy_note(url)
         if warn and isinstance(result, dict):
@@ -313,6 +317,8 @@ class SetupCompleteRequest(BaseModel):
     lidarr_api_key: str = ""
     soulsync_url: str = ""
     soulsync_api_key: str = ""
+    shoko_url: str = ""
+    shoko_api_key: str = ""
     listenbrainz_token: str = ""
     # Two-bake split: a dedicated deletion-judge bake (benchmarked better
     # at pitches than the chat curator). Off unless the wizard turns it on.
@@ -330,7 +336,7 @@ class SetupCompleteRequest(BaseModel):
     curator_num_gpu: Optional[int] = None
 
     _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
-                           "lidarr_url", "soulsync_url")(validate_service_url)
+                           "lidarr_url", "soulsync_url", "shoko_url")(validate_service_url)
     _profile = field_validator("llm_profile")(_check_profile)
     _ctx = field_validator("curator_num_ctx")(_check_num_ctx)
     _gpu = field_validator("curator_num_gpu")(_check_num_gpu)
@@ -365,6 +371,8 @@ class ReconfigureRequest(BaseModel):
     spotify_client_secret: Optional[str] = None
     soulsync_url: Optional[str] = None
     soulsync_api_key: Optional[str] = None
+    shoko_url: Optional[str] = None
+    shoko_api_key: Optional[str] = None
     listenbrainz_token: Optional[str] = None
     opensubtitles_api_key: Optional[str] = None
     opensubtitles_username: Optional[str] = None
@@ -392,7 +400,7 @@ class ReconfigureRequest(BaseModel):
     pc_curator_num_gpu: Optional[int] = None
 
     _urls = field_validator("plex_url", "jellyfin_url", "ollama_endpoint", "radarr_url", "sonarr_url",
-                           "lidarr_url", "soulsync_url")(validate_service_url)
+                           "lidarr_url", "soulsync_url", "shoko_url")(validate_service_url)
     _profile = field_validator("llm_profile", "pc_llm_profile")(_check_profile)
     _ctx = field_validator("curator_num_ctx", "pc_curator_num_ctx")(_check_num_ctx)
     _gpu = field_validator("curator_num_gpu", "pc_curator_num_gpu")(_check_num_gpu)
