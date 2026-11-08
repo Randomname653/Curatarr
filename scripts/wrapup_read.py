@@ -65,7 +65,7 @@ def main() -> None:
     cards = mine(facts)
     lines += ["## Cards the writer is offered", ""]
     for c in cards:
-        head, body = _template(c["id"], c, None)
+        head, body = _template(c["id"], c, None, lang)
         lines += [f"- **{c['id']}** [{c['slide']}, {c['score']}] {c['claim']}",
                   f"  - why: {c['why']}",
                   f"  - fallback: **{head}** - {body}"]

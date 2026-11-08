@@ -309,30 +309,71 @@ TRAIT_TITLES = {
 }
 
 
-def fallback_story(f: dict, idx: dict) -> dict:
+# The same archetypes in German - names of a way of watching, never of a
+# person (stage 3.7: the stand-in speaks the story's language).
+TRAIT_TITLES_DE = {
+    "night_owl": ("Die Nachtschicht", "Das meiste lief, als das Haus schon still war."),
+    "matinee": ("Die Wochenend-Matinee", "Die Wochenendnachmittage haben die Arbeit gemacht."),
+    "completionist": ("Bis zum Abspann", "Angefangen, zu Ende geschaut."),
+    "sampler": ("Die Kostprobe", "Viele erste Folgen, weniger zweite."),
+    "scout": ("Auf Entdeckung", "Vor allem Dinge, die du noch nie gesehen hattest."),
+    "loyalist": ("Alte Freunde", "Alte Bekannte bekamen die meisten Stunden."),
+    "archivist": ("Das Archiv", "Dein Sehalter ist älter als deine Hardware."),
+    "day_one": ("Ab Tag eins", "Kam es dieses Jahr heraus, warst du dabei."),
+    "binger": ("Noch eine Folge", "Eine Folge mehr war nie nur eine."),
+    "highbrow": ("Das gute Regal", "Das preisgekrönte Regal hat keinen Staub angesetzt."),
+    "comfort_seeker": ("Vertrautes Terrain", "Bekannter Boden, ganz bewusst."),
+    "contrarian": ("Gegen den Strom", "Deine Lieblinge sind nicht die der Masse."),
+    "purger": ("Frühjahrsputz", "Der Server ist leichter dafür."),
+    "defender": ("Die Verteidigung", "Manche Titel bleiben, weil du es gesagt hast."),
+}
+_NO_TRAIT = {"en": ("Your Period in Review", "What you played, told plainly."),
+             "de": ("Dein Rückblick", "Was lief, schlicht erzählt.")}
+_FALLBACK = {
+    "en": {"where": "Where the hours went", "led": "{title} led the period",
+           "took": "{title}: {hours} hours over {plays} plays.",
+           "rest": "The rest of the shelf", "rotation": "Also in heavy rotation",
+           "next": "Next, if you feel like it: {title}."},
+    "de": {"where": "Wohin die Stunden gingen", "led": "{title} vorne",
+           "took": "{title}: {hours} Stunden in {plays} Wiedergaben.",
+           "rest": "Der Rest des Regals", "rotation": "Auch oft gelaufen",
+           "next": "Als Nächstes, wenn du magst: {title}."},
+}
+
+
+def trait_title(key: Optional[str], lang: str = "en") -> tuple:
+    """(title, subhead) of the archetype for ``key`` in ``lang`` (en/de)."""
+    table = TRAIT_TITLES_DE if lang == "de" else TRAIT_TITLES
+    return table.get(key) or _NO_TRAIT.get(lang) or _NO_TRAIT["en"]
+
+
+def fallback_story(f: dict, idx: dict, lang: str = "en") -> dict:
     """The same shape, written from the facts alone: archetype from the
-    strongest trait, chapters from the top titles, every sentence a fact."""
+    strongest trait, chapters from the top titles, every sentence a fact,
+    in the story's language."""
+    tx = _FALLBACK.get(lang) or _FALLBACK["en"]
     traits = f.get("traits") or []
     key = traits[0]["key"] if traits else None
-    title, sub = TRAIT_TITLES.get(key, ("Your Period in Review", "The numbers, without the commentary."))
+    title, sub = trait_title(key, lang)
     by_title = {v["title"]: k for k, v in idx["items"].items()}
     top = f.get("top") or []
     chapters = []
     if top:
         refs = [by_title[t["title"]] for t in top[:2] if t["title"] in by_title]
         lead = top[0]
-        chapters.append({"title": "Where the hours went", "kicker": f"{lead['title']} led the period",
-                         "commentary": f"{lead['title']} took {lead['hours']} hours over {lead['plays']} plays.",
+        chapters.append({"title": tx["where"], "kicker": tx["led"].format(title=lead["title"]),
+                         "commentary": tx["took"].format(title=lead["title"], hours=lead["hours"],
+                                                         plays=lead["plays"]),
                          "item_refs": refs, "fact_refs": []})
     rest = [by_title[t["title"]] for t in top[2:5] if t["title"] in by_title]
     if rest:
-        chapters.append({"title": "The rest of the shelf", "kicker": "Also in heavy rotation",
+        chapters.append({"title": tx["rest"], "kicker": tx["rotation"],
                          "commentary": ", ".join(idx["items"][r]["title"] for r in rest) + ".",
                          "item_refs": rest, "fact_refs": []})
     pick = next(iter(idx["picks"]), None)
     hook = None
     if pick:
-        hook = {"challenge": f"{idx['picks'][pick]['title']} is on the server and you have not played it yet.",
+        hook = {"challenge": tx["next"].format(title=idx["picks"][pick]["title"]),
                 "item_ref": pick, "fact_refs": []}
     return {"archetype_title": title, "archetype_subhead": sub, "archetype_trait": key,
             "era_chapters": chapters, "roast_and_toast": None, "look_ahead_hook": hook,
@@ -395,7 +436,7 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         step(5)
         if story is None:
             logger.info("[wrapup] %s/%s/%s: deterministic story (%s)", user_id, scope, period_key, source)
-            story, source = fallback_story(facts, idx), "fallback"
+            story, source = fallback_story(facts, idx, lang), "fallback"
         await run_write(save_story, user_id, scope, period_key, facts["facts_hash"],
                         finish_story(story, idx), source, model)
         task_monitor.done(task, "Wrap-up written" if source != "fallback" else "Wrap-up written without the curator")

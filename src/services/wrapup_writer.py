@@ -48,10 +48,43 @@ _TEMP_EDITOR, _TEMP_WRITER = 0.4, 0.85
 _PREDICT_EDITOR, _PREDICT_WRITER, _PREDICT_REPAIR = 500, 1800, 1200
 _TIMEOUT = 420.0
 
-BEAT_HEADLINES = {"open": "The period in hours", "reveal": "Where the hours went",
-                  "rhythm": "When you watched", "moment": "The day it happened",
+BEAT_HEADLINES = {"open": "Your hours", "reveal": "Where the hours went",
+                  "rhythm": "Your rhythm", "moment": "The day it happened",
                   "twist": "The twist", "court": "Before the court", "balance": "In and out",
-                  "identity": "Who you were", "music": "On repeat"}
+                  "identity": "Your kind of thing", "music": "On repeat", "decades": "Your decades"}
+
+# ── the template, for a slide the writer could not write (UX design record,
+# stage 3.7). It used to read "<claim> <the editor's reason>." - the reason
+# is a note to the editor ("the widest gap between you and everyone else"),
+# cold on a slide. Now: the claim, and a warm line for its kind of card, in
+# the story's language. The claim itself is a fact sentence of the miner and
+# stays English (the UI language project, 3.8, is a later round).
+_HEADLINES_DE = {"open": "Deine Stunden", "reveal": "Wohin die Stunden gingen",
+                 "rhythm": "Dein Rhythmus", "moment": "Der Tag, an dem es passierte",
+                 "twist": "Die Wendung", "court": "Vor Gericht", "balance": "Rein und raus",
+                 "identity": "Ganz dein Ding", "music": "In Dauerschleife", "decades": "Deine Jahrzehnte"}
+_CLOSERS = {
+    "en": {"superlative": "Nothing else came close.", "streak": "Once it started, it kept going.",
+           "rhythm": "A rhythm all your own.", "moment": "One worth remembering.",
+           "identity": "Right up your street.", "court": "The court had its say.",
+           "contrast": "You and the crowd, happily apart.", "confession": "No judgement, only numbers.",
+           "balance": "The shelves kept moving.",
+           "ROAST": "Said with love.", "TOAST": "Here's to more of that.",
+           "NEXT": "Next, if you feel like it: {title}."},
+    "de": {"superlative": "Nichts anderes kam heran.", "streak": "Einmal angefangen, lief es weiter.",
+           "rhythm": "Ein ganz eigener Takt.", "moment": "Das bleibt.",
+           "identity": "Genau nach deinem Geschmack.", "court": "Das Gericht hat gesprochen.",
+           "contrast": "Du und die anderen, angenehm verschieden.", "confession": "Kein Urteil, nur Zahlen.",
+           "balance": "Die Regale blieben in Bewegung.",
+           "ROAST": "Liebevoll gemeint.", "TOAST": "Auf mehr davon.",
+           "NEXT": "Als Nächstes, wenn du magst: {title}."},
+}
+
+
+def beat_headline(slide: str, lang: str = "en") -> str:
+    """A slide's headline when the writer gave none, in the story's language."""
+    table = _HEADLINES_DE if lang == "de" else BEAT_HEADLINES
+    return table.get(slide, "")
 
 # ── language ────────────────────────────────────────────────────────────────
 
@@ -421,11 +454,11 @@ def editor_schema(n_cards: int) -> dict:
                      "archetype_subhead", "share_line", "next_pick"]}
 
 
-def default_edit(cards: list, traits: list, picks: dict) -> dict:
+def default_edit(cards: list, traits: list, picks: dict, lang: str = "en") -> dict:
     """The editor's choice made by rule: the top cards in beat order, the
     strongest confession or twist as the roast, the strongest identity or
     superlative as the toast."""
-    from src.services.wrapup_story import TRAIT_TITLES
+    from src.services.wrapup_story import trait_title
     order = list(BEAT_HEADLINES)
     top = sorted(cards[:_ARC_MAX], key=lambda c: (order.index(c["slide"]) if c["slide"] in order else 99,
                                                   -c["score"]))
@@ -433,7 +466,7 @@ def default_edit(cards: list, traits: list, picks: dict) -> dict:
     toast = next((c["id"] for c in cards if c["kind"] in ("identity", "superlative") and c["id"] != roast),
                  cards[-1]["id"])
     key = traits[0] if traits else None
-    title, sub = TRAIT_TITLES.get(key, ("Your Period in Review", "The numbers, without the commentary."))
+    title, sub = trait_title(key, lang)
     return {"arc": [c["id"] for c in top], "roast": roast, "toast": toast, "archetype_trait": key,
             "archetype_title": title, "archetype_subhead": sub, "share_line": title,
             "next_pick": next(iter(picks), ""), "cluster_names": []}
@@ -549,15 +582,18 @@ def _model_name() -> str:
 
 # ── the pipeline ────────────────────────────────────────────────────────────
 
-def _template(section: str, card: Optional[dict], pick: Optional[dict]) -> tuple:
+def _template(section: str, card: Optional[dict], pick: Optional[dict], lang: str = "en") -> tuple:
+    """(headline, text) for a section the writer could not write: the
+    card's claim and a warm line for its kind, in ``lang`` (en/de)."""
+    tx = _CLOSERS.get(lang) or _CLOSERS["en"]
     if section == "NEXT":
         if not pick:
             return "", ""
-        why = f" {pick['reason'].rstrip('.')}." if pick.get("reason") else ""
-        return "", f"{pick['title']} is on the server and you have not played it yet.{why}"
-    head = BEAT_HEADLINES.get(card["slide"], "") if section.startswith("I") else ""
-    why = card["why"][:1].upper() + card["why"][1:]
-    return head, f"{card['claim']} {why}."
+        why = f" {pick['reason'].rstrip('.')}." if pick.get("reason") and lang == "en" else ""
+        return "", tx["NEXT"].format(title=pick["title"]) + why
+    head = beat_headline(card["slide"], lang) if section.startswith("I") else ""
+    closer = tx.get(section) or tx.get(card["kind"]) or ""
+    return head, f"{card['claim']} {closer}".strip()
 
 
 async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list = (),
@@ -600,13 +636,13 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
         return None, f"curator unavailable: {e}", model
     except (ValueError, TypeError) as e:
         logger.info("[wrapup] editor answer was not JSON: %s", e)
-    edit = edit or default_edit(cards, traits, picks)
+    edit = edit or default_edit(cards, traits, picks, lang)
     names = known_titles
     allowed_head = set().union(*(numerals(_card_line(c)) for c in cards)) | _small()
     for k in ("archetype_title", "archetype_subhead", "share_line"):
         edit[k] = fix_style(edit.get(k) or "", names, lang)
         if numerals(edit[k]) - allowed_head:
-            edit[k] = default_edit(cards, traits, picks)[k]
+            edit[k] = default_edit(cards, traits, picks, lang)[k]
 
     sections = [*edit["arc"], "ROAST", "TOAST"] + (["NEXT"] if edit.get("next_pick") else [])
     own = {s: [s] for s in edit["arc"]}
@@ -657,7 +693,7 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
         if s not in written:
             card = cards_by_id.get(own[s][0]) if own[s] and own[s][0] in cards_by_id else None
             pick = picks.get(own[s][0]) if own[s] else None
-            written[s], sources[s] = _template(s, card, pick), "template"
+            written[s], sources[s] = _template(s, card, pick, lang), "template"
 
     story = assemble(edit, written, sources, cards_by_id, idx)
     vals = set(sources.values())
