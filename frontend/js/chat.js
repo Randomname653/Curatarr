@@ -56,11 +56,7 @@ export async function newChat() {
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
         <div id="glance-panel" aria-live="off"></div>
         <div id="last-played-panel" aria-live="off"></div>
-        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">
-          <button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?')}>What should I watch tonight?</button>
-          <button class="sp-chip" ${act('fillPrompt', 'What can I clean up in my library?')}>What can I clean up in my library?</button>
-          <button class="sp-chip" ${act('fillPrompt', 'What does my watch history say about my taste?')}>What does my watch history say about my taste?</button>
-        </div>`;
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">${_staticChipsHtml()}</div>`;
       loadGlancePanel();
       loadLastPlayed();
       loadStarters();
@@ -469,20 +465,34 @@ export function fillPrompt(text) {
   inp.value = text;
   inp.focus();
 }
+// The fallback before /starters answers (and if it fails): the static chips
+// of the page's initial HTML, the owner's clean-up chip for the owner only --
+// a member cannot open Deletions at all.
+function _staticChipsHtml() {
+  const chip = t => `<button class="sp-chip" ${act('fillPrompt', t)}>${esc(t)}</button>`;
+  return chip('What should I watch tonight?')
+    + (state.currentUser?.is_admin ? chip('What can I clean up in my library?') : '')
+    + chip('What does my watch history say about my taste?');
+}
 // Swaps the static #suggested-prompts chips (already in the DOM, written by
-// newChat()/the page's initial HTML) for curator-picked ones when the pool
-// has fresh material. Empty or failed GET -- e.g. a brand-new user with no
-// pool yet -- leaves the 3 static chips exactly as they were: no partial
-// replace, no empty panel.
+// newChat()/the page's initial HTML) for the server's: the curator's openers
+// first (useStarter -- the curator says the line), then the user-voiced
+// chips (fillPrompt -- the member's own words, built from their facts in the
+// language they write to the curator in; services/chat_starters.user_chips).
+// Nothing back, or a failed GET, leaves the static chips as they were: no
+// partial replace, no empty panel.
 export async function loadStarters() {
   const el = document.getElementById('suggested-prompts');
   if (!el) return;
   try {
     const r = await api('/api/chat/starters');
     const starters = (r.starters || []).slice(0, 3);
-    if (!starters.length) return;
+    const chips = (r.chips || []).slice(0, 3);
+    if (!starters.length && !chips.length) return;
     el.innerHTML = starters.map(s =>
-      `<button class="sp-chip" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
+      `<button class="sp-chip" title="Curatarr opens the conversation" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
+    ).join('') + chips.map(c =>
+      `<button class="sp-chip" ${act('fillPrompt', c.text)}>${esc(c.label || c.text)}</button>`
     ).join('');
   } catch {} // best-effort nicety, keep the static fallback -- fail silent
 }

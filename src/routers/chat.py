@@ -1343,10 +1343,13 @@ _starter_gen_running: set[int] = set()
 
 @router.get("/starters")
 async def get_starters(user: User = Depends(get_current_user)):
-    from src.services.chat_starters import (pick_starters, pool_fresh_count,
+    from src.services.chat_starters import (chips_for, pick_starters, pool_fresh_count,
                                             generate_starters, POOL_TARGET)
     # pick_starters writes (impressions, retired day-named rows): the writer
     picks = await run_write(pick_starters, user.id)
+    # The user-voiced chips beside the openers: no model, the member's facts
+    # in their language; the owner's clean-up chip for the owner only.
+    chips = await run_read(chips_for, user.id, bool(user.is_admin))
     try:
         from src.services.process_monitor import is_game_running
         if (await run_read(pool_fresh_count, user.id) < POOL_TARGET // 2
@@ -1369,7 +1372,7 @@ async def get_starters(user: User = Depends(get_current_user)):
             track_task(_refill(user.id), name="starters_refill")
     except Exception as _e:
         logger.warning("[starters] refill check failed: %s", _e)
-    return {"starters": picks}
+    return {"starters": picks, "chips": chips}
 
 
 # Monotonic time of the last warm-up load attempt — server-wide, so several

@@ -508,6 +508,108 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
     return len(accepted)
 
 
+# ── user-voiced chips: no model, the member's own words ───────────────────
+#
+# The openers above are the CURATOR's lines. Beside them the landing shows
+# chips the USER can send (or edit first): before 2026-11-08 three fixed
+# placeholders, one of them the owner's ("What can I clean up in my
+# library?") for members who cannot open Deletions at all (UX audit H1,
+# C3). These are filled from the same facts as the openers, in the
+# language the member writes to the curator in (services/user_language),
+# and need nothing generated: a brand-new member gets the clock chips and
+# the mood chip from the first second. Only en and de are written; any
+# other language reads the English ones.
+
+_CHIPS = {
+    "en": {
+        "short_tonight": "Something under 30 minutes for tonight",
+        "film_tonight": "A film for tonight - surprise me",
+        "before_bed": "Something short before bed",
+        "for_later": "Something to put on later today",
+        "like_series": "Something in the spirit of {title}",
+        "like_title": "More like {title}",
+        "music": "More music like {artist}",
+        "mood": "I'm in the mood for ",
+        "taste": "What does my watch history say about my taste?",
+        "cleanup": "What can I clean up in my library?",
+    },
+    "de": {
+        "short_tonight": "Etwas unter 30 Minuten für heute Abend",
+        "film_tonight": "Ein Film für heute Abend - überrasch mich",
+        "before_bed": "Etwas Kurzes vor dem Schlafen",
+        "for_later": "Etwas für später am Tag",
+        "like_series": "Etwas in der Art von {title}",
+        "like_title": "Mehr in der Art von {title}",
+        "music": "Mehr Musik wie {artist}",
+        "mood": "Ich habe Lust auf ",
+        "taste": "Was sagt mein Verlauf über meinen Geschmack?",
+        "cleanup": "Was kann ich in meiner Bibliothek aufräumen?",
+    },
+}
+# Weekday() of Friday and Saturday: the evenings with room for a film.
+_FILM_EVENINGS = (4, 5)
+
+
+def user_chips(facts: list[dict], lang: str, is_admin: bool, limit: int = 3) -> list[dict]:
+    """Up to ``limit`` user-voiced chips from ``collect_facts`` output, in
+    ``lang``. Each is {"text": what goes into the input, "label": what the
+    chip shows}; they differ only where the text is a sentence to finish
+    (the mood chip ends in a space, its label in an ellipsis). Pure."""
+    t = _CHIPS.get(lang) or _CHIPS["en"]
+    by_kind: dict = {}
+    for f in facts:
+        by_kind.setdefault(f.get("kind"), f)
+    out: list[str] = []
+
+    clock = by_kind.get("now") or {}
+    part = clock.get("daypart")
+    weekday = _WEEKDAYS.get(str(clock.get("weekday", "")).lower())
+    if part == "evening":
+        out.append(t["film_tonight"] if weekday in _FILM_EVENINGS else t["short_tonight"])
+    elif part == "night":
+        out.append(t["before_bed"])
+    elif part in ("morning", "day"):
+        out.append(t["for_later"])
+
+    series = (by_kind.get("active_series") or {}).get("title")
+    last = by_kind.get("last_watched") or {}
+    if series:
+        out.append(t["like_series"].format(title=series))
+    elif last.get("title"):
+        key = "like_series" if last.get("media_type") in ("show", "anime") else "like_title"
+        out.append(t[key].format(title=last["title"]))
+
+    artist = (by_kind.get("music_rotation") or {}).get("artist")
+    if artist and len(out) < limit:
+        out.append(t["music"].format(artist=artist))
+    if is_admin and len(out) < limit:
+        out.append(t["cleanup"])
+    if len(out) < limit:
+        out.append(t["mood"])
+    if len(out) < limit:
+        out.append(t["taste"])
+
+    return [{"text": s, "label": (s.rstrip() + " …") if s.endswith(" ") else s}
+            for s in out[:limit]]
+
+
+_WEEKDAYS = {name: wd for wd, names in _DAY_NAMES.items() for name in names}
+
+
+def chips_for(user_id: int, is_admin: bool, now: Optional[datetime] = None,
+              zone: Optional[tzinfo] = None) -> list[dict]:
+    """``user_chips`` for a member, from their facts and language. Blocking.
+    Never raises: a failed read leaves the clock and mood chips."""
+    from src.services.user_language import user_language
+    try:
+        facts = collect_facts(user_id, now=now, zone=zone)
+    except Exception as e:  # noqa: BLE001 - chips are a nicety; the clock alone still fills them
+        logger.warning("[starters] chip facts for user %d unreadable: %s", user_id, e)
+        local = local_now(_zone(user_id, zone), now)
+        facts = [{"kind": "now", "weekday": local.strftime("%A"), "daypart": current_daypart(local)}]
+    return user_chips(facts, user_language(user_id), is_admin)
+
+
 # ── consumption ────────────────────────────────────────────────────────────
 
 def _fresh_filter(q, user_id: int, now: datetime):

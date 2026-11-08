@@ -195,7 +195,8 @@ async def _rec_write(fn, *a, **k):
     return fn(*a, **k)
 
 import src.services.process_monitor as pmon  # noqa: E402
-_saved = (chat.run_read, chat.run_write, cs.pick_starters, cs.pool_fresh_count, pmon.is_game_running)
+_saved = (chat.run_read, chat.run_write, cs.pick_starters, cs.pool_fresh_count, pmon.is_game_running,
+          cs.chips_for)
 
 
 def pick_starters(uid, limit=3):
@@ -203,11 +204,13 @@ def pick_starters(uid, limit=3):
 
 chat.run_read, chat.run_write = _rec_read, _rec_write
 cs.pick_starters, cs.pool_fresh_count = pick_starters, (lambda uid: 99)
+cs.chips_for = lambda uid, is_admin: []      # the recorder runs fn on the loop; chips read the DB
 pmon.is_game_running = lambda: False
 try:
-    asyncio.run(chat.get_starters(user=SimpleNamespace(id=1)))
+    asyncio.run(chat.get_starters(user=SimpleNamespace(id=1, is_admin=False)))
 finally:
-    chat.run_read, chat.run_write, cs.pick_starters, cs.pool_fresh_count, pmon.is_game_running = _saved
+    (chat.run_read, chat.run_write, cs.pick_starters, cs.pool_fresh_count, pmon.is_game_running,
+     cs.chips_for) = _saved
 check(f"get_starters runs pick_starters on the writer ({_calls})",
       ("write", "pick_starters") in _calls and ("read", "pick_starters") not in _calls)
 

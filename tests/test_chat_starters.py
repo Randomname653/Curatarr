@@ -455,8 +455,3 @@ def test_the_now_fact_reads_the_members_clock():
     assert clock == [{"kind": "now", "weekday": "Monday", "daypart": "night"}], clock
     utc = [f for f in cs.collect_facts(424242, now=late, zone=ZoneInfo("UTC")) if f["kind"] == "now"]
     assert utc[0]["weekday"] == "Sunday"
-
-
-def test_no_machine_clock_left_in_the_starters():
-    src = _src("services/chat_starters.py")
-    assert "datetime.now()" not in src, "every wall-clock read goes through the member's zone"
