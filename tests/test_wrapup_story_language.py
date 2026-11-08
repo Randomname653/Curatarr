@@ -117,4 +117,24 @@ text = " ".join([s["headline"] + " " + s["text"] for s in fb["slides"]]
 check("a German story: no English units or ISO dates anywhere in its text",
       fsource == "fallback" and not ENGLISH.search(text) and "735 Tage" in text, ENGLISH.findall(text) or text)
 
+# ── the roast teases a choice: never the amount watched ─────────────────────
+cards_en = mine(dict(F, tempo=dict(F["tempo"], prev_hours=80.0)))          # fewer hours than before
+drop = next(c for c in cards_en if c["key"] == "tempo_down")
+other = [c for c in cards_en if c is not drop]
+roast_plan = ('{"arc": ["%s", "%s", "%s"], "roast": "%s", "toast": "%s", "archetype_trait": "night_owl", '
+              '"archetype_title": "The Late Archive", "archetype_subhead": "Most of it after dark.", '
+              '"share_line": "An October of late nights", "next_pick": "", "cluster_names": []}'
+              % (other[0]["id"], other[1]["id"], other[2]["id"], drop["id"], other[0]["id"]))
+calls.clear()
+ww._ask = answers(roast_plan, le.LLMCallError(le.LLMFailure.INFRA_OFFLINE, "gone"))
+try:
+    rs, _, _ = asyncio.run(ww.write(F, "", idx, cards_en, lang="en"))
+finally:
+    ww._ask = _real
+check("a drop in hours is no choice to roast: the editor is told so, and its pick is replaced",
+      "never one about\n  how much they watched" in calls[0]["messages"][0]["content"]
+      and drop["claim"] not in rs["roast_and_toast"]["roast"], (rs["roast_and_toast"], drop["claim"]))
+check("...the replacement is a roastable card, and the toast is untouched",
+      rs["roast_and_toast"]["toast"].startswith(other[0]["claim"]), rs["roast_and_toast"])
+
 check.done()

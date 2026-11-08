@@ -470,7 +470,8 @@ def default_edit(cards: list, traits: list, picks: dict, lang: str = "en") -> di
     order = list(BEAT_HEADLINES)
     top = sorted(cards[:_ARC_MAX], key=lambda c: (order.index(c["slide"]) if c["slide"] in order else 99,
                                                   -c["score"]))
-    roast = next((c["id"] for c in cards if c["kind"] in ("confession", "contrast")), cards[0]["id"])
+    roast = next((c["id"] for c in cards if c["kind"] in ("confession", "contrast") and _roastable(c)),
+                 next((c["id"] for c in cards if _roastable(c)), cards[0]["id"]))
     toast = next((c["id"] for c in cards if c["kind"] in ("identity", "superlative") and c["id"] != roast),
                  cards[-1]["id"])
     key = traits[0] if traits else None
@@ -478,6 +479,16 @@ def default_edit(cards: list, traits: list, picks: dict, lang: str = "en") -> di
     return {"arc": [c["id"] for c in top], "roast": roast, "toast": toast, "archetype_trait": key,
             "archetype_title": title, "archetype_subhead": sub, "share_line": title,
             "next_pick": next(iter(picks), ""), "cluster_names": []}
+
+
+# Cards that say how MUCH was watched, not what was chosen: no roast. A roast
+# teases a choice; "a pathetic drop from ..." (owner's read on real data) is a
+# verdict on the watching itself.
+NOT_FOR_ROAST = {"tempo_down", "tempo_up"}
+
+
+def _roastable(c: dict) -> bool:
+    return c.get("key") not in NOT_FOR_ROAST
 
 
 def check_edit(e: dict, cards: list, traits: list, picks: dict, clusters: dict) -> list:
@@ -513,8 +524,9 @@ EDITOR_SYSTEM = """You are Curatarr's editor, planning ONE person's wrap-up from
 cards. You choose; you do not write the story yet.
 - arc: 3-7 card ids in the order the story should tell them — open with a number, end on
   who they were. Prefer high scores; one card per beat is plenty.
-- roast: the card that shows a blind spot or a contradiction. toast: the card that shows
-  their strongest taste. Either may also be in the arc.
+- roast: the card that shows a blind spot or a contradiction in what they chose - never one about
+  how much they watched. toast: the card that shows their strongest taste. Either may also be in
+  the arc.
 - archetype_trait: one of the TRAITS. archetype_title: 2-4 words, a role they earned from
   it, concrete and a little pointed ("The Midnight Completionist"); never Enthusiast, Lover,
   Fan, Buff, Aficionado. archetype_subhead: one sentence that earns it from the cards - about
@@ -664,6 +676,8 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     except (ValueError, TypeError) as e:
         logger.info("[wrapup] editor answer was not JSON: %s", e)
     edit = edit or default_edit(cards, traits, picks, lang)
+    if edit["roast"] in cards_by_id and not _roastable(cards_by_id[edit["roast"]]):
+        edit["roast"] = default_edit(cards, traits, picks, lang)["roast"]   # an amount is no choice
     from src.services.wrapup_insights import placeholders as _placeholders
     slots = _placeholders(cards)
     names = known_titles
