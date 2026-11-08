@@ -11,7 +11,7 @@ who wants to choose when to update can write in their compose file.
 A release needs a plain `X.Y.Z` there (no `-beta` suffix): the release
 workflow refuses anything else, because the TrueNAS catalog's update bot
 (Renovate) follows plain semantic versions on its own and would need a
-custom rule for anything else. The README and the app description say that
+custom rule for anything else. The "beta" badge next to the logo says that
 Curatarr is in beta.
 
 - **Patch** (`1.1.1`): fixes only.

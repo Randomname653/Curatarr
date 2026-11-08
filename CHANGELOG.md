@@ -4,9 +4,10 @@ Condensed release history, newest first.
 
 ---
 
-## Unreleased — Wrap-Up for everyone, a tactile glass UI on desktop and phone, Curatarr on a NAS, one SQLite writer
+## 2026-11-08 — v1.1.0: Wrap-Up for everyone, a tactile glass UI on desktop and phone, Curatarr on a NAS, one SQLite writer
 
-Two weeks after 1.1.0. The milestones, in the order the entries below
+Four weeks after 1.1.0-beta, the first release without the suffix (the
+badge next to the logo still says beta). The milestones, in the order the entries below
 follow them:
 
 - **Wrap-Up** replaces the owner-only Curation Report: every household
