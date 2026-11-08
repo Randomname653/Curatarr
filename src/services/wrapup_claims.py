@@ -146,8 +146,8 @@ TEXTS = {
         "de": ("Die Stimmung", "{share:p} des getaggten Hörens war {mood}.", None)},
     "device_night": {
         "en": ("The late screen", "After 23:00 it was the {player}: {share:p} of {hours:n} night hours.", None),
-        "de": ("Der späte Bildschirm", "Nach 23 Uhr lief es auf {player}: {share:p} von {hours:n} Nachtstunden.",
-               None)},
+        "de": ("Der späte Bildschirm", "Nach 23 Uhr lief es auf {player:wd}: {share:p} von {hours:n} "
+                                       "Nachtstunden.", None)},
     "decade": {
         "en": ("Back to the {decade}", "Your {decade}: {share:p} of the hours went to titles from the {decade}.", None),
         "de": ("Zurück in die {decade:dec}", "Deine {decade:dec}: {share:p} der Stunden gingen an Titel aus den "
@@ -199,6 +199,8 @@ _WORDS = {
               "shifting": "im Wandel", "new direction": "eine neue Richtung",
               "a hoarder": "der Server wuchs", "a pruner": "der Server wurde leichter", "in balance": "im Gleichgewicht",
               "the server grew": "der Server wuchs", "the server got lighter": "der Server wurde leichter"},
+        "wd": {"TV": "dem Fernseher", "computer": "dem Computer", "phone": "dem Handy", "tablet": "dem Tablet",
+               "browser": "dem Browser", "console": "der Konsole", "speaker": "dem Lautsprecher"},
         "wp": {"morning": "morgen", "afternoon": "nachmittage", "evening": "abende", "night": "nächte"},
         "wa": {"morning": "morgens", "afternoon": "nachmittags", "evening": "abends", "night": "nachts"},
         "wA": {"morning": "Morgens", "afternoon": "Nachmittags", "evening": "Abends", "night": "Nachts"}},
@@ -249,7 +251,7 @@ class _Formatter(string.Formatter):
                 return str(value)
             base = str(value).rstrip("s") + "er"
             return base + ("n" if spec == "decd" else "")
-        if spec in ("w", "wp", "wa", "wA"):
+        if spec in ("w", "wp", "wa", "wA", "wd"):
             table = (_WORDS.get(lang) or {}).get(spec) or {}
             return table.get(value, str(value))
         return super().format_field(value, spec)

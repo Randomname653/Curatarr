@@ -121,7 +121,7 @@ with conn.get_db_session() as db:
 facts = wf.build_wrapup_facts(UID, "all", "30d", now=datetime(2026, 11, 26, 12, 0))
 check("from the member's plays: a Tuesday-evening ritual on their clock",
       facts.get("ritual", {}).get("weekday") == "Tuesday" and facts["ritual"]["daypart"] == "evening"
-      and facts["facts_version"] == wf.FACTS_VERSION == 16, facts.get("ritual"))
+      and facts["facts_version"] == wf.FACTS_VERSION == 17, facts.get("ritual"))
 
 # ── a realistic month: ~40 hours, a quarter after 23:00, one genre most of it ─
 

@@ -68,7 +68,8 @@ _ELIGIBLE_HOURS = 3
 #     (services/wrapup_narrative).
 # 16: the comfort genre without a rewatch, the night shift as the series that
 #     held the nights, ISO weeks for the ritual (real months found none)
-FACTS_VERSION = 16
+# 17: devices by their kind (TV, computer, ...), never their own name
+FACTS_VERSION = 17
 
 
 @dataclass(frozen=True)
@@ -1003,19 +1004,34 @@ def platform_family(platform: Optional[str]) -> Optional[str]:
 
 _DEVICE_KNOWN = 0.5         # of the time with a known player, else no device story
 
+# What kind of device a platform is. The device NAME is given freely and
+# often carries a person's, a household's or a machine's name ("you lived
+# on the <machine>" - owner's read on real data): the story says the kind.
+_KINDS = {"iPhone": "phone", "Android": "phone", "iPad": "tablet",
+          "Apple TV": "TV", "Android TV": "TV", "Chromecast": "TV", "Roku": "TV", "Samsung TV": "TV",
+          "LG TV": "TV", "Windows": "computer", "Mac": "computer", "Linux": "computer", "Web": "browser",
+          "Xbox": "console", "PlayStation": "console", "Sonos": "speaker"}
+
+
+def device_kind(platform: Optional[str]) -> Optional[str]:
+    """"tvOS" → "TV", "Windows" → "computer", "Chrome" → "browser"; None for
+    an unknown platform."""
+    return _KINDS.get(platform_family(platform) or "")
+
 
 def _devices(db, W, ms, base, local) -> dict:
-    """Where the time was spent: hours by player (the Plex device name, else
-    the platform), and the player of the night. {} when under half the time
-    has a known player or only one is known."""
+    """Where the time was spent: hours by kind of device (TV, computer,
+    phone, ... from the platform - never the device's own name), and the
+    kind of the night. {} when under half the time has a known kind or there
+    is only one."""
     from sqlalchemy import func
     hr = func.strftime("%H", local)
     acc, night, total = Counter(), Counter(), 0
-    for player, platform, h, v in (db.query(W.player, W.platform, hr, func.sum(ms))
-                                   .filter(*base).group_by(W.player, W.platform, hr)):
+    for platform, h, v in (db.query(W.platform, hr, func.sum(ms))
+                           .filter(*base).group_by(W.platform, hr)):
         v = int(v or 0)
         total += v
-        label = (player or "").strip() or platform_family(platform)
+        label = device_kind(platform)
         if not label or h is None:
             continue
         acc[label] += v
