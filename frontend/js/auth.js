@@ -6,7 +6,7 @@ import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
-import { loadFollowupCard, loadGlancePanel, loadLastPlayed, loadStarters, restoreChatHistory } from './chat.js';
+import { loadFollowupCard, loadGlancePanel, loadTonightCard, loadLastPlayed, loadStarters, restoreChatHistory } from './chat.js';
 import { startTaskStream, stopTaskStream } from './activity.js';
 import { startProcessMonitor } from './game.js';
 import { routeFromHash } from './nav.js';
@@ -299,6 +299,7 @@ export async function showApp() {
   loadHistoryStatus();
   restoreChatHistory();
   loadFollowupCard();
+  loadTonightCard();
   loadGlancePanel();
   loadLastPlayed();
   loadStarters();

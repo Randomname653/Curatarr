@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**A Tonight card on the chat landing.** Above the chat a member now finds one pick for this
+moment of their own week, from their series in progress, stored recommendations and Swipe wants:
+on a weeknight the series they are in the middle of, on Friday and Saturday evening a film, on a
+Sunday afternoon a rewatch, during the day something they wanted to watch "for later". The line
+is a template of facts in the member's time zone, no model. "Open in Plex" (through
+app.plex.tv, so it works away from home) or "Open in Jellyfin" opens it on their server, "+
+Watchlist" puts a stored pick on their watchlist in one tap, and "Something else" steps through
+the other candidates (`GET /api/home/tonight`).
+
 **A "Loved" shows at once.** A Loved answer in Swipe, or "Loved it" on the landing card, fed the
 taste rebuild, and the Recommendations page and the TV's "Curatarr Recommended" rows showed
 nothing of it until the weekly regeneration. Now the member's stored picks nearest the loved

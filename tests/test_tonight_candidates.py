@@ -104,4 +104,100 @@ sp = cp.build_system_prompt(voice="neutral", user_lang="en", tonight_context=tex
 check("the chat prompt carries it after the library items",
       text in sp and sp.index("RELEVANT LIBRARY ITEMS") < sp.index("[TONIGHT CANDIDATES]"))
 
+# ── the landing's Tonight card ──────────────────────────────────────────────
+
+from zoneinfo import ZoneInfo  # noqa: E402
+
+BERLIN = ZoneInfo("Europe/Berlin")
+
+
+def local(y, m, d, h):
+    return datetime(y, m, d, h)
+
+check("the moment: a Tuesday evening, a Friday evening, a Sunday afternoon, late, a morning",
+      [tonight._moment(local(2026, 11, 10, 20)), tonight._moment(local(2026, 11, 13, 20)),
+       tonight._moment(local(2026, 11, 15, 15)), tonight._moment(local(2026, 11, 10, 23)),
+       tonight._moment(local(2026, 11, 10, 9))]
+      == ["weeknight", "film_night", "sunday", "late", "later"])
+
+
+def card_at(utc):
+    return tonight.tonight_card(UID, now=utc, zone=BERLIN)
+
+tue = card_at(datetime(2026, 11, 10, 19, 0))            # 20:00 in Berlin, a Tuesday
+check("a weeknight: the series in progress first, its line names the weekday",
+      tue["moment"] == "weeknight" and tue["items"][0]["title"] == "Starfall Archive"
+      and tue["items"][0]["headline"] == "A Tuesday evening: carry on with **Starfall Archive**"
+      and tue["items"][0]["why"] == "You are in the middle of it - up to season 1, episode 4.", tue["items"][0])
+whys = {i["title"]: i["why"] for i in tue["items"]}
+check("the card's second line is said to the member, never the curator's wording",
+      whys["The Lantern Room"] == "Because you watched Gull Point, Tide Clock and Salt Road: "
+                                  "Stored reason for The Lantern Room."
+      and whys["Tide Clock"] == "You marked it 'Want to watch' in Swipe."
+      and whys["The Quiet Harbour"].startswith("Loved once, untouched for two years: ")
+      and not any("they " in w or "do NOT" in w for w in whys.values()), whys)
+fri = card_at(datetime(2026, 11, 13, 19, 0))
+check("Friday evening: a film first", fri["items"][0]["category"] == "movie"
+      and fri["items"][0]["headline"] == "Friday - room for a film: **The Lantern Room**", fri["items"][0])
+sun = card_at(datetime(2026, 11, 15, 14, 0))
+check("Sunday afternoon: the rewatch first",
+      sun["items"][0]["headline"] == "Sunday rewatch? **The Quiet Harbour**", sun["items"][0])
+morning = card_at(datetime(2026, 11, 10, 8, 0))
+check("in the day: a Swipe want for later first",
+      morning["items"][0]["headline"] == "For later: **Tide Clock**, you wanted to watch it", morning["items"][0])
+check("every candidate stays behind 'Something else', each once",
+      sorted(i["title"] for i in tue["items"]) == sorted(i["title"] for i in morning["items"])
+      and len(tue["items"]) == len(set(i["title"] for i in tue["items"])))
+check("no candidates, no card", tonight.tonight_card(424242, now=NOW, zone=BERLIN) is None)
+
+# the route: links into the member's server, and the watchlist add
+import asyncio  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import src.services.media_server as media_server  # noqa: E402
+import src.services.plex_playlists as plex_playlists  # noqa: E402
+import src.services.plex_watchlist as plex_watchlist  # noqa: E402
+import src.services.tonight as tonight_mod  # noqa: E402
+from src.routers import home  # noqa: E402
+
+with conn.get_db_session() as db:
+    db.query(CachedRecommendation).filter(CachedRecommendation.title == "The Lantern Room").update(
+        {"plex_rating_key": "4711"})
+    db.commit()
+
+
+async def _mid(force=False):
+    return "MACHINE"
+
+added = []
+
+
+async def _add(uid, title, year=None, media_type=None):
+    added.append((uid, title, year, media_type))
+    return {"ok": True, "matched": title}
+
+_saved = (plex_playlists.get_machine_identifier, media_server.active_kind, plex_watchlist.add_to_watchlist,
+          tonight_mod.tonight_card)
+plex_playlists.get_machine_identifier = _mid
+media_server.active_kind = lambda settings=None: "plex"
+plex_watchlist.add_to_watchlist = _add
+_real_card = tonight_mod.tonight_card
+tonight_mod.tonight_card = lambda uid: _real_card(uid, now=datetime(2026, 11, 13, 19, 0), zone=BERLIN)
+try:
+    out = asyncio.run(home.tonight(user=SimpleNamespace(id=UID)))
+    w = asyncio.run(home.tonight_watchlist(home.WatchlistBody(title="The Lantern Room", category="movie",
+                                                              year=2019), user=SimpleNamespace(id=UID)))
+finally:
+    (plex_playlists.get_machine_identifier, media_server.active_kind, plex_watchlist.add_to_watchlist,
+     tonight_mod.tonight_card) = _saved
+first = out["card"]["items"][0]
+check("GET /api/home/tonight: the pick links into Plex for every account the server is shared with",
+      first["title"] == "The Lantern Room"
+      and first["link"] == "https://app.plex.tv/desktop/#!/server/MACHINE/details?key=%2Flibrary%2Fmetadata%2F4711"
+      and all("key" not in i for i in out["card"]["items"]), first)
+check("an item without a server key has no link", all("link" not in i for i in out["card"]["items"][1:]
+                                                       if i["title"] != "Starfall Archive"))
+check("POST /api/home/tonight/watchlist: the member's own watchlist, as a Swipe 'Want to watch'",
+      w["ok"] is True and added == [(UID, "The Lantern Room", 2019, "movie")])
+
 check.done()

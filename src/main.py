@@ -493,6 +493,7 @@ from src.routers import music
 from src.routers import library
 from src.routers import image_proxy   # Pass 97
 from src.routers import swipe
+from src.routers import home
 from src.routers import hosts
 from src.routers import stats
 from src.routers import wrapup
@@ -526,6 +527,7 @@ app.include_router(stats.router,           prefix="/api/stats",           tags=[
 app.include_router(wrapup.router,          prefix="/api/wrapup",          tags=["wrapup"])
 app.include_router(imports.router,         prefix="/api/import",          tags=["import"])
 app.include_router(swipe.router,           prefix="/api/swipe",           tags=["swipe"])
+app.include_router(home.router,            prefix="/api/home",            tags=["home"])
 app.include_router(hosts.router,           prefix="/api/hosts",           tags=["hosts"])
 app.include_router(jellyfin.router,        prefix="/api/jellyfin",        tags=["jellyfin"])
 app.include_router(shoko.router,           prefix="/api/shoko",           tags=["shoko"])

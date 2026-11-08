@@ -74,6 +74,7 @@ def candidates(user_id: int, domain: Optional[str] = None,
     out: list[dict] = []
     with get_db_session() as db:
         video = [{"title": r.title, "series_title": r.series_title, "media_type": r.media_type,
+                  "key": r.plex_item_id,
                   "season": r.season, "episode": r.episode, "viewed_at": r.viewed_at,
                   "duration_ms": r.duration_ms, "view_offset_ms": r.view_offset_ms,
                   "completed": bool(r.completed)}
@@ -83,8 +84,11 @@ def candidates(user_id: int, domain: Optional[str] = None,
             if agg["media_type"] not in cats:
                 continue
             p = get_series_progress(video, title, agg["media_type"], now=now)
+            last_key = next((v["key"] for v in video
+                             if (v["series_title"] or v["title"]) == title and v["key"]), None)
             out.append({"title": title, "category": agg["media_type"], "source": "in progress",
-                        "note": (p or {}).get("phrase") or ""})
+                        "note": (p or {}).get("phrase") or "", "key": last_key, "kind": "series",
+                        "at": ((p or {}).get("furthest_season"), (p or {}).get("furthest_episode"))})
 
         def played(title: str, category: str, since: Optional[datetime]) -> bool:
             # A film by its title; a series, and a music recommendation (an
@@ -95,7 +99,8 @@ def candidates(user_id: int, domain: Optional[str] = None,
                 q = q.filter(W.viewed_at >= since)
             return q.first() is not None
 
-        recs = (db.query(R.title, R.category, R.lane, R.reason, R.year, R.cached_at, R.score_factors)
+        recs = (db.query(R.title, R.category, R.lane, R.reason, R.year, R.cached_at, R.score_factors,
+                         R.plex_rating_key)
                 .filter(R.user_id == user_id, R.lane.in_(_LANES), R.category.in_(cats))
                 .order_by(R.lifted_at.desc(), R.confidence.desc()).limit(40).all())
         seen = {c["title"].lower() for c in out}
@@ -123,7 +128,8 @@ def candidates(user_id: int, domain: Optional[str] = None,
             if anchors:
                 source = "recommended because they watched " + _and(anchors)
             out.append({"title": r.title, "category": r.category, "year": r.year,
-                        "source": source, "note": _short(r.reason)})
+                        "source": source, "note": _short(r.reason), "key": r.plex_rating_key,
+                        "kind": r.lane, "anchors": anchors})
 
         wants = (db.query(S.title, S.category)
                  .filter(S.user_id == user_id, S.want == True, S.seen == False,  # noqa: E712
@@ -136,7 +142,7 @@ def candidates(user_id: int, domain: Optional[str] = None,
                 continue
             seen.add(title.lower())
             out.append({"title": title, "category": category,
-                        "source": "marked 'want to watch' in Swipe", "note": ""})
+                        "source": "marked 'want to watch' in Swipe", "note": "", "kind": "want"})
             n += 1
     return out
 
@@ -158,3 +164,99 @@ def tonight_block(user_id: int, domain: Optional[str] = None,
                   now: Optional[datetime] = None) -> str:
     """``block(candidates(...))``. Blocking."""
     return block(candidates(user_id, domain, now))
+
+
+# ── the landing's Tonight card (UX audit 2026-11-08, §2.1 A) ───────────────
+#
+# One pick for this moment of the member's week, from the same candidates,
+# with the rest behind "Something else". No model: the line is a template and
+# every slot in it is a fact. The moment is the member's own clock.
+
+def _moment(local: datetime) -> str:
+    """weeknight | film_night | sunday | late | later - which rule applies."""
+    from src.services.chat_starters import current_daypart
+    part, wd = current_daypart(local), local.weekday()
+    if part == "night":
+        return "late"
+    if wd == 6 and part in ("day", "evening"):
+        return "sunday"
+    if part == "evening":
+        return "film_night" if wd in (4, 5) else "weeknight"
+    return "later"
+
+
+# Which kinds of candidate each moment puts first, in order; the rest follow.
+_FIRST = {
+    "weeknight": ("series", "because", "library", "rediscover", "want"),
+    "film_night": ("film", "series", "rediscover", "want"),
+    "sunday": ("rediscover", "series", "because", "library", "want"),
+    "late": ("series", "because", "library", "want", "rediscover"),
+    "later": ("want", "because", "library", "series", "rediscover"),
+}
+
+
+def _rank(c: dict, moment: str) -> int:
+    order = _FIRST[moment]
+    kinds = [c.get("kind")]
+    if c.get("category") == "movie" and c.get("kind") in ("because", "library"):
+        kinds.insert(0, "film")
+    return min((order.index(k) for k in kinds if k in order), default=len(order))
+
+
+def headline(c: dict, moment: str, weekday: str) -> str:
+    """The card's line for ``c`` at this moment. Plain text; the title is
+    marked with ** for the client to set in bold."""
+    t = f"**{c['title']}**"
+    kind = c.get("kind")
+    if kind == "series":
+        return {"late": f"Still up? One more of {t}",
+                "weeknight": f"A {weekday} evening: carry on with {t}"}.get(moment, f"Carry on with {t}")
+    if kind == "want":
+        return f"For later: {t}, you wanted to watch it" if moment == "later" else f"You wanted to watch {t}"
+    if kind == "rediscover":
+        return f"Sunday rewatch? {t}" if moment == "sunday" else f"Back to an old favourite: {t}"
+    if moment == "film_night" and c.get("category") == "movie":
+        return f"{weekday} - room for a film: {t}"
+    return f"For tonight: {t}"
+
+
+def member_why(c: dict) -> str:
+    """The card's second line, said TO the member. The candidates' ``source``
+    and ``note`` are written for the curator (third person, and a series'
+    progress phrase carries instructions to the model); this is built from
+    the same facts for the page."""
+    kind = c.get("kind")
+    if kind == "series":
+        season, ep = c.get("at") or (None, None)
+        where = (f"season {season}, episode {ep}" if season and ep else f"episode {ep}" if ep else "")
+        return f"You are in the middle of it{f' - up to {where}' if where else ''}."
+    if kind == "want":
+        return "You marked it 'Want to watch' in Swipe."
+    lead = {"because": ("Because you watched " + _and(c["anchors"])) if c.get("anchors")
+            else "Close to what you watched lately",
+            "library": "From your library, still unwatched",
+            "rediscover": "Loved once, untouched for two years"}.get(kind, "")
+    note = c.get("note") or ""
+    return f"{lead}: {note}" if lead and note else (lead or note)
+
+
+def tonight_card(user_id: int, now: Optional[datetime] = None, zone=None) -> Optional[dict]:
+    """{"moment", "weekday", "items": [...]} - the candidates ordered for the
+    member's moment, each with its ``headline`` and ``why``; None without
+    any. Blocking."""
+    from src.services.chat_starters import local_now
+    from src.services.user_time import user_zone_by_id
+    now = now or datetime.utcnow()
+    local = local_now(zone or user_zone_by_id(user_id), now)
+    cands = candidates(user_id, now=now)
+    if not cands:
+        return None
+    moment = _moment(local)
+    weekday = local.strftime("%A")
+    ordered = sorted(enumerate(cands), key=lambda ic: (_rank(ic[1], moment), ic[0]))
+    items = []
+    for _, c in ordered:
+        items.append({"title": c["title"], "category": c["category"], "year": c.get("year"),
+                      "kind": c.get("kind"), "key": c.get("key"),
+                      "headline": headline(c, moment, weekday), "why": member_why(c)})
+    return {"moment": moment, "weekday": weekday, "items": items}

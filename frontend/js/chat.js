@@ -1,7 +1,7 @@
 // ── CHAT ──────────────────────────────────────────────────────────────────────
-import { EL, EVENT, _errMsg, _posterImg, act, actOn, confirmDialog, esc, escAttr, haptic, proxyImg, renderMarkdown, toast } from './ui.js';
+import { EL, EVENT, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, esc, escAttr, haptic, proxyImg, renderMarkdown, toast } from './ui.js';
 import { api } from './api.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 import { _updateKbBadge } from './kb.js';
 import { showView } from './nav.js';
 import { _deleteBody, deleteFateLines } from './deletions.js';
@@ -55,10 +55,12 @@ export async function newChat() {
       msgs.innerHTML = `
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
         <div id="followup-panel" aria-live="off"></div>
+        <div id="tonight-panel" aria-live="off"></div>
         <div id="glance-panel" aria-live="off"></div>
         <div id="last-played-panel" aria-live="off"></div>
         <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">${_staticChipsHtml()}</div>`;
       loadFollowupCard();
+      loadTonightCard();
       loadGlancePanel();
       loadLastPlayed();
       loadStarters();
@@ -211,7 +213,7 @@ export async function sendMessage() {
   const text = inp.value.trim(); if (!text) return;
   inp.value = ''; inp.style.height = 'auto';
   inp.disabled = btn.disabled = true;
-  ['followup-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
+  ['followup-panel', 'tonight-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
   showEarlierChat();           // a send continues the thread: its history shows above it
   haptic('medium');
   addMsg(text, 'user');
@@ -526,6 +528,66 @@ export async function explainFollowup(id, msgText) {
                          'Discussing a proactive message', msgText)) return;
   const inp = document.getElementById('chat-input');
   if (inp) { inp.value = ''; inp.focus(); }
+}
+// ── CHAT LANDING "TONIGHT" CARD ─────────────────────────────────────────────
+// One pick for this moment of the member's week (GET /api/home/tonight,
+// services/tonight.tonight_card): their series in progress on a weeknight, a
+// film on Friday and Saturday, a rewatch on Sunday, a "for later" from their
+// Swipe wants in the day. No model: the line is a template of facts. "Something
+// else" steps through the other candidates; a stored pick goes onto the
+// watchlist in one tap; the link opens it on their own server.
+const _TONIGHT_LABEL = {weeknight: 'Tonight', film_night: 'Film night', sunday: 'Sunday', late: 'Late', later: 'For later'};
+let _tonight = null;
+export async function loadTonightCard() {
+  const el = document.getElementById('tonight-panel');
+  if (!el) return;
+  try {
+    const { card } = await api('/api/home/tonight');
+    _tonight = card && card.items?.length ? { ...card, at: 0 } : null;
+    _paintTonight();
+  } catch { el.innerHTML = ''; } // best-effort nicety: the chat works without it
+}
+function _bold(text) {
+  return esc(text).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+function _paintTonight() {
+  const el = document.getElementById('tonight-panel');
+  if (!el) return;
+  const it = _tonight?.items[_tonight.at];
+  if (!it) { el.innerHTML = ''; return; }
+  const canList = ['because', 'library', 'rediscover'].includes(it.kind);
+  el.innerHTML = `<div class="card mt-14">
+    <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(_TONIGHT_LABEL[_tonight.moment] || 'Tonight')}</span></div>
+    <p>${_bold(it.headline)}</p>
+    <p class="fs-12 t3 mt-4">${esc(it.why)}</p>
+    <div class="flex gap-8 flex-wrap mt-10">
+      ${it.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(it.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
+      ${canList ? `<button type="button" class="btn btn-secondary btn-sm" ${act('tonightWatchlist', EL)}>+ Watchlist</button>` : ''}
+      ${_tonight.items.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" ${act('tonightNext')}>Something else</button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" ${act('hideTonight')}>Not now</button>
+    </div></div>`;
+}
+export function tonightNext() {
+  if (!_tonight) return;
+  _tonight.at = (_tonight.at + 1) % _tonight.items.length;
+  _paintTonight();
+}
+export async function tonightWatchlist(btn) {
+  const it = _tonight?.items[_tonight.at];
+  if (!it) return;
+  btnBusy(btn, 'Adding…');
+  try {
+    const r = await api('/api/home/tonight/watchlist', 'POST', { title: it.title, category: it.category, year: it.year || null });
+    if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
+    else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
+  } catch (e) {
+    btnDone(btn, '+ Watchlist');
+    toast(`Not added: ${_errMsg(e)}`, 'danger');
+  }
+}
+export function hideTonight() {
+  _tonight = null;
+  _paintTonight();
 }
 export function hideFollowup() {
   const el = document.getElementById('followup-panel');
