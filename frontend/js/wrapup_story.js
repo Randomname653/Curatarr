@@ -390,18 +390,43 @@ function _hold(on) {
 // the slide's own line and the period's label go on it.
 const SHARE_W = 1080, SHARE_H = 1920;
 
-/** The lines a share image says, wrapped to ``width`` characters at most:
- *  the period's label, then the slide's share line. Pure. */
-export function shareCardLines(share, label, width = 22) {
+/** The share line laid out to fit the picture: wrapped by MEASURED width
+ *  (``measure(text, px)`` - the canvas's measureText), the font shrunk
+ *  until every word fits on a line and every line fits the height, a word
+ *  wider than the narrowest line broken with a hyphen rather than cut.
+ *  Nothing is dropped. Pure. */
+export function shareLayout(share, measure, {maxWidth = SHARE_W - 192, maxHeight = 1240,
+  sizes = [92, 80, 70, 62, 56, 48], lead = 1.26} = {}) {
   const words = String(share || '').split(/\s+/).filter(Boolean);
-  const lines = [];
-  let cur = '';
-  for (const w of words) {
-    if (cur && (cur + ' ' + w).length > width) { lines.push(cur); cur = w; }
-    else cur = cur ? `${cur} ${w}` : w;
+  const wrap = px => {
+    const lines = [];
+    let cur = '';
+    for (const w of words) {
+      const next = cur ? `${cur} ${w}` : w;
+      if (!cur || measure(next, px) <= maxWidth) cur = next;
+      else { lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  };
+  for (const px of sizes) {
+    const lines = wrap(px);
+    if (lines.every(l => measure(l, px) <= maxWidth) && lines.length * px * lead <= maxHeight) return {size: px, lines};
   }
-  if (cur) lines.push(cur);
-  return {eyebrow: String(label || ''), lines: lines.slice(0, 9)};
+  // the smallest size, a too-long word broken where it must
+  const px = sizes[sizes.length - 1];
+  const out = [];
+  for (const line of wrap(px)) {
+    let rest = line;
+    while (measure(rest, px) > maxWidth && rest.length > 1) {
+      let n = rest.length - 1;
+      while (n > 1 && measure(rest.slice(0, n) + '-', px) > maxWidth) n--;
+      out.push(rest.slice(0, n) + '-');
+      rest = rest.slice(n);
+    }
+    out.push(rest);
+  }
+  return {size: px, lines: out};
 }
 
 /** The file name of a slide's image. Pure. */
@@ -427,14 +452,16 @@ function _slideImage(sl, label) {
   glow.addColorStop(1, 'transparent');
   g.fillStyle = glow;
   g.fillRect(0, 0, SHARE_W, SHARE_H);
-  const {eyebrow, lines} = shareCardLines(sl.share, label);
+  const face = px => `700 ${px}px system-ui, sans-serif`;
+  const measure = (t, px) => { g.font = face(px); return g.measureText(t).width; };
+  const {size, lines} = shareLayout(sl.share, measure);
   g.textBaseline = 'top';
   g.fillStyle = amber;
   g.font = '600 44px system-ui, sans-serif';
-  g.fillText(eyebrow.toUpperCase(), 96, 300);
+  g.fillText(String(label || '').toUpperCase(), 96, 300);
   g.fillStyle = text;
-  g.font = '700 92px system-ui, sans-serif';
-  lines.forEach((l, k) => g.fillText(l, 96, 420 + k * 116));
+  g.font = face(size);
+  lines.forEach((l, k) => g.fillText(l, 96, 420 + k * Math.round(size * 1.26)));
   g.fillStyle = amber;
   g.font = '700 52px system-ui, sans-serif';
   g.fillText('Curatarr', 96, SHARE_H - 200);

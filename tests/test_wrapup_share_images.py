@@ -62,7 +62,11 @@ if node:
         .replace("export async function", "async function")
     harness = r"""
 const drawn = [];
-const fakeCtx = {fillRect() {}, fillText(t) { drawn.push(String(t)); },
+// a canvas that measures like a font: 0.55 of the size per letter
+const px = f => +String(f).match(/(\d+)px/)[1];
+const fakeMeasure = (t, size) => String(t).length * size * 0.55;
+const fakeCtx = {font: '', fillRect() {}, fillText(t) { drawn.push(String(t)); },
+  measureText(t) { return {width: fakeMeasure(t, px(this.font))}; },
   createRadialGradient: () => ({addColorStop() {}})};
 const downloads = [];
 const document = {
@@ -91,7 +95,8 @@ const countTo = () => {}; const haptic = () => {}; const loc = () => undefined;
   for (const sl of slides.filter(s => s.share)) {
     drawn.length = 0;
     await _slideImage(sl, label);
-    perSlide.push({share: sl.share, drawn: drawn.slice(), expect: shareCardLines(sl.share, label)});
+    perSlide.push({share: sl.share, drawn: drawn.slice(), expect: shareLayout(sl.share, fakeMeasure).lines,
+                   label: label.toUpperCase()});
   }
   st.data = data; st.slides = slides; st.i = 0; st.el = null;
   await shareWrapupSlide();                                  // no share sheet: a download
@@ -109,8 +114,10 @@ const countTo = () => {}; const haptic = () => {}; const loc = () => undefined;
     perSlide, downloads, shared, paused: st.paused, noShareSlide: plain,
     cardsOnly: cardsOnly.filter(x => x.cls.startsWith('beat')).map(x => x.share),
     bare: bare.filter(x => x.cls.startsWith('beat')).map(x => x.share),
-    wrap: shareCardLines('a very long line that goes on and on past what fits on one row', 'Label', 22),
-    many: shareCardLines('word '.repeat(80), 'L').lines.length,
+    long: shareLayout('Die Donnerstagabende gehörten der Fernsehserienwiederholungsnacht', fakeMeasure),
+    huge: shareLayout('Ein Rindfleischetikettierungsüberwachungsaufgabenübertragungsgesetzbuch', fakeMeasure),
+    many: shareLayout('word '.repeat(80), fakeMeasure),
+    short: shareLayout('Twelve hours', fakeMeasure),
     names: [shareFileName('Week 45, 2026', 0), shareFileName('', 2), shareFileName('Oktober 2026 · Rückblick', 1)],
   }));
 })();
@@ -122,15 +129,24 @@ const countTo = () => {}; const haptic = () => {}; const loc = () => undefined;
     per = res.get("perSlide") or []
     check("every slide with a share line can become a picture", len(per) >= 4, len(per))
     check("a picture says the period, the slide's line and the wordmark - nothing else",
-          per and all(p["drawn"] == [p["expect"]["eyebrow"].upper(), *p["expect"]["lines"], "Curatarr"] for p in per),
+          per and all(p["drawn"] == [p["label"], *p["expect"], "Curatarr"] for p in per),
           per)
     every = " ".join(" ".join(p["drawn"]) for p in per)
     check("no user name, no server name, no household name on any picture",
           per and not any(n.lower() in every.lower() for n in ("Fennick", "Orla", "Basement")), every)
-    check("the line wraps at the width and never runs past nine lines",
-          res.get("wrap", {}).get("lines") and all(len(x) <= 22 for x in res["wrap"]["lines"])
-          and " ".join(res["wrap"]["lines"]) == "a very long line that goes on and on past what fits on one row"
-          and res.get("many") == 9, res.get("wrap"))
+    fits = lambda lay: all(len(x) * lay["size"] * 0.55 <= 888 for x in lay["lines"])   # noqa: E731
+    long_, huge, many, short = (res.get(k) or {"size": 0, "lines": []} for k in ("long", "huge", "many", "short"))
+    check("a short line keeps the big type", short == {"size": 92, "lines": ["Twelve hours"]}, short)
+    check("a long German word gets smaller type, never cut and never past the edge",
+          fits(long_) and long_["size"] < 92
+          and " ".join(long_["lines"]) == "Die Donnerstagabende gehörten der Fernsehserienwiederholungsnacht", long_)
+    word = "EinRindfleischetikettierungsüberwachungsaufgabenübertragungsgesetzbuch"
+    check("...a word too long even then is broken with a hyphen, every letter kept",
+          fits(huge) and len(huge["lines"]) > 1 and huge["lines"][1].endswith("-")
+          and "".join(x[:-1] if x.endswith("-") else x for x in huge["lines"]).replace(" ", "") == word, huge)
+    check("a long line wraps into the picture's height at a smaller size, nothing dropped",
+          fits(many) and len(many["lines"]) * many["size"] * 1.26 <= 1240
+          and " ".join(many["lines"]).split() == ["word"] * 80, (many["size"], len(many["lines"])))
     check("without a share sheet the picture is saved, named after the period and the slide",
           res.get("downloads") == ["curatarr-week-45-2026-1.png"], res.get("downloads"))
     check("with a share sheet the PNG goes to it with the slide's line, nothing uploaded",
