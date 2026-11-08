@@ -135,6 +135,14 @@ async def attach_posters(facts: dict) -> None:
     facts["posters"] = posters
 
 
+def _final(p, row: dict) -> bool:
+    """Whether stored facts are the closed period's for good: the period is
+    over AND they were computed after it ended. A week opened on Wednesday
+    is closed by Monday, but its Wednesday facts are not the week's."""
+    at = (row or {}).get("facts_at")
+    return bool(p.closed and at and at >= p.end)
+
+
 async def current_facts(user: User, scope: str, period: str) -> tuple:
     """(facts, stored row) — the stored facts while fresh, else recomputed,
     decorated with artwork and saved."""
@@ -151,7 +159,7 @@ async def current_facts(user: User, scope: str, period: str) -> tuple:
     facts = row and row.get("facts")
     if facts and facts.get("facts_version") != FACTS_VERSION:
         facts = None          # built on older watch data: a closed year thaws once
-    if facts and (p.closed or (row.get("facts_at") and datetime.utcnow() - row["facts_at"] < _FRESH)):
+    if facts and (_final(p, row) or (row.get("facts_at") and datetime.utcnow() - row["facts_at"] < _FRESH)):
         return facts, row
     facts = await run_read(build_wrapup_facts, user.id, scope, period,
                            is_admin=bool(user.is_admin))

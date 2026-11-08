@@ -78,4 +78,55 @@ check("a play at 00:30 Monday on the member's clock counts for that week",
 check("the week's facts carry their key and label", f46["period"]["key"] == "week:2026-W46"
       and f46["period"]["label"] == "Week 46, 2026" and f46["facts_version"] == wf.FACTS_VERSION)
 
+# ── a week opened on Wednesday is not frozen at Wednesday ───────────────────
+
+import asyncio  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from src.database.models import Wrapup  # noqa: E402
+from src.routers import wrapup as wr  # noqa: E402
+from src.services import wrapup_store  # noqa: E402
+
+with conn.get_db_session() as db:
+    mid = User(plex_user_id="wm-2", plex_username="Midweek", timezone="Europe/Berlin")
+    db.add(mid)
+    db.commit()
+    MID = mid.id
+    for d in range(7):                       # week 10 of 2026: Monday 2 March .. Sunday 8 March
+        db.add(WatchHistoryEntry(user_id=MID, plex_user_id="wm-2", plex_item_id=f"m{d}", title=f"Episode {d + 1}",
+                                 series_title="Starfall Archive", media_type="anime", season=1, episode=d + 1,
+                                 duration_ms=3_600_000, view_offset_ms=3_600_000, completed=True,
+                                 viewed_at=datetime(2026, 3, 2, 19, 0) + timedelta(days=d)))
+    db.commit()
+WEDNESDAY = datetime(2026, 3, 4, 20, 0)
+wrapup_store.save_facts(MID, "all", "week:2026-W10",
+                        wf.build_wrapup_facts(MID, "all", "week:2026-W10", now=WEDNESDAY))
+with conn.get_db_session() as db:
+    db.query(Wrapup).filter(Wrapup.user_id == MID).update({"facts_at": WEDNESDAY})
+    db.commit()
+
+built = []
+_build, _posters = wf.build_wrapup_facts, wr.attach_posters
+
+
+def _counting(*a, **k):
+    built.append(a[2])
+    return _build(*a, **k)
+
+
+async def _no_posters(facts):
+    facts.setdefault("posters", {})
+
+wf.build_wrapup_facts, wr.attach_posters = _counting, _no_posters
+try:
+    member = SimpleNamespace(id=MID, is_admin=False, plex_username="Midweek")
+    first, _ = asyncio.run(wr.current_facts(member, "all", "week:2026-W10"))
+    again, _ = asyncio.run(wr.current_facts(member, "all", "week:2026-W10"))
+finally:
+    wf.build_wrapup_facts, wr.attach_posters = _build, _posters
+check("a week whose facts were stored on its Wednesday is counted again once it is over: all seven days",
+      first["tempo"]["plays"] == 7 and built[:1] == ["week:2026-W10"], (first.get("tempo"), built))
+check("...and those facts, computed after the end, are the week's for good", again["tempo"]["plays"] == 7
+      and len(built) == 1, built)
+
 check.done()
