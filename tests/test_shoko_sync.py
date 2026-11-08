@@ -11,7 +11,7 @@ from _harness import app_db, check  # noqa: I001 - first: temp stores
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -19,7 +19,7 @@ conn = app_db()
 from src.config import settings  # noqa: E402
 from src.database.models import ShokoWatchSync, User, WatchHistoryEntry  # noqa: E402
 from src.services import shoko_client, shoko_sync  # noqa: E402
-from src.services.media_server.base import ExternalIds, FileRef, MediaItem  # noqa: E402
+from src.services.media_server.base import ExternalIds, FileRef, Library, MediaItem  # noqa: E402
 
 KEY_OWNER, KEY_PARTNER, KEY_STRANGER = "k-owner", "k-partner", "k-stranger"
 
@@ -61,7 +61,10 @@ class FakeShoko:
         if path == "/User/Current":
             return httpx.Response(200, json=user)
         if path == "/File/PathEndsWith":
-            return httpx.Response(200, json=self.files.get(request.url.params.get("path"), []))
+            files = self.files.get(request.url.params.get("path"), [])
+            if request.url.params.get("include") != "XRefs":   # as the live server does
+                files = [{**f, "SeriesIDs": None} for f in files]
+            return httpx.Response(200, json=files)
         if path.startswith("/Tmdb/Episode/"):
             return httpx.Response(200, json=self.tmdb.get(int(path.split("/")[3]), []))
         if path.startswith("/Episode/") and path.endswith("/UserData"):
@@ -80,13 +83,38 @@ class FakeShoko:
 
 
 class FakeAdapter:
+    """item() for the played keys; libraries/items/children for the
+    current copies (series "Show A" now lives under key s1)."""
+
     def __init__(self, items):
-        self.items = items
+        self.played = items
         self.calls = 0
+        self.listings = 0
 
     async def item(self, key):
         self.calls += 1
-        return self.items.get(key)
+        return self.played.get(key)
+
+    async def libraries(self):
+        return [Library(key="12", title="Anime", kind="show"),
+                Library(key="9", title="Music", kind="music")]
+
+    async def items_of(self, lib):
+        if lib.key == "12":
+            yield MediaItem(key="s1", kind="series", title="Show A")
+            yield MediaItem(key="s9", kind="series", title="Other")
+
+    def items(self, lib, kinds=()):
+        self.listings += 1
+        return self.items_of(lib)
+
+    async def children(self, key):
+        if key == "s1":
+            return [MediaItem(key="s1-1", kind="season", title="Season 1", season_number=1)]
+        if key == "s1-1":
+            return [MediaItem(key="e1", kind="episode", title="ep1", season_number=1, episode_number=1,
+                              files=ITEMS["e1"].files)]
+        return []
 
 
 def ep(key, path=None, size=None, tmdb=None, kind="episode"):
@@ -120,6 +148,13 @@ with conn.get_db_session() as db:
     play(1, "e4", T0 + timedelta(days=2))
     play(1, "e1", T0 + timedelta(days=4), completed=False)   # abandoned: not reported
     play(1, "m1", T0, media_type="movie")                    # not anime
+    # a play whose key is gone (the file was replaced): found again by title
+    db.add(WatchHistoryEntry(user_id=1, plex_user_id="1", plex_item_id="gone1", title="ep1",
+                             series_title="Show A", season=1, episode=1, media_type="anime",
+                             viewed_at=T0 + timedelta(days=6), completed=True))
+    db.add(WatchHistoryEntry(user_id=1, plex_user_id="1", plex_item_id="gone2", title="x",
+                             series_title="Nowhere", season=1, episode=1, media_type="anime",
+                             viewed_at=T0 + timedelta(days=6), completed=True))
     play(2, "e1", T0 + timedelta(days=5))
 
 
@@ -159,13 +194,15 @@ adapter = FakeAdapter(ITEMS)
 res = run(fake, adapter)
 owner = res["users"]["Default"]
 check("the single admin key gets the Curatarr admin's plays", owner["curatarr_user"] == 1, owner)
-check("six finished anime plays read, the abandoned one and the movie left out",
-      owner["plays"] == 6, owner)
-check("each media-server item is fetched once per run", adapter.calls == 4, adapter.calls)
+check("eight finished anime plays read, the abandoned one and the movie left out",
+      owner["plays"] == 8, owner)
+check("each media-server item is fetched once per run", adapter.calls == 6, adapter.calls)
+check("the series of the show libraries are listed once, only when a key is gone",
+      adapter.listings == 1, adapter.listings)
 ud = fake.user_data
-check("e1: the double row is one viewing, the re-watch three days later a second",
-      ud[(1, 101)]["PlaybackCount"] == 2
-      and shoko_client.parse_time(ud[(1, 101)]["LastPlayedAt"]) == T0 + timedelta(days=3),
+check("e1: double row one viewing, re-watch a second, the gone key's play (found by title) a third",
+      ud[(1, 101)]["PlaybackCount"] == 3
+      and shoko_client.parse_time(ud[(1, 101)]["LastPlayedAt"]) == T0 + timedelta(days=6),
       ud.get((1, 101)))
 check("e2 resolved by the folders above an ambiguous file name (backslashes on Shoko's side)",
       (1, 201) in ud and (1, 301) not in ud, sorted(ud))
@@ -177,10 +214,11 @@ check("a PUT keeps the user's other fields (favourite, tags, rating)",
       all({"IsFavorite", "UserTags", "UserRating"} <= set(b) for _, _, b in fake.puts))
 led = ledger()
 statuses = sorted(s for s, _, _ in led.values())
-check("ledger: 4 sent, 1 already (the double row), 1 unmatched",
-      statuses == ["already", "sent", "sent", "sent", "sent", "unmatched"], statuses)
+check("ledger: 5 sent, 1 already (the double row), 2 unmatched",
+      statuses == ["already", "sent", "sent", "sent", "sent", "sent", "unmatched", "unmatched"],
+      statuses)
 check("ledger names how each was matched",
-      {h for _, _, h in led.values()} == {"path", "tmdb", None}, led)
+      {h for _, _, h in led.values()} == {"path", "tmdb", "title", None}, led)
 check("the done flag says nothing is left", res["done"] is True, res)
 
 # ── 4. idempotent ────────────────────────────────────────────────────────────
@@ -191,13 +229,14 @@ check("a second run sends nothing again", len(fake.puts) == n_puts
 
 # ── 5. an unmatched play is retried after a week ─────────────────────────────
 fake.files["nowhere.mkv"] = [{"ID": 50, "Size": 7, "SeriesIDs": [{"EpisodeIDs": [{"ID": 501}]}]}]
-later = datetime.utcnow() + shoko_sync.UNMATCHED_RETRY + timedelta(hours=1)
+later = datetime.now(timezone.utc).replace(tzinfo=None) + shoko_sync.UNMATCHED_RETRY + timedelta(hours=1)
 async def _retry():
     async with shoko_client.new_client(httpx.MockTransport(fake.handler)) as c:
         sess = shoko_client.ShokoSession(c, KEY_OWNER, settings.SHOKO_URL)
         return await shoko_sync.sync_user(sess, FakeAdapter(ITEMS), 1, now=later)
 r = asyncio.run(_retry())
 check("the file Shoko imported later is reported on the retry", r["sent"] == 1
+      and r["unmatched"] == 1
       and (1, 501) in fake.user_data, r)
 
 # ── 6. several keys: each to its user ────────────────────────────────────────
@@ -232,6 +271,10 @@ check.table("match_user", [
     ("single admin key", {"Username": "z", "IsAdmin": True}, True, 1),
 ], lambda su, single: shoko_sync.match_user(
     su, [{"id": 1, "name": "DonDroid", "is_admin": True}, {"id": 2, "name": "anna_plex"}], single))
+check.table("_norm_title", [
+    ("multiplication sign", "High School D×D", "high school dxd"),
+    ("accents and punctuation", "Pokémon: The Series!", "pokemon the series"),
+], shoko_sync._norm_title)
 check.table("server_major", [
     ("dev build", {"Server": {"Version": "6.0.0-dev.588"}}, 6),
     ("stable", {"Server": {"Version": "5.3.3"}}, 5),

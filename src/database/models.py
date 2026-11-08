@@ -378,7 +378,7 @@ class ShokoWatchSync(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     status = Column(String(16), nullable=False)
     shoko_episode_ids = Column(String(200), nullable=True)   # comma-joined
-    matched_by = Column(String(8), nullable=True)            # path | tmdb
+    matched_by = Column(String(8), nullable=True)            # path | tmdb | title
     attempts = Column(Integer, default=0)
     last_attempt_at = Column(DateTime, nullable=True)
     sent_at = Column(DateTime, nullable=True)

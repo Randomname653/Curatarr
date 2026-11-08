@@ -13,8 +13,9 @@ Shoko 6.0.0-dev.588, 2026-11-08):
   and watched state is per Shoko user, so one key per user.
 - ``GET /Init/Version`` needs no key.
 - ``GET /User/Current``: the key's user, incl. ``PlexUsernames``.
-- ``GET /File/PathEndsWith?path=``: files whose path ends so; each file's
-  ``SeriesIDs[].EpisodeIDs[].ID`` are the Shoko episodes it holds.
+- ``GET /File/PathEndsWith?path=&include=XRefs``: files whose path ends so;
+  each file's ``SeriesIDs[].EpisodeIDs[].ID`` are the Shoko episodes it
+  holds (null without the include).
 - ``GET /Tmdb/Episode/{id}/Shoko/Episode``: Shoko episodes linked to a
   TMDB episode. TvDB is gone from Shoko since 5.1.
 - ``GET|PUT /Episode/{id}/UserData``: ``PlaybackCount`` and
@@ -126,7 +127,10 @@ class ShokoSession:
     async def files_by_name(self, name: str, limit: int = 20) -> list[dict]:
         """Files whose path ends with ``name`` (a file name, or the last
         folders plus the name)."""
-        got = await self._get("/File/PathEndsWith", {"path": name, "limit": limit})
+        # The episode links (SeriesIDs) come only with include=XRefs: without
+        # it the live server answered ``"SeriesIDs": null`` (2026-11-08).
+        got = await self._get("/File/PathEndsWith",
+                              {"path": name, "limit": limit, "include": "XRefs"})
         return [f for f in got if isinstance(f, dict)] if isinstance(got, list) else []
 
     async def episodes_by_tmdb_episode(self, tmdb_episode_id: int) -> list[int]:

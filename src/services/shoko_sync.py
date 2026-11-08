@@ -15,8 +15,12 @@ Which Shoko episode: the media server's file for the played item, looked
 up in Shoko by file name and confirmed by size (Plex and Shoko mount the
 same disk under different roots, so only the tail of the path is shared);
 without a file match, the item's TMDB id through Shoko's TMDB links.
-Season and episode numbers are never used: AniDB splits what TVDB and
-TMDB call one show into one entry per season.
+Season and episode numbers never pick the Shoko episode: AniDB splits
+what TVDB and TMDB call one show into one entry per season. They only find
+the media server's CURRENT copy of a played episode whose key is gone (a
+replaced file, a series moved to another library: 726 of 859 plays on the
+2026-10-25 history), by series title, season and number; that copy's file
+then goes through the same file match, so Shoko still decides.
 
 How it is written: ``PUT /Episode/{id}/UserData`` with the play's own date.
 A play no later than Shoko's last play of that episode (plus the window in
@@ -94,7 +98,7 @@ def _due_plays(user_id: int, limit: int, now: datetime) -> list[dict]:
     from src.database.models import ShokoWatchSync, WatchHistoryEntry as W
     with get_db_session() as db:
         rows = (db.query(W.id, W.plex_item_id, W.viewed_at, W.title, W.series_title,
-                         ShokoWatchSync.attempts)
+                         ShokoWatchSync.attempts, W.season, W.episode)
                 .outerjoin(ShokoWatchSync, ShokoWatchSync.watch_history_id == W.id)
                 .filter(W.user_id == user_id, W.media_type == "anime",
                         W.completed == True,  # noqa: E712
@@ -106,7 +110,8 @@ def _due_plays(user_id: int, limit: int, now: datetime) -> list[dict]:
                 .order_by(W.viewed_at.asc(), W.id.asc())
                 .limit(limit).all())
     return [{"id": r[0], "item": r[1], "viewed_at": r[2],
-             "title": (f"{r[4]} - {r[3]}" if r[4] else r[3]), "attempts": r[5] or 0}
+             "title": (f"{r[4]} - {r[3]}" if r[4] else r[3]), "attempts": r[5] or 0,
+             "series": r[4], "season": r[6], "episode": r[7]}
             for r in rows]
 
 
@@ -201,6 +206,85 @@ async def resolve(sess: shoko_client.ShokoSession, item) -> tuple[list[int], Opt
     return [], None
 
 
+def _norm_title(s: Optional[str]) -> str:
+    import re
+    import unicodedata
+    # "High School D×D" became "High School DxD" in Plex (2026-11-08);
+    # NFKD leaves the multiplication sign alone.
+    s = unicodedata.normalize("NFKD", (s or "").casefold().replace("×", "x"))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"[^0-9a-z]+", " ", s).strip()
+
+
+class CurrentCopies:
+    """The media server's current episode for (series title, season,
+    episode): every series of the show libraries is listed once per run,
+    a series' seasons and episodes only when a play asks for them."""
+
+    def __init__(self, adapter):
+        self._ad = adapter
+        self._series: Optional[dict] = None
+        self._children: dict = {}
+
+    async def _kids(self, key: str) -> list:
+        if key not in self._children:
+            try:
+                self._children[key] = await self._ad.children(key)
+            except Exception as e:  # noqa: BLE001 - one series, logged, run goes on
+                logger.info("[shoko] children of %s unreadable: %s", key, e)
+                self._children[key] = []
+        return self._children[key]
+
+    async def _index(self) -> dict:
+        if self._series is None:
+            self._series = {}
+            try:
+                for lib in await self._ad.libraries():
+                    if lib.kind != "show":
+                        continue
+                    async for it in self._ad.items(lib, kinds=("series",)):
+                        self._series.setdefault(_norm_title(it.title), []).append(it.key)
+            except Exception as e:  # noqa: BLE001 - no fallback this run
+                logger.info("[shoko] series listing failed: %s", e)
+        return self._series
+
+    async def episodes(self, series: Optional[str], season, episode) -> list:
+        """Every current episode item that fits, one per same-named series."""
+        if not series or season is None or episode is None:
+            return []
+        out = []
+        for key in (await self._index()).get(_norm_title(series), []):
+            for se in await self._kids(key):
+                if se.kind != "season" or se.season_number != season:
+                    continue
+                for ep in await self._kids(se.key):
+                    end = ep.episode_number_end or ep.episode_number
+                    if ep.kind == "episode" and ep.episode_number is not None                             and ep.episode_number <= episode <= end:
+                        out.append(ep)
+        return out
+
+
+async def _match(sess, adapter, copies: CurrentCopies, p: dict, items: dict,
+                 matches: dict) -> tuple[list[int], Optional[str]]:
+    """The Shoko episodes of one play: its own item, else the current copy."""
+    key = str(p["item"] or "")
+    if key not in matches:
+        item = await _item_of(adapter, key, items) if key else None
+        matches[key] = await resolve(sess, item) if item else None
+    if matches[key] is not None:
+        return matches[key]
+    alt = ("title", _norm_title(p.get("series")), p.get("season"), p.get("episode"))
+    if alt not in matches:
+        found: tuple[list[int], Optional[str]] = ([], None)
+        for ep in await copies.episodes(p.get("series"), p.get("season"), p.get("episode")):
+            eps, _how = await resolve(sess, ep)
+            if eps:
+                found = (eps, "title")
+                break
+        matches[alt] = found
+    return matches[alt]
+
+
 # ── writing ──────────────────────────────────────────────────────────────────
 
 def next_user_data(state: dict, played_at: datetime, now: datetime) -> Optional[dict]:
@@ -275,13 +359,10 @@ async def sync_user(sess, adapter, user_id: int, *, limit: int = BATCH,
     items: dict = {}
     matches: dict = {}
     states: dict = {}
+    copies = CurrentCopies(adapter)
     failures = 0
     for p in plays:
-        key = str(p["item"] or "")
-        if key not in matches:
-            item = await _item_of(adapter, key, items) if key else None
-            matches[key] = await resolve(sess, item) if item else ([], None)
-        eps, how = matches[key]
+        eps, how = await _match(sess, adapter, copies, p, items, matches)
         if not eps:
             status = "unmatched"
         else:
