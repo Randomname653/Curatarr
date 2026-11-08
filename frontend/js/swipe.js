@@ -24,6 +24,12 @@ import { _errHtml, _errMsg, act, activeDialog, emptyHtml, esc, proxyImg, toast }
 import { haptic } from './mobile.js';
 import { serverLabel } from './state.js';
 
+// Where a 'Want to watch' lands: the plex.tv watchlist, or on Jellyfin the
+// member's watchlist playlist, named in their language (playlist_names).
+function _watchlistName() {
+  return serverLabel() === 'Jellyfin' ? 'Jellyfin watchlist playlist' : 'Plex watchlist';
+}
+
 const CATS = [['movie', 'Movies'], ['show', 'TV Shows'], ['anime', 'Anime']];
 const REACT = {
   notseen:  {label: 'Not seen',      stamp: 'Not seen', dir: 'left',  stars: null, keys: 'N ArrowLeft'},
@@ -499,12 +505,12 @@ async function _submit(seen, stars, kind, gesture) {
     _renderProgress();
   }
   if (r.watchlist?.ok) {
-    _note(`${ICON.want}<span><b>${esc(c.title)}</b> is on your Plex watchlist</span>`);
+    _note(`${ICON.want}<span><b>${esc(c.title)}</b> is on your ${_watchlistName()}</span>`);
   } else if (r.watchlist && !_watchlistWarned) {
     _watchlistWarned = true;
-    toast(`Saved as Want to watch, but not added to your Plex watchlist - ${r.watchlist.error || 'no match on plex.tv'}`, 'info');
+    toast(`Saved as Want to watch, but not added to your ${_watchlistName()} - ${r.watchlist.error || (serverLabel() === 'Jellyfin' ? 'no match in Jellyfin' : 'no match on plex.tv')}`, 'info');
   } else if (r.watchlist) {
-    _say(`Saved as Want to watch; ${c.title} is not on your Plex watchlist.`);
+    _say(`Saved as Want to watch; ${c.title} is not on your ${_watchlistName()}.`);
   }
   if (kind === 'loved') _chain(c, gen);
 }
@@ -549,7 +555,7 @@ export async function swipeUndo() {
     _renderRecent();
     _renderSession();
     // the plex.tv watchlist entry stays: it may have been there before
-    const kept = u.want ? ' - it stays on your Plex watchlist' : '';
+    const kept = u.want ? ` - it stays on your ${_watchlistName()}` : '';
     _say(`Took back your answer for ${u.title || 'that title'}${kept}.`);
     _note(`<span>Took back <b>${esc(u.title || 'that title')}</b>${esc(kept)}</span>`);
   } catch (e) {

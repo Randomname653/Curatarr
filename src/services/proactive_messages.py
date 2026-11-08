@@ -872,6 +872,13 @@ def detect_last_night(entries: list[dict], now: datetime,
 # Canonical list of proactive-message triggers with user-facing copy. Each
 # trigger is independently togglable in Settings → Notifications. Order here
 # matches priority in _run_all_triggers below.
+#
+# The labels and descriptions judge the work and the watching, never the
+# person (curator_voice.WORK): "Attention deficit", "Procrastinator",
+# "Guilty pleasures", "Genre rut", "Low completion" and "Night owl" graded the
+# member, and the bell badge showed them on every message (UX audit
+# 2026-11-08, L2). The internal type names stay - they key the stored
+# messages, the cooldowns and every member's switches.
 TRIGGER_TYPES: list[dict] = [
     {"type": "recommendation_followup", "label": "Recommendation follow-up",
      "description": "When you watch something from your Curatarr Recommended playlist, ask how it landed — your verdict feeds back with extra weight."},
@@ -887,26 +894,37 @@ TRIGGER_TYPES: list[dict] = [
      "description": "Surface a single song you've played dozens or hundreds of times — at song level, not just the artist."},
     {"type": "series_completion", "label": "Series completion",
      "description": "Acknowledge when you finish an entire series."},
-    {"type": "attention_deficit", "label": "Attention deficit",
-     "description": "Calls it out when you keep starting new things and dropping them early."},
-    {"type": "procrastinator",    "label": "Procrastinator",
-     "description": "Reminds you of titles you started months ago and never finished."},
-    {"type": "genre_rut",         "label": "Genre rut",
-     "description": "Pokes you when you've been deep in one genre for weeks."},
-    {"type": "guilty_pleasure",   "label": "Guilty pleasures",
-     "description": "Surface low-rated titles you keep coming back to anyway."},
+    {"type": "attention_deficit", "label": "Started, not finished",
+     "description": "Notices when several new titles were started and left after an episode or two."},
+    {"type": "procrastinator",    "label": "Waiting on your list",
+     "description": "Brings back titles you started months ago and never finished."},
+    {"type": "genre_rut",         "label": "Same lane lately",
+     "description": "Notices when one genre has filled the last few weeks."},
+    {"type": "guilty_pleasure",   "label": "Comfort picks",
+     "description": "Titles you rated low but keep coming back to anyway."},
     {"type": "genre_absence",     "label": "Genre absence",
      "description": "Suggest a genre you used to love but haven't touched in a while."},
-    {"type": "low_completion",    "label": "Low completion",
-     "description": "Observe when you're abandoning more than half of what you start."},
+    {"type": "low_completion",    "label": "Left halfway",
+     "description": "Notices when more than half of what you start stays unfinished."},
     {"type": "new_genre",         "label": "New genre discovery",
      "description": "Celebrate (or interrogate) when you start exploring a brand-new genre."},
-    {"type": "night_owl",         "label": "Night owl",
-     "description": "Calls out the late-night-watching pattern when it shows up."},
+    {"type": "night_owl",         "label": "Late-night viewing",
+     "description": "A word about what you watch after midnight, once that is a habit."},
     {"type": "history_deep_dive", "label": "Deep-history reflection",
      "description": "Occasionally pull a memorable old play forward for reflection."},
 ]
 TRIGGER_TYPE_NAMES: set[str] = {t["type"] for t in TRIGGER_TYPES}
+# Messages the bell shows that no switch governs (the chat's keep outcome).
+_OTHER_LABELS = {"protection_intent": "Keep request"}
+
+
+def trigger_label(trigger_type: str) -> str:
+    """The user-facing name of a message's trigger, for the bell badge: the
+    Settings label, never the internal type."""
+    for t in TRIGGER_TYPES:
+        if t["type"] == trigger_type:
+            return t["label"]
+    return _OTHER_LABELS.get(trigger_type) or (trigger_type or "").replace("_", " ").capitalize()
 
 
 def get_disabled_triggers(user_id: int) -> set[str]:
@@ -1966,12 +1984,55 @@ async def get_unread_messages(user_id: int, seen: bool = False) -> dict:
                     "id": m.id,
                     "message": m.message,
                     "trigger_type": m.trigger_type,
+                    "label": trigger_label(m.trigger_type),
                     "created_at": m.created_at.isoformat(),
                 },
                 "total": total,
             }
 
     return await run_write(_next)
+
+
+# ── the follow-up card on the chat landing (UX audit 2026-11-08, L2 / 1.6) ──
+#
+# The two messages that ask about something the member just watched - a
+# watched recommendation and the morning line - reached them only behind the
+# bell, and answering meant typing. The landing shows the newest unread one
+# as a card with one-tap answers. An answer goes the way a typed reply goes
+# (the message's own chat thread, the existing feedback path), so nothing
+# new is stored. The answers are in the member's language: they are sent as
+# the member's own message, and the language detection counts those.
+
+FOLLOWUP_TYPES = ("recommendation_followup", "last_night")
+FOLLOWUP_REPLIES = {
+    "en": ("Loved it", "Liked it", "It was okay", "Not for me"),
+    "de": ("Hat mir sehr gefallen", "Hat mir gefallen", "War okay", "Nichts für mich"),
+}
+
+
+def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict]:
+    """The newest unread, unexpired follow-up message with its one-tap
+    answers, or None. Read only: showing the card is no impression (the bell
+    counts those). Blocking."""
+    from src.services.user_language import user_language
+    now = now or datetime.utcnow()
+    with get_db_session() as db:
+        m = (db.query(ProactiveMessage)
+             .filter(ProactiveMessage.user_id == user_id,
+                     ProactiveMessage.read == False,  # noqa: E712 - SQL comparison
+                     ProactiveMessage.trigger_type.in_(FOLLOWUP_TYPES))
+             .filter((ProactiveMessage.expires_at == None)  # noqa: E711 - SQL comparison
+                     | (ProactiveMessage.expires_at > now))
+             .order_by(ProactiveMessage.created_at.desc())
+             .first())
+        if m is None:
+            return None
+        card = {"id": m.id, "message": m.message, "trigger_type": m.trigger_type,
+                "label": trigger_label(m.trigger_type),
+                "created_at": m.created_at.isoformat() if m.created_at else None}
+    lang = user_language(user_id)
+    card["replies"] = list(FOLLOWUP_REPLIES.get(lang) or FOLLOWUP_REPLIES["en"])
+    return card
 
 
 async def mark_message_read(message_id: int, user_id: int) -> bool:

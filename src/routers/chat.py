@@ -3429,6 +3429,11 @@ async def _send_message_guarded(message: ChatMessage, user: User,
     # attribute read lazily re-opens a transaction on the request session
     # and holds a pooled connection for minutes of generation. Plain id
     # from here on.
+    # The owner reads the machine room in the status and error lines (which
+    # job holds the GPU, which Ollama address failed); a member reads plain
+    # words - the log keeps every detail (UX audit 2026-11-08, H4). Read with
+    # the id, before the stream: no ORM attribute is touched after this.
+    _owner = bool(user.is_admin)
     _uid = user.id
     _user_at = datetime.utcnow()
 
@@ -3467,7 +3472,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             # generation at a time, so we wait for the slot instead of
             # thrashing it.
             if curator_busy():
-                _holder = gate_owner()
+                _holder = gate_owner() if _owner else None
                 _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
                          if _holder else
                          "Curatarr is busy with another request — you are next in line…")
@@ -3678,8 +3683,12 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                               "Send it again - Curatarr answers on this server now.")
 
             except httpx.ConnectError:
+                logger.error("[chat] Ollama not reachable at %s", ollama_url)
                 error_text = (f"Ollama not reachable at {ollama_url}. Make sure Ollama is "
-                              f"running and '{settings.CURATOR_MODEL}' is pulled.")
+                              f"running and '{settings.CURATOR_MODEL}' is pulled."
+                              if _owner else
+                              "The curator cannot be reached right now - try again "
+                              "in a minute.")
 
             except (asyncio.CancelledError, GeneratorExit):
                 # Pass 46 (Bug 2): client closed the SSE connection mid-stream.

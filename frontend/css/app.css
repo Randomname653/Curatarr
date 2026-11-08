@@ -909,6 +909,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .input { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: var(--radius); font-size: 12px; font-family: inherit; }
 /* Chat system note (thread exited / deleted from the discussion) */
 .msg.system { align-self: center; background: none; border: none; color: var(--text3); font-size: 12px; font-style: italic; max-width: 90%; }
+/* The folded history of a returning visit (chat.js restoreChatHistory) */
+#earlier-chat-btn { align-self: center; }
 /* Working-without-a-count dot: the sidebar's pulse as a content-level spinner */
 .spinner { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: sb-pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
 /* Number-as-link inside tables: the door to the list behind a count */

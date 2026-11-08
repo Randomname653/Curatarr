@@ -304,8 +304,10 @@ async def set_prefs(body: dict, user: User = Depends(get_current_user)):
 
 @router.post("/playlist")
 async def push_playlist(body: dict, user: User = Depends(get_current_user)):
-    """Put this wrap-up's titles into a Plex playlist on the user's own account."""
+    """Put this wrap-up's titles into a playlist on the user's own account,
+    on whichever media server this install runs (Plex or Jellyfin)."""
     from src.database.runner import run_read
+    from src.services.media_server import active_kind
     from src.services.plex_playlists import push_wrapup_playlist
     from src.services.wrapup_store import load
 
@@ -330,13 +332,18 @@ async def push_playlist(body: dict, user: User = Depends(get_current_user)):
               for t in (facts.get("music") or {}).get("top_tracks") or []]
     if not videos and not tracks:
         raise HTTPException(404, "Nothing in this wrap-up to put in a playlist")
+    server = "Jellyfin" if active_kind() == "jellyfin" else "Plex"
     try:
         out = await push_wrapup_playlist(user, p.label, videos, tracks)
     except Exception as e:
         logger.warning("[wrapup] playlist push for %s failed: %s", user.plex_username, e)
-        raise HTTPException(502, "Plex did not take the playlist — try again in a moment")
+        raise HTTPException(502, f"{server} did not take the playlist — try again in a moment")
     if out.get("skipped") == "no_token":
         raise HTTPException(409, "Sign out and in again once, so Curatarr can write to your own Plex account")
+    if out.get("skipped") == "no_jellyfin_account":
+        # It fell through to "not found in Plex" (UX audit 2026-11-08, W4).
+        raise HTTPException(409, "Your Curatarr account is not linked to a Jellyfin user yet - "
+                                 "sign out and in again with Jellyfin once")
     if not out.get("pushed"):
-        raise HTTPException(404, "None of these titles were found in Plex")
+        raise HTTPException(404, f"None of these titles were found in {server}")
     return out

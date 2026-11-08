@@ -81,15 +81,19 @@ async def get_recommendations(
     refresh: bool = Query(False),
     source: str = Query("cache"),  # cache / library / external
     lane: Optional[str] = Query(None),  # filter cache to "library" / "discovery"
+    cache_only: bool = Query(False),
     user: User = Depends(get_current_user),
 ):
-    """Cache reads are free. Generating (``refresh``, the library or external
+    """Cache reads are free. ``cache_only``: an empty cache answers an empty
+    list instead of generating on the fly - the chat landing's tile counts
+    what is ready and must never take the GPU (UX audit 2026-11-08, H2). Generating (``refresh``, the library or external
     lane) is minutes of curator time on the shared GPU plus TMDB/OMDb calls
     per candidate — the same per-user budget and one-at-a-time guard as
     ``/refresh-cache``, or this GET was the way around them."""
     generating = refresh or source in ("library", "external")
     if not generating:
-        return await _get_recommendations_impl(category, limit, refresh, source, lane, user)
+        return await _get_recommendations_impl(category, limit, refresh, source, lane, user,
+                                               cache_only=cache_only)
     from src.services import rate_limit as _rl
     _rl.enforce("recs-refresh", user.id, _rl.RECS_REFRESH_PER_10MIN, 600,
                 "Recommendations were generated recently — try again in a few minutes")
@@ -100,7 +104,8 @@ async def get_recommendations(
         _rl.RECS_REFRESH_IN_FLIGHT.leave(user.id)
 
 
-async def _get_recommendations_impl(category, limit, refresh, source, lane, user):
+async def _get_recommendations_impl(category, limit, refresh, source, lane, user,
+                                    cache_only: bool = False):
     from src.database.models import CachedRecommendation
     from src.services.app_state import get_state
     CAT_LABEL = {"movie":"🎬 Movies","show":"📺 TV Shows","anime":"⛩️ Anime","music":"🎵 Music"}
@@ -166,6 +171,9 @@ async def _get_recommendations_impl(category, limit, refresh, source, lane, user
             return {"recommendations": recs, "category": category,
                     "from_cache": True, "source": "cache",
                     "cached_at": own or await run_read(get_state, "recs_cached_at")}
+        if cache_only:
+            return {"recommendations": [], "category": category,
+                    "from_cache": True, "source": "cache", "cached_at": None}
 
     # Generate on the fly
     import asyncio

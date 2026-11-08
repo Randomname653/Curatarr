@@ -579,11 +579,11 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
     for obj, name, value in patches:
         setattr(obj, name, value)
 
-    async def start(text="hi"):
+    async def start(text="hi", admin=False):
         from src.schemas.chat import ChatMessage
         rl.CHAT_IN_FLIGHT.leave(_UID)
         rl.CHAT_IN_FLIGHT.enter_or_409(_UID)
-        user = types.SimpleNamespace(id=_UID, is_admin=False)
+        user = types.SimpleNamespace(id=_UID, is_admin=admin)
         return await chat._send_message_guarded(
             ChatMessage(message=text), user, rl, "general")
 
@@ -604,9 +604,9 @@ def _stream_rig(lines=(), first_delay=0.0, delay=0.0, status=200, connect_error=
         rl.CHAT_IN_FLIGHT.leave(_UID)
 
 
-def _frames(rig, text="hi"):
+def _frames(rig, text="hi", admin=False):
     async def run():
-        resp = await rig.start(text)
+        resp = await rig.start(text, admin=admin)
         return resp, [f async for f in resp.body_iterator]
     return asyncio.run(run())
 
@@ -645,6 +645,13 @@ def test_an_ollama_error_is_shown_but_never_persisted():
 
     with _stream_rig(connect_error=True) as rig:
         _, frames = _frames(rig)
+        # A member reads plain words; the Ollama address is the owner's to read.
+        assert "cannot be reached right now" in _tokens(frames)
+        assert "Ollama" not in _tokens(frames)
+        assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
+
+    with _stream_rig(connect_error=True) as rig:
+        _, frames = _frames(rig, admin=True)
         assert "Ollama not reachable" in _tokens(frames)
         assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
 

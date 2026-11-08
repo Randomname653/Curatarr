@@ -5,7 +5,7 @@
 import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, loc, setStatus, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
-import { state } from './state.js';
+import { serverLabel, state } from './state.js';
 export async function recomputeTaste(statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
@@ -31,7 +31,7 @@ export async function recomputeTaste(statusId = null) {
 export async function syncHistory(force = false, statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
-  const label = 'Syncing Plex history…';
+  const label = `Syncing ${serverLabel()} history…`;
   if (status) setStatus(status, label, 'busy');
   else if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${label}</p>`;
   try {

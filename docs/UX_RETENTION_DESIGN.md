@@ -1,6 +1,14 @@
 # Curatarr — Feeling at home: UX, retention and habit design
 
-_Design record, **Proposed** 2026-11-08. Audit of commit `38b3f28`; line
+_Design record, **Proposed** 2026-11-08; **stage 1 built** the same day
+(see CHANGELOG, Unreleased). Owner's decisions since: the post-watch verdict
+gets its own table `post_watch_verdicts` and weighs the existing play row
+(like `user_rating_by_item` for music), never a second row; model work for
+stage 3 runs only through the custodian with the game lock; the member UI
+language stays the ROADMAP "German locale" project, outside this round.
+As built, rule 8 is one line (`chat_prompt.CONVERSATION_RULE`) and
+`num_predict` is unchanged: lowering it for pick turns would need an
+intent filter on the message, and tone is the prompt's job alone. Audit of commit `38b3f28`; line
 numbers describe that commit. Scope: what a household member (not the
 owner) sees in Home/Chat, Swipe, Wrap-Up and the bell, and how the TV
 rows and the web UI could form one calm loop._
