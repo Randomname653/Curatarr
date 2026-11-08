@@ -60,6 +60,12 @@ writes the archetype, its line and the share line in German. They used to read E
 TV", "the computer"), never the name a device was given, and one kind is no story. The writer's
 law, the work and never the person, now stands where each headline and roast is written.
 
+**Delete & exit closes its own discussion.** The approve waits for the arr to delete the files;
+a discussion opened meanwhile was closed by its answer, its memories were flushed instead of the
+deleted title's, and the next message went to free chat without the title. The answer now acts
+on the deleted proposal's own thread only: a pane that moved on keeps its discussion and gets a
+toast.
+
 **Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
 library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
 explicit form of "keep this": written and confirmed at once, where the keep-detector's outcome
