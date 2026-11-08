@@ -487,18 +487,37 @@ MONTH_STORY_DAYS = 7
 MINI_STORY_CARDS = 5
 
 
-def due_wrapups(row_for, now=None, local=None) -> list:
+def due_wrapups(row_for, now=None, local=None, zone=None) -> list:
     """(scope, period) pairs worth writing ahead for one user, given
     ``row_for(scope, period)`` → the stored row or None. The rolling month is
     kept at most a week old; in the first MONTH_STORY_DAYS days of a month on
-    the member's clock (``local``) the month just ended is written once, a
-    mini story for "Your month is ready"; from 1 December the current year is
-    written (and refreshed weekly while it fills), and in the first two weeks
-    of January the closed year once more, so the final version covers every
-    day."""
+    the member's clock the month just ended is written once, a mini story
+    for "Your month is ready"; from 1 December the current year is written
+    (and refreshed weekly while it fills), and in the first two weeks of
+    January the closed year once more, so the final version covers every
+    day.
+
+    "Once" means once by the curator: a stand-in story (``story_source``
+    fallback - the curator was away, a game started) does not count as
+    written, so the next run tries again while the window lasts. "Written
+    after the 1st" compares ``story_at`` (UTC) with the member's local
+    midnight of the 1st in UTC. ``zone`` (the member's) gives both clocks;
+    without it ``local`` is the member's wall clock and the offset is taken
+    from it."""
     from datetime import datetime, timedelta
     now = now or datetime.utcnow()
-    local = local or now
+    if zone is not None:
+        from src.services.user_time import to_local, to_utc
+        local = to_local(now, zone)
+
+        def utc_of(wall):
+            return to_utc(wall, zone)
+    else:
+        local = local or now
+        offset = timedelta(minutes=round((local - now).total_seconds() / 60))
+
+        def utc_of(wall):
+            return wall - offset
     out = []
 
     def stale(row, written_after=None):
@@ -509,7 +528,7 @@ def due_wrapups(row_for, now=None, local=None) -> list:
         except (TypeError, ValueError):
             return True
         if written_after is not None:
-            return at < written_after
+            return at < written_after or row.get("story_source") == "fallback"
         return now - at > timedelta(days=_REFRESH_DAYS) or row.get("story_hash") != row.get("facts_hash")
 
     if stale(row_for("all", "30d")):
@@ -517,13 +536,13 @@ def due_wrapups(row_for, now=None, local=None) -> list:
     if local.day <= MONTH_STORY_DAYS:
         y, m = (local.year, local.month - 1) if local.month > 1 else (local.year - 1, 12)
         month = f"month:{y}-{m:02d}"
-        if stale(row_for("all", month), written_after=datetime(local.year, local.month, 1)):
+        if stale(row_for("all", month), written_after=utc_of(datetime(local.year, local.month, 1))):
             out.append(("all", month))
-    if now.month == 12 and stale(row_for("all", f"year:{now.year}")):
-        out.append(("all", f"year:{now.year}"))
-    if now.month == 1 and now.day <= 14:
-        closed = f"year:{now.year - 1}"
-        if stale(row_for("all", closed), written_after=datetime(now.year, 1, 1)):
+    if local.month == 12 and stale(row_for("all", f"year:{local.year}")):
+        out.append(("all", f"year:{local.year}"))
+    if local.month == 1 and local.day <= 14:
+        closed = f"year:{local.year - 1}"
+        if stale(row_for("all", closed), written_after=utc_of(datetime(local.year, 1, 1))):
             out.append(("all", closed))
     return out
 
@@ -544,10 +563,8 @@ async def pregenerate_all(task=None) -> bool:
                     for u in db.query(User).filter(User.is_active == True).all()]  # noqa: E712
 
     def _due(uid):
-        from src.services.chat_starters import local_now
         from src.services.user_time import user_zone_by_id
-        return due_wrapups(lambda scope, period: load(uid, scope, period),
-                           local=local_now(user_zone_by_id(uid)))
+        return due_wrapups(lambda scope, period: load(uid, scope, period), zone=user_zone_by_id(uid))
 
     ok = True
     users = await run_read(_users)

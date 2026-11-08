@@ -189,6 +189,7 @@ check("not enough played → the task is skipped, nothing written", str(task2.st
 
 print("\nthe season")
 from datetime import datetime  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
 fresh = {"story": {"x": 1}, "story_at": "2026-12-10T00:00:00", "story_hash": "a", "facts_hash": "a"}
 check("nothing stored → the month is due", st.due_wrapups(lambda s, p: None, datetime(2026, 10, 15))
       == [("all", "30d")])
@@ -207,6 +208,27 @@ check("...written once: a story from this month leaves it alone",
           lambda s, p: dict(fresh, story_at="2026-11-02T00:00:00"), datetime(2026, 11, 4)))
 check("...and after the first week it is no longer written ahead",
       not any(p.startswith("month:") for _, p in st.due_wrapups(lambda s, p: None, datetime(2026, 11, 9))))
+# A stand-in is not the month written: the curator was away on the 1st.
+NY = ZoneInfo("America/New_York")
+stand_in = dict(fresh, story_at="2026-11-01T06:00:00", story_source="fallback")
+check("...a stand-in story written on the 1st (the curator was away) is due again while the week lasts",
+      ("all", "month:2026-10") in st.due_wrapups(lambda s, p: stand_in, datetime(2026, 11, 3, 12, 0), zone=NY)
+      and ("all", "month:2026-10") not in st.due_wrapups(lambda s, p: dict(stand_in, story_source="llm"),
+                                                         datetime(2026, 11, 3, 12, 0), zone=NY))
+# 03:30 UTC on 1 November is still 23:30 on 31 October in New York: written before the member's 1st
+check("...'written after the 1st' is the member's midnight in UTC, not UTC's",
+      ("all", "month:2026-10") in st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-11-01T03:30:00",
+                                                                   story_source="llm"),
+                                                 datetime(2026, 11, 3, 12, 0), zone=NY)
+      and ("all", "month:2026-10") not in st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-11-01T04:30:00",
+                                                                       story_source="llm"),
+                                                     datetime(2026, 11, 3, 12, 0), zone=NY))
+check("...the same with a wall clock and no zone (the offset is taken from it)",
+      ("all", "month:2026-10") in st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-11-01T03:30:00"),
+                                                 datetime(2026, 11, 3, 17, 0), local=datetime(2026, 11, 3, 12, 0)))
+check("...and the closed year's January rewrite, as a stand-in, is due again",
+      ("all", "year:2026") in st.due_wrapups(lambda s, p: dict(fresh, story_at="2027-01-02T00:00:00",
+                                                               story_source="fallback"), datetime(2027, 1, 5)))
 check("December: the current year is written", ("all", "year:2026") in st.due_wrapups(
     lambda s, p: None if p.startswith("year") else fresh, datetime(2026, 12, 11)))
 jan = st.due_wrapups(lambda s, p: fresh, datetime(2027, 1, 3))
