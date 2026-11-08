@@ -71,7 +71,10 @@ def for_reply(user_id: int, reply: str, library_index: Callable[[], list]) -> li
     from src.database.models import LibraryItem, ProtectedMedia
     out = []
     with get_db_session() as db:
-        kept = {i for (i,) in db.query(ProtectedMedia.identifier).filter(
+        # A keep is by title, and - where it says so - by category: keeping
+        # the film is not keeping the series of the same name. A keep with
+        # no category (the chat's keep-detector, older rows) holds for both.
+        kept = {(i, c) for i, c in db.query(ProtectedMedia.identifier, ProtectedMedia.category).filter(
             ProtectedMedia.user_id == user_id,
             ProtectedMedia.identifier.in_([t for t, _ in hits]))}
         for title, cat in hits:
@@ -82,5 +85,6 @@ def for_reply(user_id: int, reply: str, library_index: Callable[[], list]) -> li
                                LibraryItem.media_type == cat, LibraryItem.gone_at.is_(None))
                        .first())
                 key = row[0] if row else None
-            out.append({"title": title, "category": cat, "key": key, "protected": title in kept})
+            out.append({"title": title, "category": cat, "key": key,
+                        "protected": (title, cat) in kept or (title, None) in kept})
     return out

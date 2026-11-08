@@ -139,7 +139,7 @@ const all = {Acclaim: 0.4, Novelty: 0.5, Commitment: 0.7, Catalogue: 0.2, Contra
 const part = {Acclaim: 0.4};
 console.log(JSON.stringify({with: radar(f, all), without: radar(f), partial: radar(f, part)}));
 """
-    r = subprocess.run([node, "-e", harness], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
     res = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}
     if r.returncode:
         print(r.stderr[:800])

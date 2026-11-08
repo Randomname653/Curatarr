@@ -206,12 +206,15 @@ import src.services.wrapup_store as wrapup_store  # noqa: E402
 from src.routers import wrapup as wrapup_router  # noqa: E402
 
 _saved = (wrapup_store.load, plex_playlists.push_wrapup_playlist, media_server.active_kind)
+from src.services.wrapup_facts import FACTS_VERSION  # noqa: E402
+
 wrapup_store.load = lambda uid, scope, period: {"facts": {
-    "top": [{"title": "The Lantern Room", "media_type": "movie"}]}}
+    "facts_version": FACTS_VERSION, "top": [{"title": "The Lantern Room", "media_type": "movie"}]},
+    "facts_at": datetime.utcnow()}
 
 
 def _push(answer):
-    async def push(user, label, videos, tracks):
+    async def push(user, label, videos, tracks, name=None, aliases=()):
         return answer
     return push
 
@@ -221,7 +224,8 @@ def _status(answer, kind):
     media_server.active_kind = lambda settings=None: kind
     try:
         asyncio.run(wrapup_router.push_playlist({"scope": "all", "period": "30d"},
-                                                user=SimpleNamespace(id=UID, plex_username="Member")))
+                                                user=SimpleNamespace(id=UID, plex_username="Member",
+                                                                     is_admin=False)))
     except HTTPException as e:
         return e.status_code, e.detail
     return 200, ""

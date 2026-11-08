@@ -215,7 +215,7 @@ const rec = %s;
 const out = {fresh: _recWhy(rec, 'library-0'), legacy: _recWhy({title: 'Old', score_factors: null}, 'discovery-0')};
 console.log(JSON.stringify(out));
 """ % json.dumps(lib["Near Film"])
-    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=js, capture_output=True, text=True, encoding="utf-8")
     res = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}
     if r.returncode:
         print(r.stderr[:800])

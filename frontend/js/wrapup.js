@@ -7,13 +7,14 @@ import { api } from './api.js';
 import { serverLabel, state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
-import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, escAttr, haptic, loc, toast } from './ui.js';
 import { playStory } from './wrapup_story.js';
 import { brandMarkHtml } from './brand.js';
 
 const WU_KEY = 'curatarr_wrapup';
 const SEEN_KEY = 'curatarr_wrapup_seen';
-const PERIODS = [['30d', 'Last 30 days'], ['6m', '6 months'], ['year', 'Year'], ['all', 'All time']];
+const PERIODS = [['week', 'This week'], ['month', 'This month'], ['30d', 'Last 30 days'], ['6m', '6 months'],
+                 ['year', 'Year'], ['all', 'All time']];
 const SCOPE_LABEL = {all: 'Everything', movie: 'Movies', show: 'TV', anime: 'Anime', music: 'Music'};
 const PHASES = ['Counting plays', 'Finding the outliers', 'Mapping taste clusters',
                 'Fetching artwork', 'Curator is writing', 'Checking the facts'];
@@ -33,8 +34,23 @@ try { Object.assign(wu, JSON.parse(localStorage.getItem(WU_KEY) || '{}')); } cat
 function _save() {
   try { localStorage.setItem(WU_KEY, JSON.stringify({scope: wu.scope, period: wu.period, year: wu.year, season: wu.season})); } catch (_) { /* private mode */ }
 }
+// The ISO week / the month of a wall-clock date - the browser's clock is the
+// member's (it is what reports their zone); the server resolves the window
+// on the stored zone (services/wrapup_facts.resolve_period).
+function _isoWeekKey(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const y = t.getUTCFullYear();
+  const w = Math.ceil(((t - Date.UTC(y, 0, 1)) / 86400000 + 1) / 7);
+  return `week:${y}-W${String(w).padStart(2, '0')}`;
+}
+const _monthKey = d => `month:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const _periodKey = () => wu.period === 'year' ? `year:${wu.year || new Date().getFullYear()}`
-  : wu.period === 'season' ? (wu.season || '30d') : wu.period;
+  : wu.period === 'season' ? (wu.season || '30d')
+  : wu.period === 'week' ? (wu.weekKey || _isoWeekKey(new Date()))
+  : wu.period === 'month' ? (wu.monthKey || _monthKey(new Date()))
+  : wu.period;
 const _seasonLabel = k => { const [y, s] = String(k).replace('season:', '').split('-'); return `${s ? s[0].toUpperCase() + s.slice(1) : ''} ${y}`; };
 const _pct = v => Math.round(100 * (v || 0));
 const _s = v => esc(String(v ?? ''));
@@ -65,8 +81,21 @@ export async function loadWrapup() {
 }
 
 export function setWrapupPeriod(p) {
-  if (p === wu.period) return;
-  wu.period = p; _save(); haptic('tick'); loadWrapup();
+  if (p === wu.period && !wu.weekKey && !wu.monthKey) return;
+  wu.period = p; wu.weekKey = null; wu.monthKey = null;   // the chips mean "this" week / month
+  _save(); haptic('tick'); loadWrapup();
+}
+// A card names a concrete week or month ("Your week", "Your month is ready"):
+// open the Wrap-Up on exactly that one.
+export function openWrapupPeriod(key) {
+  const k = String(key || '');
+  if (k.startsWith('week:')) { wu.period = 'week'; wu.weekKey = k; wu.monthKey = null; }
+  else if (k.startsWith('month:')) { wu.period = 'month'; wu.monthKey = k; wu.weekKey = null; }
+  else if (k.startsWith('year:')) { wu.period = 'year'; wu.year = Number(k.slice(5)) || null; }
+  else return;
+  wu.data = null;
+  location.hash = '#wrapup';
+  loadWrapup();
 }
 // The anime season (services/wrapup_facts: Winter, Spring, Summer, Fall):
 // a wrap-up of the member's anime in that season.
@@ -502,14 +531,28 @@ export async function pushWrapupPlaylist(btn) {
   btnBusy(btn, 'Building the playlist…');
   try {
     const r = await api('/api/wrapup/playlist', 'POST', {scope: wu.scope, period: _periodKey()});
-    const names = (r.pushed || []).map(p => `“${p.title}” (${p.items})`).join(' and ');
     haptic('medium');
-    toast(`On ${serverLabel()} now: ${names}${r.missing?.length ? ` · not found: ${r.missing.slice(0, 3).join(', ')}` : ''}`, 'success');
     btnDone(btn, 'Playlist updated');
+    // The play card: the playlist one tap from playing, on the member's server.
+    document.getElementById('wu-play-card')?.remove();
+    btn.parentElement?.insertAdjacentHTML('afterend', playlistCardHtml(r, 'wu-play-card'));
   } catch (e) {
     toast(_errMsg(e).slice(0, 200), 'danger');
     btnDone(btn, `Make it a ${serverLabel()} playlist`);
   }
+}
+
+// The answer of POST /api/wrapup/playlist as a card: what is on the server
+// now, a button that plays it, what was not found. Shared with the landing's
+// "Your week" / "Your month" cards (chat.js).
+export function playlistCardHtml(r, id = '') {
+  const pushed = r.pushed || [];
+  return `<div class="card mt-14"${id ? ` id="${id}"` : ''} role="status">
+    <p>On ${esc(serverLabel())} now: ${pushed.map(p => `<b>${esc(p.title)}</b> (${esc(String(p.items))})`).join(' and ')}</p>
+    ${r.missing?.length ? `<p class="fs-12 t3">Not found on the server: ${esc(r.missing.slice(0, 3).join(', '))}</p>` : ''}
+    <div class="flex gap-8 flex-wrap mt-10">${pushed.filter(p => p.link).map(p =>
+      `<a class="btn btn-primary btn-sm" href="${escAttr(p.link)}" target="_blank" rel="noopener">Play ${esc(p.title)}</a>`).join('')}</div>
+  </div>`;
 }
 
 // ── snapshot: the share card and the festival lineup (Amazon) ──────────────

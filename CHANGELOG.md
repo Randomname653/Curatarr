@@ -6,6 +6,60 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**A week and a month of your own in the Wrap-Up.** Next to 30 days, 6 months and the year, the
+Wrap-Up now has "This week" (Monday to Sunday) and "This month", both on the member's own clock:
+a week starts at their Monday midnight, not the server's. Earlier weeks and months open by key
+(`week:2026-W45`, `month:2026-10`).
+
+**The Wrap-Up tells the shape of the period, not only its totals.** Code finds a ritual (the same
+evening and daypart, most weeks), the genre a member came back to, the title a month belonged
+to, the series kept for after midnight and what the period started with; the editor is offered
+them as cards like every other fact. A week or a month tells a mini story of its five strongest
+cards. To read what the writer makes of them before a merge, `scripts/wrapup_read.py` prints the
+facts, the cards and their fallback texts from a database copy (with `--write`, the story too)
+and stores nothing.
+
+**Your week, your month, your year, when they are ready.** From Sunday 17:00 to the end of
+Monday the chat landing shows "Your week": its hours, the days with something on, what most of
+it was and a genre new to the member. It is facts only, no model, and only for a week that
+reached the Wrap-Up's own threshold; a quiet week gets no card. In a month's first seven days
+"Your October is ready" appears once the custodian has written the month's mini story (it now
+does so on the 1st, one generation at a time under the game lock; opening the page never writes
+one), and from 1 December to 14 January "Your 2026 is ready". No streaks, no counts of what was
+missed; every card has "Not now". The words come in English or German, as the member writes to
+the curator.
+
+**A Wrap-Up playlist you can press play on.** "Make it a playlist" answers with a play card
+that opens the playlist on the member's server, on Plex (through app.plex.tv) as on Jellyfin.
+A week's and a month's playlist is one rolling playlist each, "Curatarr · Your Week" /
+"Curatarr · Deine Woche", replaced in place each time rather than piling up. A member whose account cannot write
+playlists on the server is told so, not "nothing found".
+
+**Share a slide as a picture.** Every slide of the story has "Share": its share line, the
+period's label and the wordmark drawn as an image in the browser and handed to the phone's share
+sheet, or saved. Nothing is uploaded, and no server, user or household name is on it, nor a
+device name (they often carry one). The line is fitted by its measured width, the type made
+smaller rather than a word cut.
+
+**Warmer words when the writer falls short.** A slide the writer could not write used to say
+its fact followed by the editor's note on why it mattered. Now it says the fact with the headline
+and the warm line of that very fact ("The long wait … Good things keep."), and none where none
+fits; the next pick is an offer ("Next, if you feel like it: …") instead of "you have not played
+it yet". In a German story all of it is German, the fact included, with German numbers ("18,2
+Stunden", "44 %"), as are the archetype names, the stand-in story without the curator and the
+"Your week" card. A story never says a field name ("new_share") any more: the writer no longer
+sees them, and a section that says one is rewritten. The editor and the writer carry the voice's
+law, the work and never the person, for the archetype line too, and the balance card says what
+the server did ("the server grew"), not what the member is.
+
+**A German Wrap-Up is written in German.** The editor and the writer of a story in German now
+read its cards in German - claims, the renderings they may use ("11,9 Stunden", "735 Tage",
+"20.10.2026") and the note on why each matters - and no English background sheet, and the editor
+writes the archetype, its line and the share line in German. They used to read English and carried
+"11.9 hours" or "2026-10-20" into the German text. The device card says the kind of device ("the
+TV", "the computer"), never the name a device was given, and one kind is no story. The writer's
+law, the work and never the person, now stands where each headline and roast is written.
+
 **Delete & exit closes its own discussion.** The approve waits for the arr to delete the files;
 a discussion opened meanwhile was closed by its answer, its memories were flushed instead of the
 deleted title's, and the next message went to free chat without the title. The answer now acts
@@ -41,7 +95,8 @@ nothing of it until the weekly regeneration. Now the member's stored picks neare
 title (at most three, from the library and because lanes) move up: first in their lane, marked
 "moved up" on the card, and first in the next playlist push, which the lift makes due. The
 answer says how many moved, and says nothing when none were close. Undoing a Loved swipe takes
-its lift back.
+its lift back, even while the lift is still being worked out, and only its own: a "Loved it" in
+chat on the same title keeps its lift.
 
 **Swipe comes in decks of ten, with a reason you can read in two seconds.** The stack refilled
 for ever and its ring counted only seen-it answers toward the next taste refresh, so it barely

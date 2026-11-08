@@ -113,7 +113,7 @@ console.log(JSON.stringify({clock: clock(rows), clockThin: clock([[1]]), river: 
   riverThin: river({"2026-10": {"a": 1}}), cons: consensus(cons), consThin: consensus({points: []}),
   cls: slides.map(s => s.cls), html: slides.map(s => s.html)}));
 """ % (json.dumps(clock_rows), json.dumps(c))
-    r = subprocess.run([node, "-e", harness], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
     if r.returncode:
         print(r.stderr[:1500])
     res = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}

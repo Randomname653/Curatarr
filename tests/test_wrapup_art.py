@@ -44,7 +44,7 @@ const d = {story: {refs: {I04: {title: 'ASP', media_type: 'music'}}, era_chapter
 const html = _story(f, d);
 console.log(JSON.stringify(html.split('<article').slice(1)));
 """
-    r = subprocess.run([node, "-e", harness], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
     if r.returncode:
         print(r.stderr[:1200])
     cards = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else []

@@ -1798,6 +1798,10 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .wus-close { position: absolute; top: max(6px, env(safe-area-inset-top, 0px)); right: 10px; z-index: 4;
   width: 40px; height: 40px; border: 0; background: transparent; color: var(--text2); font-size: 26px; cursor: pointer; }
 .wus-close:hover { color: var(--amber); }
+.wus-share-btn { position: absolute; top: max(10px, env(safe-area-inset-top, 0px)); right: 56px; z-index: 4;
+  background: none; border: 1px solid var(--border); color: var(--text2); border-radius: 999px; padding: 4px 12px;
+  font-size: 12px; cursor: pointer; }
+.wus-share-btn:hover { color: var(--amber); border-color: var(--amber); }
 /* The watermark: a screenshot of a slide says where it came from. */
 .wus-mark { position: absolute; left: 14px; bottom: max(14px, env(safe-area-inset-bottom, 0px)); z-index: 3;
   width: 28px; height: 28px; opacity: .7; pointer-events: none; }

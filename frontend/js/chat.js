@@ -3,6 +3,7 @@ import { EL, EVENT, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDi
 import { api } from './api.js';
 import { serverLabel, state } from './state.js';
 import { _updateKbBadge } from './kb.js';
+import { playlistCardHtml } from './wrapup.js';
 import { showView } from './nav.js';
 import { _deleteBody, deleteFateLines } from './deletions.js';
 import { applyOrphanRepair } from './libraries.js';
@@ -55,11 +56,13 @@ export async function newChat() {
       msgs.innerHTML = `
         <div class="msg assistant">Fresh chat. Ask me anything.</div>
         <div id="followup-panel" aria-live="off"></div>
+        <div id="moments-panel" aria-live="off"></div>
         <div id="tonight-panel" aria-live="off"></div>
         <div id="glance-panel" aria-live="off"></div>
         <div id="last-played-panel" aria-live="off"></div>
         <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">${_staticChipsHtml()}</div>`;
       loadFollowupCard();
+      loadMomentsCards();
       loadTonightCard();
       loadGlancePanel();
       loadLastPlayed();
@@ -213,7 +216,7 @@ export async function sendMessage() {
   const text = inp.value.trim(); if (!text) return;
   inp.value = ''; inp.style.height = 'auto';
   inp.disabled = btn.disabled = true;
-  ['followup-panel', 'tonight-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
+  ['followup-panel', 'moments-panel', 'tonight-panel', 'glance-panel', 'last-played-panel', 'suggested-prompts'].forEach(id => document.getElementById(id)?.remove());
   showEarlierChat();           // a send continues the thread: its history shows above it
   haptic('medium');
   addMsg(text, 'user');
@@ -537,6 +540,53 @@ export async function explainFollowup(id, msgText) {
                          'Discussing a proactive message', msgText)) return;
   const inp = document.getElementById('chat-input');
   if (inp) { inp.value = ''; inp.focus(); }
+}
+// ── CHAT LANDING WRAP-UP MOMENTS ────────────────────────────────────────────
+// "Your week" from Sunday evening to Monday (GET /api/home/moments,
+// services/wrapup_cards), on the member's clock and in their language. "Not
+// now" hides that one card for good (this browser): a moment, not a nag.
+const _MOMENT_OPEN = {week: 'See the week', month: 'Play your month', year: 'Play your year'};
+const _MOMENT_HIDDEN = 'curatarr_moments_hidden';
+function _hiddenMoments() {
+  try { return JSON.parse(localStorage.getItem(_MOMENT_HIDDEN) || '[]'); } catch { return []; }
+}
+export async function loadMomentsCards() {
+  const el = document.getElementById('moments-panel');
+  if (!el) return;
+  try {
+    const { cards } = await api('/api/home/moments');
+    const hidden = new Set(_hiddenMoments());
+    el.innerHTML = (cards || []).filter(c => !hidden.has(c.key)).map(c => `<div class="card mt-14" data-moment="${escAttr(c.key)}">
+      <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(c.label)}</span></div>
+      ${(c.lines || []).map(l => `<p>${_bold(l)}</p>`).join('')}
+      <div class="flex gap-8 flex-wrap mt-10">
+        <button type="button" class="btn btn-primary btn-sm" ${act('openWrapupPeriod', c.key)}>${esc(_MOMENT_OPEN[c.kind] || 'Open')}</button>
+        ${c.kind === 'week' || c.kind === 'month' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('momentPlaylist', c.key, EL)}>Make it a playlist</button>` : ''}
+        <button type="button" class="btn btn-ghost btn-sm" ${act('hideMoment', c.key)}>Not now</button>
+      </div></div>`).join('');
+  } catch { el.innerHTML = ''; } // best-effort nicety: the Wrap-Up page has it all
+}
+// The week's / month's titles as one rolling playlist on the member's own
+// server (POST /api/wrapup/playlist), then the play card in place.
+export async function momentPlaylist(key, btn) {
+  btnBusy(btn, 'Building the playlist…');
+  try {
+    const r = await api('/api/wrapup/playlist', 'POST', { scope: 'all', period: key });
+    haptic('medium');
+    btn.closest('.card')?.insertAdjacentHTML('afterend', playlistCardHtml(r));
+    btnDone(btn, 'Playlist ready');
+    btn.disabled = true;
+  } catch (e) {
+    btnDone(btn, 'Make it a playlist');
+    toast(_errMsg(e).slice(0, 200), 'danger');
+  }
+}
+export function hideMoment(key) {
+  try {
+    const keep = _hiddenMoments().filter(k => k !== key).slice(-30);
+    localStorage.setItem(_MOMENT_HIDDEN, JSON.stringify([...keep, key]));
+  } catch { /* private mode: hidden for this view only */ }
+  document.querySelector(`#moments-panel [data-moment="${CSS.escape(key)}"]`)?.remove();
 }
 // ── CHAT LANDING "TONIGHT" CARD ─────────────────────────────────────────────
 // One pick for this moment of the member's week (GET /api/home/tonight,

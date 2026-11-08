@@ -48,10 +48,35 @@ _TEMP_EDITOR, _TEMP_WRITER = 0.4, 0.85
 _PREDICT_EDITOR, _PREDICT_WRITER, _PREDICT_REPAIR = 500, 1800, 1200
 _TIMEOUT = 420.0
 
-BEAT_HEADLINES = {"open": "The period in hours", "reveal": "Where the hours went",
-                  "rhythm": "When you watched", "moment": "The day it happened",
+BEAT_HEADLINES = {"open": "Your hours", "reveal": "Where the hours went",
+                  "rhythm": "Your rhythm", "moment": "The day it happened",
                   "twist": "The twist", "court": "Before the court", "balance": "In and out",
-                  "identity": "Who you were", "music": "On repeat"}
+                  "identity": "Your kind of thing", "music": "On repeat", "decades": "Your decades"}
+
+# ── the template, for a slide the writer could not write (UX design record,
+# stage 3.7). It used to read "<claim> <the editor's reason>." - the reason
+# is a note to the editor ("the widest gap between you and everyone else"),
+# cold on a slide. Now: the claim, the headline and the warm line of that
+# very fact (services/wrapup_claims, by the card's key - a line chosen by
+# the kind of card did not fit its claim), all in the story's language. A
+# fact with no fitting warm line gets none. The beat headlines below stand
+# in only for a card without a key.
+_HEADLINES_DE = {"open": "Deine Stunden", "reveal": "Wohin die Stunden gingen",
+                 "rhythm": "Dein Rhythmus", "moment": "Der Tag, an dem es passierte",
+                 "twist": "Die Wendung", "court": "Vor Gericht", "balance": "Rein und raus",
+                 "identity": "Ganz dein Ding", "music": "In Dauerschleife", "decades": "Deine Jahrzehnte"}
+_CLOSERS = {
+    "en": {"ROAST": "Said with love.", "TOAST": "Here's to more of that.",
+           "NEXT": "Next, if you feel like it: {title}."},
+    "de": {"ROAST": "Liebevoll gemeint.", "TOAST": "Auf mehr davon.",
+           "NEXT": "Als Nächstes, wenn du magst: {title}."},
+}
+
+
+def beat_headline(slide: str, lang: str = "en") -> str:
+    """A slide's headline when the writer gave none, in the story's language."""
+    table = _HEADLINES_DE if lang == "de" else BEAT_HEADLINES
+    return table.get(slide, "")
 
 # ── language ────────────────────────────────────────────────────────────────
 
@@ -180,6 +205,8 @@ _SECTION = re.compile(r"^##\s*(I\d{2}|ROAST|TOAST|NEXT)\s*(?:\|\s*(.*?))?\s*$", 
 def _norm(n: str) -> str:
     if re.fullmatch(r"\d{1,3}(,\d{3})+", n):
         n = n.replace(",", "")
+    elif re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", n):
+        n = n.replace(".", "")              # German thousands: 2.100 is 2100 (no rendering has 3 decimals)
     n = n.replace(",", ".")
     return n.split(".")[0] if re.fullmatch(r"\d+\.0+", n) else n
 
@@ -332,14 +359,28 @@ def _sentences(text: str) -> list:
     return out + [(p, []) for p in pending]
 
 
-def check_section(text: str, headline: str, own: list, ev: dict, known_titles: list) -> list:
+def stray_placeholders(text: str, names) -> list:
+    """The machine names (``wrapup_insights.placeholders``) and template
+    braces that ended up in a text - a slot copied in as a word ("Du
+    verbringst eine new_share: 85% ...")."""
+    found = sorted(n for n in names or () if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", text or ""))
+    if "{" in (text or "") or "}" in (text or ""):
+        found.append("{...}")
+    return found
+
+
+def check_section(text: str, headline: str, own: list, ev: dict, known_titles: list,
+                  placeholders=()) -> list:
     """The faults of one written section. Strict on truth: each sentence's
     numerals must be its cited cards' (or the section's own card's), and a
-    library title it names must be on one of them. ``own``: the ids the
-    section is about (its card, or the pick)."""
+    library title it names must be on one of them; no machine name of a
+    card (``placeholders``) is said. ``own``: the ids the section is about
+    (its card, or the pick)."""
     faults = []
     if not text.strip():
         return ["the section is empty"]
+    for n in stray_placeholders(f"{headline}\n{text}", placeholders):
+        faults.append(f"\"{n}\" is a field name, not a word: say the fact itself")
     if len(text) > _TEXT_MAX:
         faults.append(f"too long ({len(text)} characters, at most {_TEXT_MAX})")
     own_ev = [ev[i] for i in own if i in ev]
@@ -421,22 +462,49 @@ def editor_schema(n_cards: int) -> dict:
                      "archetype_subhead", "share_line", "next_pick"]}
 
 
-def default_edit(cards: list, traits: list, picks: dict) -> dict:
+def default_edit(cards: list, traits: list, picks: dict, lang: str = "en") -> dict:
     """The editor's choice made by rule: the top cards in beat order, the
     strongest confession or twist as the roast, the strongest identity or
     superlative as the toast."""
-    from src.services.wrapup_story import TRAIT_TITLES
+    from src.services.wrapup_story import trait_title
     order = list(BEAT_HEADLINES)
     top = sorted(cards[:_ARC_MAX], key=lambda c: (order.index(c["slide"]) if c["slide"] in order else 99,
                                                   -c["score"]))
-    roast = next((c["id"] for c in cards if c["kind"] in ("confession", "contrast")), cards[0]["id"])
+    roast = next((c["id"] for c in cards if c["kind"] in ("confession", "contrast") and _roastable(c)),
+                 next((c["id"] for c in cards if _roastable(c)), cards[0]["id"]))
     toast = next((c["id"] for c in cards if c["kind"] in ("identity", "superlative") and c["id"] != roast),
                  cards[-1]["id"])
     key = traits[0] if traits else None
-    title, sub = TRAIT_TITLES.get(key, ("Your Period in Review", "The numbers, without the commentary."))
+    title, sub = trait_title(key, lang)
     return {"arc": [c["id"] for c in top], "roast": roast, "toast": toast, "archetype_trait": key,
             "archetype_title": title, "archetype_subhead": sub, "share_line": title,
             "next_pick": next(iter(picks), ""), "cluster_names": []}
+
+
+# What the editor needs to know about writing in a language. German nouns
+# for a person carry a gender ("-siegerin"), and the member's is not known:
+# the archetype names the way of watching, its line says what was watched.
+_LANGUAGE_NOTES = {
+    "de": ("\n  In German the archetype_title names a way of watching, not a person: no gendered person noun "
+           "(\"Serien-Sprint\", not \"Serien-Sprintsiegerin\"), and the archetype_subhead uses no personal "
+           "pronoun (er, sie) - it says what was watched."),
+}
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\uFE0F\u200D]")
+
+
+def no_emoji(text: str) -> str:
+    """Archetype, line and share line carry no emoji (the UI's own rule)."""
+    return re.sub(r"\s{2,}", " ", _EMOJI.sub("", text or "")).strip()
+
+
+# Cards that say how MUCH was watched, not what was chosen: no roast. A roast
+# teases a choice; "a pathetic drop from ..." (owner's read on real data) is a
+# verdict on the watching itself.
+NOT_FOR_ROAST = {"tempo_down", "tempo_up"}
+
+
+def _roastable(c: dict) -> bool:
+    return c.get("key") not in NOT_FOR_ROAST
 
 
 def check_edit(e: dict, cards: list, traits: list, picks: dict, clusters: dict) -> list:
@@ -460,42 +528,52 @@ def check_edit(e: dict, cards: list, traits: list, picks: dict, clusters: dict) 
 # ── the brief ───────────────────────────────────────────────────────────────
 
 def _card_line(c: dict) -> str:
-    say = "; ".join(f"{k}: " + " | ".join(v) for k, v in c["say"].items() if v)
+    from src.services.wrapup_insights import say_line
+    say = say_line(c["say"])
     return (f"{c['id']} [{c['slide']}] {c['claim']} — why: {c['why']}."
             + (f" Say: {say}." if say else ""))
 
+
+from src.services.curator_voice import WORK  # noqa: E402 - the shared voice law
 
 EDITOR_SYSTEM = """You are Curatarr's editor, planning ONE person's wrap-up from ranked insight
 cards. You choose; you do not write the story yet.
 - arc: 3-7 card ids in the order the story should tell them — open with a number, end on
   who they were. Prefer high scores; one card per beat is plenty.
-- roast: the card that shows a blind spot or a contradiction. toast: the card that shows
-  their strongest taste. Either may also be in the arc.
+- roast: the card that shows a blind spot or a contradiction in what they chose - never one about
+  how much they watched. toast: the card that shows their strongest taste. Either may also be in
+  the arc.
 - archetype_trait: one of the TRAITS. archetype_title: 2-4 words, a role they earned from
   it, concrete and a little pointed ("The Midnight Completionist"); never Enthusiast, Lover,
-  Fan, Buff, Aficionado. archetype_subhead: one sentence that earns it from the cards.
+  Fan, Buff, Aficionado. archetype_subhead: one sentence that earns it from the cards - about
+  what they watched and how, never a verdict on who they are.
 - share_line: under 100 characters, something they would post.
 - next_pick: the U# pick to end on, or "" when there is none.
 - cluster_names: a 2-4 word name for each C# taste cluster, if any.
+- Write archetype_title, archetype_subhead, share_line and cluster_names in {language}, the
+  language of the story, without emojis.{language_note}
+- """ + WORK + """
 Answer with the JSON object only."""
 
-WRITER_SYSTEM = """You are Curatarr, the household's media curator, writing ONE person's wrap-up
-in {language}. You know them from months of arguing about what stays on the server. Voice:
-a sharp critic friend — dry, specific, affectionate underneath. Never a greeting card.
+WRITER_SYSTEM = """You are Curatarr, the household's media curator, writing ONE person's wrap-up in {language}.
+FORMAT: one section per ID in the PLAN, in that order, each headed "## <its ID> | <headline>" - never two cards in one section - then ## ROAST, ## TOAST and ## NEXT.
 
-Write one section per card in the PLAN, in that order, then ROAST, TOAST and NEXT:
+You know them from months of arguing about what stays on the server. Voice: a sharp critic
+friend — dry, specific, affectionate underneath. Never a greeting card.
+""" + WORK + """
 
-## I03 | <headline, under 60 characters>
-<2-3 sentences>
+## <ID> | <headline, under 60 characters>
+<2-3 sentences about that card>
 
 ## ROAST
-<1-2 sentences: the blind spot the roast card proves>
+<1-2 sentences: the blind spot the roast card proves - tease the choice, never the person>
 ## TOAST
 <1-2 sentences: their best taste, with respect>
 ## NEXT
 <1-2 sentences: the challenge, around the next pick>
 
 RULES
+- A headline says what the titles and the hours did, never a verdict on the person or their choices.
 - End each sentence (or each two-sentence thought) with the cards it rests on in
   brackets: [I03] or [I03, I07] or [U1].
 - Numbers: only the cited cards' own, written as the card writes them or as one of its
@@ -521,7 +599,13 @@ def build_writer_brief(plan: list, cards_by_id: dict, edit: dict, picks: dict,
         lines.append("YOUR WORDS (things they told you in debates; quote at most one, exactly):")
         lines += [f"- about {q['title']}: \"{q['text']}\"" for q in quotes]
     lines.append(f"ARCHETYPE: {edit['archetype_title']} — {edit['archetype_subhead']}")
-    lines.append("\nBACKGROUND FACTS (for context; cite only cards):\n" + sheet)
+    if sheet:
+        lines.append("\nBACKGROUND FACTS (for context; cite only cards):\n" + sheet)
+    # The sections to write, last, where the answer starts: the writer once put
+    # every arc card in one "## I03" section and the whole story fell to the
+    # templates (owner's read, three runs).
+    heads = [f"## {i} |" for i in plan] + ["## ROAST", "## TOAST"] + (["## NEXT"] if p else [])
+    lines.append("\nWRITE THESE SECTIONS, one each, in this order: " + "   ".join(heads))
     return "\n".join(lines)
 
 
@@ -549,15 +633,22 @@ def _model_name() -> str:
 
 # ── the pipeline ────────────────────────────────────────────────────────────
 
-def _template(section: str, card: Optional[dict], pick: Optional[dict]) -> tuple:
+def _template(section: str, card: Optional[dict], pick: Optional[dict], lang: str = "en") -> tuple:
+    """(headline, text) for a section the writer could not write: the
+    card's claim with the headline and warm line of that fact, in ``lang``
+    (en/de; services/wrapup_claims)."""
+    from src.services import wrapup_claims as wc
+    tx = _CLOSERS.get(lang) or _CLOSERS["en"]
     if section == "NEXT":
         if not pick:
             return "", ""
-        why = f" {pick['reason'].rstrip('.')}." if pick.get("reason") else ""
-        return "", f"{pick['title']} is on the server and you have not played it yet.{why}"
-    head = BEAT_HEADLINES.get(card["slide"], "") if section.startswith("I") else ""
-    why = card["why"][:1].upper() + card["why"][1:]
-    return head, f"{card['claim']} {why}."
+        why = f" {pick['reason'].rstrip('.')}." if pick.get("reason") and lang == "en" else ""
+        return "", tx["NEXT"].format(title=pick["title"]) + why
+    head = ""
+    if section.startswith("I"):
+        head = wc.headline(card, lang) or beat_headline(card["slide"], lang)
+    closer = tx.get(section) or wc.warm(card, lang)
+    return head, f"{wc.claim(card, lang)} {closer}".strip()
 
 
 async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list = (),
@@ -581,7 +672,8 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     # 1. the editor
     edit, edit_source = None, "fallback"
     try:
-        raw = await _ask([{"role": "system", "content": EDITOR_SYSTEM},
+        raw = await _ask([{"role": "system", "content": EDITOR_SYSTEM.format(
+                              language=LANG_NAMES.get(lang, "English"), language_note=_LANGUAGE_NOTES.get(lang, ""))},
                           {"role": "user", "content": "CARDS:\n" + "\n".join(_card_line(c) for c in cards)
                            + (f"\nTRAITS: {', '.join(traits)}" if traits else "")
                            + (f"\nPICKS: " + "; ".join(f"{k} {v['title']}" for k, v in picks.items())
@@ -600,20 +692,28 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
         return None, f"curator unavailable: {e}", model
     except (ValueError, TypeError) as e:
         logger.info("[wrapup] editor answer was not JSON: %s", e)
-    edit = edit or default_edit(cards, traits, picks)
+    edit = edit or default_edit(cards, traits, picks, lang)
+    if edit["roast"] in cards_by_id and not _roastable(cards_by_id[edit["roast"]]):
+        edit["roast"] = default_edit(cards, traits, picks, lang)["roast"]   # an amount is no choice
+    from src.services.wrapup_insights import placeholders as _placeholders
+    slots = _placeholders(cards)
     names = known_titles
     allowed_head = set().union(*(numerals(_card_line(c)) for c in cards)) | _small()
     for k in ("archetype_title", "archetype_subhead", "share_line"):
-        edit[k] = fix_style(edit.get(k) or "", names, lang)
-        if numerals(edit[k]) - allowed_head:
-            edit[k] = default_edit(cards, traits, picks)[k]
+        edit[k] = no_emoji(fix_style(edit.get(k) or "", names, lang))
+        if numerals(edit[k]) - allowed_head or stray_placeholders(edit[k], slots):
+            edit[k] = default_edit(cards, traits, picks, lang)[k]
 
     sections = [*edit["arc"], "ROAST", "TOAST"] + (["NEXT"] if edit.get("next_pick") else [])
     own = {s: [s] for s in edit["arc"]}
     own.update({"ROAST": [edit["roast"]], "TOAST": [edit["toast"]],
                 "NEXT": [edit["next_pick"]] if edit.get("next_pick") else []})
     ev = evidence(cards, picks)
-    brief = build_writer_brief(edit["arc"], cards_by_id, edit, picks, list(quotes), sheet)
+    # The background sheet is English (facts as the code names them); a story
+    # in another language gets only its cards, already in that language - an
+    # English line in the brief was copied into the German text.
+    brief = build_writer_brief(edit["arc"], cards_by_id, edit, picks, list(quotes),
+                               sheet if lang == "en" else "")
     system = WRITER_SYSTEM.format(language=LANG_NAMES.get(lang, "English"))
 
     def judge(parsed: dict) -> dict:
@@ -622,7 +722,7 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
             head, text = parsed.get(s, ("", ""))
             text = fix_style(tuck_cites(text), names, lang)
             head = fix_style(head, names, lang)
-            faults = check_section(text, head, own[s], ev, known_titles) if text else ["missing"]
+            faults = check_section(text, head, own[s], ev, known_titles, slots) if text else ["missing"]
             out[s] = (head, text, faults)
         return out
 
@@ -639,7 +739,8 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
         # 3. one repair turn for the slides that failed, every fault named
         if bad:
             logger.info("[wrapup] %d section(s) back for repair: %s", len(bad), bad)
-            ask = "These sections need fixing. Send ONLY these sections again, every rule kept:\n" + "\n".join(
+            ask = ("These sections need fixing. Send ONLY these sections again, each as its own section "
+                   "headed \"## <its ID> | <headline>\", every rule kept:\n") + "\n".join(
                 f"## {s}: " + "; ".join(f) for s, f in bad.items())
             raw2 = await _ask([{"role": "system", "content": system}, {"role": "user", "content": brief},
                                {"role": "assistant", "content": raw[:4000]},
@@ -657,7 +758,7 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
         if s not in written:
             card = cards_by_id.get(own[s][0]) if own[s] and own[s][0] in cards_by_id else None
             pick = picks.get(own[s][0]) if own[s] else None
-            written[s], sources[s] = _template(s, card, pick), "template"
+            written[s], sources[s] = _template(s, card, pick, lang), "template"
 
     story = assemble(edit, written, sources, cards_by_id, idx)
     vals = set(sources.values())
@@ -685,7 +786,7 @@ def assemble(edit: dict, written: dict, sources: dict, cards_by_id: dict, idx: d
         card = cards_by_id[cid]
         slides.append({"id": cid, "beat": card["slide"], "kind": card["kind"], "headline": head,
                        "text": strip_cites(text), "item_refs": trefs(card), "source": sources[cid],
-                       "score": card["score"]})
+                       "score": card["score"], **({"private": True} if card.get("private") else {})})
     roast, toast = strip_cites(written["ROAST"][1]), strip_cites(written["TOAST"][1])
     nxt = strip_cites(written.get("NEXT", ("", ""))[1]) if "NEXT" in written else ""
     return {

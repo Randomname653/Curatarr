@@ -22,14 +22,22 @@ _FRESH = timedelta(minutes=15)
 _POSTER_MAX = 16
 
 
-def _period(scope: str, period: str):
+def _period(scope: str, period: str, zone=None):
+    """The period, its window on the member's clock (``zone``: week and
+    month run midnight to midnight there); 400 for an unknown one."""
     from src.services.wrapup_facts import SCOPES, resolve_period
     if scope not in SCOPES:
         raise HTTPException(400, "unknown scope")
     try:
-        return resolve_period(period)
+        return resolve_period(period, zone=zone)
     except ValueError:
         raise HTTPException(400, "unknown period")
+
+
+async def _zone(user):
+    from src.database.runner import run_read
+    from src.services.user_time import user_zone_by_id
+    return await run_read(user_zone_by_id, user.id)
 
 
 def poster_wants(facts: dict) -> dict:
@@ -127,6 +135,14 @@ async def attach_posters(facts: dict) -> None:
     facts["posters"] = posters
 
 
+def _final(p, row: dict) -> bool:
+    """Whether stored facts are the closed period's for good: the period is
+    over AND they were computed after it ended. A week opened on Wednesday
+    is closed by Monday, but its Wednesday facts are not the week's."""
+    at = (row or {}).get("facts_at")
+    return bool(p.closed and at and at >= p.end)
+
+
 async def current_facts(user: User, scope: str, period: str) -> tuple:
     """(facts, stored row) — the stored facts while fresh, else recomputed,
     decorated with artwork and saved."""
@@ -134,7 +150,7 @@ async def current_facts(user: User, scope: str, period: str) -> tuple:
     from src.services.wrapup_facts import FACTS_VERSION, build_wrapup_facts
     from src.services.wrapup_store import load, save_facts
 
-    p = _period(scope, period)
+    p = _period(scope, period, await _zone(user))
     if period.startswith("season:"):
         # the anime season's "finished" reads the series' aired episodes
         from src.services.proactive_messages import _get_sonarr_index
@@ -143,7 +159,7 @@ async def current_facts(user: User, scope: str, period: str) -> tuple:
     facts = row and row.get("facts")
     if facts and facts.get("facts_version") != FACTS_VERSION:
         facts = None          # built on older watch data: a closed year thaws once
-    if facts and (p.closed or (row.get("facts_at") and datetime.utcnow() - row["facts_at"] < _FRESH)):
+    if facts and (_final(p, row) or (row.get("facts_at") and datetime.utcnow() - row["facts_at"] < _FRESH)):
         return facts, row
     facts = await run_read(build_wrapup_facts, user.id, scope, period,
                            is_admin=bool(user.is_admin))
@@ -200,8 +216,10 @@ def _milestones(user_id: int, period: str) -> dict:
     period (the story's slide), the whole history (the page's timeline),
     with each one's phrase, and the kinds and the ones switched off."""
     from src.services import milestones as ms
+    from src.services.user_time import user_zone_by_id
     from src.services.wrapup_facts import resolve_period
-    p = resolve_period(period)
+    p = resolve_period(period, zone=user_zone_by_id(user_id))
+
     def dress(m):
         return {**m, "phrase": ms.phrase(m)}
     return {"period": [dress(m) for m in ms.in_period(user_id, p.start, p.end)],
@@ -247,7 +265,7 @@ async def start_wrapup(body: dict, user: User = Depends(get_current_user)):
 
     scope = str(body.get("scope") or "all")
     period = str(body.get("period") or "30d")
-    _period(scope, period)
+    _period(scope, period, await _zone(user))
     # No await between this check and create(): on the one event loop the
     # check-and-claim is atomic, and the task registry dies with the process,
     # so a crash leaves no stale claim behind (an app_state lock would).
@@ -305,19 +323,26 @@ async def set_prefs(body: dict, user: User = Depends(get_current_user)):
 @router.post("/playlist")
 async def push_playlist(body: dict, user: User = Depends(get_current_user)):
     """Put this wrap-up's titles into a playlist on the user's own account,
-    on whichever media server this install runs (Plex or Jellyfin)."""
+    on whichever media server this install runs (Plex or Jellyfin), and
+    answer a link that plays it. A week's and a month's playlist is one
+    rolling playlist each, named in the member's language
+    (services/playlist_names), so a tap on the "Your week" card replaces last
+    week's instead of piling up."""
     from src.database.runner import run_read
     from src.services.media_server import active_kind
+    from src.services.playlist_names import name as playlist_name, names as playlist_names
     from src.services.plex_playlists import push_wrapup_playlist
-    from src.services.wrapup_store import load
+    from src.services.server_links import attach_links
+    from src.services.user_language import user_language
 
     scope = str(body.get("scope") or "all")
     period = str(body.get("period") or "30d")
-    p = _period(scope, period)
-    row = await run_read(load, user.id, scope, period)
-    facts = (row or {}).get("facts") or {}
+    p = _period(scope, period, await _zone(user))
+    # The stored facts, or fresh ones: a card's tap can come before the page
+    # was ever opened for that week.
+    facts, _row = await current_facts(user, scope, period)
     if not facts or facts.get("empty"):
-        raise HTTPException(404, "Open the wrap-up first")
+        raise HTTPException(404, "Nothing played in this period yet")
     videos, seen = [], set()
     for t in facts.get("top") or []:
         if t["media_type"] != "music" and t["title"] not in seen:
@@ -333,8 +358,13 @@ async def push_playlist(body: dict, user: User = Depends(get_current_user)):
     if not videos and not tracks:
         raise HTTPException(404, "Nothing in this wrap-up to put in a playlist")
     server = "Jellyfin" if active_kind() == "jellyfin" else "Plex"
+    slot = {"week:": "wrapup_week", "month:": "wrapup_month"}.get(period[:period.find(":") + 1])
+    name, aliases = None, ()
+    if slot:
+        name = playlist_name(slot, await run_read(user_language, user.id))
+        aliases = tuple(sorted(playlist_names(slot) - {name}))
     try:
-        out = await push_wrapup_playlist(user, p.label, videos, tracks)
+        out = await push_wrapup_playlist(user, p.label, videos, tracks, name=name, aliases=aliases)
     except Exception as e:
         logger.warning("[wrapup] playlist push for %s failed: %s", user.plex_username, e)
         raise HTTPException(502, f"{server} did not take the playlist — try again in a moment")
@@ -344,6 +374,12 @@ async def push_playlist(body: dict, user: User = Depends(get_current_user)):
         # It fell through to "not found in Plex" (UX audit 2026-11-08, W4).
         raise HTTPException(409, "Your Curatarr account is not linked to a Jellyfin user yet - "
                                  "sign out and in again with Jellyfin once")
+    if out.get("skipped") == "no_server_access":
+        raise HTTPException(409, f"{server} does not let Curatarr write to your account on this server yet")
     if not out.get("pushed"):
         raise HTTPException(404, f"None of these titles were found in {server}")
+    # A link that plays it (services/server_links); the key is the client's no longer.
+    await attach_links(out["pushed"], playlist=True)
+    for pl in out["pushed"]:
+        pl.pop("key", None)
     return out

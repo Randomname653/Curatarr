@@ -63,7 +63,13 @@ _ELIGIBLE_HOURS = 3
 # 12: episodes marked as played one at a time are no viewings, a started-then-marked
 #     play counts its own minutes (plex_sync.mark_unwitnessed, schema generation 3).
 # 13: eras carry each decade's hours and leading titles ("your decades").
-FACTS_VERSION = 13
+# 14: week: and month: periods on the member's clock.
+# 15: the narrative facts - ritual, comfort genre, of the month, night shift
+#     (services/wrapup_narrative).
+# 16: the comfort genre without a rewatch, the night shift as the series that
+#     held the nights, ISO weeks for the ritual (real months found none)
+# 17: devices by their kind (TV, computer, ...), never their own name
+FACTS_VERSION = 17
 
 
 @dataclass(frozen=True)
@@ -73,13 +79,19 @@ class Period:
     end: datetime
     label: str
     closed: bool            # a past calendar year: its facts never change
+    # The window before it, where a plain "same length earlier" is wrong: the
+    # month before a month (28 to 31 days), on the member's clock.
+    prev: Optional[tuple] = None
 
     @property
     def previous(self) -> Optional[tuple]:
         """The window just before this one, for "vs last time" — the same
-        calendar span a year earlier for a year, the same length otherwise."""
+        calendar span a year earlier for a year, the calendar month before a
+        month, the same length otherwise."""
         if self.key == "all":
             return None
+        if self.prev is not None:
+            return self.prev
         if self.key.startswith("year:"):
             y = self.start.year - 1
             return datetime(y, 1, 1), self.end.replace(year=y)
@@ -95,8 +107,56 @@ def season_key(at: datetime) -> str:
     return f"season:{at.year}-{name}"
 
 
-def resolve_period(key: str, now: Optional[datetime] = None) -> Period:
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December")
+
+
+def week_key(local: datetime) -> str:
+    """The ISO week a wall-clock time falls in: "week:2026-W45"."""
+    y, w, _ = local.isocalendar()
+    return f"week:{y}-W{w:02d}"
+
+
+def month_key(local: datetime) -> str:
+    return f"month:{local.year}-{local.month:02d}"
+
+
+def _local_window(start_local: datetime, end_local: datetime, zone) -> tuple:
+    """A wall-clock window of the member's -> naive UTC, each end with the
+    offset in force at it (a week across the DST change is 167 or 169 hours)."""
+    from src.services.user_time import to_utc
+    return to_utc(start_local, zone), to_utc(end_local, zone)
+
+
+def resolve_period(key: str, now: Optional[datetime] = None, zone=None) -> Period:
+    """``key`` -> its window in naive UTC. ``week:YYYY-Www`` (ISO) and
+    ``month:YYYY-MM`` run midnight to midnight on the member's clock
+    (``zone``, services/user_time; the machine's without one); the other
+    periods are as they always were."""
     now = now or datetime.utcnow()
+    wm = re.fullmatch(r"week:(\d{4})-W(\d{2})", key or "")
+    if wm:
+        from datetime import date as _date
+        try:
+            monday = _date.fromisocalendar(int(wm.group(1)), int(wm.group(2)), 1)
+        except ValueError:
+            raise ValueError(f"unknown period {key!r}") from None
+        s_local = datetime(monday.year, monday.month, monday.day)
+        start, end = _local_window(s_local, s_local + timedelta(days=7), zone)
+        ps, _ = _local_window(s_local - timedelta(days=7), s_local, zone)
+        if start <= now and monday.year >= 2000:
+            return Period(key, start, min(end, now), f"Week {int(wm.group(2))}, {wm.group(1)}",
+                          end <= now, (ps, start))
+    mm = re.fullmatch(r"month:(\d{4})-(\d{2})", key or "")
+    if mm and 1 <= int(mm.group(2)) <= 12 and int(mm.group(1)) >= 2000:
+        y, m = int(mm.group(1)), int(mm.group(2))
+        s_local = datetime(y, m, 1)
+        e_local = datetime(y + (m == 12), m % 12 + 1, 1)
+        p_local = datetime(y - (m == 1), (m - 2) % 12 + 1, 1)
+        start, end = _local_window(s_local, e_local, zone)
+        ps, _ = _local_window(p_local, s_local, zone)
+        if start <= now:
+            return Period(key, start, min(end, now), f"{_MONTHS[m - 1]} {y}", end <= now, (ps, start))
     sm = re.fullmatch(r"season:(\d{4})-(winter|spring|summer|fall)", key or "")
     if sm and 2000 <= int(sm.group(1)) <= now.year:
         y, m = int(sm.group(1)), SEASONS[sm.group(2)]
@@ -250,7 +310,8 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
     from src.services import wrapup_sections as _sections
 
     now = now or datetime.utcnow()
-    period = resolve_period(period_key, now)
+    from src.services.user_time import user_zone_by_id
+    period = resolve_period(period_key, now, user_zone_by_id(user_id))
     types = scope_types(scope)
     ms = played_ms_sql(W)
     base = (W.user_id == user_id, W.viewed_at >= period.start,
@@ -331,6 +392,9 @@ def build_wrapup_facts(user_id: int, scope: str, period_key: str,
             if out["music"] and moods:
                 out["music"]["moods"] = moods
         out["devices"] = _devices(db, W, ms, base, local)
+        # The narrative facts, on the member's clock (services/wrapup_narrative).
+        from src.services import wrapup_narrative as _narrative
+        out.update(_narrative.narrative(db, W, ms, base, local, period, out.get("comfort")))
 
         out["genres"] = _genres(db, W, ms, user_id, period, types)
         out["curatarr"] = _curatarr_angle(db, user_id, period, scope, types, is_admin)
@@ -940,19 +1004,34 @@ def platform_family(platform: Optional[str]) -> Optional[str]:
 
 _DEVICE_KNOWN = 0.5         # of the time with a known player, else no device story
 
+# What kind of device a platform is. The device NAME is given freely and
+# often carries a person's, a household's or a machine's name ("you lived
+# on the <machine>" - owner's read on real data): the story says the kind.
+_KINDS = {"iPhone": "phone", "Android": "phone", "iPad": "tablet",
+          "Apple TV": "TV", "Android TV": "TV", "Chromecast": "TV", "Roku": "TV", "Samsung TV": "TV",
+          "LG TV": "TV", "Windows": "computer", "Mac": "computer", "Linux": "computer", "Web": "browser",
+          "Xbox": "console", "PlayStation": "console", "Sonos": "speaker"}
+
+
+def device_kind(platform: Optional[str]) -> Optional[str]:
+    """"tvOS" → "TV", "Windows" → "computer", "Chrome" → "browser"; None for
+    an unknown platform."""
+    return _KINDS.get(platform_family(platform) or "")
+
 
 def _devices(db, W, ms, base, local) -> dict:
-    """Where the time was spent: hours by player (the Plex device name, else
-    the platform), and the player of the night. {} when under half the time
-    has a known player or only one is known."""
+    """Where the time was spent: hours by kind of device (TV, computer,
+    phone, ... from the platform - never the device's own name), and the
+    kind of the night. {} when under half the time has a known kind or there
+    is only one."""
     from sqlalchemy import func
     hr = func.strftime("%H", local)
     acc, night, total = Counter(), Counter(), 0
-    for player, platform, h, v in (db.query(W.player, W.platform, hr, func.sum(ms))
-                                   .filter(*base).group_by(W.player, W.platform, hr)):
+    for platform, h, v in (db.query(W.platform, hr, func.sum(ms))
+                           .filter(*base).group_by(W.platform, hr)):
         v = int(v or 0)
         total += v
-        label = (player or "").strip() or platform_family(platform)
+        label = device_kind(platform)
         if not label or h is None:
             continue
         acc[label] += v
@@ -1224,7 +1303,8 @@ async def taste_drift(user_id: int, scope: str, period_key: str) -> dict:
     from src.database.runner import run_read
     from src.vector_store.chromadb_wrapper import run_chroma
 
-    period = resolve_period(period_key)
+    from src.services.user_time import user_zone_by_id
+    period = resolve_period(period_key, zone=await run_read(user_zone_by_id, user_id))
     now_rows, past_rows = await run_read(_drift_rows, user_id, scope, period)
     if len(now_rows) < _DRIFT_MIN_NOW or len(past_rows) < _DRIFT_MIN_PAST:
         return {}
@@ -1252,7 +1332,8 @@ async def taste_river(user_id: int, scope: str, period_key: str) -> list:
     from src.database.runner import run_read
     from src.services.taste_snapshots import series
     from src.vector_store.chromadb_wrapper import run_chroma
-    period = resolve_period(period_key)
+    from src.services.user_time import user_zone_by_id
+    period = resolve_period(period_key, zone=await run_read(user_zone_by_id, user_id))
     lo, hi = period.start.strftime("%Y-%m"), period.end.strftime("%Y-%m")
     months = [m for m in await run_read(series, user_id, scope) if lo <= m["month"] <= hi]
     if sum(1 for m in months if m["mean"]) < _RIVER_MIN_MONTHS:

@@ -151,7 +151,7 @@ def play(rk, hour, minutes, mtype="music", player=None, platform=None, n=1):
 
 play("t1", 8, 60, n=3)                   # mornings: Energetic (album)
 play("t2", 23, 60, n=3)                  # nights: Melancholy (track)
-play("m1", 23, 120, mtype="movie", player="Living Room TV", n=2)
+play("m1", 23, 120, mtype="movie", player="Living Room TV", platform="tvOS", n=2)
 play("m2", 0, 120, mtype="movie", platform="iOS 17.1 (iPhone14,2)", n=3)
 play("m3", 15, 60, mtype="movie", n=1)   # no player known
 
@@ -172,10 +172,10 @@ check("each part of the day has its leading mood",
       and moods["by_daypart"]["night"]["mood"] == "Melancholy")
 check("styles over the music time (both tracks are on the Shoegaze album)",
       moods["top_styles"] == [{"style": "Shoegaze", "share": 1.0}])
-check("players by hours, a Spotify-style platform read as its family",
-      [x["player"] for x in devices["top"]] == ["iPhone", "Living Room TV"]
+check("devices by hours, as their kind - a Spotify-style platform read as its family, never the device's name",
+      [x["player"] for x in devices["top"]] == ["phone", "TV"]
       and devices["known_share"] == round(10 / 17, 2))
-check("the player of the night", devices["night"]["player"] == "iPhone"
+check("the kind of the night", devices["night"]["player"] == "phone"
       and devices["night"]["share"] == 0.6 and devices["night"]["hours"] == 10)
 play("t4", 12, 600, n=2)                 # untagged music: coverage under a third
 check("too little tagged music says nothing", facts(["music"])[0] == {})

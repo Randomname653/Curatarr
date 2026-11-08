@@ -256,7 +256,8 @@ def render_fact_sheet(f: dict) -> tuple:
             fact(f"You talked the curator out of deleting {item(t['title'], t.get('media_type'))} {t['title']}.")
     v = f.get("velocity") or {}
     if v:
-        fact(f"Server: {v['gb_in']} GB arrived, {v['gb_out']} GB left ({v['verdict']}).")
+        grew = {"hoarder": "the server grew", "pruner": "the server got lighter"}.get(v.get("verdict"), "in balance")
+        fact(f"Server: {v['gb_in']} GB arrived, {v['gb_out']} GB left ({grew}).")
     t = f.get("time_to_watch") or {}
     if t:
         lo = t["longest"]
@@ -309,30 +310,72 @@ TRAIT_TITLES = {
 }
 
 
-def fallback_story(f: dict, idx: dict) -> dict:
+# The same archetypes in German - names of a way of watching, never of a
+# person (stage 3.7: the stand-in speaks the story's language).
+TRAIT_TITLES_DE = {
+    "night_owl": ("Die Nachtschicht", "Das meiste lief, als das Haus schon still war."),
+    "matinee": ("Die Wochenend-Matinee", "Die Wochenendnachmittage haben die Arbeit gemacht."),
+    "completionist": ("Bis zum Abspann", "Angefangen, zu Ende geschaut."),
+    "sampler": ("Die Kostprobe", "Viele erste Folgen, weniger zweite."),
+    "scout": ("Auf Entdeckung", "Vor allem Dinge, die du noch nie gesehen hattest."),
+    "loyalist": ("Alte Freunde", "Alte Bekannte bekamen die meisten Stunden."),
+    "archivist": ("Das Archiv", "Dein Sehalter ist älter als deine Hardware."),
+    "day_one": ("Ab Tag eins", "Kam es dieses Jahr heraus, warst du dabei."),
+    "binger": ("Noch eine Folge", "Eine Folge mehr war nie nur eine."),
+    "highbrow": ("Das gute Regal", "Das preisgekrönte Regal hat keinen Staub angesetzt."),
+    "comfort_seeker": ("Vertrautes Terrain", "Bekannter Boden, ganz bewusst."),
+    "contrarian": ("Gegen den Strom", "Deine Lieblinge sind nicht die der Masse."),
+    "purger": ("Frühjahrsputz", "Der Server ist leichter dafür."),
+    "defender": ("Die Verteidigung", "Manche Titel bleiben, weil du es gesagt hast."),
+}
+_NO_TRAIT = {"en": ("Your Period in Review", "What you played, told plainly."),
+             "de": ("Dein Rückblick", "Was lief, schlicht erzählt.")}
+_FALLBACK = {
+    "en": {"where": "Where the hours went", "led": "{title} led the period",
+           "took": "{title}: {hours} hours over {plays} plays.",
+           "rest": "The rest of the shelf", "rotation": "Also in heavy rotation",
+           "next": "Next, if you feel like it: {title}."},
+    "de": {"where": "Wohin die Stunden gingen", "led": "{title} vorne",
+           "took": "{title}: {hours} Stunden in {plays} Wiedergaben.",
+           "rest": "Der Rest des Regals", "rotation": "Auch oft gelaufen",
+           "next": "Als Nächstes, wenn du magst: {title}."},
+}
+
+
+def trait_title(key: Optional[str], lang: str = "en") -> tuple:
+    """(title, subhead) of the archetype for ``key`` in ``lang`` (en/de)."""
+    table = TRAIT_TITLES_DE if lang == "de" else TRAIT_TITLES
+    return table.get(key) or _NO_TRAIT.get(lang) or _NO_TRAIT["en"]
+
+
+def fallback_story(f: dict, idx: dict, lang: str = "en") -> dict:
     """The same shape, written from the facts alone: archetype from the
-    strongest trait, chapters from the top titles, every sentence a fact."""
+    strongest trait, chapters from the top titles, every sentence a fact,
+    in the story's language."""
+    from src.services.wrapup_claims import num
+    tx = _FALLBACK.get(lang) or _FALLBACK["en"]
     traits = f.get("traits") or []
     key = traits[0]["key"] if traits else None
-    title, sub = TRAIT_TITLES.get(key, ("Your Period in Review", "The numbers, without the commentary."))
+    title, sub = trait_title(key, lang)
     by_title = {v["title"]: k for k, v in idx["items"].items()}
     top = f.get("top") or []
     chapters = []
     if top:
         refs = [by_title[t["title"]] for t in top[:2] if t["title"] in by_title]
         lead = top[0]
-        chapters.append({"title": "Where the hours went", "kicker": f"{lead['title']} led the period",
-                         "commentary": f"{lead['title']} took {lead['hours']} hours over {lead['plays']} plays.",
+        chapters.append({"title": tx["where"], "kicker": tx["led"].format(title=lead["title"]),
+                         "commentary": tx["took"].format(title=lead["title"], hours=num(lead["hours"], lang),
+                                                         plays=num(lead["plays"], lang)),
                          "item_refs": refs, "fact_refs": []})
     rest = [by_title[t["title"]] for t in top[2:5] if t["title"] in by_title]
     if rest:
-        chapters.append({"title": "The rest of the shelf", "kicker": "Also in heavy rotation",
+        chapters.append({"title": tx["rest"], "kicker": tx["rotation"],
                          "commentary": ", ".join(idx["items"][r]["title"] for r in rest) + ".",
                          "item_refs": rest, "fact_refs": []})
     pick = next(iter(idx["picks"]), None)
     hook = None
     if pick:
-        hook = {"challenge": f"{idx['picks'][pick]['title']} is on the server and you have not played it yet.",
+        hook = {"challenge": tx["next"].format(title=idx["picks"][pick]["title"]),
                 "item_ref": pick, "fact_refs": []}
     return {"archetype_title": title, "archetype_subhead": sub, "archetype_trait": key,
             "era_chapters": chapters, "roast_and_toast": None, "look_ahead_hook": hook,
@@ -361,7 +404,7 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
     from src.routers.wrapup import attach_posters
     from src.services.task_monitor import task_monitor
     from src.services.wrapup_facts import build_wrapup_facts, taste_drift, taste_river
-    from src.services.wrapup_insights import mine
+    from src.services.wrapup_insights import MAX_CARDS, mine
     from src.services.wrapup_store import save_error, save_facts, save_story
     from src.services.wrapup_writer import write
 
@@ -387,13 +430,18 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         await run_write(save_facts, user_id, scope, period_key, facts)
         step(4)
         sheet, idx = render_fact_sheet(facts)
-        cards = mine(facts)
+        # A week or a month tells a mini story: its strongest few cards.
+        limit = MINI_STORY_CARDS if period_key.startswith(("week:", "month:")) else MAX_CARDS
+        cards = mine(facts, limit=limit)
         lang, quotes = await run_read(_voice, user_id, cards)
+        if lang != "en":
+            # the same cards, said in the story's language for the editor and the writer
+            cards = mine(facts, limit=limit, lang=lang)
         story, source, model = await write(facts, sheet, idx, cards, quotes=quotes, lang=lang)
         step(5)
         if story is None:
             logger.info("[wrapup] %s/%s/%s: deterministic story (%s)", user_id, scope, period_key, source)
-            story, source = fallback_story(facts, idx), "fallback"
+            story, source = fallback_story(facts, idx, lang), "fallback"
         await run_write(save_story, user_id, scope, period_key, facts["facts_hash"],
                         finish_story(story, idx), source, model)
         task_monitor.done(task, "Wrap-up written" if source != "fallback" else "Wrap-up written without the curator")
@@ -437,14 +485,43 @@ def wrapup_discussion_block(facts: dict, story: Optional[dict]) -> str:
 _REFRESH_DAYS = 7
 
 
-def due_wrapups(row_for, now=None) -> list:
+# The month a "Your month is ready" card offers: written in its first days.
+MONTH_STORY_DAYS = 7
+# A week's or a month's story is a mini story: the strongest few cards.
+MINI_STORY_CARDS = 5
+
+
+def due_wrapups(row_for, now=None, local=None, zone=None) -> list:
     """(scope, period) pairs worth writing ahead for one user, given
     ``row_for(scope, period)`` → the stored row or None. The rolling month is
-    kept at most a week old; from 1 December the current year is written
+    kept at most a week old; in the first MONTH_STORY_DAYS days of a month on
+    the member's clock the month just ended is written once, a mini story
+    for "Your month is ready"; from 1 December the current year is written
     (and refreshed weekly while it fills), and in the first two weeks of
-    January the closed year once more, so the final version covers every day."""
+    January the closed year once more, so the final version covers every
+    day.
+
+    "Once" means once by the curator: a stand-in story (``story_source``
+    fallback - the curator was away, a game started) does not count as
+    written, so the next run tries again while the window lasts. "Written
+    after the 1st" compares ``story_at`` (UTC) with the member's local
+    midnight of the 1st in UTC. ``zone`` (the member's) gives both clocks;
+    without it ``local`` is the member's wall clock and the offset is taken
+    from it."""
     from datetime import datetime, timedelta
     now = now or datetime.utcnow()
+    if zone is not None:
+        from src.services.user_time import to_local, to_utc
+        local = to_local(now, zone)
+
+        def utc_of(wall):
+            return to_utc(wall, zone)
+    else:
+        local = local or now
+        offset = timedelta(minutes=round((local - now).total_seconds() / 60))
+
+        def utc_of(wall):
+            return wall - offset
     out = []
 
     def stale(row, written_after=None):
@@ -455,16 +532,21 @@ def due_wrapups(row_for, now=None) -> list:
         except (TypeError, ValueError):
             return True
         if written_after is not None:
-            return at < written_after
+            return at < written_after or row.get("story_source") == "fallback"
         return now - at > timedelta(days=_REFRESH_DAYS) or row.get("story_hash") != row.get("facts_hash")
 
     if stale(row_for("all", "30d")):
         out.append(("all", "30d"))
-    if now.month == 12 and stale(row_for("all", f"year:{now.year}")):
-        out.append(("all", f"year:{now.year}"))
-    if now.month == 1 and now.day <= 14:
-        closed = f"year:{now.year - 1}"
-        if stale(row_for("all", closed), written_after=datetime(now.year, 1, 1)):
+    if local.day <= MONTH_STORY_DAYS:
+        y, m = (local.year, local.month - 1) if local.month > 1 else (local.year - 1, 12)
+        month = f"month:{y}-{m:02d}"
+        if stale(row_for("all", month), written_after=utc_of(datetime(local.year, local.month, 1))):
+            out.append(("all", month))
+    if local.month == 12 and stale(row_for("all", f"year:{local.year}")):
+        out.append(("all", f"year:{local.year}"))
+    if local.month == 1 and local.day <= 14:
+        closed = f"year:{local.year - 1}"
+        if stale(row_for("all", closed), written_after=utc_of(datetime(local.year, 1, 1))):
             out.append(("all", closed))
     return out
 
@@ -485,7 +567,8 @@ async def pregenerate_all(task=None) -> bool:
                     for u in db.query(User).filter(User.is_active == True).all()]  # noqa: E712
 
     def _due(uid):
-        return due_wrapups(lambda scope, period: load(uid, scope, period))
+        from src.services.user_time import user_zone_by_id
+        return due_wrapups(lambda scope, period: load(uid, scope, period), zone=user_zone_by_id(uid))
 
     ok = True
     users = await run_read(_users)

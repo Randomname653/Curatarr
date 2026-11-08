@@ -80,7 +80,9 @@ check("the month the taste turned is found in the river",
       any("2026-03 was the month it turned" in c["claim"] for c in cards))
 check("a 412-day wait is a confession with its renderings",
       any(c["refs"] == ["Stalker"] and "over a year" in c["say"]["days"] for c in cards))
-check("the server's balance names the hoarder", any("a hoarder" in c["claim"] for c in cards))
+check("the server's balance says what the server did, never names the person",
+      any("the server grew" in c["claim"] for c in cards)
+      and not any(w in c["claim"] for c in cards for w in ("hoarder", "pruner")))
 check("an unremarkable new-title share (45%) is not worth a card",
       not any("new to you" in c["claim"] for c in cards))
 weak = wi.mine({"tempo": {"hours": 5, "prev_hours": 5, "active_days": 3, "longest_streak_days": 1,

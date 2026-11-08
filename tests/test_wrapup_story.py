@@ -86,7 +86,8 @@ check("refs resolve to title + artwork for the page", done["refs"][T["Dark"]]["p
 fb = st.fallback_story(FACTS, idx)
 check("fallback names the strongest trait", fb["archetype_title"] == "The Contrarian")
 check("fallback chapters anchor on the top titles", fb["era_chapters"][0]["item_refs"][0] == T["Dark"])
-check("fallback says only facts", "5.0 hours" in fb["era_chapters"][0]["commentary"])
+check("fallback says only facts, its numbers as people write them",
+      fb["era_chapters"][0]["commentary"] == "Dark: 5 hours over 6 plays.", fb["era_chapters"][0])
 check("fallback hook is an owned-unwatched pick", fb["look_ahead_hook"]["item_ref"] in idx["picks"])
 
 calls = []
@@ -162,6 +163,24 @@ check("the task walks every phase and finishes", task.processed == 5 and str(tas
 check("the writer's story is stored for this facts hash", saved.get("source") == "llm"
       and saved.get("hash") == "h1" and saved["story"]["version"] == 2 and saved["story"]["refs"]
       and len(saved["story"]["slides"]) == 3)
+# A month's story is a mini story: the editor gets the strongest few cards.
+limits = []
+_real_mine = wi.mine
+
+
+def _mine(facts, floor=wi.FLOOR, limit=wi.MAX_CARDS):
+    limits.append(limit)
+    return _real_mine(facts, floor, limit)
+wi.mine = _mine
+le.post_chat = fake_post_factory([EDIT, PROSE])
+try:
+    tm3 = tm.task_monitor.create("Wrap-up: month", "wrapup", total=len(st.PHASES), task_id="wrapup-1-all-month:2026-10")
+    tm.task_monitor.start(tm3)
+    asyncio.run(st.generate_wrapup(1, "all", "month:2026-10", True, tm3))
+finally:
+    wi.mine = _real_mine
+check("a month's story is told from its strongest few cards (a mini story)",
+      limits and limits[-1] == st.MINI_STORY_CARDS, limits)
 wf.build_wrapup_facts = lambda uid, scope, period, is_admin=False: {"empty": True, "eligible": False}
 task2 = tm.task_monitor.create("Wrap-up: empty", "wrapup", total=6, task_id="wrapup-1-all-6m")
 tm.task_monitor.start(task2)
@@ -170,13 +189,46 @@ check("not enough played → the task is skipped, nothing written", str(task2.st
 
 print("\nthe season")
 from datetime import datetime  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
 fresh = {"story": {"x": 1}, "story_at": "2026-12-10T00:00:00", "story_hash": "a", "facts_hash": "a"}
-check("nothing stored → the month is due", st.due_wrapups(lambda s, p: None, datetime(2026, 10, 1))
+check("nothing stored → the month is due", st.due_wrapups(lambda s, p: None, datetime(2026, 10, 15))
       == [("all", "30d")])
 check("a fresh month is left alone outside the season",
-      st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-10-01T00:00:00"), datetime(2026, 10, 3)) == [])
+      st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-10-10T00:00:00"), datetime(2026, 10, 13)) == [])
 check("a story for older numbers is due", ("all", "30d") in st.due_wrapups(
-    lambda s, p: dict(fresh, story_at="2026-10-01T00:00:00", facts_hash="b"), datetime(2026, 10, 3)))
+    lambda s, p: dict(fresh, story_at="2026-10-10T00:00:00", facts_hash="b"), datetime(2026, 10, 13)))
+# The month just ended: written in its first days, on the member's clock, once.
+early = st.due_wrapups(lambda s, p: None, datetime(2026, 10, 31, 23, 30), local=datetime(2026, 11, 1, 0, 30))
+check("on the 1st of the member's month the month just ended is due (UTC still says October 31)",
+      ("all", "month:2026-10") in early, early)
+check("...January's month is the December before",
+      ("all", "month:2026-12") in st.due_wrapups(lambda s, p: None, datetime(2027, 1, 3)))
+check("...written once: a story from this month leaves it alone",
+      ("all", "month:2026-10") not in st.due_wrapups(
+          lambda s, p: dict(fresh, story_at="2026-11-02T00:00:00"), datetime(2026, 11, 4)))
+check("...and after the first week it is no longer written ahead",
+      not any(p.startswith("month:") for _, p in st.due_wrapups(lambda s, p: None, datetime(2026, 11, 9))))
+# A stand-in is not the month written: the curator was away on the 1st.
+NY = ZoneInfo("America/New_York")
+stand_in = dict(fresh, story_at="2026-11-01T06:00:00", story_source="fallback")
+check("...a stand-in story written on the 1st (the curator was away) is due again while the week lasts",
+      ("all", "month:2026-10") in st.due_wrapups(lambda s, p: stand_in, datetime(2026, 11, 3, 12, 0), zone=NY)
+      and ("all", "month:2026-10") not in st.due_wrapups(lambda s, p: dict(stand_in, story_source="llm"),
+                                                         datetime(2026, 11, 3, 12, 0), zone=NY))
+# 03:30 UTC on 1 November is still 23:30 on 31 October in New York: written before the member's 1st
+check("...'written after the 1st' is the member's midnight in UTC, not UTC's",
+      ("all", "month:2026-10") in st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-11-01T03:30:00",
+                                                                   story_source="llm"),
+                                                 datetime(2026, 11, 3, 12, 0), zone=NY)
+      and ("all", "month:2026-10") not in st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-11-01T04:30:00",
+                                                                       story_source="llm"),
+                                                     datetime(2026, 11, 3, 12, 0), zone=NY))
+check("...the same with a wall clock and no zone (the offset is taken from it)",
+      ("all", "month:2026-10") in st.due_wrapups(lambda s, p: dict(fresh, story_at="2026-11-01T03:30:00"),
+                                                 datetime(2026, 11, 3, 17, 0), local=datetime(2026, 11, 3, 12, 0)))
+check("...and the closed year's January rewrite, as a stand-in, is due again",
+      ("all", "year:2026") in st.due_wrapups(lambda s, p: dict(fresh, story_at="2027-01-02T00:00:00",
+                                                               story_source="fallback"), datetime(2027, 1, 5)))
 check("December: the current year is written", ("all", "year:2026") in st.due_wrapups(
     lambda s, p: None if p.startswith("year") else fresh, datetime(2026, 12, 11)))
 jan = st.due_wrapups(lambda s, p: fresh, datetime(2027, 1, 3))

@@ -14,6 +14,7 @@ from _harness import check  # noqa: I001 - first: temp stores
 
 import asyncio
 import json
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -228,7 +229,7 @@ story, source, _ = run(edit(), prose(bad_court=True, bad_bear=True),
 ask = calls[2]["messages"][-1]["content"]
 check("only the failing slides go back, every fault named",
       f"## {court['id']}" in ask and f"## {bear['id']}" in ask and f"## {top['id']}:" not in ask
-      and "15" in ask and "77" in ask)
+      and "15" in ask and "77" in ask and 'each as its own section headed "## <its ID> | <headline>"' in ask)
 check("a repaired slide is kept, the good ones stay as written",
       story["slide_sources"][court["id"]] == "repaired" and story["slide_sources"][top["id"]] == "llm")
 check("a slide that fails twice gets its card's template — only that slide",
@@ -243,6 +244,53 @@ check("an unusable editor answer: the rule-made plan, the writer still writes, g
 story, source, _ = run(edit(archetype_title="42 Shades of Dread"), prose(), "")
 check("an invented number in the archetype falls back to the earned title",
       story["archetype_title"] == "The Contrarian")
+
+# A slot name copied in as a word ("Du verbringst eine new_share: 85% ...", seen in a stored
+# story): the renderings reach the model without their names, and a section that says one anyway
+# goes back, then falls to its template.
+story, source, _ = run(edit(), prose())
+cards_msg, brief = calls[0]["messages"][1]["content"], calls[1]["messages"][1]["content"]
+check("the editor and the writer see a card's renderings, never their field names",
+      not any(f"{k}: " in m for c in CARDS for k in c["say"] for m in (cards_msg, brief))
+      and any(c["say"] for c in CARDS), cards_msg[:600])
+slot = top["key"]
+leaky = prose().replace(f"Severance took 20 hours, {round(top['values']['share'] * 100)}%",
+                        f"Severance took 20 hours, {slot}: {round(top['values']['share'] * 100)}%")
+story, source, _ = run(edit(), leaky, leaky)
+ask = calls[2]["messages"][-1]["content"]
+check("a section that says a field name goes back with the fault named",
+      f"## {top['id']}" in ask and slot in ask and "field name" in ask, ask)
+check("...and twice wrong, it is its template: no field name reaches the slide",
+      story["slide_sources"][top["id"]] == "template"
+      and not any(slot in s["text"] or slot in s["headline"] for s in story["slides"]), story["slides"])
+check("braces of a template are a field too", ww.stray_placeholders("You spent {hours} here.", set()) == ["{...}"]
+      and ww.stray_placeholders("A new share of the night.", {"new_share"}) == []
+      and ww.stray_placeholders("new_share: 85%", {"new_share"}) == ["new_share"])
+story, source, _ = run(edit(archetype_subhead=f"Mostly {slot}."), prose())
+check("a field name in the archetype falls back to the earned line",
+      slot not in story["archetype_subhead"], story["archetype_subhead"])
+
+from src.services.curator_voice import WORK  # noqa: E402
+check("the editor and the writer carry the voice's law: the work, never the person (the archetype too)",
+      WORK in ww.EDITOR_SYSTEM and WORK in ww.WRITER_SYSTEM.format(language="German")
+      and "never a verdict on who they are" in ww.EDITOR_SYSTEM)
+_w = ww.WRITER_SYSTEM.format(language="German")
+fmt = next(line for line in _w.splitlines() if line.startswith("FORMAT:"))
+check("the writer's format rule is one short line at the top, before the voice and the content rules: "
+      "a section per arc ID, never two cards in one (all arc cards came back in one '## I03' section)",
+      _w.index(fmt) < _w.index(WORK) < _w.index("RULES") and len(fmt) < 200
+      and '"## <its ID> | <headline>"' in fmt and "never two cards in one section" in fmt
+      and "## I03" not in _w, fmt)
+check("...the law frames the voice once; headlines and roasts say it where they are written",
+      _w.count(WORK) == 1 and "- A headline says what the titles and the hours did, never a verdict" in _w
+      and "tease the choice, never the person>" in _w)
+story, source, _ = run(edit(), prose())
+brief = calls[1]["messages"][1]["content"]
+tail = brief.splitlines()[-1]
+check("the brief ends with the sections to write, each arc ID its own, in the arc's order",
+      tail.startswith("WRITE THESE SECTIONS")
+      and [h[3:-2] for h in re.findall(r"## I\d\d \|", tail)] == ARC
+      and tail.index("## ROAST") > tail.index(f"## {ARC[-1]} |") and "## NEXT" in tail, tail)
 
 story, source, _ = run(le.LLMCallError(le.LLMFailure.INFRA_OFFLINE, "down"))
 check("an offline curator: no story, a reason, no exception",
