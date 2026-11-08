@@ -279,14 +279,19 @@ function build(d) {
       html: `<div class="wus-eyebrow">Round the clock</div><h2 class="wus-h">Most at ${_s(t.peak_hour)}:00, busiest on ${day}s</h2>
         ${clockSvg}${moodLine ? `<p class="wus-text">The music's mood — ${moodLine}.</p>` : ''}`});
   }
-  const slides = s?.slides?.length ? s.slides
-    : (d.insights || []).slice(0, 5).map(c => ({id: c.id, beat: c.slide, headline: '', text: c.claim, item_refs: []}));
+  // A slide's share line: the curator's headline, or - told from the cards
+  // alone - the claim. Never one that names what the household named itself
+  // (a device: ``private``), and never a story's body text, which can.
+  const written = !!s?.slides?.length;
+  const slides = written ? s.slides
+    : (d.insights || []).slice(0, 5).map(c => ({id: c.id, beat: c.slide, headline: '', text: c.claim, item_refs: [],
+      private: !!c.private}));
   for (const sl of slides) {
     let visual = '';
     if (sl.beat === 'court') visual = court(f.court);
     else if (sl.beat === 'decades') visual = decades(f.eras);
     else if (sl.beat === 'balance' && f.velocity) visual = balance(f.velocity);
-    out.push({cls: `beat beat-${esc(sl.beat || '')}`, share: sl.headline || sl.text,
+    out.push({cls: `beat beat-${esc(sl.beat || '')}`, share: sl.private ? '' : (sl.headline || (written ? '' : sl.text)),
       html: `${sl.headline ? `<h2 class="wus-h">${_s(sl.headline)}</h2>` : ''}${_posters(f, sl.item_refs, s)}${visual}
         <p class="wus-text">${_s(sl.text)}</p>`});
   }

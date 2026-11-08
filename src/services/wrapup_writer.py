@@ -721,7 +721,7 @@ def assemble(edit: dict, written: dict, sources: dict, cards_by_id: dict, idx: d
         card = cards_by_id[cid]
         slides.append({"id": cid, "beat": card["slide"], "kind": card["kind"], "headline": head,
                        "text": strip_cites(text), "item_refs": trefs(card), "source": sources[cid],
-                       "score": card["score"]})
+                       "score": card["score"], **({"private": True} if card.get("private") else {})})
     roast, toast = strip_cites(written["ROAST"][1]), strip_cites(written["TOAST"][1])
     nxt = strip_cites(written.get("NEXT", ("", ""))[1]) if "NEXT" in written else ""
     return {

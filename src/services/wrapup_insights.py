@@ -139,13 +139,19 @@ def _clamp(x: float) -> float:
 
 
 def _card(kind, slide, score, claim, why, values=None, say=None, refs=None,
-          media_type: Optional[str] = None) -> dict:
+          media_type: Optional[str] = None, private: bool = False) -> dict:
+    """``private``: the claim names something the household named itself (a
+    device: "the Living Room TV", "Anna's iPad") - fine on the member's own
+    screen, never on a share image (wrapup_story.js)."""
     refs = [r for r in (refs or []) if r]
     # specificity: a card that names something beats one that does not
     score = _clamp(score + (0.08 if refs else 0))
-    return {"kind": kind, "slide": slide, "score": round(score, 2), "claim": claim,
+    card = {"kind": kind, "slide": slide, "score": round(score, 2), "claim": claim,
             "why": why, "values": values or {}, "say": say or {}, "refs": refs,
             "media_type": media_type}
+    if private:
+        card["private"] = True
+    return card
 
 
 def _tempo(f) -> list:
@@ -398,7 +404,7 @@ def _devices(f) -> list:
     return [_card("rhythm", "rhythm", 0.3 + _clamp(n["share"]) * 0.4 + _clamp(n["hours"] / 50) * 0.15,
                   f"After 23:00 it was the {n['player']}: {round(n['share'] * 100)}% of {_fmt(n['hours'])} night hours.",
                   "where the late hours were spent", {"share": n["share"], "hours": n["hours"]},
-                  {"share": say_share(n["share"]), "hours": say_hours(n["hours"])})]
+                  {"share": say_share(n["share"]), "hours": say_hours(n["hours"])}, private=True)]
 
 
 def _decades(f) -> list:
