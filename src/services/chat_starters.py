@@ -105,6 +105,9 @@ def current_daypart(now: Optional[datetime] = None) -> str:
 
 # ── facts: deterministic, cheap, per user ──────────────────────────────────
 
+# Days a stalled series stays out of the facts once an opener was about it.
+STALLED_REST_DAYS = 14
+
 def _pause(video: list[dict], title: str, now: datetime) -> str:
     """How the gap since ``title``'s last play compares with the user's own
     pace, in words the model may repeat. Only "longer than usual" is news.
@@ -118,6 +121,12 @@ def _pause(video: list[dict], title: str, now: datetime) -> str:
     if last is None:
         return ""
     since = (now - last).days
+    # One play, the first episode: a start. "normal: 1 day" let the model
+    # spin it into "one episode before you left it hanging" (2026-11-07).
+    if (len(mine) == 1 and mine[0].get("episode") == 1
+            and mine[0].get("season") in (None, 0, 1)):
+        when = {0: "today", 1: "yesterday"}.get(since, f"{since} days ago")
+        return f"just started: the first episode, {when}"
     starts = [s["start"] for s in _sittings(mine, now, window_days=365)]
     gaps = sorted((b - a).total_seconds() / 86400 for a, b in zip(starts, starts[1:]))
     usual = gaps[len(gaps) // 2] if gaps else None
@@ -167,6 +176,14 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
                               WatchHistoryEntry.viewed_at
                               >= now - timedelta(days=14))
                       .limit(4000).all())]
+        # The series the openers already asked about (their anchor_title): a
+        # stalled one rests, or every batch asks it again - one stalled
+        # series was the anchor of most openers for six weeks.
+        asked = {t for (t,) in db.query(ChatStarter.anchor_title)
+                 .filter(ChatStarter.user_id == user_id,
+                         ChatStarter.anchor_title.isnot(None),
+                         ChatStarter.created_at >= now - timedelta(days=STALLED_REST_DAYS))
+                 .all()}
 
     if video:
         r = video[0]
@@ -200,7 +217,8 @@ def collect_facts(user_id: int, now: Optional[datetime] = None) -> list[dict]:
     active = [(k, v) for k, v in series.items()
               if v["last"] and (now - v["last"]).days <= 7 and v["plays"] >= 3]
     stalled = [(k, v) for k, v in series.items()
-               if v["last"] and 21 <= (now - v["last"]).days <= 120 and v["plays"] >= 3]
+               if v["last"] and 21 <= (now - v["last"]).days <= 120 and v["plays"] >= 3
+               and k not in asked]
     if active:
         k, v = max(active, key=lambda kv: kv[1]["plays"])
         # Sittings from the plays' own timestamps. The fact used to be named
