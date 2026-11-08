@@ -57,6 +57,14 @@ Plex in turn sees running sessions only through the daily sync; polling
 
 ## Next
 
+**Shoko, phase 2: what AniDB knows per episode**
+- The watched sync already ties each play to its Shoko episode. Shoko keeps
+  AniDB's data locally, so reading it costs AniDB nothing: per episode the
+  rating with its vote count, the episode type (episode, special, credits,
+  trailer, parody), titles and cast; per series the tags with weight and
+  spoiler flag. That would carry statements like "the weakest episode of
+  the season is the one you stop at" or "these are recap specials".
+
 **Discovery features on the taste-vector stack** (SoulSync-inspired)
 
 **Taste engine stage 3**

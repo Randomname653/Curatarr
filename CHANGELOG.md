@@ -37,6 +37,18 @@ follow them:
   media-server seam, and moves between them both ways without losing
   anything (Settings -> Media server, or `scripts/rebind_server.py`).
 
+**Anime watched, reported to Shoko (2026-11-08).** An optional Shoko Server
+(`SHOKO_URL`, `SHOKO_API_KEY`, one key per Shoko user) now gets every
+finished anime episode marked watched, with the day it was watched. The
+media server's file decides which Shoko episode it is, then TMDB; a play
+whose Plex key is gone (a replaced file, a series moved between libraries)
+is found again through the series' current copy. On the owner's history
+that placed 686 of 859 plays. What is left is listed per series and season
+under Settings -> Integrations -> Shoko, where the owner links it to its
+AniDB entry (one link per cour where AniDB splits a season) or skips it (western
+cartoons filed as anime). Nothing runs
+without the two settings.
+
 **Jellyfin plays while Curatarr is off.** Curatarr may run only a few hours a day on a PC, and
 Jellyfin itself keeps only each item's current state. The live-session poller now notices
 when it saw nothing for more than 15 minutes (the app off, the PC asleep, Jellyfin out of

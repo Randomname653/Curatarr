@@ -141,7 +141,7 @@ the internet is down (2026-10-22).
 
 ## Connection tests and service addresses
 
-Plex, Jellyfin, arr, Ollama and SoulSync addresses must be plain `http(s)` base URLs:
+Plex, Jellyfin, arr, Ollama, SoulSync and Shoko addresses must be plain `http(s)` base URLs:
 no credentials, query string or fragment (a `#` would cut off the API path
 the client appends), and no link-local or cloud-metadata address. A host
 name is resolved before a test or setup step connects to it, and is refused

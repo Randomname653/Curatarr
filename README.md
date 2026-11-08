@@ -202,6 +202,12 @@ drag down to close.*
   action (in a proposal card's More menu, or Search & pin in the Knowledge
   Base) permanently pins the right identity when two same-named works
   collide.
+- **Anime watched, reported to [Shoko](https://shokoanime.com)** —
+  optional: with a Shoko Server on the LAN, every anime episode you finish
+  is marked watched there, with the day you watched it. The file decides
+  which Shoko episode it is; what the sync cannot place (a renamed series,
+  one that left the library) you link to its AniDB entry or skip under
+  Settings → Integrations.
 
 ### Your hardware
 
@@ -480,6 +486,7 @@ These are the options most people change:
 | `COLLECTIONS_ON_HOME` | Curatarr's collections as home-screen rows on Plex: `all` (default), `owner`, `off` |
 | `RADARR_URL` / `SONARR_URL` / `LIDARR_URL` (+ API keys) | \*arr connections |
 | `TMDB_API_KEY` | Primary metadata source |
+| `SHOKO_URL`, `SHOKO_API_KEY` | Optional [Shoko Server](https://shokoanime.com): finished anime episodes are reported there as watched. One key per Shoko user, comma-separated |
 | `SYNC_INTERVAL_HOURS` | Plex history pull cadence (default 24) |
 | `PLEX_SESSION_POLL_S` | Plex: seconds between looks whether a play ended, so it is fetched within minutes (default 300, tripled when idle; 0 = off) |
 | `ENRICHMENT_TTL_DAYS` | How long an enriched profile stays fresh (default 90) |
@@ -563,6 +570,8 @@ reserved. A fork is welcome to the code, under its own name and logo.
   [FastAPI](https://fastapi.tiangolo.com) carry the stack.
 - The [\*arr](https://wiki.servarr.com) projects and
   [Plex](https://www.plex.tv), which Curatarr is useless without.
+- [Shoko](https://shokoanime.com), whose server keeps the anime
+  collection matched to AniDB and takes Curatarr's watched reports.
 - Metadata from [TMDB](https://www.themoviedb.org),
   [OMDb](https://www.omdbapi.com), [AniList](https://anilist.co),
   [MusicBrainz](https://musicbrainz.org), [Last.fm](https://www.last.fm)

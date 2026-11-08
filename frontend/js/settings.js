@@ -11,6 +11,7 @@ import { loadUnreadMessages } from './notifications.js';
 import { loadNodes } from './nodes.js';
 import { loadMediaServer } from './media_switch.js';
 import { loadHostAdvice } from './host_advice.js';
+import { loadShokoUnmatched } from './shoko.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, 'Re-attributing…');
@@ -254,6 +255,15 @@ export async function loadIntegrations() {
     for (const card of INTEGRATION_CARDS) {
       if (card.node && !r.node) continue;
       shell.appendChild(renderIntegrationCard(card, _integrationsCfg));
+      // With Shoko set up, the plays its sync could not place sit right
+      // under its card, each with Link / Skip (shoko.js).
+      if (card.key === 'shoko' && _integrationsCfg.shoko_url) {
+        const sec = document.createElement('section');
+        sec.className = 'section';
+        sec.id = 'shoko-unmatched';
+        shell.appendChild(sec);
+        loadShokoUnmatched();
+      }
     }
     loadHostAdvice();
   } catch (e) {

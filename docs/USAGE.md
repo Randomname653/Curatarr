@@ -77,6 +77,13 @@ Items marked *(admin)* are visible to the admin account only.
 | Reclassify anime ↔ TV | Sidebar → **Reclassify**: tick the rows, then **Apply selected** in the bottom bar |
 | Uncensored cut: owned? exists? | Curation → **Upgrades** lists anime whose files on disk are TV or web releases while AniDB says the Blu-ray/DVD release is uncensored. **Search releases** asks Sonarr's indexers for uncensored or Blu-ray releases |
 
+**Anime and Shoko** *(admin, optional)*
+
+| Task | Where |
+|---|---|
+| Report anime you watched to Shoko | Settings → **Integrations** → **Shoko (anime)**: the Shoko URL and an API key (one per Shoko user, comma-separated; each goes to the Curatarr user named in that Shoko user's Plex usernames), then **Test connection**. Every 6 hours each finished anime episode is marked watched in Shoko with the day it was watched (Activity: "Anime watched, reported to Shoko"). Whether Shoko passes that on to your AniDB MyList is Shoko's own MyList setting |
+| Plays that found no Shoko episode | Same card, **Without a Shoko episode**: per series and season, **Link…** searches your Shoko collection and pins the AniDB entry (episode N becomes its regular episode N; pick the entry of that season). AniDB often splits one season into two halves (cours): link the first from episode 1, then **Link…** again with the episode the second starts at, **Skip** stops the retries for what AniDB does not list (western cartoons filed as anime). **Unpin** lifts it; the next run tries those plays again. Files Shoko itself did not recognise are linked in Shoko |
+
 **Music**
 
 | Task | Where |
@@ -138,6 +145,7 @@ example `venv\Scripts\python update_db.py`.
 | `python run_pipeline_spotify.py` | Trigger the music pipeline manually |
 | `python scripts/music_enricher.py` | Clear a large music backlog in a separate process |
 | `python scripts/mbid_speedrunner.py` | Bulk-resolve MusicBrainz ids |
+| `python -m src.services.shoko_sync --plan` | What the next Shoko watched sync would report, play by play, without writing anything |
 | `python scripts/dedupe_watch_history.py` | Report play rows that record one viewing twice (`--apply` to remove) |
 | `python scripts/rebind_server.py --to jellyfin` | Move the install from Plex to Jellyfin, or back with `--to plex`, keeping history, enrichment, vectors and open proposals. A dry run by default; `--write` needs Curatarr stopped, backs the database up and prints the `--undo` command. Both servers must be set in `.env` ([JELLYFIN_DESIGN.md](JELLYFIN_DESIGN.md) §8) |
 | `python scripts/facts_speedrunner.py` | Clear the archive-metadata backlog in one go (`--skip-significance` leaves the GPU alone) |

@@ -34,6 +34,7 @@ import { loadNodes, saveNodeName, updateNode } from './nodes.js';
 import { clearNetflixFiles, handleNetflixDrop, onNetflixFile, openNetflixPicker, runNetflixImport } from './netflix_import.js';
 import { answerGameQuestion } from './game.js';
 import { applyIconStyle, setIconStyle } from './brand.js';
+import { loadShokoUnmatched, shokoLink, shokoOpenLink, shokoSearch, shokoSearchOnEnter, shokoSkip, shokoUnpin } from './shoko.js';
 
 export function init() {
 initMobile();
@@ -118,6 +119,13 @@ document.addEventListener('click', ev => {
 
 
 const actions = {
+  loadShokoUnmatched,
+  shokoLink,
+  shokoOpenLink,
+  shokoSearch,
+  shokoSearchOnEnter,
+  shokoSkip,
+  shokoUnpin,
   _setNotifPref,
   addArrItem,
   addBacklogArtist,
