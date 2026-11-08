@@ -190,7 +190,7 @@ if node:
           + "unmeasured: strip(_adviceHtml('server', part, {curator: 'gemma4:31b', profile: 'large', num_ctx: '0', num_gpu: '99'})),"
           + "e4b: strip(_adviceHtml('server', part, {curator: 'gemma4:e4b-it-qat', profile: 'large', num_ctx: '0', num_gpu: '-1'})),"
           + "nosize: strip(_adviceHtml('server', {...part, card: {}, advice: {package: null}}, {}))}));")
-    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=js, capture_output=True, text=True, encoding="utf-8")
     out = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}
     if r.returncode:
         print(r.stderr[:600])

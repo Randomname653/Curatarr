@@ -83,7 +83,7 @@ console.log(JSON.stringify({
   dwellHuge: dwellMs('word '.repeat(500)),
 }));
 """ % json.dumps(DATA)
-    r = subprocess.run([node, "-e", harness], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
     if r.returncode:
         print(r.stderr[:1500])
     res = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}

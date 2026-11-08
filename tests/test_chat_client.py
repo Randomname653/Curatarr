@@ -39,7 +39,7 @@ def _node(js: str) -> str | None:
     if not node:
         print("  (node not installed - checked statically)")
         return None
-    r = subprocess.run([node, "-e", js], capture_output=True, text=True)
+    r = subprocess.run([node, "-"], input=js, capture_output=True, text=True, encoding="utf-8")
     assert r.returncode == 0, r.stderr[:800]
     return r.stdout
 

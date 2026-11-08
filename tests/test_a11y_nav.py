@@ -55,7 +55,7 @@ def _node(js: str):
     if not node:
         print("  (node not installed - behavioural checks skipped)")
         return None
-    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    r = subprocess.run([node, "-"], input=js, capture_output=True, text=True, encoding="utf-8", timeout=30)
     if r.returncode != 0:
         print(r.stderr[:800])
         return {}
