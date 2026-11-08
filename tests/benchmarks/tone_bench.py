@@ -9,6 +9,10 @@ folder). Two kinds:
              "user": "<the turn to answer>"}],
    "starters": [{"id": "...", "facts": [<collect_facts output>]}]}
 
+Invented cases live in tests/benchmarks/tone_cases_public.json (committed,
+every title made up); ``run`` reads both files, each case's "catch" goes
+into the report above its replies.
+
 Built 2026-11-06 from a copy of the owner's database: the turns where the
 old persona read motives into viewing, argued with the user's own account
 or grew a "pattern" from one title, plus pushback on the curator's own
@@ -53,6 +57,18 @@ from src.services.chat_prompt import build_system_prompt  # noqa: E402
 
 DATA = Path(__file__).resolve().parent / "tone_data"
 CASES = DATA / "cases.json"
+PUBLIC_CASES = Path(__file__).resolve().parent / "tone_cases_public.json"
+
+
+def load_cases() -> dict:
+    """The private cases (when this machine has them) plus the public ones."""
+    out: dict = {"chat": [], "starters": []}
+    for path in (CASES, PUBLIC_CASES):
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for kind in out:
+                out[kind] += data.get(kind, [])
+    return out
 
 
 def _call(url, model, messages, temperature, num_predict):
@@ -70,7 +86,8 @@ def chat_system(voice: str, taste: str, lang: str) -> str:
 
 
 def run(a) -> Path:
-    cases = json.loads(CASES.read_text(encoding="utf-8"))
+    cases = load_cases()
+    catch = {c["id"]: c.get("catch", "") for kind in cases.values() for c in kind}
     voices = [v for v in a.voices.split(",") if cv.normalize(v)]
     out = DATA / "runs" / f"{datetime.now():%Y%m%d_%H%M}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +110,7 @@ def run(a) -> Path:
                         msgs.append({"role": "user", "content": c["user"]})
                         text, s = _call(a.ollama, a.model, msgs, 0.7, 700)
                         f.write(json.dumps({"kind": "chat", "case": c["id"], "voice": v, "rep": rep,
+                                            "catch": catch.get(c["id"], ""),
                                             "out": text, "s": s}, ensure_ascii=False) + "\n")
                         print("chat", c["id"], v, rep, s, "s", flush=True)
     print("wrote", out)
@@ -106,6 +124,8 @@ def report(path: Path) -> Path:
         lines += [f"## {kind}", ""]
         for r in sorted((r for r in rows if r["kind"] == kind), key=lambda r: (r["case"], r["voice"], r["rep"])):
             lines.append(f"### {r['case']} · {r['voice']} · rep {r['rep']} ({r['s']} s)")
+            if r.get("catch"):
+                lines.append(f"_Built to catch: {r['catch']}_")
             if kind == "starters":
                 try:
                     lines += [f"- *{c.get('form')}*: {c.get('text')}" for c in cs._extract_json_array(r["out"])]

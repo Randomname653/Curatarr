@@ -36,6 +36,13 @@ check("the other rules come with every turn",
       all(r in free for r in (cp.NO_INVENTION_RULE, cp.NO_LIBRARY_ACTIONS_RULE,
                               cp.NO_MONOLOGUE_RULE, cp.ANALYTICAL_INTEGRITY_RULE)))
 
+check("rule 8 (conversation shape) is one line and comes with every turn, free chat and a "
+      "title discussion alike - a free-chat thread keeps its last title as the active one",
+      "\n" not in cp.CONVERSATION_RULE and cp.CONVERSATION_RULE.startswith("8. ")
+      and cp.CONVERSATION_RULE in free and cp.CONVERSATION_RULE in sp)
+check("rule 8 leaves the user a longer list when they ask for one",
+      "longer list only when they ask" in cp.CONVERSATION_RULE)
+
 # The benches build their chat turns with the same builder (the router's use
 # of it is pinned in test_watchlist_hook).
 import importlib.util  # noqa: E402
@@ -57,6 +64,14 @@ tb = _bench("tone_bench")
 check("tone_bench: a chat case carries the router's prompt around its taste block",
       tb.chat_system("elite", "TASTE-BLOCK", "de")
       == cp.build_system_prompt(voice="elite", user_lang="de", taste_context="TASTE-BLOCK"))
+import json  # noqa: E402
+
+pub = json.loads(tb.PUBLIC_CASES.read_text(encoding="utf-8"))
+check("tone_bench: the public cases are chat cases with an id, a language, a user turn and "
+      "what each was built to catch; load_cases reads them without the private file",
+      pub["chat"] and all(c.get("id") and c.get("lang") in ("en", "de") and c.get("user")
+                          and c.get("catch") for c in pub["chat"])
+      and {c["id"] for c in pub["chat"]} <= {c["id"] for c in tb.load_cases()["chat"]})
 cb = _bench("curator_bench")
 ctx = 'You previously proposed deleting "Some Title" (anime series, 6 GB).'
 sp = cb.system_prompt(ctx)

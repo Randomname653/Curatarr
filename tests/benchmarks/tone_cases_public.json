@@ -1,0 +1,54 @@
+{
+  "_about": "Public tone_bench cases. Every title, artist and taste line is invented, so this file is committed next to the private tone_data/cases.json. 'catch' says what the case was built to show; the report prints it above the replies.",
+  "chat": [
+    {
+      "id": "pub_tonight_en",
+      "lang": "en",
+      "catch": "Rule 8: one or two picks, one sentence of fit each, then one narrowing question. Not a ranked list.",
+      "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10; dropped loud action comedies early.",
+      "history": [],
+      "user": "What should I watch tonight?"
+    },
+    {
+      "id": "pub_tonight_de",
+      "lang": "de",
+      "catch": "Rule 8 in German: one or two picks, a short reason each, one question back. The length budget the user names is respected.",
+      "taste": "TASTE SUMMARY (show): character-driven anime, found family, gentle humour; watched Starfall Archive episodes 1-6 this week.",
+      "history": [],
+      "user": "Was kann ich heute Abend schauen? Gern was Kurzes, ich bin ziemlich müde."
+    },
+    {
+      "id": "pub_followup_en",
+      "lang": "en",
+      "catch": "After the user narrows it, one adjusted pick with its reason; no re-list of the earlier options, no lecture.",
+      "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings; rated The Quiet Harbour 8/10.",
+      "history": [
+        [
+          "user",
+          "What should I watch tonight?"
+        ],
+        [
+          "assistant",
+          "**The Lantern Room** fits best: the same patient mystery as the films you rated highest. Or **Gull Point**, lighter and set on a coast like The Quiet Harbour. More in the mood for tension or for something cosy?"
+        ]
+      ],
+      "user": "Cosy, definitely. And not longer than 90 minutes."
+    },
+    {
+      "id": "pub_list_asked_de",
+      "lang": "de",
+      "catch": "The user explicitly asks for a list: rule 8 allows it. The reply may list; it must not refuse or shrink it to two.",
+      "taste": "TASTE SUMMARY (music): post-rock, long instrumental builds; top artist The Hollow Pines (412 plays in 30 days).",
+      "history": [],
+      "user": "Gib mir bitte eine Liste mit acht Alben für einen langen Arbeitstag, ähnlich wie The Hollow Pines."
+    },
+    {
+      "id": "pub_not_a_pick_en",
+      "lang": "en",
+      "catch": "Not a recommendation turn: answer the question about their taste. Rule 8 does not force a pick or a closing question onto it.",
+      "taste": "TASTE SUMMARY (movie): slow-burn mysteries, coastal settings, ensemble casts; finished The Lantern Room (2019) and rated it 9/10; dropped loud action comedies early.",
+      "history": [],
+      "user": "What does my watch history say about my taste?"
+    }
+  ]
+}

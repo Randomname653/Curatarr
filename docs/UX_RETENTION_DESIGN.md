@@ -211,7 +211,7 @@ members.
 ```
   ✓ Deck done — 10 answered in 1:12
   3 on your Jellyfin watchlist        [▶ Play the first one]  [Open watchlist]
-  You loved "Perfect Blue" → 3 more like it lead your next deck
+  You loved "The Lantern Room" → 3 more like it lead your next deck
   Your taste profile refreshes after 4 more "seen it" answers
   [Another 10]   [Done for tonight]
 ```
@@ -309,14 +309,14 @@ post-pass with no tool calling. When the stream ends, the server matches the
 reply's `**bold**` titles against the library index (`_match_library_title`,
 `chat.py:515`) and sends one frame:
 ```json
-{"titles": [{"title": "Perfect Blue", "category": "movie", "rating_key": "4711",
+{"titles": [{"title": "The Lantern Room", "category": "movie", "rating_key": "4711",
              "in_library": true, "watched": false, "on_watchlist": false,
              "deep_link": "https://…", "protected": false}]}
 ```
 The client renders a compact action row under the bubble for each matched title:
 - **▶ Play on {server}**, using `deep_link`;
 - **+ Watchlist**, using the same `add_to_watchlist` path as Swipe;
-- **🛡 Keep**, an explicit protection: the existing protection write, confirmed
+- **Keep**, an explicit protection: the existing protection write, confirmed
   in place ("Kept — it won't be proposed for deletion");
 - **Discuss**, which anchors the thread on that title.
 
@@ -340,8 +340,8 @@ UI-language chips (B) first.
   better `week:YYYY-Www` in the member's zone. It has three lines and no LLM:
   ```
   Your week · 9 h · 5 evenings
-  Tuesday was anime night (3 episodes of Frieren after 21:00)
-  New for you: a first Korean thriller — Memories of Murder ★★★★★
+  Tuesday was anime night (3 episodes of Starfall Archive after 21:00)
+  New for you: a first Korean thriller — The Quiet Harbour ★★★★★
   [See the week]  [Make it a playlist]
   ```
 - **"Your month" mini-story** on the 1st, using a new `month:YYYY-MM` key. It
@@ -357,7 +357,7 @@ UI-language chips (B) first.
 - **comfort genre:** the genre with the highest share of rewatches and
   completed plays → "Your secret comfort genre: heist films".
 - **of the month:** the top artist, series or genre per calendar month in a
-  year period → "September belonged to Radiohead".
+  year period → "September belonged to The Hollow Pines".
 - **night shift:** a series with ≥ 50 % of its plays after 23:00 local → "Your after-midnight series".
 - **first of the period:** "It started with…" from `first_last`.
 
