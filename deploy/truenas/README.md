@@ -1,5 +1,9 @@
 # Curatarr on TrueNAS: icon, description, Web UI button
 
+> The app in the official TrueNAS catalog's format is prepared in
+> [`catalog/`](catalog/SUBMITTING.md) (not submitted yet). Until it is in the
+> catalog, the custom app below is the way to install Curatarr on TrueNAS.
+
 A custom app (Apps → Discover Apps → Custom App → Install via YAML) shows
 TrueNAS's generic icon, an empty description and no "Web UI" button: the
 compose file has no place for an icon, and TrueNAS reads a portal from it

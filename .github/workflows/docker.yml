@@ -3,11 +3,15 @@ name: docker
 # Builds the container image on every PR and push, starts it and waits for
 # the app to answer (a first-run instance: no .env, no data). A push to main
 # then publishes it as ghcr.io/randomname653/curatarr:latest (+ :sha-<commit>).
+# A release tag vX.Y.Z (docs/RELEASING.md) publishes the same build as
+# :X.Y.Z, the fixed tag a TrueNAS catalog app pins (deploy/truenas/catalog);
+# the tag must match VERSION in src/config.py.
 # Plain docker CLI on the runner: no third-party actions to pin or trust.
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -48,6 +52,27 @@ jobs:
           docker exec curatarr python -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin'); ZoneInfo('America/New_York')"
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/setup/status)
           echo "setup status: $code"; test "$code" = "200"
+
+      - name: Release tag matches the code's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}   # via env, never interpolated into the script
+        run: |
+          version=$(docker run --rm curatarr:ci python -c "from src.config import Settings; print(Settings.model_fields['VERSION'].default)")
+          echo "tag $TAG, code $version"
+          test "$TAG" = "v$version"
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+      - name: Publish release tag to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker tag curatarr:ci "$IMAGE:${TAG#v}"
+          docker push "$IMAGE:${TAG#v}"
 
       - name: Publish to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

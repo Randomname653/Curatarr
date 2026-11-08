@@ -1,0 +1,42 @@
+annotations:
+  min_scale_version: 24.10.2.2
+app_version: 1.1.0
+capabilities: []
+categories:
+- media
+changelog_url: https://github.com/Randomname653/Curatarr/blob/main/CHANGELOG.md
+date_added: '2026-11-20'
+description: Curatarr is a self-hosted AI curator for Plex or Jellyfin and the arr stack. It
+  learns the household's taste from the watch history, recommends from the library and beyond,
+  and proposes what to delete through Radarr, Sonarr and Lidarr. It needs an Ollama server.
+home: https://github.com/Randomname653/Curatarr
+host_mounts: []
+icon: https://media.sys.truenas.net/apps/curatarr/icons/icon.png
+keywords:
+- media
+- plex
+- jellyfin
+- recommendations
+- ai
+lib_version: 2.3.18
+lib_version_hash: ''
+maintainers:
+- email: dev@truenas.com
+  name: truenas
+  url: https://www.truenas.com/
+name: curatarr
+run_as_context:
+- description: Container [curatarr] can run as any non-root user and group.
+  gid: 568
+  group_name: Host group is [apps]
+  uid: 568
+  user_name: Host user is [apps]
+screenshots:
+- https://media.sys.truenas.net/apps/curatarr/screenshots/screenshot1.png
+- https://media.sys.truenas.net/apps/curatarr/screenshots/screenshot2.png
+- https://media.sys.truenas.net/apps/curatarr/screenshots/screenshot3.png
+sources:
+- https://github.com/Randomname653/Curatarr
+title: Curatarr
+train: community
+version: 1.0.0
