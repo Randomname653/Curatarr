@@ -573,7 +573,10 @@ async function _submit(seen, stars, kind, gesture) {
   if (r.watchlist?.ok) { _deck.wantOk += 1; entry.wantOk = true; }
   if (r.taste_rebuild && _calibrating) _calibrating = 0;   // the first profile is being built
   // The end screen went up before the answer came back: show its counts.
-  if (_deckDone() && _el('swipe-deck')?.querySelector('.swipe-done')) _deckMsg(_deckEndHtml());
+  if (_deckDone() && _el('swipe-deck')?.querySelector('.swipe-done')) {
+    _deckMsg(_deckEndHtml());
+    _loadStats();                 // the all-time line counts this deck too, once it is saved
+  }
   if (r.taste_rebuild) {
     _renderProgress(true);
     _say('Your answers are being folded into your taste profile.');
@@ -635,6 +638,7 @@ export async function swipeUndo() {
       _deck.n = Math.max(0, _deck.n - 1);
       if (h.kind === 'loved') _deck.loved = _deck.loved.filter(t => t !== h.card.title);
       if (h.wantOk) _deck.wantOk = Math.max(0, _deck.wantOk - 1);
+      _deck.lifted = Math.max(0, _deck.lifted - (r.unlifted || 0));   // its lift went back too
       _renderProgress();
       _queue = _queue.filter(q => q.doc_id !== h.card.doc_id);
       _queue.unshift(h.card);

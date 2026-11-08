@@ -144,7 +144,12 @@ async def undo(category: str = Query(...), user: User = Depends(get_current_user
     last = await run_write(sw.undo_last, user.id, cat)
     if last is None:
         raise HTTPException(status_code=404, detail="Nothing to undo")
-    return {"ok": True, "undone": last}
+    out = {"ok": True, "undone": last}
+    if last.get("seen") and last.get("stars") == 10 and last.get("title"):
+        # A Loved taken back takes its lift back too (services/rec_lift).
+        from src.services.rec_lift import unlift
+        out["unlifted"] = await run_write(unlift, user.id, cat, last["title"])
+    return out
 
 
 @router.get("/stats")

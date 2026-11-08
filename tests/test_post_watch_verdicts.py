@@ -105,6 +105,13 @@ check("a series' verdict is keyed by its title, the newest episode as its play k
       rows()[-1] == ("anime", "sa-3", "Starfall Archive", "not_for_me", "followup_card"), rows())
 later = message("recommendation_followup", {"title": "Starfall Archive", "category": "anime"})
 pw.record_from_message(UID, later, "okay")
+as_show = message("recommendation_followup", {"title": "Starfall Archive", "category": "show"})
+out_show = pw.record_from_message(UID, as_show, "liked")
+check("a message that files the series as a show finds its anime plays, and the verdict carries "
+      "the plays' category (the rebuild matches a series by it)",
+      out_show["category"] == "anime" and [r for r in rows() if r[0] == "show"] == [], (out_show, rows()))
+again_s = message("recommendation_followup", {"title": "Starfall Archive", "category": "anime"})
+pw.record_from_message(UID, again_s, "okay")
 check("one row per series: a later answer replaces it",
       [r for r in rows() if r[0] == "anime"] == [("anime", "sa-3", "Starfall Archive", "okay",
                                                   "followup_card")], rows())

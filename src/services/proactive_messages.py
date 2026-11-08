@@ -2038,8 +2038,11 @@ def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict
                         | (ProactiveMessage.expires_at > now))
                 .order_by(ProactiveMessage.created_at.desc())
                 .limit(20).all())
+        # Only what a verdict can land on: a message whose title has no play
+        # to weigh (NoPlay) would come back on every load, unanswerable.
         found = next(((r, sub) for r in rows
-                      if (sub := post_watch.subject_of(r.trigger_type, r.trigger_data))), None)
+                      if (sub := post_watch.subject_of(r.trigger_type, r.trigger_data))
+                      and post_watch.has_play(db, user_id, sub)), None)
         if found is None:
             return None
         m, subject = found

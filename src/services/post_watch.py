@@ -69,15 +69,23 @@ def subject_of(trigger_type: str, trigger_data: Optional[str]) -> Optional[dict]
 
 
 def _the_play(db, user_id: int, title: str, category: str):
-    """The member's newest play of ``title`` in ``category``: the film by its
-    title, a series by its series title."""
+    """The member's newest play of ``title``: the film by its title, a series
+    by its series title. A series is a series whichever of show / anime the
+    message and the plays file it under - a message naming a show whose plays
+    are anime found nothing, and the card came back on every load."""
     from sqlalchemy import func
     from src.database.models import WatchHistoryEntry as W
     col = W.title if category == "movie" else W.series_title
-    return (db.query(W.plex_item_id, W.title, W.series_title)
-            .filter(W.user_id == user_id, W.media_type == category,
+    kinds = ("movie",) if category == "movie" else ("show", "anime")
+    return (db.query(W.plex_item_id, W.title, W.series_title, W.media_type)
+            .filter(W.user_id == user_id, W.media_type.in_(kinds),
                     func.lower(col) == title.lower())
             .order_by(W.viewed_at.desc()).first())
+
+
+def has_play(db, user_id: int, subject: dict) -> bool:
+    """Whether a verdict on ``subject`` would find a play to weigh."""
+    return _the_play(db, user_id, subject["title"], subject["category"]) is not None
 
 
 def record_from_message(user_id: int, message_id: int, verdict: str,
@@ -101,8 +109,10 @@ def record_from_message(user_id: int, message_id: int, verdict: str,
         play = _the_play(db, user_id, subject["title"], subject["category"])
         if play is None:
             raise NoPlay(subject["title"])
-        key, play_title, series_title = play
-        category = subject["category"]
+        key, play_title, series_title, play_type = play
+        # The plays' own category: the rebuild matches a series by (its
+        # media_type, title), so the verdict must carry what the plays say.
+        category = play_type or subject["category"]
         title = play_title if category == "movie" else (series_title or subject["title"])
         q = db.query(PostWatchVerdict).filter(PostWatchVerdict.user_id == user_id,
                                               PostWatchVerdict.category == category)

@@ -171,4 +171,20 @@ check("a 'Loved it' verdict lifts by the play's title; 'okay' lifts nothing",
       v_loved["lifted"] == ["North Signal"] and "lifted" not in v_okay
       and asked[1] == (UID, "movie", "Gull Point", None), (v_loved, v_okay, asked))
 
+# ── an undone Loved takes its lift back ─────────────────────────────────────
+
+import src.services.swipe as swsvc  # noqa: E402
+
+with conn.get_db_session() as db:
+    db.query(CachedRecommendation).filter(CachedRecommendation.title == "Far Away Store").update(
+        {"lifted_at": NOW, "lifted_by": "Another Loved Film"})
+    db.commit()
+swsvc.save_answer(UID, "movie", "swipe-doc", "Some Swiped Film", True, 10)
+undone = asyncio.run(swipe_router.undo(category="movie", user=SimpleNamespace(id=UID)))
+with conn.get_db_session() as db:
+    left = {r.title: r.lifted_by for r in db.query(CachedRecommendation)
+            .filter(CachedRecommendation.lifted_by.isnot(None))}
+check("undoing a Loved swipe clears the lifts it gave, and only those",
+      undone["unlifted"] == 3 and left == {"Far Away Store": "Another Loved Film"}, (undone, left))
+
 check.done()

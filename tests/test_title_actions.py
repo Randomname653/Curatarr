@@ -29,6 +29,10 @@ INDEX = [("the lantern room", "The Lantern Room", "movie"), ("gull point", "Gull
          ("north signal", "North Signal", "movie"), ("the hollow pines", "The Hollow Pines", "music")]
 check("a span must BE a library title - 'Signal' is not 'North Signal', unknown names get nothing",
       ta.match(ta.bold_titles(reply), INDEX) == [("The Lantern Room", "movie"), ("Gull Point", "show")])
+check("a name held as a film and as a series gives both, each with its own category",
+      ta.match(["**Harbour Lights**".strip("*")], [("harbour lights", "Harbour Lights", "movie"),
+                                                    ("harbour lights", "Harbour Lights", "show")])
+      == [("Harbour Lights", "movie"), ("Harbour Lights", "show")])
 check("at most four rows", len(ta.match([f"t{i}" for i in range(9)],
                                         [(f"t{i}", f"T{i}", "movie") for i in range(9)])) == ta.MAX_TITLES)
 check("no bold, no rows", ta.for_reply(1, "Plain words about The Lantern Room.", lambda: INDEX) == [])
@@ -105,5 +109,28 @@ by = {r["title"]: r for r in out["recommendations"]}
 check("an owned recommendation opens on the server; a discovery pick has no link; no key leaks",
       by["The Lantern Room"]["link"].endswith("key=%2Flibrary%2Fmetadata%2F4711")
       and "link" not in by["Shop Window"] and all("_key" not in r for r in out["recommendations"]), by)
+
+# A failed machine-id lookup is remembered briefly: Plex away must not make
+# every link-wanting GET wait for the /identity timeout again.
+asked = []
+
+
+async def _gone(force=False):
+    asked.append(1)
+    return None
+
+_saved = (plex_playlists.get_machine_identifier, media_server.active_kind)
+plex_playlists.get_machine_identifier = _gone
+media_server.active_kind = lambda settings=None: "plex"
+server_links._miss["until"] = 0.0
+try:
+    for _ in range(3):
+        asyncio.run(server_links.attach_links([{"key": "4711"}]))
+    server_links._miss["until"] = 0.0           # the window over: it asks again
+    asyncio.run(server_links.attach_links([{"key": "4711"}]))
+finally:
+    plex_playlists.get_machine_identifier, media_server.active_kind = _saved
+    server_links._miss["until"] = 0.0
+check("no machine id: asked once, then remembered until the window passes", len(asked) == 2, asked)
 
 check.done()

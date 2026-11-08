@@ -34,6 +34,15 @@ with conn.get_db_session() as db:
     db.add(member)
     db.commit()
     UID = member.id
+    from src.database.models import WatchHistoryEntry
+    # The plays the follow-up messages ask about: a card is only offered
+    # for a title a verdict can land on.
+    db.add(WatchHistoryEntry(user_id=UID, plex_user_id="lr-1", plex_item_id="p1", title="The Lantern Room",
+                             media_type="movie", completed=True, viewed_at=datetime.utcnow()))
+    db.add(WatchHistoryEntry(user_id=UID, plex_user_id="lr-1", plex_item_id="p2", title="Episode 1",
+                             series_title="Starfall Archive", media_type="anime", completed=True,
+                             viewed_at=datetime.utcnow()))
+    db.commit()
 
 # ── the recommendations tile never generates ────────────────────────────────
 
@@ -160,6 +169,20 @@ with conn.get_db_session() as db:
 one = pm.followup_card(UID)
 check("a morning line about exactly one title gets the card, even under newer ones that do not",
       one and one["title"] == "Starfall Archive", one)
+with conn.get_db_session() as db:
+    db.add(ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
+                            message="A film never played here.", trigger_data=rec("Gull Point"),
+                            read=False, created_at=now - timedelta(minutes=5),
+                            expires_at=now + timedelta(days=7)))
+    db.add(ProactiveMessage(user_id=UID, trigger_type="recommendation_followup",
+                            message="The series, filed as a show.",
+                            trigger_data=rec("Starfall Archive", "show"), read=False,
+                            created_at=now - timedelta(minutes=4), expires_at=now + timedelta(days=7)))
+    db.commit()
+newest = pm.followup_card(UID)
+check("a title with no play to weigh gets no card (it would come back on every load); a series "
+      "filed as show while its plays are anime still does",
+      newest and newest["message"] == "The series, filed as a show.", newest)
 
 with conn.get_db_session() as db:
     for text in ("Was soll ich heute Abend schauen? Gern etwas Ruhiges.",

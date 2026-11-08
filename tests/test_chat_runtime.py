@@ -658,7 +658,7 @@ def test_an_ollama_error_is_shown_but_never_persisted():
         assert rig.rows() == [] and "post_turn" not in rig.events and not rig.busy()
 
 
-def test_tonight_candidates_ride_every_turn_but_a_deletion_debate():
+def test_tonight_candidates_ride_every_turn_but_deletion_principle_and_wrapup_talks():
     # UX audit 2026-11-08, C2: "what should I watch?" was answered from the
     # vector neighbours of that sentence. The member's own candidates go into
     # the system prompt of every turn - no filter guesses the pick question -
@@ -671,14 +671,18 @@ def test_tonight_candidates_ride_every_turn_but_a_deletion_debate():
         with _stream_rig(_OK) as rig:
             asyncio.run(_drain(rig.start("what should I watch tonight?")))
             free = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
-        with _stream_rig(_OK) as rig:
-            asyncio.run(_drain(rig.start("keep it", ctx=DiscussContext(kind="deletion_proposal",
-                                                                         proposal_id=999_999))))
-            debate = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
+        held_out = {}
+        for kind, ctx in (("deletion_proposal", DiscussContext(kind="deletion_proposal", proposal_id=999_999)),
+                          ("principle", DiscussContext(kind="principle", principle_id=999_999)),
+                          ("wrapup", DiscussContext(kind="wrapup", wrapup_scope="all", wrapup_period="30d"))):
+            with _stream_rig(_OK) as rig:
+                asyncio.run(_drain(rig.start("and this one?", ctx=ctx)))
+                held_out[kind] = [e[1] for e in rig.events if isinstance(e, tuple) and e[0] == "system"]
     finally:
         tonight.tonight_block = real
     assert free and "TONIGHT-X" in free[0], "free chat carries the candidates"
-    assert debate and "TONIGHT-X" not in debate[0], "a deletion debate does not"
+    for kind, sent in held_out.items():
+        assert sent and "TONIGHT-X" not in sent[0], f"a {kind} discussion does not"
 
 
 def test_a_reply_ends_with_actions_for_its_library_titles():

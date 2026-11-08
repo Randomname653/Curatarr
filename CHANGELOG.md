@@ -8,8 +8,10 @@ Condensed release history, newest first.
 
 **Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
 library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
-explicit form of "never delete this": the protection is written and confirmed at once, where
-the keep-detector's outcome used to arrive later in the bell (it still runs as before). Owned
+explicit form of "keep this": written and confirmed at once, where the keep-detector's outcome
+used to arrive later in the bell (it still runs as before). For the owner it is a protection;
+for a member a household voice the owner's protection rules weigh, and the button says so. A name
+the library holds as a film and as a series gets a row for each. Owned
 recommendation cards gained "Open in …" and "+ Watchlist" next to Discuss. Links go through
 app.plex.tv on Plex, so they work for a shared account away from home. The match is exact
 library names and the library ledger's server key; a title the reply did not set in bold, or one
@@ -18,8 +20,11 @@ the library does not hold, gets no row.
 **A Tonight card on the chat landing.** Above the chat a member now finds one pick for this
 moment of their own week, from their series in progress, stored recommendations and Swipe wants:
 on a weeknight the series they are in the middle of, on Friday and Saturday evening a film, on a
-Sunday afternoon a rewatch, during the day something they wanted to watch "for later". The line
-is a template of facts in the member's time zone, no model. "Open in Plex" (through
+Sunday afternoon a rewatch, during the day something they wanted to watch "for later". The lines
+are templates of facts in the member's time zone and language (English or German, as they write
+to the curator), no model; the second line is facts too (the titles a pick is close to, year and
+genres, Rediscover's own line), never the stored recommendation text. A series in progress
+opens on the series, not on the episode already watched. "Open in Plex" (through
 app.plex.tv, so it works away from home) or "Open in Jellyfin" opens it on their server, "+
 Watchlist" puts a stored pick on their watchlist in one tap, and "Something else" steps through
 the other candidates (`GET /api/home/tonight`).
@@ -29,7 +34,8 @@ taste rebuild, and the Recommendations page and the TV's "Curatarr Recommended" 
 nothing of it until the weekly regeneration. Now the member's stored picks nearest the loved
 title (at most three, from the library and because lanes) move up: first in their lane, marked
 "moved up" on the card, and first in the next playlist push, which the lift makes due. The
-answer says how many moved, and says nothing when none were close.
+answer says how many moved, and says nothing when none were close. Undoing a Loved swipe takes
+its lift back.
 
 **Swipe comes in decks of ten, with a reason you can read in two seconds.** The stack refilled
 for ever and its ring counted only seen-it answers toward the next taste refresh, so it barely

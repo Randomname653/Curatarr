@@ -98,6 +98,10 @@ check("the block: the header says when to use it, one line per candidate",
       lines[0] == tonight.HEADER and len(lines) == len(got) + 1
       and lines[2] == "- The Lantern Room (2019, film) - recommended because they watched Gull Point, "
                       "Tide Clock and Salt Road: Stored reason for The Lantern Room.", lines[:3])
+check("the header leaves a targeted ask to the curator's own knowledge (the owner's measured wording)",
+      "when they name a mood, genre or title to match, use one only if its stored reason matches it"
+      in tonight.HEADER and "otherwise answer as you would without this list" in tonight.HEADER
+      and tonight.HEADER.endswith("on any other turn leave them out."))
 check("no candidates, no block", tonight.block([]) == ""
       and tonight.tonight_block(424242, now=NOW) == "")
 sp = cp.build_system_prompt(voice="neutral", user_lang="en", tonight_context=text)
@@ -130,12 +134,24 @@ check("a weeknight: the series in progress first, its line names the weekday",
       and tue["items"][0]["headline"] == "A Tuesday evening: carry on with **Starfall Archive**"
       and tue["items"][0]["why"] == "You are in the middle of it - up to season 1, episode 4.", tue["items"][0])
 whys = {i["title"]: i["why"] for i in tue["items"]}
-check("the card's second line is said to the member, never the curator's wording",
-      whys["The Lantern Room"] == "Because you watched Gull Point, Tide Clock and Salt Road: "
-                                  "Stored reason for The Lantern Room."
+check("the card's second line is facts said to the member: never the stored pitch (the "
+      "curator's voice), never the wording meant for the model",
+      whys["The Lantern Room"] == "Because you watched Gull Point, Tide Clock and Salt Road · 2019"
+      and whys["North Signal"] == "In your library, not watched yet · 2019"
       and whys["Tide Clock"] == "You marked it 'Want to watch' in Swipe."
-      and whys["The Quiet Harbour"].startswith("Loved once, untouched for two years: ")
+      and not any("Stored reason for" in w and "Quiet Harbour" not in w for w in whys.values())
       and not any("they " in w or "do NOT" in w for w in whys.values()), whys)
+check("a Rediscover pick shows its one fact line (the lane's own, in the member's language), "
+      "not a second sentence that contradicts it",
+      whys["The Quiet Harbour"] == "Stored reason for The Quiet Harbour.", whys)
+de = tonight.tonight_card(UID, now=datetime(2026, 11, 10, 19, 0), zone=BERLIN, lang="de")
+check("a German member reads the card in German: label, line and facts",
+      de["label"] == "Heute Abend"
+      and de["items"][0]["headline"] == "Dienstagabend: weiter mit **Starfall Archive**"
+      and de["items"][0]["why"] == "Du bist mittendrin - bis Staffel 1, Folge 4."
+      and {i["title"]: i["why"] for i in de["items"]}["The Lantern Room"]
+      == "Weil du Gull Point, Tide Clock und Salt Road geschaut hast · 2019", de["items"][:2])
+check("an English member's label", tue["label"] == "Tonight")
 fri = card_at(datetime(2026, 11, 13, 19, 0))
 check("Friday evening: a film first", fri["items"][0]["category"] == "movie"
       and fri["items"][0]["headline"] == "Friday - room for a film: **The Lantern Room**", fri["items"][0])
@@ -160,10 +176,16 @@ import src.services.plex_watchlist as plex_watchlist  # noqa: E402
 import src.services.tonight as tonight_mod  # noqa: E402
 from src.routers import home  # noqa: E402
 
+from src.database.models import LibraryItem  # noqa: E402
+
 with conn.get_db_session() as db:
     db.query(CachedRecommendation).filter(CachedRecommendation.title == "The Lantern Room").update(
         {"plex_rating_key": "4711"})
+    db.add(LibraryItem(plex_rating_key="777", media_type="anime", title="Starfall Archive"))
     db.commit()
+series = next(c for c in tonight.candidates(UID, now=NOW) if c["kind"] == "series")
+check("a series in progress links to the series (the ledger's key), not the episode already watched",
+      series["key"] == "777", series)
 
 
 async def _mid(force=False):

@@ -558,7 +558,7 @@ function _paintTonight() {
   if (!it) { el.innerHTML = ''; return; }
   const canList = ['because', 'library', 'rediscover'].includes(it.kind);
   el.innerHTML = `<div class="card mt-14">
-    <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(_TONIGHT_LABEL[_tonight.moment] || 'Tonight')}</span></div>
+    <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(_tonight.label || _TONIGHT_LABEL[_tonight.moment] || 'Tonight')}</span></div>
     <p>${_bold(it.headline)}</p>
     <p class="fs-12 t3 mt-4">${esc(it.why)}</p>
     <div class="flex gap-8 flex-wrap mt-10">
@@ -682,21 +682,34 @@ export async function discussLastPlayed(i) {
 // the server, + Watchlist and Keep - the reply stops being text only. Keep is
 // the explicit form of "never delete this": a protection written now, said
 // now, instead of a detector's guess reported later in the bell.
+// Keep, for the owner, is a protection their own rules honour; for a member it
+// is a household voice the owner's protection rules weigh - the words say so.
+function _keepTip() {
+  return state.currentUser?.is_admin
+    ? 'Never propose it for deletion'
+    : "Tell the household you want to keep it - the owner's protection rules decide";
+}
 function _titleRow(bubble, titles) {
   if (!bubble?.isConnected || !Array.isArray(titles) || !titles.length) return;
+  const msgs = bubble.parentElement;
+  const stick = msgs ? _atBottom(msgs) : false;
+  // A film and a series of one name both get a row: say which is which.
+  const twice = new Set(titles.map(t => t.title).filter((n, i, all) => all.indexOf(n) !== i));
+  const noun = {movie: 'film', show: 'series', anime: 'anime', music: 'music'};
   const row = document.createElement('div');
   row.className = 'msg-actions';
   row.setAttribute('aria-live', 'off');
   row.innerHTML = titles.map(t => {
     const video = ['movie', 'show', 'anime'].includes(t.category);
     return `<div class="msg-actions-item" role="group" aria-label="${escAttr(t.title)}">
-      <span class="msg-actions-t">${esc(t.title)}</span>
+      <span class="msg-actions-t">${esc(t.title)}${twice.has(t.title) ? ` · ${esc(noun[t.category] || t.category)}` : ''}</span>
       ${t.link ? `<a class="btn btn-secondary btn-sm" href="${escAttr(t.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
       ${video ? `<button type="button" class="btn btn-ghost btn-sm" ${act('titleWatchlist', t.title, t.category, EL)}>+ Watchlist</button>` : ''}
-      <button type="button" class="btn btn-ghost btn-sm" title="Never propose it for deletion" ${t.protected ? 'disabled' : ''} ${act('titleKeep', t.title, t.category, EL)}>${t.protected ? 'Kept' : 'Keep'}</button>
+      <button type="button" class="btn btn-ghost btn-sm" title="${escAttr(_keepTip())}" ${t.protected ? 'disabled' : ''} ${act('titleKeep', t.title, t.category, EL)}>${t.protected ? 'Kept' : 'Keep'}</button>
     </div>`;
   }).join('');
   bubble.after(row);
+  if (msgs) _follow(msgs, false, stick);   // the row, too, comes into view when the reply did
 }
 export async function titleWatchlist(title, category, btn) {
   btnBusy(btn, 'Adding…');
@@ -715,7 +728,9 @@ export async function titleKeep(title, category, btn) {
     await api('/api/home/keep', 'POST', { title, category });
     btnDone(btn, 'Kept');
     btn.disabled = true;
-    toast(`Kept: ${title} will not be proposed for deletion`, 'success');
+    toast(state.currentUser?.is_admin
+      ? `Kept: ${title} will not be proposed for deletion`
+      : `Noted: you want to keep ${title} - the owner's protection rules weigh it`, 'success');
   } catch (e) {
     btnDone(btn, 'Keep');
     toast(`Not kept: ${_errMsg(e)}`, 'danger');

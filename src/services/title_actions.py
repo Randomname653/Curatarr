@@ -38,17 +38,20 @@ def bold_titles(reply: str) -> list[str]:
 def match(spans: list[str], index: list) -> list[tuple]:
     """[(library title, category)] for the spans that ARE a library title
     (normalized equality, not containment: "**Signal**" is not "North
-    Signal"). ``index``: [(normalized, title, category)]. Pure."""
+    Signal"). ``index``: [(normalized, title, category)]. A name the library
+    holds as a film AND a series gives both - the reply's bold does not say
+    which, and picking the first index entry wrote the watchlist add and the
+    keep under the wrong category. Pure."""
     by_norm: dict = {}
     for n, title, cat in index:
-        by_norm.setdefault(n, (title, cat))
+        hits = by_norm.setdefault(n, [])
+        if (title, cat) not in hits:
+            hits.append((title, cat))
     out = []
     for span in spans:
-        hit = by_norm.get(_norm(span))
-        if hit and hit not in out:
-            out.append(hit)
-        if len(out) == MAX_TITLES:
-            break
+        for hit in by_norm.get(_norm(span), []):
+            if hit not in out and len(out) < MAX_TITLES:
+                out.append(hit)
     return out
 
 

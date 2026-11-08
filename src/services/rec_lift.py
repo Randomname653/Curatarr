@@ -62,6 +62,20 @@ def _mark(ids: list, loved_title: str, now: datetime) -> None:
         db.commit()
 
 
+def unlift(user_id: int, category: str, loved_title: str) -> int:
+    """Take back the lift a Loved of ``loved_title`` gave (an undone Swipe
+    answer): its picks fall back to their match order. Returns how many.
+    Blocking."""
+    from src.database.connection import get_db_session
+    from src.database.models import CachedRecommendation as R
+    with get_db_session() as db:
+        n = (db.query(R).filter(R.user_id == user_id, R.category == category,
+                                R.lifted_by == loved_title[:500])
+             .update({"lifted_at": None, "lifted_by": None}, synchronize_session=False))
+        db.commit()
+    return n
+
+
 async def lift_near(user_id: int, category: str, loved_title: str,
                     seed_doc_id: Optional[str] = None, now: Optional[datetime] = None) -> list[str]:
     """Lift the member's stored picks nearest ``loved_title`` (its vector by

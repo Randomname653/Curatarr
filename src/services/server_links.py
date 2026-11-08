@@ -12,8 +12,15 @@ server's own LAN address would not); Jellyfin through the adapter's
 ``deep_link`` on the server's web app.
 """
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+# A failed machine-id lookup is remembered this long: with Plex away, every
+# GET that wants a link (Tonight, the recommendations, a chat reply) waited
+# for the /identity timeout again (code review 2026-11-08).
+MISS_TTL_S = 120.0
+_miss = {"until": 0.0}
 
 PLEX_WEB = "https://app.plex.tv/desktop/#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
 
@@ -31,9 +38,16 @@ async def attach_links(items: list, key_field: str = "key") -> None:
                 if is_jellyfin_key(it.get(key_field)):
                     it["link"] = jf.deep_link(str(it[key_field]))
             return
+        if time.monotonic() < _miss["until"]:
+            return
         from src.services.plex_playlists import get_machine_identifier
-        mid = await get_machine_identifier()
+        try:
+            mid = await get_machine_identifier()
+        except Exception:
+            _miss["until"] = time.monotonic() + MISS_TTL_S
+            raise
         if not mid:
+            _miss["until"] = time.monotonic() + MISS_TTL_S
             return
         for it in items:
             if is_plex_key(it.get(key_field)):
