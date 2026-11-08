@@ -37,14 +37,20 @@ playlists on the server is told so, not "nothing found".
 
 **Share a slide as a picture.** Every slide of the story has "Share": its share line, the
 period's label and the wordmark drawn as an image in the browser and handed to the phone's share
-sheet, or saved. Nothing is uploaded, and no server, user or household name is on it.
+sheet, or saved. Nothing is uploaded, and no server, user or household name is on it, nor a
+device name (they often carry one). The line is fitted by its measured width, the type made
+smaller rather than a word cut.
 
 **Warmer words when the writer falls short.** A slide the writer could not write used to say
-its fact followed by the editor's note on why it mattered. Now it says the fact and a warm line
-for its kind, the next pick is an offer ("Next, if you feel like it: …") instead of "you have
-not played it yet", and headlines, warm lines, archetype names and the stand-in story without
-the curator come in English or German like the story. The fact sentences themselves are still
-English for a German story until the UI language round.
+its fact followed by the editor's note on why it mattered. Now it says the fact with the headline
+and the warm line of that very fact ("The long wait … Good things keep."), and none where none
+fits; the next pick is an offer ("Next, if you feel like it: …") instead of "you have not played
+it yet". In a German story all of it is German, the fact included, with German numbers ("18,2
+Stunden", "44 %"), as are the archetype names, the stand-in story without the curator and the
+"Your week" card. A story never says a field name ("new_share") any more: the writer no longer
+sees them, and a section that says one is rewritten. The editor and the writer carry the voice's
+law, the work and never the person, for the archetype line too, and the balance card says what
+the server did ("the server grew"), not what the member is.
 
 **Talk turns into action.** Under a chat reply, every title the curator set in bold that is in the
 library gets a row: "Open in Plex" or "Open in Jellyfin", "+ Watchlist" and "Keep". Keep is the
@@ -75,7 +81,8 @@ nothing of it until the weekly regeneration. Now the member's stored picks neare
 title (at most three, from the library and because lanes) move up: first in their lane, marked
 "moved up" on the card, and first in the next playlist push, which the lift makes due. The
 answer says how many moved, and says nothing when none were close. Undoing a Loved swipe takes
-its lift back.
+its lift back, even while the lift is still being worked out, and only its own: a "Loved it" in
+chat on the same title keeps its lift.
 
 **Swipe comes in decks of ten, with a reason you can read in two seconds.** The stack refilled
 for ever and its ring counted only seen-it answers toward the next taste refresh, so it barely
