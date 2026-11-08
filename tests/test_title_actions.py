@@ -75,6 +75,25 @@ check("Keep writes one protection, as the chat's keep-detector does, and is idem
       and rows == [("manual", "movie")], rows)
 check("the deletion judge reads a member's Keep as the household's", judge_sees == ["Member"], judge_sees)
 
+# A film and a series of one name: keeping the one is not keeping the other.
+DUO = [("harbour lights", "Harbour Lights", "movie"), ("harbour lights", "Harbour Lights", "show")]
+asyncio.run(home.keep(home.KeepBody(title="Harbour Lights", category="movie"), user=SimpleNamespace(id=UID)))
+duo = {r["category"]: r["protected"] for r in ta.for_reply(UID, "**Harbour Lights**", lambda: DUO)}
+check("Keep on the film shows the film as kept, not the series of the same name",
+      duo == {"movie": True, "show": False}, duo)
+series = asyncio.run(home.keep(home.KeepBody(title="Harbour Lights", category="show"), user=SimpleNamespace(id=UID)))
+duo = {r["category"]: r["protected"] for r in ta.for_reply(UID, "**Harbour Lights**", lambda: DUO)}
+check("...and the series is kept with its own tap, a protection of its own",
+      series == {"ok": True, "already": False} and duo == {"movie": True, "show": True}, (series, duo))
+with conn.get_db_session() as db:
+    db.add(ProtectedMedia(user_id=UID, identifier="Tide Clock", title="Tide Clock", category=None, source="manual"))
+    db.commit()
+both = ta.for_reply(UID, "**Tide Clock**", lambda: [("tide clock", "Tide Clock", "movie"), ("tide clock", "Tide Clock", "show")])
+check("a keep without a category (the chat's keep-detector) holds for both",
+      [r["protected"] for r in both] == [True, True]
+      and asyncio.run(home.keep(home.KeepBody(title="Tide Clock", category="show"), user=SimpleNamespace(id=UID)))
+      == {"ok": True, "already": True}, both)
+
 # ── links: the chat frame and the recommendation cards ──────────────────────
 
 import src.services.media_server as media_server  # noqa: E402

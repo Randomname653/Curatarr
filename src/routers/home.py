@@ -78,11 +78,15 @@ def keep_title(user_id: int, title: str, category: str) -> dict:
     the owner's own keeps hold the title out of the proposals. Idempotent.
     Blocking."""
     from datetime import datetime
+    from sqlalchemy import or_
     from src.database.connection import get_db_session
     from src.database.models import ProtectedMedia
     with get_db_session() as db:
+        # Idempotent per title AND category: a film and a series of one name
+        # are kept one by one (a keep without a category holds for both).
         row = (db.query(ProtectedMedia)
-               .filter(ProtectedMedia.user_id == user_id, ProtectedMedia.identifier == title).first())
+               .filter(ProtectedMedia.user_id == user_id, ProtectedMedia.identifier == title,
+                       or_(ProtectedMedia.category == category, ProtectedMedia.category.is_(None))).first())
         if row is not None:
             return {"ok": True, "already": True}
         db.add(ProtectedMedia(user_id=user_id, identifier=title, title=title, category=category,
