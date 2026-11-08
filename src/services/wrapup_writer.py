@@ -481,6 +481,22 @@ def default_edit(cards: list, traits: list, picks: dict, lang: str = "en") -> di
             "next_pick": next(iter(picks), ""), "cluster_names": []}
 
 
+# What the editor needs to know about writing in a language. German nouns
+# for a person carry a gender ("-siegerin"), and the member's is not known:
+# the archetype names the way of watching, its line says what was watched.
+_LANGUAGE_NOTES = {
+    "de": ("\n  In German the archetype_title names a way of watching, not a person: no gendered person noun "
+           "(\"Serien-Sprint\", not \"Serien-Sprintsiegerin\"), and the archetype_subhead uses no personal "
+           "pronoun (er, sie) - it says what was watched."),
+}
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\uFE0F\u200D]")
+
+
+def no_emoji(text: str) -> str:
+    """Archetype, line and share line carry no emoji (the UI's own rule)."""
+    return re.sub(r"\s{2,}", " ", _EMOJI.sub("", text or "")).strip()
+
+
 # Cards that say how MUCH was watched, not what was chosen: no roast. A roast
 # teases a choice; "a pathetic drop from ..." (owner's read on real data) is a
 # verdict on the watching itself.
@@ -535,7 +551,7 @@ cards. You choose; you do not write the story yet.
 - next_pick: the U# pick to end on, or "" when there is none.
 - cluster_names: a 2-4 word name for each C# taste cluster, if any.
 - Write archetype_title, archetype_subhead, share_line and cluster_names in {language}, the
-  language of the story.
+  language of the story, without emojis.{language_note}
 - """ + WORK + """
 Answer with the JSON object only."""
 
@@ -656,7 +672,8 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     # 1. the editor
     edit, edit_source = None, "fallback"
     try:
-        raw = await _ask([{"role": "system", "content": EDITOR_SYSTEM.format(language=LANG_NAMES.get(lang, "English"))},
+        raw = await _ask([{"role": "system", "content": EDITOR_SYSTEM.format(
+                              language=LANG_NAMES.get(lang, "English"), language_note=_LANGUAGE_NOTES.get(lang, ""))},
                           {"role": "user", "content": "CARDS:\n" + "\n".join(_card_line(c) for c in cards)
                            + (f"\nTRAITS: {', '.join(traits)}" if traits else "")
                            + (f"\nPICKS: " + "; ".join(f"{k} {v['title']}" for k, v in picks.items())
@@ -683,7 +700,7 @@ async def write(facts: dict, sheet: str, idx: dict, cards: list, *, quotes: list
     names = known_titles
     allowed_head = set().union(*(numerals(_card_line(c)) for c in cards)) | _small()
     for k in ("archetype_title", "archetype_subhead", "share_line"):
-        edit[k] = fix_style(edit.get(k) or "", names, lang)
+        edit[k] = no_emoji(fix_style(edit.get(k) or "", names, lang))
         if numerals(edit[k]) - allowed_head or stray_placeholders(edit[k], slots):
             edit[k] = default_edit(cards, traits, picks, lang)[k]
 

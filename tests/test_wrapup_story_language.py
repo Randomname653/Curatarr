@@ -65,7 +65,7 @@ by_key = {c["key"]: c for c in de}
 top, wait, binge = by_key["top_title_clear"], by_key["wait_longest"], by_key["binge"]
 plan = ('{"arc": ["%s", "%s", "%s"], "roast": "%s", "toast": "%s", "archetype_trait": "night_owl", '
         '"archetype_title": "Die Nachtschicht", "archetype_subhead": "Das meiste lief spät.", '
-        '"share_line": "Ein Oktober mit Starfall Archive", "next_pick": "", "cluster_names": []}'
+        '"share_line": "Ein Oktober mit Starfall Archive 🐎", "next_pick": "", "cluster_names": []}'
         % (top["id"], binge["id"], wait["id"], wait["id"], top["id"]))
 german = "\n".join([
     f"## {top['id']} | Ein Monat, ein Titel",
@@ -89,6 +89,11 @@ editor_sys, editor_msg = calls[0]["messages"][0]["content"], calls[0]["messages"
 brief = calls[1]["messages"][1]["content"]
 check("the editor is told to write the archetype, subhead and share line in German",
       "in German, the" in editor_sys and "{language}" not in editor_sys, editor_sys[-400:])
+check("a German editor names a way of watching, not a person: no gendered noun, no pronoun in the line",
+      "no gendered person noun" in editor_sys
+      and "archetype_subhead uses no personal pronoun (er, sie)" in editor_sys, editor_sys[-500:])
+check("no emoji in the share line, archetype or its line", story["share_line"] == "Ein Oktober mit Starfall Archive",
+      story["share_line"])
 check("the editor's cards and the writer's brief carry no English unit, decimal point or ISO date",
       not ENGLISH.search(editor_msg) and not ENGLISH.search(brief) and "Stunden" in brief,
       ENGLISH.findall(editor_msg + brief))
@@ -131,6 +136,7 @@ try:
     rs, _, _ = asyncio.run(ww.write(F, "", idx, cards_en, lang="en"))
 finally:
     ww._ask = _real
+check("an English editor gets no German note", "gendered" not in calls[0]["messages"][0]["content"])
 check("a drop in hours is no choice to roast: the editor is told so, and its pick is replaced",
       "never one about\n  how much they watched" in calls[0]["messages"][0]["content"]
       and drop["claim"] not in rs["roast_and_toast"]["roast"], (rs["roast_and_toast"], drop["claim"]))
