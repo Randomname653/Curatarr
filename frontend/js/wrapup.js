@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { serverLabel, state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
-import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, haptic, loc, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, escAttr, haptic, loc, toast } from './ui.js';
 import { playStory } from './wrapup_story.js';
 import { brandMarkHtml } from './brand.js';
 
@@ -531,14 +531,28 @@ export async function pushWrapupPlaylist(btn) {
   btnBusy(btn, 'Building the playlist…');
   try {
     const r = await api('/api/wrapup/playlist', 'POST', {scope: wu.scope, period: _periodKey()});
-    const names = (r.pushed || []).map(p => `“${p.title}” (${p.items})`).join(' and ');
     haptic('medium');
-    toast(`On ${serverLabel()} now: ${names}${r.missing?.length ? ` · not found: ${r.missing.slice(0, 3).join(', ')}` : ''}`, 'success');
     btnDone(btn, 'Playlist updated');
+    // The play card: the playlist one tap from playing, on the member's server.
+    document.getElementById('wu-play-card')?.remove();
+    btn.parentElement?.insertAdjacentHTML('afterend', playlistCardHtml(r, 'wu-play-card'));
   } catch (e) {
     toast(_errMsg(e).slice(0, 200), 'danger');
     btnDone(btn, `Make it a ${serverLabel()} playlist`);
   }
+}
+
+// The answer of POST /api/wrapup/playlist as a card: what is on the server
+// now, a button that plays it, what was not found. Shared with the landing's
+// "Your week" / "Your month" cards (chat.js).
+export function playlistCardHtml(r, id = '') {
+  const pushed = r.pushed || [];
+  return `<div class="card mt-14"${id ? ` id="${id}"` : ''} role="status">
+    <p>On ${esc(serverLabel())} now: ${pushed.map(p => `<b>${esc(p.title)}</b> (${esc(String(p.items))})`).join(' and ')}</p>
+    ${r.missing?.length ? `<p class="fs-12 t3">Not found on the server: ${esc(r.missing.slice(0, 3).join(', '))}</p>` : ''}
+    <div class="flex gap-8 flex-wrap mt-10">${pushed.filter(p => p.link).map(p =>
+      `<a class="btn btn-primary btn-sm" href="${escAttr(p.link)}" target="_blank" rel="noopener">Play ${esc(p.title)}</a>`).join('')}</div>
+  </div>`;
 }
 
 // ── snapshot: the share card and the festival lineup (Amazon) ──────────────

@@ -160,16 +160,18 @@ async def push_user_music_playlist(user, *, adapter=None) -> dict:
     return {"pushed": ["music"]}
 
 
-async def push_wrapup_playlist(user, label: str, videos: list, tracks: list, *, adapter=None) -> dict:
-    """The Wrap-Up's titles one tap away: ``{"pushed": [{title, items}],
-    "missing": [title]}``, as the Plex push answers."""
+async def push_wrapup_playlist(user, label: str, videos: list, tracks: list, *, adapter=None,
+                               name=None, aliases: tuple = ()) -> dict:
+    """The Wrap-Up's titles one tap away: ``{"pushed": [{title, items, key}],
+    "missing": [title]}``, as the Plex push answers; ``key`` the playlist's
+    id, for a link that plays it. ``name`` / ``aliases`` as the Plex push."""
     from src.database.runner import run_read
     from src.services.plex_playlists import _MAX_WRAPUP_ITEMS, WRAPUP_PLAYLIST_PREFIX, _section_keys
     who = await server_user(user.id)
     if who is None:
         return {"skipped": "no_jellyfin_account"}
     adapter = _adapter(adapter)
-    title = WRAPUP_PLAYLIST_PREFIX + label
+    title = name or WRAPUP_PLAYLIST_PREFIX + label
     missing, video_keys, track_keys, sections = [], [], [], {}
     for v in videos[:_MAX_WRAPUP_ITEMS]:
         cat = v.get("media_type")
@@ -189,9 +191,10 @@ async def push_wrapup_playlist(user, label: str, videos: list, tracks: list, *, 
     for media, keys, suffix in (("Video", video_keys, ""), ("Audio", track_keys, " · Music")):
         if not keys:
             continue
-        name = title + (suffix if video_keys and track_keys else "")
-        await adapter.upsert_playlist(who, name, keys, media)
-        pushed.append({"title": name, "items": len(keys)})
+        tail = suffix if video_keys and track_keys else ""
+        pid = await adapter.upsert_playlist(who, title + tail, keys, media,
+                                            aliases=tuple(a + tail for a in aliases))
+        pushed.append({"title": title + tail, "items": len(keys), "key": str(pid) if pid else None})
     return {"pushed": pushed, "missing": missing}
 
 

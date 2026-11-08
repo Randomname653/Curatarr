@@ -315,19 +315,26 @@ async def set_prefs(body: dict, user: User = Depends(get_current_user)):
 @router.post("/playlist")
 async def push_playlist(body: dict, user: User = Depends(get_current_user)):
     """Put this wrap-up's titles into a playlist on the user's own account,
-    on whichever media server this install runs (Plex or Jellyfin)."""
+    on whichever media server this install runs (Plex or Jellyfin), and
+    answer a link that plays it. A week's and a month's playlist is one
+    rolling playlist each, named in the member's language
+    (services/playlist_names), so a tap on the "Your week" card replaces last
+    week's instead of piling up."""
     from src.database.runner import run_read
     from src.services.media_server import active_kind
+    from src.services.playlist_names import name as playlist_name, names as playlist_names
     from src.services.plex_playlists import push_wrapup_playlist
-    from src.services.wrapup_store import load
+    from src.services.server_links import attach_links
+    from src.services.user_language import user_language
 
     scope = str(body.get("scope") or "all")
     period = str(body.get("period") or "30d")
     p = _period(scope, period, await _zone(user))
-    row = await run_read(load, user.id, scope, period)
-    facts = (row or {}).get("facts") or {}
+    # The stored facts, or fresh ones: a card's tap can come before the page
+    # was ever opened for that week.
+    facts, _row = await current_facts(user, scope, period)
     if not facts or facts.get("empty"):
-        raise HTTPException(404, "Open the wrap-up first")
+        raise HTTPException(404, "Nothing played in this period yet")
     videos, seen = [], set()
     for t in facts.get("top") or []:
         if t["media_type"] != "music" and t["title"] not in seen:
@@ -343,8 +350,13 @@ async def push_playlist(body: dict, user: User = Depends(get_current_user)):
     if not videos and not tracks:
         raise HTTPException(404, "Nothing in this wrap-up to put in a playlist")
     server = "Jellyfin" if active_kind() == "jellyfin" else "Plex"
+    slot = {"week:": "wrapup_week", "month:": "wrapup_month"}.get(period[:period.find(":") + 1])
+    name, aliases = None, ()
+    if slot:
+        name = playlist_name(slot, await run_read(user_language, user.id))
+        aliases = tuple(sorted(playlist_names(slot) - {name}))
     try:
-        out = await push_wrapup_playlist(user, p.label, videos, tracks)
+        out = await push_wrapup_playlist(user, p.label, videos, tracks, name=name, aliases=aliases)
     except Exception as e:
         logger.warning("[wrapup] playlist push for %s failed: %s", user.plex_username, e)
         raise HTTPException(502, f"{server} did not take the playlist — try again in a moment")
@@ -354,6 +366,12 @@ async def push_playlist(body: dict, user: User = Depends(get_current_user)):
         # It fell through to "not found in Plex" (UX audit 2026-11-08, W4).
         raise HTTPException(409, "Your Curatarr account is not linked to a Jellyfin user yet - "
                                  "sign out and in again with Jellyfin once")
+    if out.get("skipped") == "no_server_access":
+        raise HTTPException(409, f"{server} does not let Curatarr write to your account on this server yet")
     if not out.get("pushed"):
         raise HTTPException(404, f"None of these titles were found in {server}")
+    # A link that plays it (services/server_links); the key is the client's no longer.
+    await attach_links(out["pushed"], playlist=True)
+    for pl in out["pushed"]:
+        pl.pop("key", None)
     return out

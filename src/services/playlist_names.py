@@ -12,10 +12,12 @@ from __future__ import annotations
 NAMES = {
     "en": {"movie": "Curatarr Recommended · Movies", "show": "Curatarr Recommended · Shows",
            "anime": "Curatarr Recommended · Anime", "music": "Curatarr Recommended · Music",
-           "watchlist": "Curatarr Watchlist", "because": "Curatarr · Because You Watched"},
+           "watchlist": "Curatarr Watchlist", "because": "Curatarr · Because You Watched",
+           "wrapup_week": "Curatarr · Your Week", "wrapup_month": "Curatarr · Your Month"},
     "de": {"movie": "Curatarr empfiehlt · Filme", "show": "Curatarr empfiehlt · Serien",
            "anime": "Curatarr empfiehlt · Anime", "music": "Curatarr empfiehlt · Musik",
-           "watchlist": "Curatarr Merkliste", "because": "Curatarr · Weil du geschaut hast"},
+           "watchlist": "Curatarr Merkliste", "because": "Curatarr · Weil du geschaut hast",
+           "wrapup_week": "Curatarr · Deine Woche", "wrapup_month": "Curatarr · Dein Monat"},
 }
 
 

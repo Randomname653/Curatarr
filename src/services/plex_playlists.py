@@ -740,14 +740,20 @@ async def resolve_track_key(track: str, artist: str, sections: Optional[list[str
     return None
 
 
-async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: list[dict]) -> dict:
+async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: list[dict], *,
+                               name: Optional[str] = None, aliases: tuple = ()) -> dict:
     """Create (or replace) the user's wrap-up playlist(s). ``videos``:
-    [{title, media_type}], ``tracks``: [{track, artist}]. Returns
-    {"pushed": [{title, items}], "missing": [title…]} or {"skipped": reason}."""
+    [{title, media_type}], ``tracks``: [{track, artist}]. ``name``: the
+    playlist's name instead of "Curatarr Wrap-Up · <label>" (the rolling week
+    and month playlists, in the member's language); ``aliases``: its names in
+    the other languages, replaced too. Returns {"pushed": [{title, items,
+    key}], "missing": [title…]} or {"skipped": reason}; ``key`` is the
+    playlist's own, for a link that plays it."""
     from src.services.media_server import active_kind
     if active_kind() == "jellyfin":
         from src.services.media_server import jellyfin_writes
-        return await jellyfin_writes.push_wrapup_playlist(user, label, videos, tracks)
+        return await jellyfin_writes.push_wrapup_playlist(user, label, videos, tracks,
+                                                          name=name, aliases=aliases)
     if not user.plex_token:
         return {"skipped": "no_token"}
     if not await get_machine_identifier():
@@ -755,7 +761,7 @@ async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: lis
     token = await server_token(user)
     if not token:
         return {"skipped": "no_server_access"}
-    title = WRAPUP_PLAYLIST_PREFIX + label
+    title = name or WRAPUP_PLAYLIST_PREFIX + label
     pushed, missing = [], []
 
     video_keys = []
@@ -785,11 +791,14 @@ async def push_wrapup_playlist(user, label: str, videos: list[dict], tracks: lis
     for kind, keys, suffix in (("video", video_keys, ""), ("audio", track_keys, " · Music")):
         if not keys:
             continue
-        name = title + (suffix if video_keys and track_keys else "")
+        tail = suffix if video_keys and track_keys else ""
+        pl_name = title + tail
+        replaced = {pl_name, *(a + tail for a in aliases)}
         for pl in await list_playlists(token, kind):
-            if pl.get("title") == name:
+            if pl.get("title") in replaced:
                 await delete_playlist(token, str(pl.get("ratingKey")))
-        meta = await create_playlist(token, name, keys, playlist_type=kind)
-        pushed.append({"title": name, "items": int((meta or {}).get("leafCount") or len(keys))})
-        logger.info("[playlists] %s: pushed wrap-up '%s' (%d items)", user.plex_username, name, len(keys))
+        meta = await create_playlist(token, pl_name, keys, playlist_type=kind)
+        pushed.append({"title": pl_name, "items": int((meta or {}).get("leafCount") or len(keys)),
+                       "key": str((meta or {}).get("ratingKey") or "") or None})
+        logger.info("[playlists] %s: pushed wrap-up '%s' (%d items)", user.plex_username, pl_name, len(keys))
     return {"pushed": pushed, "missing": missing}

@@ -23,11 +23,14 @@ MISS_TTL_S = 120.0
 _miss = {"until": 0.0}
 
 PLEX_WEB = "https://app.plex.tv/desktop/#!/server/{mid}/details?key=%2Flibrary%2Fmetadata%2F{key}"
+PLEX_PLAYLIST = "https://app.plex.tv/desktop/#!/server/{mid}/playlist?key=%2Fplaylists%2F{key}"
 
 
-async def attach_links(items: list, key_field: str = "key") -> None:
+async def attach_links(items: list, key_field: str = "key", *, playlist: bool = False) -> None:
     """Set ``item["link"]`` on every item whose ``key_field`` is a key of the
-    active server. Never raises: a surface works without links."""
+    active server; ``playlist``: the keys are playlists (the Wrap-Up's), the
+    link opens the playlist to play. Never raises: a surface works without
+    links."""
     from src.services.media_server import active_kind
     from src.services.media_server.base import is_jellyfin_key, is_plex_key
     try:
@@ -49,8 +52,9 @@ async def attach_links(items: list, key_field: str = "key") -> None:
         if not mid:
             _miss["until"] = time.monotonic() + MISS_TTL_S
             return
+        fmt = PLEX_PLAYLIST if playlist else PLEX_WEB
         for it in items:
             if is_plex_key(it.get(key_field)):
-                it["link"] = PLEX_WEB.format(mid=mid, key=it[key_field])
+                it["link"] = fmt.format(mid=mid, key=it[key_field])
     except Exception as e:  # noqa: BLE001 - links are a convenience; the surface stands without them
         logger.warning("[links] no server links: %s", e)

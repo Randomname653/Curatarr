@@ -3,6 +3,7 @@ import { EL, EVENT, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDi
 import { api } from './api.js';
 import { serverLabel, state } from './state.js';
 import { _updateKbBadge } from './kb.js';
+import { playlistCardHtml } from './wrapup.js';
 import { showView } from './nav.js';
 import { _deleteBody, deleteFateLines } from './deletions.js';
 import { applyOrphanRepair } from './libraries.js';
@@ -552,9 +553,25 @@ export async function loadMomentsCards() {
       ${(c.lines || []).map(l => `<p>${_bold(l)}</p>`).join('')}
       <div class="flex gap-8 flex-wrap mt-10">
         <button type="button" class="btn btn-primary btn-sm" ${act('openWrapupPeriod', c.key)}>${esc(_MOMENT_OPEN[c.kind] || 'Open')}</button>
+        ${c.kind === 'week' || c.kind === 'month' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('momentPlaylist', c.key, EL)}>Make it a playlist</button>` : ''}
         <button type="button" class="btn btn-ghost btn-sm" ${act('hideMoment', c.key)}>Not now</button>
       </div></div>`).join('');
   } catch { el.innerHTML = ''; } // best-effort nicety: the Wrap-Up page has it all
+}
+// The week's / month's titles as one rolling playlist on the member's own
+// server (POST /api/wrapup/playlist), then the play card in place.
+export async function momentPlaylist(key, btn) {
+  btnBusy(btn, 'Building the playlist…');
+  try {
+    const r = await api('/api/wrapup/playlist', 'POST', { scope: 'all', period: key });
+    haptic('medium');
+    btn.closest('.card')?.insertAdjacentHTML('afterend', playlistCardHtml(r));
+    btnDone(btn, 'Playlist ready');
+    btn.disabled = true;
+  } catch (e) {
+    btnDone(btn, 'Make it a playlist');
+    toast(_errMsg(e).slice(0, 200), 'danger');
+  }
 }
 export function hideMoment(key) {
   try {
