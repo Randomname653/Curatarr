@@ -163,6 +163,29 @@ async def get_taste(
 _POSTER_PAGE_MAX = 12
 
 
+def _pinned_ids(keys: list) -> dict:
+    """{(title, media_type): (tmdb_id, tvdb_id)} from the owner's match pins
+    (Knowledge Base -> Fix match) for the given play titles, matched by
+    name (alphanumerics only) and category; a show pin also answers for an
+    anime play and the other way round (one Sonarr serves both). Blocking."""
+    from src.database.models import MediaMatchOverride as O
+    from src.services.external_ids import _norm
+    want: dict = {}
+    for title, mt in keys:
+        want.setdefault(_norm(title), []).append((title, mt))
+    out: dict = {}
+    series = {"show", "anime"}
+    with get_db_session() as db:
+        rows = (db.query(O.title, O.category, O.tmdb_id, O.tvdb_id)
+                .filter((O.tmdb_id.isnot(None)) | (O.tvdb_id.isnot(None))).all())
+    for title, cat, tmdb, tvdb in rows:
+        for key in want.get(_norm(title or ""), []):
+            mt = key[1]
+            if not cat or cat == mt or {cat, mt} <= series:
+                out.setdefault(key, (tmdb, tvdb))
+    return out
+
+
 @router.get("/recent")
 async def recent_history(
     limit: int = Query(default=100, le=500),
@@ -211,13 +234,24 @@ async def recent_history(
         lookups = {}
         for e in entries:
             key = (e.series_title or e.title, e.media_type)
-            lookups.setdefault(key, (e.tmdb_id, e.artist_mbid))
+            lookups.setdefault(key, (e.tmdb_id, e.artist_mbid, None))
+        # A play row without an id fell back to a title search, and a short
+        # title found the wrong show ("Evil" drew another series' poster)
+        # although the owner had pinned the right one (2026-11-09): the pin
+        # comes first.
+        need = [k for k, ids in lookups.items() if not ids[0] and not ids[1] and k[1] != "music"]
+        if need:
+            try:
+                for key, (tmdb, tvdb) in (await run_read(_pinned_ids, need)).items():
+                    lookups[key] = (tmdb, None, tvdb)
+            except Exception as _pe:  # noqa: BLE001 - the title search stays the fallback
+                logger.warning("[history] match pins unreadable for posters: %s", _pe)
 
         async def _one(key, ids):
             lookup_title, cat = key
             try:
                 poster, _ = await _fetch_tmdb(lookup_title, cat or "movie",
-                                              tmdb_id=ids[0], mbid=ids[1])
+                                              tmdb_id=ids[0], mbid=ids[1], tvdb_id=ids[2])
                 return key, poster
             except Exception as _e:
                 from src.services.enrichment_state import log_topup_failure
