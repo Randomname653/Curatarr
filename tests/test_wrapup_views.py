@@ -9,6 +9,7 @@ there is enough to show.
     python tests/test_wrapup_views.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import json
 import re
@@ -104,7 +105,7 @@ if node:
     for d in range(7):
         for h in (8, 20, 21, 22, 23):
             clock_rows[d][h] = 0.5 + d * 0.1 + h * 0.01
-    harness = r"""
+    harness = i18n_js() + r"""
 const window = {matchMedia: () => ({matches: true})};
 const document = {};
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

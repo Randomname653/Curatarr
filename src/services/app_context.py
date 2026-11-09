@@ -75,12 +75,13 @@ APP_MAP_TEMPLATE = (
     "cards an '⟦recs.add⟧' button (admin) that adds the title to the right "
     "arr).\n"
     "- '⟦nav.swipe⟧': titles near the user's taste that they have not played in "
-    "Plex, one card at a time. Not seen: 'Not seen' moves on, 'Want to "
-    "watch' also puts the title on their own Plex watchlist. Seen: "
-    "Disliked / Meh / Liked / Loved, or exact 1-10 stars ('Seen it - how "
-    "good'). Seen-and-rated answers shape their taste profile - the way to "
-    "teach it what they watched elsewhere (Netflix, cinema); 'Want to "
-    "watch' does not, it is a plan, not a verdict.\n"
+    "Plex, one card at a time. Not seen: '⟦swipe.react.notseen⟧' moves on, "
+    "'⟦swipe.react.want⟧' also puts the title on their own Plex watchlist. Seen: "
+    "⟦swipe.react.disliked⟧ / ⟦swipe.react.meh⟧ / ⟦swipe.react.liked⟧ / ⟦swipe.react.loved⟧, "
+    "or exact 1-10 stars ('⟦swipe.exact_head|Seen it - how good⟧'). Seen-and-rated "
+    "answers shape their taste profile - the way to "
+    "teach it what they watched elsewhere (Netflix, cinema); "
+    "'⟦swipe.react.want⟧' does not, it is a plan, not a verdict.\n"
     "- '⟦nav.deletions⟧' (admin): your deletion proposals, each marked 'Cut' or "
     "'Your call' with a 'Why?' that lists the strongest signals in its "
     "deletion score, and each with a 'Delete' "
@@ -234,9 +235,6 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Upgrade candidates",
     "Redundant storage",
     "Learned principles",
-    "Not seen",
-    "Want to watch",
-    "Seen it",
     "Delete selected",
     "Fix match",
     "Back after deletion",

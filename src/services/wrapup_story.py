@@ -385,13 +385,16 @@ def fallback_story(f: dict, idx: dict, lang: str = "en") -> dict:
 # ── the background task ─────────────────────────────────────────────────────
 
 def _voice(user_id: int, cards: list) -> tuple:
-    """(language, quotes): the language the user writes to the curator in,
-    and — unless they turned it off — their own words from the debates about
-    the cards' titles. Blocking."""
+    """(language, quotes): the user's language - their setting under
+    Settings → Account, else the one they write to the curator in
+    (services/user_language, UX design record 3.8) - and, unless they turned
+    it off, their own words from the debates about the cards' titles.
+    Blocking."""
     from src.database.connection import get_db_session
-    from src.services.wrapup_writer import main_language, quotes_allowed, user_quotes
+    from src.services.user_language import user_language
+    from src.services.wrapup_writer import quotes_allowed, user_quotes
+    lang = user_language(user_id)
     with get_db_session() as db:
-        lang = main_language(db, user_id)
         titles = list(dict.fromkeys(r for c in cards for r in c.get("refs") or []))
         quotes = user_quotes(db, user_id, titles) if quotes_allowed(user_id) else []
     return lang, quotes
@@ -442,8 +445,10 @@ async def generate_wrapup(user_id: int, scope: str, period_key: str, is_admin: b
         if story is None:
             logger.info("[wrapup] %s/%s/%s: deterministic story (%s)", user_id, scope, period_key, source)
             story, source = fallback_story(facts, idx, lang), "fallback"
-        await run_write(save_story, user_id, scope, period_key, facts["facts_hash"],
-                        finish_story(story, idx), source, model)
+        # the language it is written in: the page offers a rewrite once the
+        # user's language is another (routers/wrapup "story_lang")
+        done = {**finish_story(story, idx), "lang": lang}
+        await run_write(save_story, user_id, scope, period_key, facts["facts_hash"], done, source, model)
         task_monitor.done(task, "Wrap-up written" if source != "fallback" else "Wrap-up written without the curator")
     except Exception as e:                  # a task must never die silently
         logger.warning("[wrapup] generation failed for %s/%s/%s: %s", user_id, scope, period_key, e)

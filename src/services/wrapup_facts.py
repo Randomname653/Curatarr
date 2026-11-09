@@ -1210,52 +1210,69 @@ TRAIT_KEYS = ("night_owl", "matinee", "completionist", "sampler", "scout", "loya
               "contrarian", "purger", "defender")
 
 
-def derive_traits(f: dict, now: datetime) -> list:
+def derive_traits(f: dict, now: datetime, lang: str = "en") -> list:
     """[{key, strength 0..1, evidence}] past their threshold, strongest first.
     ``strength`` = how far past the threshold, so the first trait is the one
-    the user most clearly earned."""
+    the user most clearly earned. ``evidence`` is English, as the facts the
+    curator reads are; ``lang`` asks for the page's (frontend/i18n
+    "wrapup.ev.*", routers/wrapup)."""
     t = f.get("tempo") or {}
     out = []
 
-    def add(key, value, threshold, ceiling, evidence):
+    def add(key, value, threshold, ceiling, evidence, **vals):
         if value is None or value < threshold:
             return
+        if lang != "en" and evidence:
+            from src.services.i18n import LANGUAGES, t as say
+            if lang in LANGUAGES:
+                evidence = say(f"wrapup.ev.{key}", lang, **vals)
         span = max(1e-6, ceiling - threshold)
         out.append({"key": key, "evidence": evidence,
                     "strength": round(min(1.0, 0.1 + 0.9 * (value - threshold) / span), 2)})
 
+    pc = lambda v: round(100 * (v or 0))  # noqa: E731
     dp = t.get("dayparts") or {}
-    add("night_owl", dp.get("night"), 0.30, 0.70, f"{round(100 * dp.get('night', 0))}% after 23:00")
+    add("night_owl", dp.get("night"), 0.30, 0.70, f"{round(100 * dp.get('night', 0))}% after 23:00",
+        pct=pc(dp.get("night")))
     add("matinee", t.get("weekend_daytime_share"), 0.35, 0.70,
-        f"{round(100 * t.get('weekend_daytime_share', 0))}% on weekend afternoons")
+        f"{round(100 * t.get('weekend_daytime_share', 0))}% on weekend afternoons",
+        pct=pc(t.get("weekend_daytime_share")))
     c = f.get("completion") or {}
     if (t.get("plays") or 0) >= 20 and c:
         add("completionist", c.get("completion_rate"), 0.90, 1.0,
-            f"finished {round(100 * c['completion_rate'])}% of plays")
-        add("sampler", c.get("drop_rate"), 0.25, 0.60, f"dropped {round(100 * c['drop_rate'])}% early")
+            f"finished {round(100 * c['completion_rate'])}% of plays", pct=pc(c.get("completion_rate")))
+        add("sampler", c.get("drop_rate"), 0.25, 0.60, f"dropped {round(100 * c['drop_rate'])}% early",
+            pct=pc(c.get("drop_rate")))
     d = f.get("discovery") or {}
     if "new_share" in d:
-        add("scout", d["new_share"], 0.60, 0.95, f"{round(100 * d['new_share'])}% on new titles")
+        add("scout", d["new_share"], 0.60, 0.95, f"{round(100 * d['new_share'])}% on new titles",
+            pct=pc(d["new_share"]))
         add("loyalist", 1 - d["new_share"], 0.75, 1.0,
-            f"{round(100 * (1 - d['new_share']))}% on titles you already knew")
+            f"{round(100 * (1 - d['new_share']))}% on titles you already knew", pct=pc(1 - d["new_share"]))
     e = f.get("eras") or {}
     if e:
-        add("archivist", now.year - e["viewing_age_year"], 25, 50, f"viewing age {e['viewing_age_year']}")
+        add("archivist", now.year - e["viewing_age_year"], 25, 50, f"viewing age {e['viewing_age_year']}",
+            year=e["viewing_age_year"])
         add("day_one", e["split"].get("fresh"), 0.50, 0.90,
-            f"{round(100 * e['split']['fresh'])}% on this year's releases")
+            f"{round(100 * e['split']['fresh'])}% on this year's releases", pct=pc(e["split"].get("fresh")))
     b = (f.get("binge") or {}).get("in_48h") or {}
     if b:
-        add("binger", b.get("episodes"), 10, 30, f"{b['episodes']} episodes of {b['series']} in 48 hours")
+        add("binger", b.get("episodes"), 10, 30, f"{b['episodes']} episodes of {b['series']} in 48 hours",
+            n=b.get("episodes"), series=b.get("series"))
     hc = f.get("highbrow_comfort") or {}
-    add("highbrow", hc.get("highbrow"), 0.50, 0.85, f"{round(100 * hc.get('highbrow', 0))}% acclaimed")
-    add("comfort_seeker", hc.get("comfort"), 0.35, 0.70, f"{round(100 * hc.get('comfort', 0))}% rewatches")
+    add("highbrow", hc.get("highbrow"), 0.50, 0.85, f"{round(100 * hc.get('highbrow', 0))}% acclaimed",
+        pct=pc(hc.get("highbrow")))
+    add("comfort_seeker", hc.get("comfort"), 0.35, 0.70, f"{round(100 * hc.get('comfort', 0))}% rewatches",
+        pct=pc(hc.get("comfort")))
     ct = f.get("contrarian") or {}
-    add("contrarian", ct.get("gap"), 2.5, 5.0, ct and f"{ct['you']} vs {ct['community']} on {ct['title']}")
+    add("contrarian", ct.get("gap"), 2.5, 5.0, ct and f"{ct['you']} vs {ct['community']} on {ct['title']}",
+        you=ct.get("you"), community=ct.get("community"), title=ct.get("title"))
     cu = f.get("curatarr") or {}
     g = cu.get("graveyard") or {}
-    add("purger", g.get("gb_freed"), 200, 2000, g and f"{g['gb_freed']} GB freed")
+    add("purger", g.get("gb_freed"), 200, 2000, g and f"{g['gb_freed']} GB freed", gb=g.get("gb_freed"))
     s = cu.get("shield") or {}
-    add("defender", s.get("overrides"), 3, 15, s and f"{s['overrides']} titles kept over the curator")
+    add("defender", s.get("overrides"), 3, 15, s and f"{s['overrides']} titles kept over the curator",
+        n=s.get("overrides"))
     out.sort(key=lambda x: -x["strength"])
     return out[:5]
 

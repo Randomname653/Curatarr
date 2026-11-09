@@ -3,11 +3,15 @@
  "app.js": 0,
  "auth.js": 18,
  "chat.js": 28,
+ "history.js": 0,
  "i18n.js": 0,
  "mobile.js": 0,
  "nav.js": 0,
  "notifications.js": 0,
  "recs.js": 0,
  "settings.js": 152,
- "ui.js": 1
+ "swipe.js": 2,
+ "ui.js": 1,
+ "wrapup.js": 0,
+ "wrapup_story.js": 0
 }

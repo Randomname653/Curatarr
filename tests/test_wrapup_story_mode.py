@@ -11,6 +11,7 @@ tests/test_rec_why.py); the wiring is checked in the source.
     python tests/test_wrapup_story_mode.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import json
 import re
@@ -60,7 +61,7 @@ DATA = {
 node = shutil.which("node")
 if node:
     body = re.sub(r"^import .*$", "", JS, flags=re.M).replace("export function", "function")
-    harness = r"""
+    harness = i18n_js() + r"""
 const window = {matchMedia: () => ({matches: true})};
 const document = {};
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -126,7 +127,7 @@ check("charts are SVG coloured by class — no inline style anywhere in the stor
 check("the page offers the story and opens a curator-written one the first time it is seen",
       "export function playWrapupStory()" in WRAPUP and "if (story) { _markSeen(); playStory(wu.data); }" in WRAPUP
       and "wu.data?.story?.version !== 2" in WRAPUP and "act('playWrapupStory')" in WRAPUP)
-check("the bento stays behind it as Explore", '<h2 class="wu-explore">Explore</h2>' in WRAPUP)
+check("the bento stays behind it as Explore", '<h2 class="wu-explore">${th(\'wrapup.explore\')}</h2>' in WRAPUP)
 for name in ("playWrapupStory", "answerWrapupStory", "closeWrapupStory", "nextWrapupSlide", "prevWrapupSlide"):
     check(f"action {name} is registered", re.search(rf"^\s+{name},$", APP, re.M) is not None)
 check("Escape closes it, the arrows move, holding pauses, a hold is not a tap",

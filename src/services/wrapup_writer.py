@@ -29,8 +29,9 @@ v2 splits the work (docs/WRAPUP_V2_BLUEPRINT.md §4.1):
 
 The curator may quote the user's own debate messages back to them
 ("callbacks") — only in their own wrap-up, and only while they have not
-turned it off (``quotes_allowed``). It writes in the language the user writes
-to it most (``main_language``).
+turned it off (``quotes_allowed``). It writes in the user's language: their
+setting under Settings → Account, else the one they write to it in most
+(``main_language``; services/user_language).
 """
 import logging
 import re
