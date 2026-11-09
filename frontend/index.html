@@ -694,21 +694,50 @@
       </div>
     </div>
 
-    <!-- TASKS / ACTIVITY -->
+    <!-- TASKS / ACTIVITY — Queue / Scheduled / History, the Sonarr-Radarr layout -->
     <div class="view" id="tasks-view">
       <div class="view-header">
         <h1 tabindex="-1">Activity</h1>
-        <p>Live background tasks and automation history</p>
+        <p>What runs now, what is scheduled, and what has run</p>
       </div>
       <div class="view-body">
-        <section class="section">
-          <div class="section-head"><h3>Live tasks</h3><span class="section-hint">streamed from the server — cancel what is running or queued</span></div>
-          <div class="section-body"><div id="tasks-list"><p class="loading" role="status" aria-live="polite">Connecting to task stream…</p></div></div>
-        </section>
-        <section class="section">
-          <div class="section-head"><h3>Last run per type</h3><span class="section-hint">this session</span></div>
-          <div class="section-body"><div id="tasks-history"><p class="loading" role="status" aria-live="polite">Loading history…</p></div></div>
-        </section>
+        <div class="cat-tabs act-tabs" role="tablist" aria-label="Activity" data-on-keydown="activityTabKey" data-args='["$event"]'>
+          <button type="button" class="cat-tab active" role="tab" id="act-tab-queue" aria-selected="true" aria-controls="act-panel-queue" data-action="showActivityTab" data-args='["queue"]'>Queue <span class="badge amber badge-sm" id="act-count-queue" hidden>0</span></button>
+          <button type="button" class="cat-tab" role="tab" id="act-tab-scheduled" aria-selected="false" aria-controls="act-panel-scheduled" tabindex="-1" data-action="showActivityTab" data-args='["scheduled"]' hidden>Scheduled <span class="badge muted badge-sm" id="act-count-scheduled" hidden title="Due or running now">0</span></button>
+          <button type="button" class="cat-tab" role="tab" id="act-tab-history" aria-selected="false" aria-controls="act-panel-history" tabindex="-1" data-action="showActivityTab" data-args='["history"]'>History <span class="badge danger badge-sm" id="act-count-history" hidden title="Failed runs in the last 24 hours">0</span></button>
+        </div>
+
+        <div id="act-panel-queue" role="tabpanel" aria-labelledby="act-tab-queue">
+          <section class="section">
+            <div class="section-head"><h3>Active tasks</h3><span class="section-hint" id="act-queue-hint" role="status" aria-live="polite">streamed from the server</span></div>
+            <div class="section-body"><div id="tasks-list"><p class="loading" role="status" aria-live="polite">Connecting to task stream…</p></div></div>
+          </section>
+        </div>
+
+        <div id="act-panel-scheduled" role="tabpanel" aria-labelledby="act-tab-scheduled" hidden>
+          <div id="tasks-scheduled"><p class="loading" role="status" aria-live="polite">Loading scheduled tasks…</p></div>
+        </div>
+
+        <div id="act-panel-history" role="tabpanel" aria-labelledby="act-tab-history" hidden>
+          <div class="act-filters">
+            <div class="act-chips" role="group" aria-label="Filter by result">
+              <button type="button" class="chip active" aria-pressed="true" data-filter-kind="status" data-filter-value="all" data-action="setHistoryFilter" data-args='["status","all"]'>All</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="status" data-filter-value="completed" data-action="setHistoryFilter" data-args='["status","completed"]'>Completed</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="status" data-filter-value="warn" data-action="setHistoryFilter" data-args='["status","warn"]'>Partial / warnings</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="status" data-filter-value="failed" data-action="setHistoryFilter" data-args='["status","failed"]'>Failed / cancelled</button>
+            </div>
+            <div class="act-chips" role="group" aria-label="Filter by area">
+              <button type="button" class="chip active" aria-pressed="true" data-filter-kind="area" data-filter-value="all" data-action="setHistoryFilter" data-args='["area","all"]'>All areas</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="sync" data-action="setHistoryFilter" data-args='["area","sync"]'>Sync</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="enrichment" data-action="setHistoryFilter" data-args='["area","enrichment"]'>Enrichment</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="taste" data-action="setHistoryFilter" data-args='["area","taste"]'>Taste / vectors</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="maintenance" data-action="setHistoryFilter" data-args='["area","maintenance"]'>Maintenance</button>
+            </div>
+            <label class="chip act-noop-toggle"><input type="checkbox" id="act-hide-noop" checked data-on-change="toggleHideNoop" data-args='["$el"]'> Hide empty runs</label>
+            <span class="t3 fs-12 row-end" id="act-history-count" role="status" aria-live="polite"></span>
+          </div>
+          <div id="tasks-history"><p class="loading" role="status" aria-live="polite">Loading history…</p></div>
+        </div>
       </div>
     </div>
 

@@ -1635,6 +1635,17 @@ async def generate_deletion_proposals(
         except Exception:  # noqa: BLE001 - progress card only; the run is unaffected
             pass
 
+    def _step(done: int, total: int) -> None:
+        """Inner progress of this category within the caller's card: the
+        judging loop is most of a run, and the bar sat at 0% through it."""
+        if monitor_task is None:
+            return
+        try:
+            from src.services.task_monitor import task_monitor as _tm
+            _tm.substep(monitor_task, done, max(1, total))
+        except Exception:  # noqa: BLE001 - progress card only
+            pass
+
     import math
 
     # The pool's open proposals, and the most this run could have to fill:
@@ -2829,6 +2840,7 @@ async def generate_deletion_proposals(
                     break
                 item = cand["item"]
                 judged += 1
+                _step(judged, min(judge_cap, _reach, len(scored_candidates)))
                 _msg(f"{category}: pillar-judging {judged} "
                      f"({len(final_proposals)}/{target_cuts} flagged) — "
                      f"{(item.get('title') or '?')[:50]}")

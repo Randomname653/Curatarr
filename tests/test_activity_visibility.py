@@ -138,9 +138,16 @@ check("activity rows render the task's backend-sent name",
       "${esc(t.name)}" in fe)
 check("the old per-category icon map is fully gone, not half-removed",
       "TASK_ICONS" not in fe)
-check("every status the backend emits has a color and a label",
-      all(f"{s}:" in fe.split("STATUS_BADGE")[1][:220]
-          for s in ("running", "done", "error", "pending", "skipped")))
+# 2026-11 (the Activity redesign): rows are coloured by the task's OUTCOME
+# (Task.outcome), with a fallback from the raw status for older payloads.
+_outcomes = fe.split("const OUTCOME = {")[1].split("};")[0]
+check("every outcome the backend emits has a color and a label",
+      all(f"{s}:" in _outcomes and "label:" in _outcomes for s in (
+          "running", "queued", "completed", "warning", "partial",
+          "failed", "cancelled", "skipped")))
+check("...and every raw status maps to an outcome",
+      all(f"{s}: '" in fe.split("const _outcomeOf")[1][:260]
+          for s in ("running", "pending", "done", "error", "skipped")))
 
 # ── 4. inner progress inside the wrapper runners (the 0%-until-done fix) ─────
 
@@ -188,12 +195,17 @@ check("audit reports its stages (ground truth -> scan -> requeue)",
       # requeue are requeued, not every hit
       and "Requeuing {len(to_requeue):,} flagged profiles" in en)
 
-check("frontend hides the fake 0% chip when a running card has no total",
-      "t.status === 'running' ? (t.total > 0 ?" in fe)
+check("frontend hides the fake 0% chip when a running card has no total "
+      "(an indeterminate pulse instead)",
+      "o === 'running' && !t.indeterminate ?" in fe
+      and "indeterminate ? ' indeterminate' : ''" in fe)   # the backend flag: test_activity_view
 
-check("task rows are patched in place (data-task-id) and renders coalesce per frame",
-      'data-task-id="' in fe and "requestAnimationFrame" in fe.split("function renderTasks")[1][:400])
+check("queue rows are patched in place (keyed data-run-id) and renders coalesce per frame",
+      'data-run-id="' in fe and "requestAnimationFrame" in fe.split("function renderTasks")[1][:400])
 check("the row keeps every part so a tick can patch it (hidden when empty)",
-      all(f"js-{p}" in fe for p in ("status", "meta", "error", "progress", "foot", "actions")))
+      all(f"js-{p}" in fe for p in ("ico", "title", "step", "meta", "subs", "elapsed", "bar", "actions")))
+# The server side (get_live, the stream's snapshot) is run in test_activity_view.
+check("the queue shows only live runs: a finished one fades out (no Done rows)",
+      "FADE_MS" in fe and "act-fade" in fe)
 
 check.done()

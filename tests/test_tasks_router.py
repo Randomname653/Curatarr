@@ -92,10 +92,17 @@ def test_get_task_history():
             "sync": {"id": "task_0", "status": "done"}
         }
         mock_monitor.last_runs = mock_history
+        mock_monitor.get_history.return_value = [{"id": "task_0", "run_id": "task_0@1",
+                                                  "outcome": "completed"}]
 
         response = client.get("/api/tasks/history")
 
         assert response.status_code == 200
-        assert response.json() == {"last_runs": mock_history}
+        # The persisted run log (newest first) plus the per-category summary
+        # older clients read.
+        assert response.json() == {"runs": [{"id": "task_0", "run_id": "task_0@1",
+                                             "outcome": "completed"}],
+                                   "last_runs": mock_history}
+        mock_monitor.get_history.assert_called_once_with(200)
 
     app.dependency_overrides.clear()

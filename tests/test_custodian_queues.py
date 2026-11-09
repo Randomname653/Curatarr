@@ -282,7 +282,7 @@ check("without the flag it is a no-op",
 # ── 7. wiring ────────────────────────────────────────────────────────────────
 sch = (_ROOT / "src/services/scheduler.py").read_text(encoding="utf-8")
 check("the interval job starts the queues and returns",
-      "custodian_tick_background,\n        IntervalTrigger(minutes=CUSTODIAN_TICK_MINUTES)" in sch
+      "_watched(\"data_custodian\")(custodian_tick_background),\n        IntervalTrigger(minutes=CUSTODIAN_TICK_MINUTES)" in sch
       and dc.CUSTODIAN_TICK_MINUTES == 30
       and "custodian_tick(first_tick=True, wait=False)" in sch)
 enr = (_ROOT / "src/routers/enrichment.py").read_text(encoding="utf-8")

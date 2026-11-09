@@ -132,7 +132,7 @@ rec = (ROOT / "src/routers/recommendations.py").read_text(encoding="utf-8")
 lp = (ROOT / "src/services/llm_priority.py").read_text(encoding="utf-8")
 mu = (ROOT / "src/services/model_updates.py").read_text(encoding="utf-8")
 check("the scheduled deletion run waits (stays due) while the PC is not free",
-      sched.index("if not judge_ready():") < sched.index('task_monitor.create(name="ARR Sync"'))
+      sched.index("if not judge_ready():") < sched.index('task_monitor.create(name="Arr sync"'))
 check("the Analyze button says why instead of judging on the NAS",
       rec.index("if not judge_ready():") < rec.index('acquire_state_lock, "deletion_run"'))
 check("the run resolves its host BEFORE the pitch bake, and defers without it",

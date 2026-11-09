@@ -59,12 +59,47 @@ def get_running(user: User = Depends(get_current_user)):
     return {"tasks": _visible(task_monitor.get_running(), user.id, bool(user.is_admin))}
 
 
+@router.get("/live")
+def get_live(user: User = Depends(get_current_user)):
+    """The Queue: running and queued tasks only (plus the ones that ended
+    in the last few seconds, so a row can fade out). The SSE stream sends
+    the same snapshot."""
+    return {"tasks": _visible(task_monitor.get_live(), user.id, bool(user.is_admin))}
+
+
 @router.get("/history")
-def get_task_history(user: User = Depends(get_current_user)):
-    """Last completed run per category (in-memory, resets on restart).
-    Per category means one entry can be another user's run, so members get
-    none; their own tasks are in the list above."""
-    return {"last_runs": task_monitor.last_runs if user.is_admin else {}}
+def get_task_history(user: User = Depends(get_current_user), limit: int = 200):
+    """The History: finished runs, newest first, persisted across restarts.
+    A sub-step (one category's taste vector) is folded into its run's entry.
+
+    ``last_runs`` (last completed run per category) is kept for older
+    clients. Per category means one entry can be another user's run, so
+    members get none; their own runs are in ``runs``."""
+    runs = task_monitor.get_history(max(1, min(int(limit), 300)))
+    return {
+        "runs": _visible(runs, user.id, bool(user.is_admin)),
+        "last_runs": task_monitor.last_runs if user.is_admin else {},
+    }
+
+
+@router.get("/scheduled")
+def get_scheduled(_admin: User = Depends(require_admin)):
+    """The Scheduled tab: every registered background job — cadence, last
+    execution, last duration and result, next execution. Admin only: the
+    jobs are server-wide."""
+    from src.services.activity import scheduled_overview
+    return scheduled_overview()
+
+
+@router.post("/scheduled/{job_id}/run")
+async def run_scheduled(job_id: str, _admin: User = Depends(require_admin)):
+    """Run one job now, outside its schedule. A custodian task whose queue
+    is busy runs right after what that queue is on (state "queued")."""
+    from src.services.activity import RunNowError, run_now
+    try:
+        return await run_now(job_id)
+    except RunNowError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 @router.get("/ticket")
@@ -114,7 +149,7 @@ async def stream_tasks(ticket: str = Query(None)):
     async def generate():
         from src.services.task_monitor import shutdown_event
         try:
-            snapshot = _visible(task_monitor.get_all(), user_id, is_admin)
+            snapshot = _visible(task_monitor.get_live(), user_id, is_admin)
             yield f"data: {json.dumps(snapshot)}\n\n"
 
             while not shutdown_event.is_set():

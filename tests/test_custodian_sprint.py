@@ -317,7 +317,7 @@ def test_the_console_switch():
 
 def test_the_wiring():
     src = (_ROOT / "src" / "services" / "scheduler.py").read_text(encoding="utf-8")
-    assert "custodian_sprint_tick,\n        IntervalTrigger(minutes=SPRINT_TICK_MINUTES)" in src
+    assert "_watched(\"custodian_sprint\")(custodian_sprint_tick),\n        IntervalTrigger(minutes=SPRINT_TICK_MINUTES)" in src
     router = (_ROOT / "src" / "routers" / "enrichment.py").read_text(encoding="utf-8")
     assert '@router.post("/custodian/sprint")' in router
     cut = router.index('set_state, "enrichment_left", str(max(0, len(items) - limit) if limit else 0))')
