@@ -108,8 +108,8 @@ def _admin_id() -> int | None:
     from src.database.connection import get_db_session
     from src.database.models import User
     with get_db_session() as db:
-        admin = db.query(User).filter_by(is_admin=True).first()
-        return admin.id if admin else None
+        # ⚡ Bolt: Query specific column and use .scalar() to avoid full ORM object instantiation overhead
+        return db.query(User.id).filter_by(is_admin=True).scalar()
 
 
 def _prog(task, message: str = None, processed: int = None,

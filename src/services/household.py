@@ -22,8 +22,9 @@ def is_admin_user(user_id) -> bool:
         from src.database.connection import get_db_session
         from src.database.models import User
         with get_db_session() as db:
-            row = db.query(User.is_admin).filter(User.id == int(user_id)).first()
-        return bool(row and row[0])
+            # ⚡ Bolt: Query specific column and use .scalar() to avoid full ORM object instantiation and tuple unpacking overhead
+            is_admin = db.query(User.is_admin).filter(User.id == int(user_id)).scalar()
+        return bool(is_admin)
     except Exception as e:
         logger.warning("[household] admin lookup failed for user %s: %s", user_id, e)
         return False
