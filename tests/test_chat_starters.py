@@ -455,3 +455,41 @@ def test_the_now_fact_reads_the_members_clock():
     assert clock == [{"kind": "now", "weekday": "Monday", "daypart": "night"}], clock
     utc = [f for f in cs.collect_facts(424242, now=late, zone=ZoneInfo("UTC")) if f["kind"] == "now"]
     assert utc[0]["weekday"] == "Sunday"
+
+
+# ── a real session: the rows are gone once the insert commits ─────────────
+
+def test_an_accepted_batch_survives_its_own_commit_and_takes_its_milestone():
+    """2026-11-09: the conversation-starters job ended in DetachedInstanceError
+    after the first member. The insert's commit expired the new rows and
+    closed their session, then the milestone check read their text - every
+    accepted batch raised, the milestone stayed pending, the next member got
+    nothing. The fake session above never expires a row; this one is real."""
+    import json as _json
+    from src.database.models import ChatStarter, User
+    from src.services.app_state import set_state
+    conn = _harness.app_db()
+    with conn.get_db_session() as db:
+        db.add(User(id=31, plex_user_id="p31", plex_username="u31"))
+        db.commit()
+    reached = dt.datetime.utcnow().isoformat()
+    set_state("milestones:user_id=31", _json.dumps({
+        "items": [{"kind": "films", "value": 100, "reached_at": reached}],
+        "pending": ["films:100"]}))
+    _FakeClient.payload = _json.dumps([
+        {"text": "That was your 100th film watched. Which one opened the door?",
+         "form": "question", "daypart": "any", "fact": "milestone 100th film watched"}])
+    orig_client, orig_facts = cs.httpx.AsyncClient, cs.collect_facts
+    cs.httpx.AsyncClient = _FakeClient
+    cs.collect_facts = lambda uid, now=None, zone=None: [
+        {"kind": "milestone", "text": "100th film watched"},
+        {"kind": "now", "weekday": "Monday", "daypart": "evening"}]
+    try:
+        inserted = asyncio.run(cs.generate_starters(31))
+    finally:
+        cs.httpx.AsyncClient, cs.collect_facts = orig_client, orig_facts
+    assert inserted == 1, inserted
+    with conn.get_db_session() as db:
+        assert db.query(ChatStarter).filter(ChatStarter.user_id == 31).count() == 1
+    from src.services.milestones import pending_announcements
+    assert pending_announcements(31) == [], "the opener took the milestone: offered once, never again"
