@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Last played shows the pinned title's poster.** A play row without an id got its poster from a
+title search, and a short title found the wrong show (another series' artwork next to the right
+episode), although the owner had pinned the right one in the Knowledge Base. The recent-history
+posters now take the owner's match pin first (tmdb or tvdb id; a show pin also answers for an
+anime play), and search by title only where there is neither an id nor a pin.
+
 **You and the crowd, at a glance.** The Wrap-Up story's crowd slide was a scatter of every scored
 title: thirty anonymous dots, one corner label, names only on hover, and the title the headline
 named could not be found. It is now one title with its poster and its two places among the same
