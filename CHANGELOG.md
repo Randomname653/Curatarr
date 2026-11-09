@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Conversation starters reach every member again.** Since 1.1.0 the starters job ended in an
+error after the first member with a new batch: the milestone check read the new openers after
+their insert had committed and closed the session. The batch was saved, but the milestone it
+used stayed pending (so it could be offered again) and every member after that got no new
+openers. The check now reads the openers before the insert.
+
 **Last played shows the pinned title's poster.** A play row without an id got its poster from a
 title search, and a short title found the wrong show (another series' artwork next to the right
 episode), although the owner had pinned the right one in the Knowledge Base. The recent-history

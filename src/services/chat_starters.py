@@ -509,6 +509,12 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
         ))
 
     if accepted:
+        # Read before the insert: its commit expires the rows and closes
+        # their session, and a detached row cannot load its own text again
+        # (2026-11-09: every accepted batch raised here, and the custodian
+        # never reached the next member).
+        used = " ".join(f"{r.fact_used} {r.text}" for r in accepted).lower()
+
         def _insert():
             with get_db_session() as db:
                 for row in accepted:
@@ -518,7 +524,6 @@ async def generate_starters(user_id: int, n: int = 5) -> int:
         await run_write(_insert)
         # A milestone an opener took is offered once, never again.
         from src.services.milestones import _mkey, mark_announced, pending_announcements, phrase
-        used = " ".join(f"{r.fact_used} {r.text}" for r in accepted).lower()
         taken = [_mkey(m) for m in await run_read(pending_announcements, user_id)
                  if f"{int(m['value']):,}" in used and m["kind"].rstrip("s") in used
                  or phrase(m).lower() in used]
