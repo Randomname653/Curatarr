@@ -236,12 +236,18 @@ _BUSY_TAIL_WAIT = ("The background work is waiting too, so nothing is lost, it j
                    "back once it has finished.")
 
 
-def busy_message(reason: str = "", *, lane_open: "bool | None" = None) -> str:
-    """The notice the chat shows. It promises background progress only when
-    the lane is actually open — with the memory too tight for it, saying
-    "everything keeps running" would be a lie."""
+def busy_message(reason: str = "", *, lane_open: "bool | None" = None, lang: str = "en") -> str:
+    """The notice the chat shows, in the user's UI language (``lang``,
+    frontend/i18n chat.busy.*; the English is as written here). It promises
+    background progress only when the lane is actually open — with the memory
+    too tight for it, saying "everything keeps running" would be a lie."""
     if lane_open is None:
         lane_open = lane(SUMMARIZER) == CPU
+    if lang != "en":
+        from src.services.i18n import t
+        middle = f" {t('chat.busy.holding', lang, reason=reason)}" if reason else ""
+        tail = t("chat.busy.tail_lane" if lane_open else "chat.busy.tail_wait", lang)
+        return f"{t('chat.busy.head', lang)}{middle}\n\n{tail}"
     middle = f" It is holding {reason}." if reason else ""
     tail = _BUSY_TAIL_LANE if lane_open else _BUSY_TAIL_WAIT
     return f"{_BUSY_HEAD}{middle}\n\n{tail}"

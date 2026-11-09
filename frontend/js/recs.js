@@ -8,6 +8,7 @@ import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
 import { _whyButton } from './deletions.js';
 import { tabToHash } from './nav.js';
+import { t, th } from './i18n.js';
 
 export function _stopRecsPoll() {
   if (state._recsPollTimer) { clearInterval(state._recsPollTimer); state._recsPollTimer = null; }
@@ -15,14 +16,12 @@ export function _stopRecsPoll() {
 }
 
 // Lane presentation metadata for the two recommendation sections.
-const _LANE_META = {
-  library:   { title: 'From your library', sub: 'you own it · still unwatched' },
-  discovery: { title: 'Discover new',      sub: 'not in your library · worth acquiring' },
-  because:   { title: 'Because you watched', sub: 'close to all three · from your library' },
-  rediscover:{ title: 'Rediscover', sub: 'loved once · untouched for two years · in your library' },
-};
+// (Read when drawn, in the UI's language: i18n keys recs.lane.<lane>.*)
+const _LANES = ['library', 'discovery', 'because', 'rediscover'];
+const _laneMeta = lane => (_LANES.includes(lane)
+  ? { title: t(`recs.lane.${lane}.title`), sub: t(`recs.lane.${lane}.sub`) } : { title: lane, sub: '' });
 
-const _CAT_NOUN = { movie: 'film', show: 'series', anime: 'anime' };
+const _catNoun = c => (['movie', 'show', 'anime'].includes(c) ? t(`common.noun.${c}`) : c);
 
 // "A year ago": what the member finished around today's date last year
 // (services/on_this_day). Only on days that have one; each title can be
@@ -34,18 +33,18 @@ async function _yearAgoRow(category) {
   if (!items.length) return '';
   const rows = items.map(x => `<div class="panel-item">
       <div class="panel-item-head">
-        <div class="panel-item-title">${esc(x.title)} <span class="t3 fs-12">· ${esc(_CAT_NOUN[x.category] || x.category)}${x.episodes > 1 ? ` · ${x.episodes} episodes` : ''} · <span title="${escAttr(_fmtAbs(x.viewed_at))}">${esc(new Date(x.viewed_at).toLocaleDateString(loc(), { day: 'numeric', month: 'short', year: 'numeric' }))}</span></span></div>
-        <button type="button" class="btn btn-ghost btn-sm" title="Never show this title here again" ${act('hideYearAgo', x.title, EL)}>Hide</button>
+        <div class="panel-item-title">${esc(x.title)} <span class="t3 fs-12">· ${esc(_catNoun(x.category))}${x.episodes > 1 ? ` · ${th('recs.episodes', {n: x.episodes})}` : ''} · <span title="${escAttr(_fmtAbs(x.viewed_at))}">${esc(new Date(x.viewed_at).toLocaleDateString(loc(), { day: 'numeric', month: 'short', year: 'numeric' }))}</span></span></div>
+        <button type="button" class="btn btn-ghost btn-sm" title="${th('recs.year_ago.hide_title')}" ${act('hideYearAgo', x.title, EL)}>${th('recs.year_ago.hide')}</button>
       </div></div>`).join('');
-  return `<div class="list-head"><span>A year ago</span><span class="fw-400 fs-12 t3">· what you finished around this date last year · ${items.length}</span></div>${rows}`;
+  return `<div class="list-head"><span>${th('recs.year_ago.head')}</span><span class="fw-400 fs-12 t3">· ${th('recs.year_ago.sub')} · ${items.length}</span></div>${rows}`;
 }
 
 export async function hideYearAgo(title, btn) {
   try {
     await api('/api/recommendations/on-this-day/hide', 'POST', { title });
-    toast('Hidden for good');
+    toast(t('recs.year_ago.hidden'));
     loadRecs(state.currentRecsCategory);
-  } catch (e) { toast(`Not hidden: ${e.message || e}`, 'error'); }
+  } catch (e) { toast(t('recs.year_ago.not_hidden', {error: e.message || e}), 'error'); }
 }
 
 // "Because you watched A, B and C": one section per category, headed by its
@@ -58,9 +57,9 @@ function _becauseSections(recs) {
     if (!groups.has(k)) groups.set(k, { anchors: a, recs: [] });
     groups.get(k).recs.push(r);
   }
-  const names = a => a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : (a[0] || '');
+  const names = a => a.length > 1 ? `${a.slice(0, -1).join(', ')} ${t('common.and')} ${a[a.length - 1]}` : (a[0] || '');
   return [...groups.values()].map(g =>
-    `<div class="list-head"><span>Because you watched ${esc(names(g.anchors))}</span><span class="fw-400 fs-12 t3">· ${esc(_LANE_META.because.sub)} · ${g.recs.length}</span></div>`
+    `<div class="list-head"><span>${th('recs.because_head', {names: names(g.anchors)})}</span><span class="fw-400 fs-12 t3">· ${esc(_laneMeta('because').sub)} · ${g.recs.length}</span></div>`
     + g.recs.map((r, i) => _recCard(r, `because-${r.category}-${i}`)).join('')).join('');
 }
 
@@ -74,9 +73,9 @@ export function _recWhy(rec, key) {
   if (!f.length) return {btn: '', panel: ''};
   const p = {id: `rec-${key}`, score_factors: {factors: f}};
   return {btn: _whyButton(p), panel: `<div class="why-panel mt-8" id="why-${p.id}" tabindex="-1" hidden>
-    <div class="fs-12 t2 mb-6">What it was picked on</div>
+    <div class="fs-12 t2 mb-6">${th('recs.why.head')}</div>
     <ul class="why-list">${f.map(x => `<li>${esc(x.label)}</li>`).join('')}</ul>
-    <div class="fs-11 t3 mt-6">The curator chose from these signals and wrote the pitch below.</div>
+    <div class="fs-11 t3 mt-6">${th('recs.why.foot')}</div>
   </div>`};
 }
 
@@ -85,23 +84,23 @@ export function _recCard(rec, key) {
   const genreTags = (rec.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,6)
     .map(g=>`<span class="badge muted badge-sm">${esc(g)}</span>`).join('');
   const isLib = ['library', 'because', 'rediscover'].includes(rec.lane);
-  const laneBadge = `<span class="badge muted badge-sm" title="${isLib ? 'In your library — still unwatched' : 'Not in your library — worth acquiring'}">${isLib ? 'lib' : 'new'}</span>`
-    + (rec.lifted_by ? `<span class="badge amber badge-sm" title="${escAttr(`Moved up because you loved ${rec.lifted_by}`)}">moved up</span>` : '');
+  const laneBadge = `<span class="badge muted badge-sm" title="${th(isLib ? 'recs.lane_library_title' : 'recs.lane_discovery_title')}">${th(isLib ? 'recs.badge.lib' : 'recs.badge.new')}</span>`
+    + (rec.lifted_by ? `<span class="badge amber badge-sm" title="${th('recs.moved_up_title', {title: rec.lifted_by})}">${th('recs.moved_up')}</span>` : '');
   return `
   <div class="card mb-12">
     <div class="poster-card">
-      <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="Discuss this recommendation" aria-label="Discuss ${escAttr(rec.title)}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
+      <div class="glow-interactive selectable${rec.category==='music'?' is-music':''}" role="button" tabindex="0" title="${th('recs.discuss_title')}" aria-label="${th('actions.discuss_title', {title: rec.title})}" ${act('discussRecCard', EL)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>${_posterImg(rec.poster_url, 174, rec.category==='music'?174:261, rec.category==='music')}</div>
       <div class="grow">
         <div class="panel-item-head">
-          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null && rec.lane !== 'rediscover' ? `<span class="badge amber badge-sm" title="How well it fits your taste">${Math.round(rec.confidence*100)}% match</span>` : ''}${why.btn}</div>
+          <div class="fs-16 panel-item-title">${esc(rec.title)}${laneBadge}${rec.confidence != null && rec.lane !== 'rediscover' ? `<span class="badge amber badge-sm" title="${th('recs.match_title')}">${th('recs.match', {pct: Math.round(rec.confidence*100)})}</span>` : ''}${why.btn}</div>
           <div class="panel-actions">
-            ${isLib && rec.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(rec.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
-            ${isLib && rec.category !== 'music' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('titleWatchlist', rec.title, rec.category, EL)}>+ Watchlist</button>` : ''}
-            <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">Discuss</button>
+            ${isLib && rec.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(rec.link)}" target="_blank" rel="noopener">${th('actions.open_in', {server: serverLabel()})}</a>` : ''}
+            ${isLib && rec.category !== 'music' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('titleWatchlist', rec.title, rec.category, EL)}>${th('actions.watchlist')}</button>` : ''}
+            <button type="button" class="btn btn-secondary btn-sm" data-discuss ${act('onDiscussRec', EL)} data-title="${escAttr(rec.title)}" data-reason="${escAttr(rec.reason||rec.pitch||'')}" data-category="${escAttr(rec.category)}">${th('actions.discuss')}</button>
             ${rec.lane === 'discovery' && state.currentUser?.is_admin
-              ? `<button type="button" class="btn btn-primary btn-sm" ${act('onAddRecToArr', EL)} data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">+ Add</button>`
+              ? `<button type="button" class="btn btn-primary btn-sm" ${act('onAddRecToArr', EL)} data-title="${escAttr(rec.title)}" data-category="${escAttr(rec.category)}" data-year="${escAttr(rec.year||'')}">${th('recs.add')}</button>`
               : rec.lane === 'discovery' && rec.category === 'music' && _membersWishViaPlex
-                ? `<button type="button" class="btn btn-primary btn-sm" ${act('onWishRec', EL)} data-title="${escAttr(rec.title)}" title="Put it on the household's wanted list — the owner fulfils wishes in SoulSync">Wish</button>`
+                ? `<button type="button" class="btn btn-primary btn-sm" ${act('onWishRec', EL)} data-title="${escAttr(rec.title)}" title="${th('recs.wish_title')}">${th('recs.wish')}</button>`
                 : ''}
           </div>
         </div>
@@ -124,15 +123,15 @@ export async function onAddRecToArr(btn) {
   const year = parseInt(btn.dataset.year, 10) || null;
   const svc = {movie:'radarr', show:'sonarr', anime:'sonarr', music:'lidarr'}[btn.dataset.category];
   if (!svc) return;
-  btnBusy(btn, 'Searching…');
+  btnBusy(btn, t('common.searching'));
   try {
     if (svc === 'lidarr') {
       // Lidarr optional: without it a wanted artist is a wish the owner fulfils in SoulSync
       const lid = ((await api('/api/library/status')) || {}).lidarr || {};
       if (!lid.configured && lid.music_source === 'plex') {
         const w = await api('/api/library/wish', 'POST', {title, source: 'rec'});
-        btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
-        toast(w.in_library ? `"${title}" is already in your ${serverLabel()} music` : `"${title}" is on the wanted list`, w.in_library ? 'info' : 'success');
+        btnDone(btn, t(w.in_library ? 'recs.lane_library' : 'recs.wished'), {keepDisabled: true});
+        toast(t(w.in_library ? 'recs.already_your_music' : 'recs.on_wanted_list', {title, server: serverLabel()}), w.in_library ? 'info' : 'success');
         return;
       }
     }
@@ -142,20 +141,20 @@ export async function onAddRecToArr(btn) {
     const m = (year && matches.find(x => (x.title||'').toLowerCase() === tl && x.year === year))
            || matches.find(x => (x.title||'').toLowerCase() === tl)
            || matches[0];
-    if (!m) { toast(`No match for "${title}" in ${svc} — try “+ Add new” in the ${svc} view`, 'amber'); btnDone(btn); return; }
-    if (m.already_added) { btnDone(btn, 'In library', {keepDisabled: true}); return; }
-    const res = await confirmDialog({title: `Add to ${svc}`, confirmLabel: 'Add',
-      body: `<p>Add <b>${esc(m.title)}</b>${m.year ? ` (${m.year})` : ''} to ${esc(svc)}?</p>`});
+    if (!m) { toast(t('recs.no_match', {title, svc}), 'amber'); btnDone(btn); return; }
+    if (m.already_added) { btnDone(btn, t('recs.lane_library'), {keepDisabled: true}); return; }
+    const res = await confirmDialog({title: t('recs.add_to', {svc}), confirmLabel: t('common.add'),
+      body: `<p>${th('recs.add_question_pre')} <b>${esc(m.title)}</b>${m.year ? ` (${m.year})` : ''} ${th('recs.add_question_post', {svc})}</p>`});
     if (!res.ok) { btnDone(btn); return; }
-    btnBusy(btn, 'Adding…');
+    btnBusy(btn, t('common.adding'));
     await api('/api/library/add', 'POST', {
       service: svc, title: m.title, year: m.year,
       tvdb_id: m.tvdb_id, tmdb_id: m.tmdb_id, mbid: m.mbid,
     });
-    btnDone(btn, 'Added', {keepDisabled: true});
-    toast(`Added "${m.title}" to ${svc}`, 'success');
+    btnDone(btn, t('common.added'), {keepDisabled: true});
+    toast(t('recs.added_toast', {title: m.title, svc}), 'success');
   } catch (e) {
-    let detail = e.message || 'failed';
+    let detail = e.message || t('common.failed');
     try { detail = JSON.parse(detail).detail || detail; } catch {}
     toast(detail, 'danger', {ms: 8000});
     btnDone(btn);
@@ -176,14 +175,14 @@ async function _refreshWishMode() {
 
 export async function onWishRec(btn) {
   const title = btn.dataset.title;
-  btnBusy(btn, 'Wishing…');
+  btnBusy(btn, t('recs.wishing'));
   try {
     const w = await api('/api/library/wish', 'POST', {title, source: 'rec'});
-    btnDone(btn, w.in_library ? 'In library' : 'Wished', {keepDisabled: true});
-    toast(w.in_library ? `"${title}" is already in the ${serverLabel()} music`
-                       : `"${title}" is on the household's wanted list`, w.in_library ? 'info' : 'success');
+    btnDone(btn, t(w.in_library ? 'recs.lane_library' : 'recs.wished'), {keepDisabled: true});
+    toast(t(w.in_library ? 'recs.already_the_music' : 'recs.on_household_list', {title, server: serverLabel()}),
+          w.in_library ? 'info' : 'success');
   } catch (e) {
-    let detail = e.message || 'failed';
+    let detail = e.message || t('common.failed');
     try { detail = JSON.parse(detail).detail || detail; } catch {}
     toast(detail, 'danger', {ms: 8000});
     btnDone(btn);
@@ -197,24 +196,24 @@ export async function searchLibrary() {
   if (q.length < 2) return;
   _stopRecsPoll();
   const el = document.getElementById('recs-content');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Searching + curating your library…</p>';
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('recs.searching_library')}</p>`;
   try {
     const cat = state.currentRecsCategory ? `&category=${ state.currentRecsCategory }` : '';
     const r = await api(`/api/library/semantic-search?q=${encodeURIComponent(q)}${cat}&limit=12`);
     const hits = r.results || [];
-    const back = `<div class="mb-12"><button type="button" class="btn btn-secondary btn-sm" ${act('reloadRecs')}>← Back to recommendations</button></div>`;
+    const back = `<div class="mb-12"><button type="button" class="btn btn-secondary btn-sm" ${act('reloadRecs')}>${th('recs.back')}</button></div>`;
     if (!hits.length) {
-      el.innerHTML = back + emptyHtml(`No semantic matches for "${esc(q)}" — coverage follows the enrichment index.`);
+      el.innerHTML = back + emptyHtml(th('recs.no_semantic', {q}));
       return;
     }
-    const modeTag = r.mode === 'evidence' ? ' · curated' : ' · similarity only';
-    const anchorTag = r.anchor ? ` · similar to ${esc(r.anchor)}` : '';
+    const modeTag = ` · ${th(r.mode === 'evidence' ? 'recs.mode_curated' : 'recs.mode_similarity')}`;
+    const anchorTag = r.anchor ? ` · ${th('recs.similar_to', {anchor: r.anchor})}` : '';
     const cov = r.coverage || null;
     const covBanner = (cov && cov.constraints >= 3 && cov.best_met <= 1)
-      ? `<div class="banner"><div class="banner-text">No library title carries this full profile (best match: ${cov.best_met}/${cov.constraints} criteria) — showing partial matches.</div></div>`
+      ? `<div class="banner"><div class="banner-text">${th('recs.partial', {met: cov.best_met, n: cov.constraints})}</div></div>`
       : '';
     el.innerHTML = back +
-      `<div class="fs-13 t2 mb-12">Semantic matches in your library for <b class="t-amber">${esc(q)}</b>${state.currentRecsCategory ? ` · ${esc(state.currentRecsCategory)}` : ''}${anchorTag}${modeTag}</div>` +
+      `<div class="fs-13 t2 mb-12">${th('recs.semantic_head')} <b class="t-amber">${esc(q)}</b>${state.currentRecsCategory ? ` · ${esc(state.currentRecsCategory)}` : ''}${anchorTag}${modeTag}</div>` +
       covBanner +
       hits.map(h => `
       <div class="card mb-8">
@@ -236,7 +235,7 @@ export async function searchLibrary() {
 
 export function _recSection(lane, recs) {
   if (!recs || !recs.length) return '';
-  const m = _LANE_META[lane] || { title:lane, sub:'' };
+  const m = _laneMeta(lane);
   return `<div class="list-head"><span>${esc(m.title)}</span><span class="fw-400 fs-12 t3">· ${esc(m.sub)} · ${recs.length}</span></div>` + recs.map((r, i) => _recCard(r, `${lane}-${i}`)).join('');
 }
 
@@ -249,7 +248,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
   document.querySelectorAll('#recs-view .cat-tab').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   const el = document.getElementById('recs-content');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
   // Snapshot the category so a stale tab change can't clobber the active view.
   const requestedCategory = category;
   // Both lanes are always cached; state.currentRecsLane just filters the view.
@@ -262,13 +261,13 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
     if (state.currentRecsCategory !== requestedCategory || (state.currentRecsLane || 'all') !== laneFilter) return;
     if (!r.recommendations?.length) {
       // No cache yet — kick off a background build of BOTH lanes and poll.
-      el.innerHTML = emptyHtml('Generating recommendations from your library and beyond — about 2–4 minutes the first time. This view updates on its own.');
+      el.innerHTML = emptyHtml(th('recs.generating'));
       _startRefresh(category);
       _pollRecsUntilFresh(category, btn, null);
       return;
     }
     const cacheNote = r.cached_at
-      ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">Cached ${_fmtRel(r.cached_at)}</span> · <button type="button" class="link-num t-amber" ${act('regenerateRecs')}>Regenerate now</button></div>`
+      ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">${th('recs.cached', {when: _fmtRel(r.cached_at)})}</span> · <button type="button" class="link-num t-amber" ${act('regenerateRecs')}>${th('recs.regenerate_now')}</button></div>`
       : '';
     const library   = r.recommendations.filter(x => x.lane === 'library');
     const because   = r.recommendations.filter(x => x.lane === 'because');
@@ -279,7 +278,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
     if (laneFilter === 'all' || laneFilter === 'rediscover') body += _recSection('rediscover', rediscover);
     if (laneFilter === 'all' || laneFilter === 'library')   body += _recSection('library', library);
     if (laneFilter === 'all' || laneFilter === 'discovery') body += _recSection('discovery', discovery);
-    if (!body) body = emptyHtml('Nothing in this lane yet — regenerate, or switch lane above.', 'Regenerate', act('regenerateRecs'));
+    if (!body) body = emptyHtml(th('recs.empty_lane'), t('recs.regenerate'), act('regenerateRecs'));
     el.innerHTML = cacheNote + body;
   } catch(e) { el.innerHTML = _errHtml(e); }
 }
@@ -343,7 +342,7 @@ export function _pollRecsUntilFresh(cat, btn, prevStamp) {
   state._recsPollKillswitch = setTimeout(() => {
     _stopRecsPoll();
     const el = stillHere();
-    if (el) el.innerHTML = emptyHtml('Still generating after 5 minutes — this view stopped checking. Reload to see whether the new recommendations are in.', 'Reload', act('reloadRecs'));
+    if (el) el.innerHTML = emptyHtml(th('recs.still_generating'), t('common.reload'), act('reloadRecs'));
   }, 300000);
 }
 
@@ -375,7 +374,7 @@ export async function regenerateRecs() {
     prevStamp = cur.cached_at || null;
   } catch { /* unknown stays undefined, never a sentinel the old stamp would "beat" */ }
   document.getElementById('recs-content').innerHTML =
-    emptyHtml('Regenerating both lanes — library picks and fresh discoveries across every category, ~2-4 min. The view updates on its own.');
+    emptyHtml(th('recs.regenerating'));
   _pollRecsUntilFresh(cat, null, prevStamp);
   _startRefresh(cat);
 }

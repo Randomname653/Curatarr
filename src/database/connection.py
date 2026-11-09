@@ -357,6 +357,8 @@ def _migrate_columns() -> None:
         # The user's own clock (2026-10-25): the IANA zone their browser
         # reports, for night-owl hours and calendars (services/user_time).
         ("users",                  "timezone",        "VARCHAR(64)"),
+        # The UI language setting (UX design record 3.8): NULL = Automatic.
+        ("users",                  "ui_language",     "VARCHAR(8)"),
         # Music context (2026-10-25): album, and the Spotify export's own
         # account of each play (services/spotify_import).
         ("watch_history",          "album",           "VARCHAR(512)"),

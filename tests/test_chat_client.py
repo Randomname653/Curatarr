@@ -12,6 +12,8 @@ helpers where it is installed (CI has it); the wiring is pinned statically.
 """
 import _harness  # noqa: F401,I001 - first: temp stores
 
+from _i18n_js import i18n_js
+
 import json
 import pathlib
 import re
@@ -143,7 +145,7 @@ def test_the_anchor_refetch_targets_the_active_thread():
 # clock: a fake fetch whose body yields scripted frames at virtual times, a
 # minimal DOM, and timers that only fire when the test advances the clock.
 
-_RIG = r"""
+_RIG = i18n_js() + r"""
 const T = [];                                   // virtual timers: {at, fn, id}
 let NOW = 0, NEXT_ID = 1;
 globalThis.setTimeout = (fn, ms) => { const id = NEXT_ID++; T.push({at: NOW + (ms || 0), fn, id}); return id; };

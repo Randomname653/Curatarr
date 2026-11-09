@@ -28,6 +28,7 @@ Each check fails on the code before this change:
     python tests/test_silent_failures_r3_frontend.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js
 
 import json
 import re
@@ -77,7 +78,7 @@ def _node(js: str):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-_UI_STUBS = r"""
+_UI_STUBS = i18n_js() + r"""
 const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const escAttr = esc;
 const act = (name, ...args) => `data-action="${name}"` + (args.length ? ` data-args='${JSON.stringify(args)}'` : '');

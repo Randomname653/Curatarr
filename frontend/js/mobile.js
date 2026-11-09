@@ -8,6 +8,7 @@
 import { HAPTIC_LEVELS, act, activeDialog, closeModal, haptic, hapticLevel, openModal, setHapticPref, toast } from './ui.js';
 import { showView, toggleMobileSidebar } from './nav.js';
 import { state } from './state.js';
+import { t, th } from './i18n.js';
 
 const PHONE_MQ = window.matchMedia('(max-width: 768px)');
 const REDUCED_MQ = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -72,7 +73,7 @@ function _bindInstall() {
   window.addEventListener('appinstalled', () => {
     _installEvt = null;
     if (btn) btn.hidden = true;
-    toast('Curatarr is installed — find it on your home screen.', 'success');
+    toast(t('pwa.installed'), 'success');
   });
   // iOS never fires beforeinstallprompt; Safari installs through Share.
   if (btn && _isIos() && !isStandalone()) btn.hidden = false;
@@ -90,14 +91,14 @@ export async function installApp() {
     return;
   }
   openModal({
-    title: 'Add Curatarr to your home screen',
+    title: t('pwa.ios_title'),
     size: 'narrow',
     body: `<ol class="install-steps">
-        <li>Tap <b>Share</b> <svg class="icon-inline" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg> in Safari's toolbar.</li>
-        <li>Choose <b>Add to Home Screen</b>.</li>
-        <li>Tap <b>Add</b> — Curatarr opens full screen from its icon.</li>
+        <li>${th('pwa.ios_step1_pre')} <b>${th('pwa.ios_share')}</b> <svg class="icon-inline" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg> ${th('pwa.ios_step1_post')}</li>
+        <li>${th('pwa.ios_step2_pre')} <b>${th('pwa.ios_add_home')}</b>${th('pwa.ios_step2_post')}</li>
+        <li>${th('pwa.ios_step3_pre')} <b>${th('pwa.ios_add')}</b> ${th('pwa.ios_step3_post')}</li>
       </ol>`,
-    foot: `<button class="btn btn-primary w-full" ${act('closeModal')}>Got it</button>`,
+    foot: `<button class="btn btn-primary w-full" ${act('closeModal')}>${th('common.got_it')}</button>`,
   });
 }
 
@@ -143,9 +144,9 @@ function _bindConnectivity() {
   const set = online => document.body.classList.toggle('is-offline', !online);
   window.addEventListener('offline', () => {
     set(false);
-    toast("You're offline — Curatarr picks up again when the network is back.", 'amber');
+    toast(t('net.offline'), 'amber');
   });
-  window.addEventListener('online', () => { set(true); toast('Back online.', 'success'); });
+  window.addEventListener('online', () => { set(true); toast(t('net.online'), 'success'); });
   set(navigator.onLine !== false);
 }
 
@@ -286,12 +287,10 @@ function _bindAutogrow() {
 }
 
 // The desktop placeholder wraps to three lines in a phone-width pill.
-const CHAT_PLACEHOLDER_PHONE = 'Ask Curatarr anything…';
 function _syncChatPlaceholder() {
   const inp = _el('chat-input');
   if (!inp) return;
-  inp.dataset.placeholderWide ??= inp.placeholder;
-  inp.placeholder = _isPhone() ? CHAT_PLACEHOLDER_PHONE : inp.dataset.placeholderWide;
+  inp.placeholder = t(_isPhone() ? 'chat.placeholder_phone' : 'chat.input_placeholder');
 }
 
 // Leaving the phone layout (rotating a tablet, resizing a window) must not
@@ -317,5 +316,6 @@ export function initMobile() {
   _bindAutogrow();
   _bindBreakpoint();
   _syncChatPlaceholder();
+  window.addEventListener('i18n:changed', _syncChatPlaceholder);
   _syncHapticChoice();
 }

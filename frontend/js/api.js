@@ -1,5 +1,6 @@
 // ── API ───────────────────────────────────────────────────────────────────────
 import { state } from './state.js';
+import { t } from './i18n.js';
 import { API, confirmDialog } from './ui.js';
 export async function api(path, method='GET', body=null, _retried=false, headers=null) {
   const opts = {method, headers:{'Content-Type':'application/json'}};
@@ -62,7 +63,7 @@ function _endsSession(path) {
 export function sessionEnded(body) {
   if (_sessionEnding) return;
   _sessionEnding = true;
-  let why = 'Your session ended';
+  let why = t('boot.session_ended_default');
   try { why = JSON.parse(body).detail || why; } catch { /* plain-text body */ }
   state.token = '';
   try { localStorage.removeItem('curatarr_token'); } catch {}

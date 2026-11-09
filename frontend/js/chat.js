@@ -9,6 +9,7 @@ import { _deleteBody, deleteFateLines } from './deletions.js';
 import { applyOrphanRepair } from './libraries.js';
 import { loadUnreadMessages } from './notifications.js';
 import { modelWorkEnded, modelWorkStarted, thinkingIndicator } from './brand.js';
+import { t, th } from './i18n.js';
 export function handleKey(e) { if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();} }
 
 export async function newChat() {
@@ -20,8 +21,8 @@ export async function newChat() {
   // the free-chat log and left the discussion's own log in place.
   const tid = activeThreadId();
   const res = await confirmDialog({
-    title: 'Clear conversation history', danger: true, confirmLabel: 'Clear',
-    body: '<p>This deletes the chat log for this thread. Memories and the library are kept.</p>',
+    title: t('chat.clear.title'), danger: true, confirmLabel: t('chat.clear.confirm'),
+    body: `<p>${th('chat.clear.body')}</p>`,
   });
   if (!res.ok) return;
   // A reply still streaming would be persisted AFTER the wipe and open the
@@ -38,8 +39,8 @@ export async function newChat() {
       // (summarizer down). Clearing now would lose them, so ask first.
       if (e.status !== 409) throw e;
       const again = await confirmDialog({
-        title: 'Memories not saved yet', danger: true, confirmLabel: 'Clear anyway',
-        body: `<p>${esc(_errMsg(e).replace(/,? or clear anyway with \?force=1\.?/, '.'))}</p><p>Clearing now loses what Curatarr would have remembered from this chat.</p>`,
+        title: t('chat.clear.unsaved_title'), danger: true, confirmLabel: t('chat.clear.anyway'),
+        body: `<p>${esc(_errMsg(e).replace(/,? or clear anyway with \?force=1\.?/, '.'))}</p><p>${th('chat.clear.unsaved_body')}</p>`,
       });
       if (!again.ok) return;
       await api(url + '&force=1', 'DELETE');
@@ -54,7 +55,7 @@ export async function newChat() {
       // The landing panels sit inside the live log but are not conversation:
       // aria-live="off" keeps their late-loading tiles from being read out.
       msgs.innerHTML = `
-        <div class="msg assistant">Fresh chat. Ask me anything.</div>
+        <div class="msg assistant">${th('chat.fresh')}</div>
         <div id="followup-panel" aria-live="off"></div>
         <div id="moments-panel" aria-live="off"></div>
         <div id="tonight-panel" aria-live="off"></div>
@@ -73,7 +74,7 @@ export async function newChat() {
     state.pendingDiscussContext = null;
     _setDiscussBanner(null);
   } catch (e) {
-    toast('Failed to clear chat history: ' + _errMsg(e), 'danger');
+    toast(t('chat.clear.failed', {error: _errMsg(e)}), 'danger');
   }
 }
 
@@ -92,7 +93,7 @@ export async function correctChatAnchor() {
   const original = label.textContent;
   btn.disabled = true;
   btn.classList.add('busy');
-  label.textContent = 'clearing…';
+  label.textContent = t('chat.refetch_busy');
   try {
     const r = await api('/api/chat/correct-anchor', 'POST', { thread_id: activeThreadId() });
     // Inject a small system note into the chat so the user sees what happened
@@ -102,13 +103,13 @@ export async function correctChatAnchor() {
       const note = document.createElement('div');
       note.className = 'msg system';
       note.textContent = r.ok
-        ? `${r.message || `Cleared cache for '${r.title}'. Your next question will re-fetch fresh metadata.`}`
-        : `${r.reason || 'No active topic to clear yet.'}`;
+        ? (r.message || t('chat.refetch_done', {title: r.title}))
+        : (r.reason || t('chat.refetch_none'));
       msgs.appendChild(note);
       _follow(msgs, true);
     }
   } catch (e) {
-    toast('Re-fetch failed: ' + _errMsg(e), 'danger');
+    toast(t('chat.refetch_failed', {error: _errMsg(e)}), 'danger');
   } finally {
     btn.disabled = false;
     btn.classList.remove('busy');
@@ -147,7 +148,7 @@ export function abortActiveStream(reason = 'superseded') {
 // answer and send the next turn into a 409.
 export function _busyStreaming() {
   if (!_stream) return false;
-  toast('The curator is still answering — wait for this reply to finish first.', 'amber');
+  toast(t('chat.still_answering'), 'amber');
   return true;
 }
 
@@ -329,13 +330,12 @@ export async function sendMessage() {
       // The partial reply stays on screen; the note says it was not kept
       // (the server persists a turn only once its stream completes).
       const why = ctrl.signal.reason;
-      const note = why === 'superseded' ? 'Stopped.'
-        : why === 'idle' ? 'The connection went quiet — this reply was interrupted and not saved.'
-        : 'Connection lost — this reply was interrupted and not saved.';
+      const note = t(why === 'superseded' ? 'chat.stream.stopped'
+        : why === 'idle' ? 'chat.stream.quiet' : 'chat.stream.lost');
       if (!full) bubble.textContent = note;
       else bubble.after(Object.assign(document.createElement('div'), {className: 'msg system', textContent: note}));
     } else if (gotDone && !full) {
-      bubble.textContent = '(no response)';
+      bubble.textContent = t('chat.stream.no_response');
     }
     bubble.setAttribute('aria-busy', 'false');
     if (_stream === me) _stream = null;
@@ -401,18 +401,18 @@ export async function loadGlancePanel() {
   }
   if (libPct !== null) {
     tiles.push({num: libPct + '%', view: 'enrich',
-                lbl: watchedPct !== null ? `Library enriched · ${watchedPct}% of watched titles` : 'Library enriched'});
+                lbl: watchedPct !== null ? t('glance.library_enriched_of', {pct: watchedPct}) : t('glance.library_enriched')});
   } else if (watchedPct !== null) {
-    tiles.push({num: watchedPct + '%', lbl: 'Watched titles enriched', view: 'enrich'});
+    tiles.push({num: watchedPct + '%', lbl: t('glance.watched_enriched'), view: 'enrich'});
   }
 
   if (recs.status === 'fulfilled' && recs.value.recommendations?.length) {
-    tiles.push({num: recs.value.recommendations.length, lbl: 'Recommendations ready', view: 'recs'});
+    tiles.push({num: recs.value.recommendations.length, lbl: t('glance.recs_ready'), view: 'recs'});
   }
 
   if (isAdmin && dels.status === 'fulfilled' && dels.value) {
     const n = dels.value.total ?? (dels.value.proposals || []).length;   // the pool, not one page
-    tiles.push({num: n, lbl: n === 1 ? 'Deletion proposal' : 'Deletion proposals', view: 'deletions'});
+    tiles.push({num: n, lbl: t('glance.deletions', {n}), view: 'deletions'});
   }
 
   if (tasks.status === 'fulfilled') {
@@ -420,15 +420,15 @@ export async function loadGlancePanel() {
       .filter(r => r.at).sort((a, b) => (b.at || '').localeCompare(a.at || ''))[0];
     if (latest) {
       const mins = Math.round((Date.now() - new Date(latest.at).getTime()) / 60000);
-      const when = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
-      tiles.push({num: when, lbl: 'Last activity', view: 'tasks', small: true});
+      const when = mins < 1 ? t('time.just_now') : mins < 60 ? t('time.minutes_ago', {n: mins}) : t('time.hours_ago', {n: Math.round(mins / 60)});
+      tiles.push({num: when, lbl: t('glance.last_activity'), view: 'tasks', small: true});
     }
   }
 
   if (!tiles.length) return; // every source failed -- say nothing rather than show an empty shell
 
   el.innerHTML = `<div class="mt-16 mb-4 stat-row">` + tiles.map(t => `
-    <div class="pointer stat-box" role="button" tabindex="0" aria-label="Go to ${escAttr(t.lbl)}" ${act('goToView', t.view)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
+    <div class="pointer stat-box" role="button" tabindex="0" aria-label="${th('glance.go_to', {what: t.lbl})}" ${act('goToView', t.view)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
       <div class="fs-16 num"${t.small ? '' : ''}>${esc(String(t.num))}</div>
       <div class="lbl">${esc(t.lbl)}</div>
     </div>`).join('') + `</div>`;
@@ -458,13 +458,13 @@ export async function loadLastPlayed() {
       .flatMap(r => r.status === 'fulfilled' ? (r.value.entries || []) : [])
       .sort((a, b) => (b.viewed_at || '').localeCompare(a.viewed_at || ''));
     if (!state._lastPlayedEntries.length) return;
-    el.innerHTML = `<div class="lp-heading">Last played</div><div class="lp-row">` +
+    el.innerHTML = `<div class="lp-heading">${th('chat.last_played')}</div><div class="lp-row">` +
       state._lastPlayedEntries.map((e, i) => {
         const isMusic = e.media_type === 'music';
         let title = e.title;
         if (isMusic && e.series_title) title = `${e.title} — ${e.series_title}`;
         else if ((e.media_type === 'anime' || e.media_type === 'show') && e.series_title) title = `${e.series_title}: ${e.title}`;
-        return `<div class="lp-chip glow-interactive selectable" role="button" tabindex="0" aria-label="Discuss ${escAttr(title)}" ${act('discussLastPlayed', i)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
+        return `<div class="lp-chip glow-interactive selectable" role="button" tabindex="0" aria-label="${th('actions.discuss_title', {title})}" ${act('discussLastPlayed', i)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
           ${_posterImg(e.poster_url, 72, isMusic ? 72 : 108, isMusic)}
           <div class="lp-title">${esc(title)}</div>
         </div>`;
@@ -506,7 +506,7 @@ export async function loadFollowupCard() {
       <p>${esc(card.message)}</p>
       <div class="flex gap-8 flex-wrap mt-10">${card.answers.map(a =>
         `<button type="button" class="sp-chip" ${act('answerFollowup', card.id, a.verdict, card.message, EL)}>${esc(a.label)}</button>`).join('')}
-        <button type="button" class="btn btn-ghost btn-sm" title="Hide it here - it stays in the notifications" ${act('hideFollowup')}>Not now</button>
+        <button type="button" class="btn btn-ghost btn-sm" title="${th('followup.hide_title')}" ${act('hideFollowup')}>${th('common.not_now')}</button>
       </div></div>`;
   } catch { el.innerHTML = ''; } // best-effort nicety: the bell still has the message
 }
@@ -519,16 +519,16 @@ export async function answerFollowup(id, verdict, msgText, btn) {
     haptic('light');
     el.innerHTML = `<div class="card mt-14" role="status">
       <p>${(r.lifted || []).length
-        ? `Got it - ${r.lifted.length} of your recommendations near <b>${esc(r.title)}</b> moved up.`
-        : `Got it - your taste profile now weighs <b>${esc(r.title)}</b> by that.`}</p>
+        ? th('followup.lifted', {n: r.lifted.length, title: r.title})
+        : th('followup.weighed', {title: r.title})}</p>
       <div class="flex gap-8 flex-wrap mt-10">
-        <button type="button" class="btn btn-secondary btn-sm" ${act('explainFollowup', id, msgText)}>Tell the curator why</button>
-        <button type="button" class="btn btn-ghost btn-sm" ${act('hideFollowup')}>Done</button>
+        <button type="button" class="btn btn-secondary btn-sm" ${act('explainFollowup', id, msgText)}>${th('followup.tell_why')}</button>
+        <button type="button" class="btn btn-ghost btn-sm" ${act('hideFollowup')}>${th('common.done')}</button>
       </div></div>`;
     loadUnreadMessages();
   } catch (e) {
     el.querySelectorAll('button').forEach(b => { b.disabled = false; });
-    toast(`Not saved: ${_errMsg(e)}`, 'danger');
+    toast(t('common.not_saved', {error: _errMsg(e)}), 'danger');
     btn?.focus();
   }
 }
@@ -537,7 +537,7 @@ export async function answerFollowup(id, verdict, msgText, btn) {
 export async function explainFollowup(id, msgText) {
   if (_busyStreaming()) return;
   if (!await enterThread({ kind: 'proactive_message', message_id: id },
-                         'Discussing a proactive message', msgText)) return;
+                         t('chat.banner.proactive'), msgText)) return;
   const inp = document.getElementById('chat-input');
   if (inp) { inp.value = ''; inp.focus(); }
 }
@@ -545,7 +545,7 @@ export async function explainFollowup(id, msgText) {
 // "Your week" from Sunday evening to Monday (GET /api/home/moments,
 // services/wrapup_cards), on the member's clock and in their language. "Not
 // now" hides that one card for good (this browser): a moment, not a nag.
-const _MOMENT_OPEN = {week: 'See the week', month: 'Play your month', year: 'Play your year'};
+const _momentOpen = kind => (['week', 'month', 'year'].includes(kind) ? t(`moments.open.${kind}`) : t('common.open'));
 const _MOMENT_HIDDEN = 'curatarr_moments_hidden';
 function _hiddenMoments() {
   try { return JSON.parse(localStorage.getItem(_MOMENT_HIDDEN) || '[]'); } catch { return []; }
@@ -560,24 +560,24 @@ export async function loadMomentsCards() {
       <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(c.label)}</span></div>
       ${(c.lines || []).map(l => `<p>${_bold(l)}</p>`).join('')}
       <div class="flex gap-8 flex-wrap mt-10">
-        <button type="button" class="btn btn-primary btn-sm" ${act('openWrapupPeriod', c.key)}>${esc(_MOMENT_OPEN[c.kind] || 'Open')}</button>
-        ${c.kind === 'week' || c.kind === 'month' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('momentPlaylist', c.key, EL)}>Make it a playlist</button>` : ''}
-        <button type="button" class="btn btn-ghost btn-sm" ${act('hideMoment', c.key)}>Not now</button>
+        <button type="button" class="btn btn-primary btn-sm" ${act('openWrapupPeriod', c.key)}>${esc(_momentOpen(c.kind))}</button>
+        ${c.kind === 'week' || c.kind === 'month' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('momentPlaylist', c.key, EL)}>${th('moments.playlist')}</button>` : ''}
+        <button type="button" class="btn btn-ghost btn-sm" ${act('hideMoment', c.key)}>${th('common.not_now')}</button>
       </div></div>`).join('');
   } catch { el.innerHTML = ''; } // best-effort nicety: the Wrap-Up page has it all
 }
 // The week's / month's titles as one rolling playlist on the member's own
 // server (POST /api/wrapup/playlist), then the play card in place.
 export async function momentPlaylist(key, btn) {
-  btnBusy(btn, 'Building the playlist…');
+  btnBusy(btn, t('moments.playlist_busy'));
   try {
     const r = await api('/api/wrapup/playlist', 'POST', { scope: 'all', period: key });
     haptic('medium');
     btn.closest('.card')?.insertAdjacentHTML('afterend', playlistCardHtml(r));
-    btnDone(btn, 'Playlist ready');
+    btnDone(btn, t('moments.playlist_ready'));
     btn.disabled = true;
   } catch (e) {
-    btnDone(btn, 'Make it a playlist');
+    btnDone(btn, t('moments.playlist'));
     toast(_errMsg(e).slice(0, 200), 'danger');
   }
 }
@@ -595,7 +595,7 @@ export function hideMoment(key) {
 // Swipe wants in the day. No model: the line is a template of facts. "Something
 // else" steps through the other candidates; a stored pick goes onto the
 // watchlist in one tap; the link opens it on their own server.
-const _TONIGHT_LABEL = {weeknight: 'Tonight', film_night: 'Film night', sunday: 'Sunday', late: 'Late', later: 'For later'};
+const _tonightLabel = m => (['weeknight', 'film_night', 'sunday', 'late', 'later'].includes(m) ? t(`tonight.label.${m}`) : t('tonight.label.weeknight'));
 let _tonight = null;
 export async function loadTonightCard() {
   const el = document.getElementById('tonight-panel');
@@ -616,15 +616,15 @@ function _paintTonight() {
   if (!it) { el.innerHTML = ''; return; }
   const canList = ['because', 'library', 'rediscover'].includes(it.kind);
   el.innerHTML = `<div class="card mt-14">
-    <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(_tonight.label || _TONIGHT_LABEL[_tonight.moment] || 'Tonight')}</span></div>
+    <div class="inline-flex gap-6 mb-4"><span class="mi-badge">${esc(_tonight.label || _tonightLabel(_tonight.moment))}</span></div>
     <p>${_bold(it.headline)}</p>
     <p class="fs-12 t3 mt-4">${esc(it.why)}</p>
     <div class="flex gap-8 flex-wrap mt-10">
-      ${it.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(it.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
-      ${canList ? `<button type="button" class="btn btn-secondary btn-sm" ${act('tonightWatchlist', EL)}>+ Watchlist</button>` : ''}
-      ${_tonight.items.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" ${act('tonightNext')}>Something else</button>` : ''}
-      ${_tonight.ask ? `<button type="button" class="btn btn-ghost btn-sm" ${act('askTonight')}>Ask the curator</button>` : ''}
-      <button type="button" class="btn btn-ghost btn-sm" ${act('hideTonight')}>Not now</button>
+      ${it.link ? `<a class="btn btn-primary btn-sm" href="${escAttr(it.link)}" target="_blank" rel="noopener">${th('actions.open_in', {server: serverLabel()})}</a>` : ''}
+      ${canList ? `<button type="button" class="btn btn-secondary btn-sm" ${act('tonightWatchlist', EL)}>${th('actions.watchlist')}</button>` : ''}
+      ${_tonight.items.length > 1 ? `<button type="button" class="btn btn-ghost btn-sm" ${act('tonightNext')}>${th('tonight.something_else')}</button>` : ''}
+      ${_tonight.ask ? `<button type="button" class="btn btn-ghost btn-sm" ${act('askTonight')}>${th('tonight.ask')}</button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" ${act('hideTonight')}>${th('common.not_now')}</button>
     </div></div>`;
 }
 // "Ask the curator": the card's own question, in the member's language, sent
@@ -642,14 +642,14 @@ export function tonightNext() {
 export async function tonightWatchlist(btn) {
   const it = _tonight?.items[_tonight.at];
   if (!it) return;
-  btnBusy(btn, 'Adding…');
+  btnBusy(btn, t('common.adding'));
   try {
     const r = await api('/api/home/watchlist', 'POST', { title: it.title, category: it.category, year: it.year || null });
-    if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
-    else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
+    if (r.ok) { btnDone(btn, t('actions.on_watchlist')); btn.disabled = true; haptic('light'); }
+    else { btnDone(btn, t('actions.watchlist')); toast(t('actions.watchlist_not_added', {error: r.error || t('actions.no_match')}), 'info'); }
   } catch (e) {
-    btnDone(btn, '+ Watchlist');
-    toast(`Not added: ${_errMsg(e)}`, 'danger');
+    btnDone(btn, t('actions.watchlist'));
+    toast(t('common.not_added', {error: _errMsg(e)}), 'danger');
   }
 }
 export function hideTonight() {
@@ -664,10 +664,16 @@ export function hideFollowup() {
 // of the page's initial HTML, the owner's clean-up chip for the owner only --
 // a member cannot open Deletions at all.
 function _staticChipsHtml() {
-  const chip = t => `<button class="sp-chip" ${act('fillPrompt', t)}>${esc(t)}</button>`;
-  return `<button class="sp-chip" ${act('fillPrompt', 'What should I watch tonight?', 'tonight')}>What should I watch tonight?</button>`
-    + (state.currentUser?.is_admin ? chip('What can I clean up in my library?') : '')
-    + chip('What does my watch history say about my taste?');
+  const chip = (key, kind = '') => `<button class="sp-chip" ${act('fillPrompt', t(key), kind)}>${th(key)}</button>`;
+  return chip('chips.tonight', 'tonight')
+    + (state.currentUser?.is_admin ? chip('chips.cleanup') : '')
+    + chip('chips.taste');
+}
+// The fallback chips on the landing, in the UI's language, until /starters
+// answers (auth.showApp calls this before loadStarters).
+export function paintStaticChips() {
+  const el = document.getElementById('suggested-prompts');
+  if (el) el.innerHTML = _staticChipsHtml();
 }
 // Swaps the static #suggested-prompts chips (already in the DOM, written by
 // newChat()/the page's initial HTML) for the server's: the curator's openers
@@ -685,7 +691,7 @@ export async function loadStarters() {
     const chips = (r.chips || []).slice(0, 3);
     if (!starters.length && !chips.length) return;
     el.innerHTML = starters.map(s =>
-      `<button class="sp-chip" title="Curatarr opens the conversation" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
+      `<button class="sp-chip" title="${th('chips.starter_title')}" ${act('useStarter', s.id, EL)}>${esc(s.text)}</button>`
     ).join('') + chips.map(c =>
       `<button class="sp-chip" ${act('fillPrompt', c.text, c.kind || '')}>${esc(c.label || c.text)}</button>`
     ).join('');
@@ -710,7 +716,7 @@ export async function useStarter(id, btn) {
   const text = btn.textContent;
   api(`/api/chat/starters/${encodeURIComponent(id)}/used`, 'POST')
     .catch(e => console.warn('[chat] starter mark-used failed', id, e));
-  if (!await enterThread({ kind: 'starter', starter_id: id }, 'Curator opened this thread', text)) return;
+  if (!await enterThread({ kind: 'starter', starter_id: id }, t('chat.banner.starter'), text)) return;
   const inp = document.getElementById('chat-input');
   inp.value = '';
   inp.focus();
@@ -739,8 +745,8 @@ export async function discussLastPlayed(i) {
     viewed_at: e.viewed_at || null,
     poster_url: e.poster_url || null,
   } : null;
-  if (!await enterThread(ctx, ctx ? `Discussing "${title}"` : null)) return;
-  discussInChat('custom', {message: `I recently ${isMusic ? 'listened to' : 'watched'} "${title}" — what do you think about it, or what should I know?`});
+  if (!await enterThread(ctx, ctx ? t('chat.banner.title', {title}) : null)) return;
+  discussInChat('custom', {message: t(isMusic ? 'chat.discuss_listened' : 'chat.discuss_watched', {title})});
 }
 
 // ── ONE-TAP ACTIONS UNDER A REPLY ───────────────────────────────────────────
@@ -751,55 +757,51 @@ export async function discussLastPlayed(i) {
 // Keep, for the owner, is a protection their own rules honour; for a member it
 // is a household voice the owner's protection rules weigh - the words say so.
 function _keepTip() {
-  return state.currentUser?.is_admin
-    ? 'Never propose it for deletion'
-    : "Tell the household you want to keep it - the owner's protection rules decide";
+  return t(state.currentUser?.is_admin ? 'actions.keep_tip_owner' : 'actions.keep_tip_member');
 }
 function _titleRow(bubble, titles) {
   if (!bubble?.isConnected || !Array.isArray(titles) || !titles.length) return;
   const msgs = bubble.parentElement;
   const stick = msgs ? _atBottom(msgs) : false;
   // A film and a series of one name both get a row: say which is which.
-  const twice = new Set(titles.map(t => t.title).filter((n, i, all) => all.indexOf(n) !== i));
-  const noun = {movie: 'film', show: 'series', anime: 'anime', music: 'music'};
+  const twice = new Set(titles.map(x => x.title).filter((n, i, all) => all.indexOf(n) !== i));
+  const noun = c => (['movie', 'show', 'anime', 'music'].includes(c) ? t(`common.noun.${c}`) : c);
   const row = document.createElement('div');
   row.className = 'msg-actions';
   row.setAttribute('aria-live', 'off');
-  row.innerHTML = titles.map(t => {
-    const video = ['movie', 'show', 'anime'].includes(t.category);
-    return `<div class="msg-actions-item" role="group" aria-label="${escAttr(t.title)}">
-      <span class="msg-actions-t">${esc(t.title)}${twice.has(t.title) ? ` · ${esc(noun[t.category] || t.category)}` : ''}</span>
-      ${t.link ? `<a class="btn btn-secondary btn-sm" href="${escAttr(t.link)}" target="_blank" rel="noopener">Open in ${esc(serverLabel())}</a>` : ''}
-      ${video ? `<button type="button" class="btn btn-ghost btn-sm" ${act('titleWatchlist', t.title, t.category, EL)}>+ Watchlist</button>` : ''}
-      <button type="button" class="btn btn-ghost btn-sm" title="${escAttr(_keepTip())}" ${t.protected ? 'disabled' : ''} ${act('titleKeep', t.title, t.category, EL)}>${t.protected ? 'Kept' : 'Keep'}</button>
+  row.innerHTML = titles.map(x => {
+    const video = ['movie', 'show', 'anime'].includes(x.category);
+    return `<div class="msg-actions-item" role="group" aria-label="${escAttr(x.title)}">
+      <span class="msg-actions-t">${esc(x.title)}${twice.has(x.title) ? ` · ${esc(noun(x.category))}` : ''}</span>
+      ${x.link ? `<a class="btn btn-secondary btn-sm" href="${escAttr(x.link)}" target="_blank" rel="noopener">${th('actions.open_in', {server: serverLabel()})}</a>` : ''}
+      ${video ? `<button type="button" class="btn btn-ghost btn-sm" ${act('titleWatchlist', x.title, x.category, EL)}>${th('actions.watchlist')}</button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" title="${escAttr(_keepTip())}" ${x.protected ? 'disabled' : ''} ${act('titleKeep', x.title, x.category, EL)}>${th(x.protected ? 'actions.kept' : 'actions.keep')}</button>
     </div>`;
   }).join('');
   bubble.after(row);
   if (msgs) _follow(msgs, false, stick);   // the row, too, comes into view when the reply did
 }
 export async function titleWatchlist(title, category, btn) {
-  btnBusy(btn, 'Adding…');
+  btnBusy(btn, t('common.adding'));
   try {
     const r = await api('/api/home/watchlist', 'POST', { title, category });
-    if (r.ok) { btnDone(btn, 'On your watchlist'); btn.disabled = true; haptic('light'); }
-    else { btnDone(btn, '+ Watchlist'); toast(`Not added to your watchlist - ${r.error || 'no match'}`, 'info'); }
+    if (r.ok) { btnDone(btn, t('actions.on_watchlist')); btn.disabled = true; haptic('light'); }
+    else { btnDone(btn, t('actions.watchlist')); toast(t('actions.watchlist_not_added', {error: r.error || t('actions.no_match')}), 'info'); }
   } catch (e) {
-    btnDone(btn, '+ Watchlist');
-    toast(`Not added: ${_errMsg(e)}`, 'danger');
+    btnDone(btn, t('actions.watchlist'));
+    toast(t('common.not_added', {error: _errMsg(e)}), 'danger');
   }
 }
 export async function titleKeep(title, category, btn) {
-  btnBusy(btn, 'Keeping…');
+  btnBusy(btn, t('actions.keeping'));
   try {
     await api('/api/home/keep', 'POST', { title, category });
-    btnDone(btn, 'Kept');
+    btnDone(btn, t('actions.kept'));
     btn.disabled = true;
-    toast(state.currentUser?.is_admin
-      ? `Kept: ${title} will not be proposed for deletion`
-      : `Noted: you want to keep ${title} - the owner's protection rules weigh it`, 'success');
+    toast(t(state.currentUser?.is_admin ? 'actions.kept_owner' : 'actions.kept_member', {title}), 'success');
   } catch (e) {
-    btnDone(btn, 'Keep');
-    toast(`Not kept: ${_errMsg(e)}`, 'danger');
+    btnDone(btn, t('actions.keep'));
+    toast(t('actions.not_kept', {error: _errMsg(e)}), 'danger');
   }
 }
 
@@ -873,11 +875,11 @@ async function _loadThread(tid) {
 function _historyErrorRow(onRetry) {
   const row = document.createElement('div');
   row.className = 'msg system load-err';
-  row.textContent = "Couldn't load this conversation's history — it is still saved on the server. ";
+  row.textContent = t('chat.history_failed') + ' ';
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'btn btn-secondary btn-sm';
-  retry.textContent = 'Retry';
+  retry.textContent = t('common.retry');
   retry.addEventListener('click', () => { if (!_busyStreaming()) onRetry(); });
   row.appendChild(retry);
   return row;
@@ -939,7 +941,7 @@ export async function restoreChatHistory() {
     fold.id = 'earlier-chat-btn';
     fold.className = 'btn btn-ghost btn-sm';
     fold.addEventListener('click', showEarlierChat);
-    fold.textContent = `Continue our last conversation · ${history.length} message${history.length === 1 ? '' : 's'}`;
+    fold.textContent = t('chat.continue_last', {n: history.length});
     msgs.insertBefore(fold, first);
     for (const m of history) {
       const b = _historyBubble(m);
@@ -968,7 +970,7 @@ export function discussInChat(type, data) {
   // Prime the chat with context
   let primer = '';
   if (type === 'rec') {
-    primer = `I want to talk about the recommendation for "${data.title}". You suggested it because: "${data.reason}". Let's discuss whether this actually fits my taste.`;
+    primer = t('chat.discuss_rec', {title: data.title, reason: data.reason});
   } else if (type === 'delete') {
     primer = `I just deleted "${data.title}" from my library. My reason: "${data.reason || 'no specific reason given'}". What does this tell you about my taste? What should I avoid in the future?`;
   } else if (type === 'custom') {

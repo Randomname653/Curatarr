@@ -934,9 +934,15 @@ TRIGGER_TYPE_NAMES: set[str] = {t["type"] for t in TRIGGER_TYPES}
 _OTHER_LABELS = {"protection_intent": "Keep request"}
 
 
-def trigger_label(trigger_type: str) -> str:
+def trigger_label(trigger_type: str, lang: str = "en") -> str:
     """The user-facing name of a message's trigger, for the bell badge: the
-    Settings label, never the internal type."""
+    Settings label, never the internal type - in the user's UI language
+    (frontend/i18n bell.trigger.<type>, services/i18n), English as written
+    here where the dictionary has none."""
+    from src.services.i18n import dictionary
+    key = f"bell.trigger.{trigger_type}"
+    if lang != "en" and key in dictionary(lang):
+        return dictionary(lang)[key]
     for t in TRIGGER_TYPES:
         if t["type"] == trigger_type:
             return t["label"]
@@ -1958,6 +1964,10 @@ async def get_unread_messages(user_id: int, seen: bool = False) -> dict:
     """
     now = datetime.utcnow()
 
+    # The badge's words in the user's UI language, read before the write.
+    from src.services.user_language import ui_language
+    lang = await run_read(ui_language, user_id)
+
     # Retiring stale bubbles and counting the impression write: one
     # read-modify-write on the writer thread.
     def _next():
@@ -2000,7 +2010,7 @@ async def get_unread_messages(user_id: int, seen: bool = False) -> dict:
                     "id": m.id,
                     "message": m.message,
                     "trigger_type": m.trigger_type,
-                    "label": trigger_label(m.trigger_type),
+                    "label": trigger_label(m.trigger_type, lang),
                     "created_at": m.created_at.isoformat(),
                 },
                 "total": total,
@@ -2027,7 +2037,7 @@ def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict
     with its one-tap answers, or None. Read only: showing the card is no
     impression (the bell counts those). Blocking."""
     from src.services import post_watch
-    from src.services.user_language import user_language
+    from src.services.user_language import ui_language, user_language
     now = now or datetime.utcnow()
     with get_db_session() as db:
         rows = (db.query(ProactiveMessage)
@@ -2047,7 +2057,7 @@ def followup_card(user_id: int, now: Optional[datetime] = None) -> Optional[dict
             return None
         m, subject = found
         card = {"id": m.id, "message": m.message, "trigger_type": m.trigger_type,
-                "label": trigger_label(m.trigger_type), "title": subject["title"],
+                "label": trigger_label(m.trigger_type, ui_language(user_id)), "title": subject["title"],
                 "created_at": m.created_at.isoformat() if m.created_at else None}
     card["answers"] = post_watch.answers(user_language(user_id))
     return card

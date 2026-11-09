@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { EL, _errHtml, act, esc, escAttr, loc, setBadge } from './ui.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
+import { t, th } from './i18n.js';
 // seen === true only when the panel is open and the message is on screen —
 // the 60 s badge poll must not count as an impression, or every message
 // retires unread after ~40 minutes of an open tab. Strict === because
@@ -46,7 +47,7 @@ export async function loadUnreadMessages(seen) {
 
     let html = '';
     if (sys.items.length) {
-      html += `<div class="mp-section">System</div>`;
+      html += `<div class="mp-section">${th('bell.system')}</div>`;
       html += sys.items.map(n => {
         const run = n.action && SYS_ACTIONS[n.action.key];
         const run2 = n.secondary && SYS_ACTIONS[n.secondary.key];
@@ -60,21 +61,21 @@ export async function loadUnreadMessages(seen) {
       }).join('');
     }
     if (principles.length) {
-      html += `<div class="mp-section">Principles awaiting review</div>`;
+      html += `<div class="mp-section">${th('bell.principles')}</div>`;
       html += principles.slice(0, 3).map(p => `
         <div class="cursor-default msg-item">
-          <div class="mi-text">${p.novelty === 'contradiction' ? '<span class="fs-10 mr-4 badge danger">contradiction</span>' : ''}${esc(p.text)}</div>
+          <div class="mi-text">${p.novelty === 'contradiction' ? `<span class="fs-10 mr-4 badge danger">${th('bell.contradiction')}</span>` : ''}${esc(p.text)}</div>
           <div class="flex gap-8 mt-10">
-            <button class="flex-1 btn btn-primary btn-sm" ${act('discussPrinciple', p.id, p.text)}>Review together</button>
+            <button class="flex-1 btn btn-primary btn-sm" ${act('discussPrinciple', p.id, p.text)}>${th('bell.review_together')}</button>
           </div>
         </div>`).join('');
       if (principles.length > 3) {
-        html += `<div class="mp-more">${principles.length - 3} more in the Learned principles panel</div>`;
+        html += `<div class="mp-more">${th('bell.more_principles', {n: principles.length - 3})}</div>`;
       }
     }
     if (r.message) {
       const m = r.message;
-      html += `<div class="mp-section">From the curator</div>
+      html += `<div class="mp-section">${th('bell.from_curator')}</div>
       <div class="cursor-default msg-item">
         <div class="mi-text">${esc(m.message)}</div>
         <div class="inline-flex gap-6 mt-8">
@@ -82,13 +83,13 @@ export async function loadUnreadMessages(seen) {
           <span class="mi-time">${new Date(m.created_at).toLocaleString(loc())}</span>
         </div>
         <div class="flex gap-8 mt-10">
-          <button class="flex-1 btn btn-primary btn-sm" ${act('respondToMessage', m.id, m.message, m.trigger_type)}>Respond</button>
-          <button class="btn btn-secondary btn-sm" ${act('skipMessage', m.id, EL)} title="Skip — may come back later">Skip</button>
+          <button class="flex-1 btn btn-primary btn-sm" ${act('respondToMessage', m.id, m.message, m.trigger_type)}>${th('bell.respond')}</button>
+          <button class="btn btn-secondary btn-sm" ${act('skipMessage', m.id, EL)} title="${th('bell.skip_title')}">${th('bell.skip')}</button>
         </div>
       </div>`;
-      if (r.total > 1) html += `<div class="mp-more">${r.total - 1} more waiting</div>`;
+      if (r.total > 1) html += `<div class="mp-more">${th('bell.more_waiting', {n: r.total - 1})}</div>`;
     }
-    list.innerHTML = html || '<div id="msg-empty">No new notifications</div>';
+    list.innerHTML = html || `<div id="msg-empty">${th('bell.empty')}</div>`;
     _bellFails = 0;
   } catch (e) {
     // A 401 already ended the session in api(). Anything else: the third
@@ -117,10 +118,10 @@ const SYS_ACTIONS = {
 export async function discussPrinciple(id, text) {
   if (_busyStreaming()) return;
   toggleMsgPanel();
-  if (!await enterThread({ kind: 'principle', principle_id: id }, 'Reviewing a learned principle',
-                         `I've learned a new rule from our debates and want to settle it with you: "${text}"`)) return;
+  if (!await enterThread({ kind: 'principle', principle_id: id }, t('chat.banner.principle'),
+                         t('bell.principle_opener', {text}))) return;
   const input = document.getElementById('chat-input');
-  if (input) { input.value = "Let's review this learned principle together."; }
+  if (input) { input.value = t('bell.principle_ask'); }
   sendMessage();
 }
 
@@ -142,7 +143,7 @@ export async function respondToMessage(id, msgText, triggerType) {
   // as a RAG context block, it doesn't need us to forward msgText). Pass 27:
   // sticky discuss-context — the banner shows the user they're in a thread.
   if (!await enterThread({ kind: 'proactive_message', message_id: id },
-                         'Discussing a proactive message', msgText)) return;
+                         t('chat.banner.proactive'), msgText)) return;
 
   // Leave input empty — user types their own response
   const input = document.getElementById('chat-input');

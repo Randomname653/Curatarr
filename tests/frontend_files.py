@@ -34,6 +34,13 @@ def script() -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in modules())
 
 
+def dictionaries() -> str:
+    """frontend/i18n/*.json - the UI's words since 3.8 (en first)."""
+    i18n = _FRONTEND / "i18n"
+    return "\n".join((i18n / f"{lang}.json").read_text(encoding="utf-8") for lang in ("en", "de"))
+
+
 def everything() -> str:
-    """Markup + script, for needle tests that do not care where a string lives."""
-    return markup() + "\n" + script()
+    """Markup + script + the dictionaries, for needle tests that do not care
+    where a string lives (a UI word may live in frontend/i18n/en.json)."""
+    return markup() + "\n" + script() + "\n" + dictionaries()

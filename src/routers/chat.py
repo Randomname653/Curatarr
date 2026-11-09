@@ -1994,10 +1994,13 @@ async def _build_discuss_context_block(
         # App knowledge (in-view buttons, verdict classes) lives in
         # app_context.py — the single source of truth, drift-tested against
         # the frontend files. Never inline UI prose here again.
-        from src.services.app_context import DISCUSSION_UI_BLOCK, STAGNANT_VERDICT_BLOCK
-        block += DISCUSSION_UI_BLOCK
+        # Its UI names in the user's UI language (UX design record 3.8).
+        from src.services.app_context import DISCUSSION_UI_TEMPLATE, STAGNANT_VERDICT_TEMPLATE, render
+        from src.services.user_language import ui_language
+        _ui = await run_read(ui_language, user_id)
+        block += render(DISCUSSION_UI_TEMPLATE, _ui)
         if getattr(proposal, "stagnant", False):
-            block += STAGNANT_VERDICT_BLOCK
+            block += render(STAGNANT_VERDICT_TEMPLATE, _ui)
 
         # Size-outlier context: is this item's GB normal for its resolution/codec
         # class (don't treat as a flaw) or genuine bitrate bloat? Lets the curator
@@ -2630,7 +2633,8 @@ async def _build_discuss_context_block(
     # applied post-turn by detect_and_apply_principle_verdict.
     if kind == "principle" and getattr(ctx, "principle_id", None):
         from src.database.models import CuratorPrinciple
-        from src.services.app_context import PRINCIPLE_REVIEW_BLOCK
+        from src.services.app_context import PRINCIPLE_REVIEW_TEMPLATE, render
+        from src.services.user_language import ui_language
         prin = await run_read(_in_session, lambda db: _row_copy(db.query(CuratorPrinciple).filter(
             CuratorPrinciple.id == ctx.principle_id,
             CuratorPrinciple.user_id == user_id,
@@ -2665,7 +2669,7 @@ async def _build_discuss_context_block(
                           "with the owner's taste profile shown above.\n")
         except Exception as e:
             logger.warning("[chat] active-principles fetch failed: %s", e)
-        block += PRINCIPLE_REVIEW_BLOCK
+        block += render(PRINCIPLE_REVIEW_TEMPLATE, await run_read(ui_language, user_id))
         logger.info("💉 [PRINCIPLE REVIEW CONTEXT] #%d (%s) injected",
                     prin.id, prin.novelty or "new")
         return block, "", domain
@@ -2944,7 +2948,8 @@ async def send_message(
     from src.services.llm_lane import busy_message, curator_available
     _curator_ok, _curator_why = curator_available()
     if not _curator_ok:
-        _busy_text = busy_message(_curator_why)   # promises background work only if the lane is open
+        from src.services.user_language import ui_language as _uil
+        _busy_text = busy_message(_curator_why, lang=await run_read(_uil, user.id))   # background work promised only if the lane is open
         def _save_both(db):
             _save_message(user.id, "user", message.message, db, thread_id=thread_id)
             _save_message(user.id, "assistant", _busy_text, db, thread_id=thread_id)
@@ -2989,6 +2994,15 @@ async def _send_message_guarded(message: ChatMessage, user: User,
     tonight_ask = bool(_ctx and (_ctx.kind or _ctx.type) == "tonight")
     if tonight_ask:
         message = message.model_copy(update={"discuss_context": None})
+    # The words the server writes into this turn (status lines, error lines)
+    # in the user's UI language (UX design record 3.8); the answer itself
+    # follows the message.
+    from src.services.i18n import t as _i18n_t
+    from src.services.user_language import ui_language as _ui_language
+    _ui = await run_read(_ui_language, user.id)
+
+    def _say(key: str, **values) -> str:
+        return _i18n_t(key, _ui, **values)
     # One host for the whole turn: its window budgets the history and the
     # answer, its url takes the request.
     chat_host = host_for("chat")
@@ -3017,7 +3031,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
         # --- DISCUSS BUTTON: server looks up the real record by ID and builds a
         #     RAG-style context block. No fake assistant message is persisted —
         #     the LLM gets the context via the system prompt instead.
-        pre_stream_status.append("Loading discussion context…")
+        pre_stream_status.append(_say("chat.status.loading_discussion"))
         discuss_block, active_title, discuss_domain = await _build_discuss_context_block(
             message.discuss_context, user.id
         )
@@ -3025,7 +3039,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             logger.info("💉 [DISCUSS CONTEXT INJECTED]: %s (thread=%s)",
                         active_title or "(no title anchor)", thread_id)
             pre_stream_status.append(
-                f"Loaded discussion context: {active_title or '(proactive message)'}"
+                _say("chat.status.loaded_discussion", title=active_title or _say("chat.status.proactive_message"))
             )
 
     if not message.discuss_context:
@@ -3048,7 +3062,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
         title_hint = bool(_lib0) or _looks_like_title_introduction(message.message)
 
         if title_hint:
-            pre_stream_status.append("Identifying media reference…")
+            pre_stream_status.append(_say("chat.status.identifying"))
             detected_title, year_hint = await _detect_media_in_query(message.message)
             # Anaphora on OUR OWN recommendation: "tell me more about that"
             # after the curator just pitched a title. Before running
@@ -3076,7 +3090,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         logger.info("[chat] anchor recovered from last assistant "
                                     "reply: %r", detected_title)
                         pre_stream_status.append(
-                            f"Anchoring to '{detected_title}' from the previous reply")
+                            _say("chat.status.anchoring", title=detected_title))
 
             # Pass 31: override the cascade-detected title when a DIFFERENT
             # title in the message has stronger user-state (pending
@@ -3107,7 +3121,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                             detected_title, alt_title, alt_category, alt_title,
                         )
                         pre_stream_status.append(
-                            f"️ Redirecting anchor: '{detected_title}' '{alt_title}' (has prior stance)"
+                            _say("chat.status.redirecting", title=detected_title, alt=alt_title)
                         )
                         detected_title = alt_title
                         forced_domain = alt_category  # may be None for protected
@@ -3138,7 +3152,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                             _verified_block_for, active_title, _dom, cached_data)
                     logger.debug("[chat] Reusing cached title for thread %s: %s",
                                  thread_id, active_title)
-                    pre_stream_status.append(f"Reusing cached metadata for '{active_title}'")
+                    pre_stream_status.append(_say("chat.status.reusing", title=active_title))
                 else:
                     # Pass 14.10: detected_title differs from any cached title
                     # for this thread → topic pivot. Smaller conversation
@@ -3146,15 +3160,15 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                     if cached:
                         topic_changed = True
                         pre_stream_status.append(
-                            f"Topic switched: {cached[0]} {detected_title}"
+                            _say("chat.status.switched", old=cached[0], new=detected_title)
                         )
                     logger.info(
                         "🔍 [LIVE SEARCH] Attempting fetch for: '%s' (year=%s)",
                         detected_title, year_hint,
                     )
                     pre_stream_status.append(
-                        f"Looking up '{detected_title}'"
-                        + (f" ({year_hint})" if year_hint else "") + "…"
+                        _say("chat.status.looking_up", title=detected_title,
+                             year=f" ({year_hint})" if year_hint else "")
                     )
                     domains = _domain_cascade(message.message, year_hint=year_hint)
                     # Pass 33: if Pass 31 redirected the anchor AND the
@@ -3222,7 +3236,8 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         logger.info("💉 [INJECTED CONTEXT (Live)]: %s (domain=%s)",
                                     active_title, matched_domain)
                         pre_stream_status.append(
-                            f"Found in {matched_domain or 'catalog'}: '{active_title}'"
+                            _say("chat.status.found", where=matched_domain or _say("chat.status.catalog"),
+                                 title=active_title)
                         )
                     else:
                         # No enrichment data: anchor the curator into "I don't know"
@@ -3235,7 +3250,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         logger.warning("⚠️ [NO METADATA] Anchor for: '%s' (cascade=%s)",
                                        detected_title, domains)
                         pre_stream_status.append(
-                            f"️ No verified data for '{detected_title}' — anchor mode"
+                            _say("chat.status.no_data", title=detected_title)
                         )
             else:
                 logger.info("ℹ️ [CHAT] Title hint detected but no entity extracted.")
@@ -3351,7 +3366,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
     )
 
     # Retrieve relevant episodic memories — scoped to the same domain when known
-    pre_stream_status.append("Loading taste profile + memories…")
+    pre_stream_status.append(_say("chat.status.loading_taste"))
     from src.services.episodic_memory import retrieve_memories, format_memories_for_context
     memories = await retrieve_memories(
         user.id, retrieval_query, top_k=6, media_category=domain,
@@ -3363,7 +3378,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
         memories = _filter_memories_for_topic(memories, active_title)
     memory_context = format_memories_for_context(memories)
     if memories:
-        pre_stream_status.append(f"{len(memories)} relevant memor{'y' if len(memories) == 1 else 'ies'} loaded")
+        pre_stream_status.append(_say("chat.status.memories", n=len(memories)))
 
     # System-prompt layout: the discussion block goes LAST so it sits closest
     # to the user message in the LLM's attention window. Memories and RAG
@@ -3425,8 +3440,10 @@ async def _send_message_guarded(message: ChatMessage, user: User,
     from src.services import curator_voice
     from src.services.chat_prompt import build_system_prompt
     voice = await run_read(curator_voice.voice_for, user.id, user.is_admin)
+    # user_lang: the answer's language (this message); ui_lang: the language
+    # of the UI the curator points to (the setting) - they can differ.
     system_prompt = build_system_prompt(
-        voice=voice, user_lang=user_lang, taste_context=taste_context,
+        voice=voice, user_lang=user_lang, ui_lang=_ui, taste_context=taste_context,
         memory_context=memory_context, rag_context=rag_context,
         discuss_block=discuss_block, active_title=active_title,
         pillar_framework=pillar_framework,
@@ -3498,9 +3515,8 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             # thrashing it.
             if curator_busy():
                 _holder = gate_owner() if _owner else None
-                _busy = (f"Curatarr is busy ({_holder}) — you are next in line…"
-                         if _holder else
-                         "Curatarr is busy with another request — you are next in line…")
+                _busy = (_say("chat.status.busy_holder", holder=_holder) if _holder else
+                         _say("chat.status.busy"))
                 yield f"data: {json.dumps({'status': _busy})}\n\n"
 
             # Queue for the slot WITHOUT going silent: a deletion run can hold
@@ -3552,7 +3568,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
             health_warned = False
 
             try:
-                yield f"data: {json.dumps({'status': 'Curatarr is thinking…'})}\n\n"
+                yield f"data: {json.dumps({'status': _say('chat.status.thinking')})}\n\n"
                 last_emit = loop.time()
                 # Context-budget watchdog: input + num_predict share the
                 # CURATOR_NUM_CTX window — past the budget the generation gets
@@ -3635,8 +3651,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                                     _body = (await resp.aread())[:500]
                                     logger.error("[chat] Ollama answered %s: %r",
                                                  resp.status_code, _body)
-                                    error_text = ("Error: the curator could not start this reply. "
-                                                  "The server log has the details.")
+                                    error_text = _say("chat.error.start")
                                 else:
                                     # The heartbeat keeps running until the end, not
                                     # just until the slot is ours: a cold load of the
@@ -3691,7 +3706,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                         from src.services.pc_host import node_name as _node
                         logger.info("[chat] %s went away before the reply "
                                     "started - answering on %s", _node(), _fallback.url)
-                        _gone = f"{_node(cap=True)} went away - answering on this server…"
+                        _gone = _say("chat.status.node_gone", node=_node(cap=True))
                         yield f"data: {json.dumps({'status': _gone})}\n\n"
                         last_emit = loop.time()
                         from src.services.prompt_budget import budget_for as _bf, fit_messages as _fm
@@ -3704,16 +3719,12 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                 from src.services.pc_host import node_name as _node
                 logger.info("[chat] %s went away mid-reply (%d chars)", _node(),
                             len(full_response))
-                error_text = (f"{_node(cap=True)} went away in the middle of this reply. "
-                              "Send it again - Curatarr answers on this server now.")
+                error_text = _say("chat.error.node_gone", node=_node(cap=True))
 
             except httpx.ConnectError:
                 logger.error("[chat] Ollama not reachable at %s", ollama_url)
-                error_text = (f"Ollama not reachable at {ollama_url}. Make sure Ollama is "
-                              f"running and '{settings.CURATOR_MODEL}' is pulled."
-                              if _owner else
-                              "The curator cannot be reached right now - try again "
-                              "in a minute.")
+                error_text = (_say("chat.error.ollama", url=ollama_url, model=settings.CURATOR_MODEL)
+                              if _owner else _say("chat.error.unreachable"))
 
             except (asyncio.CancelledError, GeneratorExit):
                 # Pass 46 (Bug 2): client closed the SSE connection mid-stream.
@@ -3733,8 +3744,7 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                 # can carry an endpoint, a path or a model's raw reply (CodeQL
                 # py/stack-trace-exposure, 2026-09-25).
                 logger.error("[chat] stream failed: %s: %s", type(e).__name__, e, exc_info=True)
-                error_text = ("Error: the curator could not finish this reply. "
-                              "The server log has the details.")
+                error_text = _say("chat.error.finish")
 
             finally:
                 # The GPU slot goes back the moment Ollama is done; the

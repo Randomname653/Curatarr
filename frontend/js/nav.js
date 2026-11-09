@@ -11,10 +11,11 @@ import { arrActiveTab, loadArrPage } from './arr.js';
 import { loadReclassify } from './reclassify.js';
 import { loadWrapup } from './wrapup.js';
 import { haptic, withTransition } from './ui.js';
+import { t } from './i18n.js';
 export function toggleSidebar() {
   const collapsed = document.getElementById('sidebar').classList.toggle('collapsed');
   localStorage.setItem('curatarr_sidebar_collapsed', collapsed ? '1' : '0');
-  document.getElementById('sb-collapse-toggle').title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  document.getElementById('sb-collapse-toggle').title = t(collapsed ? 'nav.expand_title' : 'nav.collapse_title');
 }
 // Below 768px the sidebar is an off-canvas drawer (see the responsive
 // media query) instead of the desktop expand/collapse rail. `force` lets
