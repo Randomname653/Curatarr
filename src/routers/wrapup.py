@@ -54,6 +54,8 @@ def poster_wants(facts: dict) -> dict:
     for key in ("contrarian", "dismissal", "comfort"):
         x = facts.get(key) or {}
         add(x.get("title"), x.get("media_type"))
+    d = (facts.get("consensus") or {}).get("duel") or {}     # the "you and the crowd" slide
+    add(d.get("title"), d.get("media_type"))
     for key in ("in_48h", "deepest_sitting"):
         x = (facts.get("binge") or {}).get(key) or {}
         add(x.get("series"), x.get("media_type"))

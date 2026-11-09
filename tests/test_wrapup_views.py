@@ -79,7 +79,19 @@ check("consensus: the titles with a community score, your hours, the judge's las
       and {p["title"]: p["verdict"] for p in c["points"]}["T4"] == "cut")
 check("...and the ones you loved more than the crowd did",
       c["yours_alone"] == ["T0"])
-check("too few scored titles: no scatter", ws.consensus(db, 1, titles[:3], enriched) == {})
+check("...its duel: that title's place for you (by hours) and for the crowd (by score), among the same six",
+      c["duel"] == {"kind": "yours", "title": "T0", "media_type": "movie", "hours": 9, "community": 5.9,
+                    "your_rank": 1, "crowd_rank": 6, "of": 6})
+# Nothing yours alone: the crowd's favourite you barely touched, far enough apart
+t2 = [{"title": f"S{i}", "media_type": "movie", "hours": h} for i, h in enumerate([9, 7, 5, 3, 2, 1, 0.8, 0.5])]
+e2 = {f"S{i}": {"rating": r, "votes": 5000} for i, r in enumerate([8.0, 7.8, 7.6, 7.4, 7.2, 7.0, 6.8, 9.5])}
+c2 = ws.consensus(db, 1, t2, e2)
+check("...and with nothing yours alone, the crowd's #1 you watched least",
+      c2["yours_alone"] == [] and c2["duel"]["kind"] == "theirs" and c2["duel"]["title"] == "S7"
+      and (c2["duel"]["your_rank"], c2["duel"]["crowd_rank"]) == (8, 1))
+e3 = {**e2, "S7": {"rating": 7.1, "votes": 5000}}
+check("...but no duel when the two places are close", ws.consensus(db, 1, t2, e3)["duel"] is None)
+check("too few scored titles: no slide", ws.consensus(db, 1, titles[:3], enriched) == {})
 db.close()
 check("the facts are a new generation", wf.FACTS_VERSION >= 11)
 
@@ -110,7 +122,7 @@ const facts = {period: {label: '2026', start: '2026-01-01', end: '2026-12-31'},
   consensus: cons, top: []};
 const slides = build({facts, story: null, insights: []});
 console.log(JSON.stringify({clock: clock(rows), clockThin: clock([[1]]), river: river(byMonth),
-  riverThin: river({"2026-10": {"a": 1}}), cons: consensus(cons), consThin: consensus({points: []}),
+  riverThin: river({"2026-10": {"a": 1}}), duelNone: duel(null, {}),
   cls: slides.map(s => s.cls), html: slides.map(s => s.html)}));
 """ % (json.dumps(clock_rows), json.dumps(c))
     r = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
@@ -123,9 +135,7 @@ console.log(JSON.stringify({clock: clock(rows), clockThin: clock([[1]]), river: 
     check("the river is one stream per nanogenre, the biggest the strongest shade, named in-stream",
           res.get("river", "").count('class="wus-rv s') == 2 and 'class="wus-rv s0"><title>crime thriller' in res.get("river", "")
           and ">crime thriller</text>" in res.get("river", "") and res.get("riverThin") == "")
-    check("consensus marks a kept title with a triangle and a cut one with a cross",
-          res.get("cons", "").count("wus-cs-kept") == 1 and res.get("cons", "").count("wus-cs-cut") == 1
-          and res.get("cons", "").count("<circle") == 4 and res.get("consThin") == "")
+    check("no duel, no slide", res.get("duelNone") is None)
     cls = res.get("cls", [])
     check("the story adds the clock after the opening, river and consensus before the end",
           "clock" in cls and "river" in cls and "consensus" in cls
@@ -134,7 +144,14 @@ console.log(JSON.stringify({clock: clock(rows), clockThin: clock([[1]]), river: 
     check("...with their own words: the peak hour and day, the leader and what is new, yours alone",
           "Most at 22:00, busiest on Fridays" in html.get("clock", "")
           and "crime thriller</h2>" not in html.get("river", "") and "crime thriller led" in html.get("river", "")
-          and "New to you: teen comedy" in html.get("river", "") and "Yours alone: T0" in html.get("consensus", ""))
+          and "New to you: teen comedy" in html.get("river", ""))
+    # 2026-11-08: a scatter of every scored title hid the one the headline named
+    duel_html = html.get("consensus", "")
+    check("you and the crowd: one title, your place in amber and the crowd's, among the same titles",
+          ">Yours alone<" in duel_html and '<h2 class="wus-h">T0</h2>' in duel_html
+          and re.search(r'wus-duel-side lead">\s*<span class="wus-duel-lbl">for you</span><span class="wus-duel-n">#1<', duel_html) is not None
+          and re.search(r'the community</span><span class="wus-duel-n">#6<', duel_html) is not None
+          and "among the 6 titles" in duel_html and "<svg" not in duel_html)
 else:
     print("  (node not installed - checked statically)")
 check("no inline style in the story mode", 'style="' not in JS and ".style." not in JS)

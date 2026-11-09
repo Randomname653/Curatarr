@@ -195,40 +195,26 @@ export function river(byMonth) {
   return `<svg class="wus-chart wus-river" width="460" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="Your nanogenres month by month: ${order.map(_s).join(', ')}">${layers.join('')}${labels.join('')}${ends}</svg>`;
 }
 
-/** Consensus: your hours (up) against the community's score (right); the
- *  judge's verdict is the marker. Top-left is what you loved alone. */
-export function consensus(c) {
-  const pts = c?.points || [];
-  if (pts.length < 6) return '';
-  const W = 280, H = 170, pad = 22;
-  const cs = pts.map(p => p.community);
-  const lo = Math.min(...cs, c.median_community) - 0.3, hi = Math.max(...cs, c.median_community) + 0.3;
-  const hmax = Math.max(...pts.map(p => p.hours), 1);
-  const px = v => pad + (v - lo) / (hi - lo) * (W - pad - 6);
-  const py = v => H - pad - Math.sqrt(Math.max(0, v) / hmax) * (H - pad - 8);
-  const f1 = n => n.toFixed(1);
-  const mark = p => {
-    const X = px(p.community), Y = py(p.hours);
-    const tip = `<title>${_s(p.title)} · ${_fmt(p.hours)} h · ${_fmt(p.community)}</title>`;
-    if (p.verdict === 'cut') {
-      return `<path d="M${f1(X - 4)} ${f1(Y - 4)}L${f1(X + 4)} ${f1(Y + 4)}M${f1(X + 4)} ${f1(Y - 4)}L${f1(X - 4)} ${f1(Y + 4)}" class="wus-cs-cut">${tip}</path>`;
-    }
-    if (p.verdict === 'kept') {
-      return `<path d="M${f1(X)} ${f1(Y - 5)}L${f1(X + 5)} ${f1(Y + 4)}L${f1(X - 5)} ${f1(Y + 4)}Z" class="wus-cs-kept">${tip}</path>`;
-    }
-    return `<circle cx="${f1(X)}" cy="${f1(Y)}" r="4" class="wus-cs-pt">${tip}</circle>`;
+/** You and the crowd: one title and its two places among the same titles -
+ *  yours by hours, the community's by score (services/wrapup_sections
+ *  .consensus "duel"). Replaced a scatter of every scored title, which hid
+ *  the one the headline named among thirty anonymous dots (2026-11-08).
+ *  The side the slide is about carries the amber number. */
+export function duel(d, posters) {
+  if (!d || !d.title) return null;
+  const yours = d.kind === 'yours';
+  const poster = (posters || {})[d.title];
+  const side = (lead, label, rank, sub) => `<div class="wus-duel-side${lead ? ' lead' : ''}">
+      <span class="wus-duel-lbl">${label}</span><span class="wus-duel-n">#${rank}</span><span class="wus-duel-sub">${sub}</span></div>`;
+  return {
+    eyebrow: yours ? 'Yours alone' : "The crowd's, not yours",
+    share: yours ? `Mine, not theirs: ${d.title}` : `Theirs, not mine: ${d.title}`,
+    html: `${poster ? _posterImg(poster, 120, d.media_type === 'music' ? 120 : 180, d.media_type === 'music') : ''}
+      <h2 class="wus-h">${_s(d.title)}</h2>
+      <div class="wus-duel">${side(yours, 'for you', d.your_rank, `${_fmt(d.hours)} hours`)}${side(!yours, 'the community', d.crowd_rank, `${_fmt(d.community)} of 10`)}</div>`,
+    note: `Both places among the ${d.of} titles of this period with a community score.`,
   };
-  return `<svg class="wus-chart wus-cons" width="420" viewBox="0 0 ${W} ${H}" role="img" aria-label="${pts.length} titles: your hours against the community score">
-    <line x1="${f1(px(c.median_community))}" x2="${f1(px(c.median_community))}" y1="4" y2="${H - pad}" class="wus-axis"/>
-    <line x1="${pad}" x2="${W - 6}" y1="${f1(py(c.median_hours))}" y2="${f1(py(c.median_hours))}" class="wus-axis"/>
-    <text x="${pad + 2}" y="12" class="wus-rd-lbl">yours alone</text>
-    <text x="4" y="${H / 2}" class="wus-rd-lbl" transform="rotate(-90 8 ${H / 2})" text-anchor="middle">your hours</text>
-    <text x="${pad}" y="${H - 6}" class="wus-rd-lbl">${_fmt(Math.min(...cs))}</text>
-    <text x="${f1(px(Math.max(...cs)))}" y="${H - 6}" class="wus-rd-lbl" text-anchor="end">${_fmt(Math.max(...cs))}</text>
-    <text x="${f1((pad + W) / 2)}" y="${H - 6}" class="wus-rd-lbl" text-anchor="middle">community score</text>
-    ${pts.map(mark).join('')}</svg>`;
 }
-
 // ── the slides ──────────────────────────────────────────────────────────────
 function _posters(f, refs, story) {
   // no artwork, no frame: an empty "?" tile says nothing on a story slide
@@ -303,12 +289,12 @@ function build(d) {
       html: `<div class="wus-eyebrow">How the taste moved</div>${lead ? `<h2 class="wus-h">${_s(lead.name)} led</h2>` : ''}
         ${riverSvg}${(ng.new_to_you || []).length ? `<p class="wus-text">New to you: ${ng.new_to_you.map(_s).join(', ')}.</p>` : ''}`});
   }
-  const consSvg = consensus(f.consensus);
-  if (consSvg) {
-    const alone = f.consensus.yours_alone || [];
-    out.push({cls: 'consensus', share: alone.length ? `Mine, not theirs: ${alone.join(', ')}` : 'You and the crowd',
-      html: `<div class="wus-eyebrow">You and the crowd</div><h2 class="wus-h">${alone.length ? `Yours alone: ${_s(alone[0])}` : 'Mostly in step with the crowd'}</h2>
-        ${consSvg}<p class="wus-text">Up is your hours, right the community's score. A cross is a title the judge wanted gone, a triangle one it kept.</p>`});
+  const du = duel(f.consensus?.duel, f.posters);
+  if (du) {
+    const more = (f.consensus.yours_alone || []).filter(t => t !== f.consensus.duel.title);
+    const also = f.consensus.duel.kind === 'yours' && more.length ? ` Also yours alone: ${more.map(_s).join(', ')}.` : '';
+    out.push({cls: 'consensus', share: du.share,
+      html: `<div class="wus-eyebrow">${du.eyebrow}</div>${du.html}<p class="wus-text wus-duel-note">${_s(du.note)}${also}</p>`});
   }
   const rt = s?.roast_and_toast;
   if (rt?.roast && rt?.toast) {
