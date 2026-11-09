@@ -69,7 +69,8 @@ _ELIGIBLE_HOURS = 3
 # 16: the comfort genre without a rewatch, the night shift as the series that
 #     held the nights, ISO weeks for the ritual (real months found none)
 # 17: devices by their kind (TV, computer, ...), never their own name
-FACTS_VERSION = 17
+# 18: consensus carries the duel - one title, your place and the crowd's
+FACTS_VERSION = 18
 
 
 @dataclass(frozen=True)

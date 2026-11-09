@@ -6,6 +6,13 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**You and the crowd, at a glance.** The Wrap-Up story's crowd slide was a scatter of every scored
+title: thirty anonymous dots, one corner label, names only on hover, and the title the headline
+named could not be found. It is now one title with its poster and its two places among the same
+titles of the period: yours by hours (in amber) and the community's by score, "for you #2, the
+community #27". With nothing yours alone it shows the community's favourite you barely touched,
+when the two places are at least five apart; otherwise there is no slide. FACTS_VERSION 18.
+
 **A week and a month of your own in the Wrap-Up.** Next to 30 days, 6 months and the year, the
 Wrap-Up now has "This week" (Monday to Sunday) and "This month", both on the member's own clock:
 a week starts at their Monday midnight, not the server's. Earlier weeks and months open by key

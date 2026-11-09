@@ -274,7 +274,8 @@ def nanogenres(db, W, user_id: int, period, types: list) -> dict:
 
 # ── consensus: your hours against the community's score ─────────────────────
 
-_CONSENSUS_MIN = 6         # points for a scatter worth drawing
+_CONSENSUS_MIN = 6         # titles for two rankings worth comparing
+_DUEL_MIN_GAP = 5          # places apart before "the crowd's, not yours" is worth a slide
 _CONSENSUS_MAX = 40
 CONSENSUS_POOL = _CONSENSUS_MAX
 _CONSENSUS_VOTES = 200     # a community score below this mass is noise
@@ -307,6 +308,27 @@ def consensus(db, user_id: int, titles: list, enriched: dict) -> dict:
         p["verdict"] = "cut" if v in ("CUT", "STAGNANT") else ("kept" if v else None)
     hrs = sorted(p["hours"] for p in pts)
     mid_h, mid_c = hrs[len(hrs) // 2], sorted(p["community"] for p in pts)[len(pts) // 2]
-    yours = [p["title"] for p in pts if p["hours"] > mid_h and p["community"] < mid_c]
+    # The two rankings of the same titles: yours by hours, the crowd's by
+    # score. The story's slide is one title and its two places ("for you #2,
+    # the community #27"), comparable because both rank the same set; the
+    # scatter of all of them read as noise (2026-11-08).
+    yr = {p["title"]: i + 1 for i, p in enumerate(sorted(pts, key=lambda p: -p["hours"]))}
+    cr = {p["title"]: i + 1 for i, p in enumerate(sorted(pts, key=lambda p: -p["community"]))}
+    gap = {t: cr[t] - yr[t] for t in yr}           # > 0: you rank it higher than the crowd
+    yours = sorted((p["title"] for p in pts if p["hours"] > mid_h and p["community"] < mid_c),
+                   key=lambda t: -gap[t])
+    theirs = sorted((p["title"] for p in pts if p["hours"] <= mid_h and p["community"] >= mid_c),
+                    key=lambda t: gap[t])
+
+    def duel(title: str, kind: str) -> dict:
+        p = next(x for x in pts if x["title"] == title)
+        return {"kind": kind, "title": title, "media_type": p["media_type"], "hours": p["hours"],
+                "community": p["community"], "your_rank": yr[title], "crowd_rank": cr[title],
+                "of": len(pts)}
+
+    # Yours alone first; failing that the crowd's favourite you barely
+    # touched, when the two places are far enough apart to say so.
+    pick = (duel(yours[0], "yours") if yours
+            else duel(theirs[0], "theirs") if theirs and -gap[theirs[0]] >= _DUEL_MIN_GAP else None)
     return {"points": pts, "median_hours": mid_h, "median_community": mid_c,
-            "yours_alone": yours[:3]}
+            "yours_alone": yours[:3], "duel": pick}
