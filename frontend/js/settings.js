@@ -512,7 +512,9 @@ export async function loadUiLanguage() {
     const r = await api('/api/users/me/ui-language');
     for (const el of _langRadios()) el.checked = el.value === r.setting;
     const hint = document.getElementById('ui-language-detected');
-    if (hint) hint.textContent = t('account.language_detected', {language: t(`language.${r.detected}`)});
+    // A detected language without a name in the dictionary reads as English (as the UI does).
+    const name = t(`language.${r.detected}`);
+    if (hint) hint.textContent = t('account.language_detected', {language: name.startsWith('language.') ? t('language.en') : name});
   } catch (_) { /* the radios stay unset; picking one still saves */ }
 }
 

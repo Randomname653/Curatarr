@@ -128,6 +128,13 @@ de_map = app_context.render(app_context.APP_MAP_TEMPLATE, "de")
 check("the curator's app map names the UI the user sees, in German, around English prose",
       "'Empfehlungen'" in de_map and "'Löschvorschläge' (admin)" in de_map and "'Bibliothek durchsuchen…'" in de_map
       and "APP MAP (Curatarr's own UI" in de_map and "'Recommendations'" not in de_map)
+check("...the Discovery cards by the lane's German name; the English prose stays 'Discovery cards'",
+      "on Neu entdecken cards" in de_map and "on Discovery cards" in app_context.APP_MAP_BLOCK
+      and "recs.lane_discovery" in app_context.REFERENCED_UI_KEYS)
+check("every language the chat can detect has a name in both dictionaries (Automatic says which it is)",
+      all(f"language.{lang}" in EN and f"language.{lang}" in DE for lang in ul.LOCALES))
+check("no status line starts with a stray emoji selector", not any(
+    isinstance(v, str) and v.startswith("\ufe0f") for v in list(EN.values()) + list(DE.values())))
 de_prompt = chat_prompt.build_system_prompt(voice="neutral", user_lang="en", ui_lang="de")
 en_prompt = chat_prompt.build_system_prompt(voice="neutral", user_lang="en")
 check("a chat in English for a German UI: the answer rule says English, the map says the German buttons",

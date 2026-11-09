@@ -71,7 +71,7 @@ APP_MAP_TEMPLATE = (
     "'⟦nav.recs⟧' (your picks; a '⟦recs.search⟧' box for "
     "curated semantic search over what they own — understands "
     "'like <title> but …' queries and ranks by fit, falling back to "
-    "plain similarity when the ranker is unavailable — and on Discovery "
+    "plain similarity when the ranker is unavailable — and on ⟦recs.lane_discovery|Discovery⟧ "
     "cards an '⟦recs.add⟧' button (admin) that adds the title to the right "
     "arr).\n"
     "- '⟦nav.swipe⟧': titles near the user's taste that they have not played in "
@@ -170,7 +170,7 @@ KB_HEALING_TEMPLATE = (
 LIBRARY_ACTIONS_TEMPLATE = (
     "LIBRARY ACTIONS: You never execute changes yourself from chat and never "
     "claim something was added, downloaded, queued, or removed. ADDING new "
-    "media happens INSIDE Curatarr too: the '⟦recs.add⟧' button on Discovery "
+    "media happens INSIDE Curatarr too: the '⟦recs.add⟧' button on ⟦recs.lane_discovery|Discovery⟧ "
     "cards or the library browsers' add flow (admin) — not by hand in the "
     "arr. DELETING existing media happens INSIDE Curatarr: the user "
     "approves a proposal in the Deletions view ('Delete', or bulk via "
@@ -187,17 +187,20 @@ LIBRARY_ACTIONS_TEMPLATE = (
 # the curator's prompt, not the user's text.
 import re as _re  # noqa: E402
 
-_MARK = _re.compile(r"⟦([\w.]+)⟧")
+# ⟦key|words⟧ keeps ``words`` in English where the prose names a thing by
+# its kind ("Discovery cards") rather than by its English label.
+_MARK = _re.compile(r"⟦([\w.]+)(?:\|([^⟧]*))?⟧")
 
 
 def render(template: str, lang: str = "en") -> str:
     """``template`` with every ⟦key⟧ as its UI name in ``lang``."""
     from src.services.i18n import t
-    return _MARK.sub(lambda m: t(m.group(1), lang), template)
+    return _MARK.sub(lambda m: m.group(2) if (m.group(2) is not None and lang == "en") else t(m.group(1), lang),
+                     template)
 
 
 def keys_in(template: str) -> list:
-    return _MARK.findall(template)
+    return [m.group(1) for m in _MARK.finditer(template)]
 
 
 # The blocks in English, as every caller without a user's language reads them.
