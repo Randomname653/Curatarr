@@ -33,7 +33,7 @@ export function renderArrCard(svc, info) {
       ${svc === 'lidarr' ? '<p class="fs-12 t3 mb-12">Optional. Without Lidarr the Music page, the deletion proposals and the curator run on the Plex music index (deletions go through Plex, wanted artists become wishes you fulfil in SoulSync).</p>' : ''}
       <div id="arr-form-${svc}" class="grid-form-120 fs-12 mb-12">
         <label for="arr-url-${svc}" class="t3">URL</label>
-        <input type="text" id="arr-url-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${port}">
+        <input type="url" id="arr-url-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${port}">
         <label for="arr-key-${svc}" class="t3">API key</label>
         <input type="password" id="arr-key-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}">
       </div>

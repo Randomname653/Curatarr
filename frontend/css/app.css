@@ -1223,7 +1223,7 @@ select option { background: var(--bg2); }
   /* Toolbars: controls share the row; search inputs take what is left */
   .toolbar { gap: 6px; }
   .toolbar-right { margin-left: 0; width: 100%; }
-  .toolbar-right .input[type="text"], .toolbar-right .input[type="search"], .toolbar-right input:not([type]), .toolbar .w-220, .toolbar .w-200 { flex: 1; width: auto; min-width: 0; }
+  .toolbar-right .input[type="text"], .toolbar-right .input[type="search"], .toolbar-right .input[type="url"], .toolbar-right input:not([type]), .toolbar .w-220, .toolbar .w-200 { flex: 1; width: auto; min-width: 0; }
   .grid-cards { grid-template-columns: 1fr; }
   .stat-row { flex-wrap: wrap; }
   .stat-box { flex: 1 1 calc(50% - 6px); }

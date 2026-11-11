@@ -61,7 +61,7 @@ const SETUP_CONTENT = {
     ${serverChoice()}
     <div class="form-group">
       <label for="s-plex-url">Plex Server URL</label>
-      <input id="s-plex-url" placeholder="http://192.168.1.100:32400" value="${state.setupData.plex_url||''}">
+      <input id="s-plex-url" type="url" placeholder="http://192.168.1.100:32400" value="${state.setupData.plex_url||''}">
       <div class="hint">The local IP address of your Plex server.</div>
     </div>
     <div class="form-group">
@@ -76,7 +76,7 @@ const SETUP_CONTENT = {
     <h2 class="setup-heading">Ollama — Local AI</h2>
     <div class="form-group">
       <label for="s-ollama">Ollama Endpoint</label>
-      <input id="s-ollama" placeholder="http://localhost:11434" value="${state.setupData.ollama_endpoint||'http://localhost:11434'}">
+      <input id="s-ollama" type="url" placeholder="http://localhost:11434" value="${state.setupData.ollama_endpoint||'http://localhost:11434'}">
     </div>
     <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>Detect models</button>
     <div class="my-8" id="test-ollama-result"></div>
@@ -188,7 +188,7 @@ const SETUP_CONTENT = {
     </div>
     <div class="form-group">
       <label for="s-soulsync-url">SoulSync URL <span class="fs-10 badge muted">Optional · Music</span></label>
-      <input id="s-soulsync-url" placeholder="http://192.168.1.100:12279" value="${state.setupData.soulsync_url||''}">
+      <input id="s-soulsync-url" type="url" placeholder="http://192.168.1.100:12279" value="${state.setupData.soulsync_url||''}">
       <div class="hint">A SoulSync instance on your LAN adds a second music-metadata opinion. Read-only — Curatarr never triggers its downloads. Skip if you don't run one.</div>
     </div>
     <div class="form-group">
@@ -214,7 +214,7 @@ const SETUP_CONTENT = {
         </div>
         <div class="mb-8 form-group">
           <label for="s-${id}-url">URL</label>
-          <input id="s-${id}-url" placeholder="http://192.168.1.100:${port}" value="${state.setupData[id+'_url']||''}">
+          <input id="s-${id}-url" type="url" placeholder="http://192.168.1.100:${port}" value="${state.setupData[id+'_url']||''}">
         </div>
         <div class="mb-8 form-group">
           <label for="s-${id}-key">API Key</label>

@@ -30,7 +30,7 @@ export function jellyfinConnectHtml(url, connected, onConnected) {
   return `<div class="form-group">
       <label for="s-jellyfin-url">Jellyfin server</label>
       <div id="jf-found" class="mb-8" role="status" aria-live="polite"><span class="t3 fs-12">Looking for Jellyfin on your network…</span></div>
-      <input id="s-jellyfin-url" placeholder="http://192.168.1.100:8096" value="${escAttr(url || '')}">
+      <input id="s-jellyfin-url" type="url" placeholder="http://192.168.1.100:8096" value="${escAttr(url || '')}">
       <div class="hint">Picked from the servers found, or any address of a Jellyfin 10.9 or newer.</div>
     </div>
     <div class="row">
