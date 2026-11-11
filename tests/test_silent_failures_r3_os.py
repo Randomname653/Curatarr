@@ -402,9 +402,18 @@ def _db(rows=None, fail=False):
 
 def _procs(*names, rss=2 * 2**30):
     def it(attrs=None):
+        class _Ctx:
+            def __enter__(self): pass
+            def __exit__(self, *args): pass
+
         for i, n in enumerate(names):
-            yield SimpleNamespace(info={"name": n, "pid": 100 + i}, pid=100 + i,
-                                  memory_info=lambda: SimpleNamespace(rss=rss))
+            yield SimpleNamespace(
+                info={"name": n, "pid": 100 + i},
+                pid=100 + i,
+                name=lambda n=n: n,
+                memory_info=lambda: SimpleNamespace(rss=rss),
+                oneshot=lambda: _Ctx()
+            )
     return it
 
 

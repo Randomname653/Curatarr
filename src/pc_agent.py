@@ -68,17 +68,21 @@ def _process_list() -> list[dict]:
     entry per name (the largest instance)."""
     import psutil
     best: dict[str, int] = {}
-    for proc in psutil.process_iter(["name", "memory_info"]):
+    # ⚡ Bolt: Use .oneshot() instead of process_iter attrs dict overhead for faster polling
+    for proc in psutil.process_iter():
         try:
-            name = proc.info.get("name")
-            mem = proc.info.get("memory_info")
+            with proc.oneshot():
+                name = proc.name()
+                if not name:
+                    continue
+                mem = proc.memory_info()
+                if mem is None:
+                    continue
+                mb = int(mem.rss // (1024 * 1024))
+                if mb >= MIN_RSS_MB and mb > best.get(name, -1):
+                    best[name] = mb
         except (psutil.Error, AttributeError):
             continue
-        if not name or mem is None:
-            continue
-        mb = int(mem.rss // (1024 * 1024))
-        if mb >= MIN_RSS_MB and mb > best.get(name, -1):
-            best[name] = mb
     return [{"name": n, "rss_mb": mb} for n, mb in sorted(best.items(), key=lambda kv: -kv[1])]
 
 

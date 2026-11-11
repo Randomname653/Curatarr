@@ -65,8 +65,17 @@ cc._smi_cache.clear()
 
 
 class _Proc:
+    def name(self):
+        return "mock_proc.exe"
+
     def memory_info(self):
         return type("M", (), {"rss": 1536 * 1024 * 1024})()
+
+    def oneshot(self):
+        class _Ctx:
+            def __enter__(self): pass
+            def __exit__(self, *args): pass
+        return _Ctx()
 
 
 tmp = Path(tempfile.mkdtemp())

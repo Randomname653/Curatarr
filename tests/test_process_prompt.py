@@ -24,13 +24,23 @@ class _Proc:
     def __init__(self, name, pid, rss_mb):
         mem = None if rss_mb is None else types.SimpleNamespace(rss=rss_mb * 1024 * 1024)
         self.info = {"name": name, "pid": pid, "memory_info": mem}
+        self._name = name
         self.pid = pid
         self._mem = mem
+
+    def name(self):
+        return self._name
 
     def memory_info(self):
         if self._mem is None:
             raise pm.psutil.AccessDenied(self.pid)
         return self._mem
+
+    def oneshot(self):
+        class _Ctx:
+            def __enter__(self): pass
+            def __exit__(self, *args): pass
+        return _Ctx()
 
 
 def _run(procs, games=(), ignored=()):
