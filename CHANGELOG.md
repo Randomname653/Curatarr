@@ -24,7 +24,7 @@ History view's pane, arr apps, users with the Spotify and Netflix imports, integ
 Shoko, notifications, maintenance with the compute nodes and model updates), the setup wizard,
 onboarding and the sign-in screen follow the language setting. Job names and the summaries the
 server writes for a run stay as they come; so do model, host and service names and every text
-an external app reports. With this every frontend module is on the English-literal ratchet; 22
+an external app reports. With this every frontend module is on the English-literal ratchet; 23
 literals remain, each a server phrase used as a lookup key, a fallback the server replaces, or a
 unit.
 
