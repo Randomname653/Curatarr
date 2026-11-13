@@ -7,29 +7,30 @@
 // apply still shows the post-apply state, not a stale one.
 import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
+import { t, th } from './i18n.js';
 export function _renderReclassify(res) {
   const el = document.getElementById('reclassify-content');
   const sum = document.getElementById('reclassify-summary');
   if (res.error) { el.innerHTML = `<p class="load-err">${esc(res.error)}</p>`; return; }
   const c = res.counts || {};
-  if (sum) sum.textContent = `${c.to_tv||0} → TV · ${c.to_anime||0} → Anime · ${c.fix_settings||0} settings · ${c.uncertain||0} uncertain`;
+  if (sum) sum.textContent = t('recl.summary', {tv: c.to_tv||0, anime: c.to_anime||0, settings: c.fix_settings||0, uncertain: c.uncertain||0});
   const sections = [
-    ['Western cartoons in Anime → move to TV', res.to_tv, 'fix'],
-    ['Anime in the TV library → move to Anime', res.to_anime, 'fix'],
-    ['Right library, wrong settings → fix in place', res.fix_settings, 'fix'],
-    ['Uncertain — pick a direction, or leave it', res.uncertain, 'uncertain'],
+    [th('recl.sec_to_tv'), res.to_tv, 'fix'],
+    [th('recl.sec_to_anime'), res.to_anime, 'fix'],
+    [th('recl.sec_settings'), res.fix_settings, 'fix'],
+    [th('recl.sec_uncertain'), res.uncertain, 'uncertain'],
   ];
   let html = '';
   for (const [label, items, mode] of sections) {
     if (!items || !items.length) continue;
     // One .section per group, like every other view: heading + count, the
     // group's own "Select all" at the right, the cards in its body.
-    const all = mode === 'fix' ? `<div class="section-actions"><label class="chip"><input type="checkbox" ${actOn('change', 'rcToggleSection', EL)}> Select all</label></div>` : '';
+    const all = mode === 'fix' ? `<div class="section-actions"><label class="chip"><input type="checkbox" ${actOn('change', 'rcToggleSection', EL)}> ${th('recl.select_all')}</label></div>` : '';
     html += `<section class="section"><div class="section-head"><h3>${label}<span class="badge muted badge-sm">${items.length}</span></h3>${all}</div><div class="section-body"><div class="grid-cards">`;
     for (const it of items) html += reclassifyCard(it, mode);
     html += '</div></div></section>';
   }
-  el.innerHTML = html || emptyHtml('Everything is correctly filed and configured.', null, null, {good: true});
+  el.innerHTML = html || emptyHtml(th('recl.all_good'), null, null, {good: true});
   updateReclassifyCount();
 }
 
@@ -37,7 +38,7 @@ export async function loadReclassify() {
   const el = document.getElementById('reclassify-content');
   const sum = document.getElementById('reclassify-summary');
   if (!_swrCache.has('reclassify')) {
-    el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning Sonarr (first run resolves origins, ~15s)…</p>';
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('recl.scanning')}</p>`;
     if (sum) sum.textContent = '';
   }
   try {
@@ -57,7 +58,7 @@ export function reclassifyCard(it, mode) {
   const cu = it.current, ex = it.expected || {}, iss = it.issues || [];
   const poster = _posterImg(it.poster, 48, 72, false);
   const link = it.sonarr_link
-    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" aria-label="Open ${escAttr(it.title)} in Sonarr" title="Open in Sonarr" class="no-underline t-amber fs-11">↗</a>` : '';
+    ? ` <a href="${escAttr(it.sonarr_link)}" target="_blank" rel="noopener" aria-label="${th('cur.open_title_in', {title: it.title, app: 'Sonarr'})}" title="${th('actions.open_in', {server: 'Sonarr'})}" class="no-underline t-amber fs-11">↗</a>` : '';
   const card = (inner) => `<div class="panel-item rc-card">${inner}</div>`;
 
   if (mode === 'uncertain') {
@@ -71,7 +72,7 @@ export function reclassifyCard(it, mode) {
       <div class="grow">
         <div class="fs-12-5 mb-3 b">${esc(it.title)}${link}</div>
         <div class="fs-11 t3">${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>
-        <div class="gap-5 row mt-8">${dirBtn('tv', '→ TV')}${dirBtn('anime', '→ Anime')}${dirBtn('skip', 'skip')}</div>
+        <div class="gap-5 row mt-8">${dirBtn('tv', th('recl.to_tv'))}${dirBtn('anime', th('recl.to_anime'))}${dirBtn('skip', th('recl.skip'))}</div>
       </div>`);
   }
 
@@ -79,7 +80,7 @@ export function reclassifyCard(it, mode) {
              + _rcRow(cu.series_type, ex.series_type, iss.includes('type'))
              + _rcRow(cu.profile, ex.profile, iss.includes('profile'));
   const moveTag = (it.fix && it.fix.moveFiles)
-    ? ` <span class="badge amber badge-sm" title="Sonarr queues a physical move of the files">move files</span>` : '';
+    ? ` <span class="badge amber badge-sm" title="${th('recl.move_files_title')}">${th('recl.move_files')}</span>` : '';
   return card(`<input type="checkbox" class="mt-3 shrink-0 rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' ${actOn('change', 'updateReclassifyCount')}>
     ${poster}
     <div class="grow">
@@ -117,8 +118,8 @@ export function updateReclassifyCount() {
   const btn = document.getElementById('reclassify-move-btn');
   if (bar) bar.classList.toggle('show', n > 0);
   const count = document.getElementById('rc-select-count');
-  if (count) count.textContent = `${n} selected`;
-  if (btn) { btn.textContent = 'Apply selected'; btn.disabled = n === 0; }
+  if (count) count.textContent = t('recl.n_selected', {n});
+  if (btn) { btn.textContent = t('recl.apply_selected'); btn.disabled = n === 0; }
 }
 export function rcClearSelection() {
   document.querySelectorAll('#reclassify-content .rc-cb:checked').forEach(cb => { cb.checked = false; if (cb.dataset.fa !== undefined) cb.dataset.fix = ''; });
@@ -131,28 +132,28 @@ export async function moveReclassify(btn) {
   const cbs = [...document.querySelectorAll('#reclassify-content .rc-cb:checked')];
   const items = cbs.map(cb => { let f = {}; try { f = JSON.parse(cb.dataset.fix || '{}'); } catch (_) {} return { sonarr_id: +cb.dataset.id, title: cb.dataset.title, fix: f }; })
                    .filter(i => i.fix && i.fix.seriesType);
-  if (!items.length) { toast('Nothing actionable selected — pick a direction on the uncertain cards.', 'amber'); return; }
+  if (!items.length) { toast(t('recl.nothing_selected'), 'amber'); return; }
   const moves = items.filter(i => i.fix.moveFiles).length;
   const res = await confirmDialog({
-    title: 'Apply to Sonarr', danger: moves > 0, confirmLabel: `Apply ${items.length}`,
-    body: `<p>Apply <b>${items.length}</b> change${items.length > 1 ? 's' : ''} to Sonarr.${moves ? ` <b>${moves}</b> will physically move files (queued in Sonarr).` : ''}</p><p class="t3 fs-12 mt-8">Nothing gets re-enriched.</p>`,
+    title: t('recl.apply_title'), danger: moves > 0, confirmLabel: t('recl.apply_n', {n: items.length}),
+    body: `<p>${th('recl.apply_pre')} <b>${items.length}</b> ${th('recl.apply_post', {n: items.length})}${moves ? ` <b>${moves}</b> ${th('recl.will_move')}` : ''}</p><p class="t3 fs-12 mt-8">${th('recl.no_reenrich')}</p>`,
   });
   if (!res.ok) return;
-  btnBusy(btn, `Applying ${items.length}…`);
+  btnBusy(btn, t('recl.applying', {n: items.length}));
   try {
     const r = await api('/api/library/reclassify/apply', 'POST',
       { items: items.map(i => ({ sonarr_id: i.sonarr_id, fix: i.fix })) });
     const fails = (r.results || []).filter(x => !x.ok);
-    toast(`Applied ${r.applied || 0}${r.failed ? `, ${r.failed} failed` : ''}`, fails.length ? 'amber' : 'success', {ms: 6000});
+    toast(t('recl.applied', {n: r.applied || 0}) + (r.failed ? `, ${t('recl.n_failed', {n: r.failed})}` : ''), fails.length ? 'amber' : 'success', {ms: 6000});
     _swrInvalidate('reclassify'); // without this, noAutoReplace above would suppress this intentional re-render too
     await loadReclassify();   // re-scan so the lists reflect the new state
     if (fails.length) {
       // The failure list outlives a toast: a banner above the fresh scan.
       document.getElementById('reclassify-content')?.insertAdjacentHTML('afterbegin',
-        `<div class="banner danger"><div class="banner-text"><b>${fails.length} failed</b>${fails.slice(0, 12).map(f => `<div class="mt-4">${esc(f.title || f.sonarr_id)}: ${esc(f.error || '?')}</div>`).join('')}</div></div>`);
+        `<div class="banner danger"><div class="banner-text"><b>${th('recl.n_failed', {n: fails.length})}</b>${fails.slice(0, 12).map(f => `<div class="mt-4">${esc(f.title || f.sonarr_id)}: ${esc(f.error || '?')}</div>`).join('')}</div></div>`);
     }
   } catch (e) {
-    toast('Apply failed: ' + _errMsg(e), 'danger');
+    toast(t('recl.apply_failed', {error: _errMsg(e)}), 'danger');
   }
   btnDone(btn);
   updateReclassifyCount();

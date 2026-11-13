@@ -11,6 +11,7 @@ import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
 import { _busyStreaming, enterThread, proposalOpener, sendMessage } from './chat.js';
 import { tabToHash } from './nav.js';
+import { t, th } from './i18n.js';
 
 // Proposals deleted through the media server itself (music without Lidarr,
 // or rebound from Plex): no arr entity to re-match, no import list.
@@ -36,13 +37,13 @@ export function _recentActivityBadge(p) {
   const ageMs   = Date.now() - dt.getTime();
   const ageDays = Math.floor(ageMs / 86400000);
   if (ageDays > 30) return '';
-  const label = ageDays <= 0 ? 'today'
-              : ageDays === 1 ? 'yesterday'
-              : ageDays <= 7  ? `${ageDays}d ago`
-              :                 `${Math.floor(ageDays / 7)}w ago`;
+  const label = ageDays <= 0 ? t('del.recent.today')
+              : ageDays === 1 ? t('del.recent.yesterday')
+              : ageDays <= 7  ? t('del.recent.days', {n: ageDays})
+              :                 t('del.recent.weeks', {n: Math.floor(ageDays / 7)});
   // Recent activity = small amber "new" tag. Small enough not to compete
   // with the confidence pill, distinct enough to spot at a glance.
-  return `<span class="badge amber badge-sm" title="Latest episode/movie/track file imported ${ageDays}d ago — fresh activity may indicate this proposal is more relevant to review.">new · ${label}</span>`;
+  return `<span class="badge amber badge-sm" title="${th('del.recent.title', {n: ageDays})}">${th('del.recent.badge', {label})}</span>`;
 }
 
 // "Why?" — the deletion score taken apart (engine.deletion_score_factors).
@@ -57,7 +58,7 @@ const _SHORTLIST_SCORE = 30;
 // button even on a row with no factor breakdown, and its sentence leads the panel.
 export function _whyButton(p) {
   if (!p.score_factors?.factors?.length && !p.score_factors?.guard) return '';
-  return `<button type="button" class="btn-why" aria-expanded="false" aria-controls="why-${p.id}" ${act('toggleWhy', EL)}>Why?</button>`;
+  return `<button type="button" class="btn-why" aria-expanded="false" aria-controls="why-${p.id}" ${act('toggleWhy', EL)}>${th('del.why')}</button>`;
 }
 export function _whyPanel(p) {
   const f = p.score_factors?.factors || [];
@@ -67,9 +68,9 @@ export function _whyPanel(p) {
   const rest = f.length - top.length;
   return `<div class="why-panel mt-8" id="why-${p.id}" tabindex="-1" hidden>
     ${guard ? `<div class="fs-12 t2 mb-6">${esc(_yourCallWhy(p))}.</div>` : ''}
-    ${f.length ? `<div class="fs-12 t2 mb-6">The strongest signals in its score</div>
-    <ul class="why-list">${top.map(x => `<li><span class="why-pts ${x.points > 0 ? 'to-delete' : 'to-keep'}" title="${x.points > 0 ? 'Pushes toward deleting' : 'Pushes toward keeping'}">${x.points > 0 ? '+' : '−'}${Math.round(Math.abs(x.points))}</span> ${esc(x.label)}</li>`).join('')}</ul>
-    <div class="fs-11 t3 mt-6">Score ${Math.round(p.score_factors.total)}${rest > 0 ? ` from ${f.length} signals` : ''}. Titles scoring above ${_SHORTLIST_SCORE} are shortlisted; the curator then reviews each one, and its reasoning is quoted below.</div>` : ''}
+    ${f.length ? `<div class="fs-12 t2 mb-6">${th('del.why_signals')}</div>
+    <ul class="why-list">${top.map(x => `<li><span class="why-pts ${x.points > 0 ? 'to-delete' : 'to-keep'}" title="${th(x.points > 0 ? 'del.why_to_delete' : 'del.why_to_keep')}">${x.points > 0 ? '+' : '−'}${Math.round(Math.abs(x.points))}</span> ${esc(x.label)}</li>`).join('')}</ul>
+    <div class="fs-11 t3 mt-6">${th(rest > 0 ? 'del.why_score_from' : 'del.why_score', {score: Math.round(p.score_factors.total), n: f.length})}. ${th('del.why_shortlist', {min: _SHORTLIST_SCORE})}</div>` : ''}
   </div>`;
 }
 // "Your call" has three causes: the curator found the title merely fine, or
@@ -78,9 +79,9 @@ export function _whyPanel(p) {
 // with it, or the title carries a major honour (the stature floor).
 // Different reasons, different tooltips.
 export function _yourCallWhy(p) {
-  if (p.score_factors?.guard === 'household_floor') return 'The curator leaned toward cutting it, but someone else in your household has watched or played it, or asked to keep it — so the decision is yours';
-  if (p.score_factors?.guard === 'stature_floor') return 'The curator leaned toward cutting it, but it carries major honours — so the decision is yours';
-  return 'Curatarr finds it merely fine, not a clear cut — the decision is yours';
+  if (p.score_factors?.guard === 'household_floor') return t('del.your_call.household');
+  if (p.score_factors?.guard === 'stature_floor') return t('del.your_call.stature');
+  return t('del.your_call.fine');
 }
 export function toggleWhy(btn) {
   const panel = document.getElementById(btn.getAttribute('aria-controls'));
@@ -111,13 +112,13 @@ if (typeof document !== 'undefined') document.addEventListener('keydown', _whyEs
 // counts the pool, not the ten on screen, and "Show more" appends the next ten.
 function _delSummaryHtml(shown, page) {
   const gb = page?.total_gb ?? shown.reduce((s, p) => s + (p.size_gb || 0), 0);
-  const count = page && page.total > shown.length ? `${shown.length} of ${page.total}` : `${shown.length}`;
-  return `Potential savings: <b class="t-amber">${Number(gb).toFixed(1)} GB</b> · ${count} proposals`;
+  const count = page && page.total > shown.length ? t('del.count_of', {shown: shown.length, total: page.total}) : `${shown.length}`;
+  return `${th('del.savings')} <b class="t-amber">${Number(gb).toFixed(1)} GB</b> · ${th('del.proposals', {n: page?.total ?? shown.length, count})}`;
 }
 function _delMoreHtml(shown, page) {
   const left = page ? page.total - shown.length : 0;
   return left > 0
-    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('loadMoreDeletions', EL)}>Show ${Math.min(left, _DEL_PAGE)} more</button>`
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('loadMoreDeletions', EL)}>${th('del.show_more', {n: Math.min(left, _DEL_PAGE)})}</button>`
     : '';
 }
 const _DEL_PAGE = 10;
@@ -127,7 +128,7 @@ export function _renderDeletionProposals(proposals, page = null) {
   state._delProposalsAll = proposals?.length ? [...proposals] : null;
   state._delPage = page;
   if (!proposals?.length) {
-    el.innerHTML = emptyHtml('No proposals yet — <b>Run analysis</b> asks the curator for deletion candidates.', 'Run analysis', act('loadDeletions', state.currentDelCategory || null, null, true));
+    el.innerHTML = emptyHtml(`${th('del.empty_pre')} <b>${th('del.run_analysis')}</b> ${th('del.empty_post')}`, t('del.run_analysis'), act('loadDeletions', state.currentDelCategory || null, null, true));
     updateDelBulkCount();
     return;
   }
@@ -147,7 +148,7 @@ export function _renderDeletionProposals(proposals, page = null) {
 export async function loadMoreDeletions(btn) {
   const shown = state._delProposalsAll || [];
   const category = state.currentDelCategory;
-  btnBusy(btn, 'Loading…');
+  btnBusy(btn, t('common.loading'));
   try {
     const r = await api(`/api/recommendations/deletions?refresh=false&offset=${shown.length}&limit=${_DEL_PAGE}`
                         + (category ? `&category=${category}` : '') + _delRecentParams());
@@ -181,21 +182,17 @@ function _delCardHtml(p) {
       // that came without them.
       const tags = Array.isArray(p.tags) ? p.tags
         : (p.genres||'').split(',').map(g=>g.trim()).filter(Boolean).slice(0,4).map(label => ({label, kind: 'genre'}));
-      const genreTags = tags.map(t => t.kind === 'theme'
-        ? `<span class="badge theme badge-sm" title="Theme">${esc(t.label)}</span>`
-        : `<span class="badge muted badge-sm">${esc(t.label)}</span>`).join('');
-      const placeholder = p.service==='lidarr'
-        ? "e.g. 'Keep — listen to this regularly' or 'Delete — haven't touched it in years'"
-        : p.service==='radarr'
-          ? "e.g. 'Keep — haven't watched it yet' or 'Delete — awful film'"
-          : "e.g. 'Keep — still watching this' or 'Delete — dropped after 2 eps'";
+      const genreTags = tags.map(tag => tag.kind === 'theme'
+        ? `<span class="badge theme badge-sm" title="${th('del.theme')}">${esc(tag.label)}</span>`
+        : `<span class="badge muted badge-sm">${esc(tag.label)}</span>`).join('');
+      const placeholder = t(p.service==='lidarr' ? 'del.note_ph.lidarr' : p.service==='radarr' ? 'del.note_ph.radarr' : 'del.note_ph.other');
       const limbo = p.status === 'limbo';
       const ctx = `data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}" data-stagnant="${p.stagnant ? 1 : 0}"`;
       return `
       <div class="card mb-12${p.stagnant ? ' is-stagnant' : (p.confidence > .7 ? ' is-hot' : '')}" data-del-id="${p.id}" data-title="${escAttr(p.title)}" data-service="${escAttr(p.service || '')}">
         <div class="poster-card">
-          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" ${actOn('change', 'onDelCheckbox', EL)} hidden title="Select for bulk delete"/>
-          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" aria-label="Select ${escAttr(p.title)} for bulk delete" ${act('toggleDelSelect', p.id)} ${actOn('keydown', 'keyActivate', EVENT, EL)} title="Click to select for bulk delete">
+          <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" ${actOn('change', 'onDelCheckbox', EL)} hidden title="${th('del.select_bulk')}"/>
+          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" aria-label="${th('del.select_title_bulk', {title: p.title})}" ${act('toggleDelSelect', p.id)} ${actOn('keydown', 'keyActivate', EVENT, EL)} title="${th('del.click_select')}">
             ${_posterImg(p.poster_url, 174, p.category==='music'?174:261, p.category==='music')}
             <div class="del-poster-check">${SVG_CHECK.replace('width="13" height="13"', 'width="34" height="34"')}</div>
           </div>
@@ -203,30 +200,30 @@ function _delCardHtml(p) {
             <div class="panel-item-head">
               <div class="fs-16 panel-item-title">${esc(p.title)}
                 ${p.stagnant
-                  ? `<span class="badge amber" title="${escAttr(_yourCallWhy(p))}">Your call</span>`
-                  : `<span class="badge danger" title="Curatarr suggests deleting it">Cut</span>`}${_recentActivityBadge(p)}
+                  ? `<span class="badge amber" title="${escAttr(_yourCallWhy(p))}">${th('del.your_call')}</span>`
+                  : `<span class="badge danger" title="${th('del.cut_title')}">${th('del.cut')}</span>`}${_recentActivityBadge(p)}
                 ${_whyButton(p)}
-                ${limbo ? '<span class="badge amber" title="Parked: the arr was unreachable, its index drifted, or the last attempt\'s outcome is unconfirmed — nothing was deleted twice">Parked</span>' : ''}
+                ${limbo ? `<span class="badge amber" title="${th('del.parked_title')}">${th('del.parked')}</span>` : ''}
               </div>
               <div class="panel-actions">
-                <button type="button" class="btn btn-secondary btn-sm" ${act('rejectDelete', p.id, EL)} title="Not suggested again for 90 days">Keep</button>
-                <button type="button" class="btn btn-secondary btn-sm" ${act('onDiscussDeletion', EL)} ${ctx}>Discuss</button>
-                <button type="button" class="btn btn-danger btn-sm ml-8" ${act('approveDelete', p.id, EL)}>${limbo?'Retry delete':'Delete'}</button>
+                <button type="button" class="btn btn-secondary btn-sm" ${act('rejectDelete', p.id, EL)} title="${th('del.keep_title')}">${th('del.keep')}</button>
+                <button type="button" class="btn btn-secondary btn-sm" ${act('onDiscussDeletion', EL)} ${ctx}>${th('del.discuss')}</button>
+                <button type="button" class="btn btn-danger btn-sm ml-8" ${act('approveDelete', p.id, EL)}>${th(limbo ? 'del.retry_delete' : 'del.delete')}</button>
                 ${menuHtml([
-                  {label: 'Challenge verdict', action: act('onReevaluateDeletion', EL), attrs: ctx, title: 'Open a discussion and ask the curator to look deeper: the creators, what the work subverts, why it might matter'},
-                  p.media_id && p.service && !_MEDIA_SERVERS.has(p.service) ? {label: 'Fix match', action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: 'Card or pitch describing the wrong same-named title? Pin the correct entity — the pin survives rescans and the item re-enriches on it.'} : null,
-                  p.arr_url ? {label: `Open in ${p.service}`, href: p.arr_url} : null,
+                  {label: t('del.challenge'), action: act('onReevaluateDeletion', EL), attrs: ctx, title: t('del.challenge_title')},
+                  p.media_id && p.service && !_MEDIA_SERVERS.has(p.service) ? {label: t('del.fix_match'), action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: t('del.fix_match_title')} : null,
+                  p.arr_url ? {label: t('del.open_in', {service: p.service}), href: p.arr_url} : null,
                 ])}
               </div>
             </div>
             ${_whyPanel(p)}
             <div class="quote-text mt-8">${esc(p.pitch||p.reason||'')}</div>
-            <div class="meta-quiet mt-8">${esc(p.service||'')}${p.size_gb ? ` · frees <b>${_fmtSize(p.size_gb)}</b>` : ''}</div>
+            <div class="meta-quiet mt-8">${esc(p.service||'')}${p.size_gb ? ` · ${th('del.frees')} <b>${_fmtSize(p.size_gb)}</b>` : ''}</div>
             ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(p.synopsis)}</div>` : ''}
-            ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} Parked: the arr was unreachable, its index drifted, or the last attempt's outcome is unconfirmed. Retry delete checks again before it deletes anything.</div>` : ''}
+            ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} ${th('del.parked_note')}</div>` : ''}
             <textarea id="del-comment-${p.id}" class="del-comment" data-saved="${escAttr(p.user_comment||'')}" placeholder="${escAttr(placeholder)}" ${actOn('blur', 'saveComment', p.id)} ${actOn('keydown', 'blurOnCtrlEnter', EVENT, EL)}>${esc(p.user_comment||'')}</textarea>
-            <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? 'Note saved.' : ''}</div>
+            <div class="fs-11 t3 mt-4" id="del-note-hint-${p.id}">${p.user_comment ? th('del.note_saved') : ''}</div>
           </div>
         </div>
       </div>`;
@@ -308,7 +305,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
   // of opening a parallel DB read that returns the pre-commit snapshot.
   if (!refresh && _delAnalysePromise) {
     const elapsed = Math.round((Date.now() - _delAnalyseStartedAt) / 1000);
-    el.innerHTML = `<p class="loading" role="status" aria-live="polite">Analysis still running (${elapsed}s)… auto-refreshing when it's done.</p>`;
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('del.still_running', {s: elapsed})}</p>`;
     try {
       const r = await _delAnalysePromise;
       if (seq !== _delLoadSeq) return;
@@ -327,7 +324,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
   // Every tab asks the server for its own first page. Tab clicks used to
   // slice the "All" list in the browser, which held the top 30 of every
   // category together: the Anime tab showed the anime among them (9 of 50).
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">' + (refresh ? 'Analysing library with AI…' : 'Loading cached proposals…') + '</p>';
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th(refresh ? 'del.analysing' : 'del.loading_cached')}</p>`;
   try {
     const url = `/api/recommendations/deletions?refresh=${refresh}`
               + (category ? `&category=${category}` : '')
@@ -397,34 +394,35 @@ export function _renderRunBanner(run) {
   banner.id = 'del-run-banner';
   banner.setAttribute('role', 'status');
   const when = run.at ? ` <span class="t3" title="${escAttr(_fmtAbs(run.at + 'Z'))}">${esc(_fmtRel(run.at + 'Z'))}</span>` : '';
-  const again = `<button type="button" class="btn btn-secondary btn-sm" ${act('loadDeletions', state.currentDelCategory || null, null, true)}>Run analysis</button>`;
+  const again = `<button type="button" class="btn btn-secondary btn-sm" ${act('loadDeletions', state.currentDelCategory || null, null, true)}>${th('del.run_analysis')}</button>`;
   const warn = SVG_WARN.replace('width="13" height="13"', 'width="18" height="18"');
-  const deferred = run.deferred ? ` ${run.deferred} waited for missing metadata and are checked once it arrives.` : '';
+  const deferred = run.deferred ? ` ${th('del.run.deferred', {n: run.deferred})}` : '';
   // The cause comes from the server (llm_errors.DESCRIPTIONS): "Ollama is not
   // answering" and "another program took the graphics card" need different
   // fixes, and the old fixed sentence blamed the model for both.
-  const cause = esc(run.failed_reason || "the model didn't answer");
-  const stopped = run.stopped ? ` Stopped early: ${esc(run.stopped)}.` : '';
+  const cause = esc(run.failed_reason || t('del.run.no_answer'));
+  const stopped = run.stopped ? ` ${th('del.run.stopped')} ${esc(run.stopped)}.` : '';
   // An unreadable taste profile: the run went on, but its ranking is weaker.
-  const degraded = run.degraded ? ` Note: ${esc(run.degraded)}.` : '';
+  const degraded = run.degraded ? ` ${th('del.run.note')} ${esc(run.degraded)}.` : '';
   // The node away for JUDGE_FALLBACK_HOURS: this server's smaller model judged,
   // and the node re-judges those proposals once it is back.
-  const fallback = run.fallback ? ` Judged on this server's model while ${esc(run.fallback)} is away; ${esc(run.fallback)} checks these again once it is back.` : '';
+  const fallback = run.fallback ? ` ${th('del.run.fallback', {node: run.fallback})}` : '';
+  const summary = th('del.run.summary', {flagged: run.flagged, judged: run.judged});
   if (run.failed && run.failed >= run.judged) {
     banner.className = 'banner danger';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>The last analysis couldn't judge any title</b>${when} — ${cause}.${stopped} Check that Ollama is running, then try again.${fallback}${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>${th('del.run.none_judged')}</b>${when} — ${cause}.${stopped} ${th('del.run.check_ollama')}${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.failed) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}. ${run.failed} couldn't be judged — ${cause}; they are checked again on the next run.${stopped}${fallback}${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>${summary}</b>${when}. ${run.failed} ${th('del.run.failed_pre')} ${cause}; ${th('del.run.failed_post')}${stopped}${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.stopped) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${stopped} The rest is checked on the next run.${fallback}${deferred}${degraded}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>${summary}</b>${when}.${stopped} ${th('del.run.rest')}${fallback}${deferred}${degraded}</div>${again}`;
   } else if (run.degraded) {
     banner.className = 'banner warn';
-    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>Last analysis: ${run.flagged} flagged of ${run.judged} checked</b>${when}.${degraded}${fallback}${deferred}</div>${again}`;
+    banner.innerHTML = `<span class="banner-icon">${warn}</span><div class="banner-text"><b>${summary}</b>${when}.${degraded}${fallback}${deferred}</div>${again}`;
   } else {
     banner.className = 'banner';
-    banner.innerHTML = `<div class="banner-text">Last analysis: ${run.flagged} flagged of ${run.judged} checked${when}.${fallback}${deferred}</div>`;
+    banner.innerHTML = `<div class="banner-text">${summary}${when}.${fallback}${deferred}</div>`;
   }
   const delContent = document.getElementById('del-content');
   delContent.parentNode.insertBefore(banner, delContent);
@@ -456,37 +454,37 @@ export function _renderEnrichmentCoverageBanner(cov) {
     // The status table couldn't be read — say so instead of "never run".
     banner.className = 'banner warn';
     banner.innerHTML = `<span class="banner-icon">${warn}</span>
-      <div class="banner-text"><b>Enrichment coverage unknown.</b> Curatarr couldn't read the enrichment status${cov.error ? ` (${esc(cov.error)})` : ''}, so it can't say how much of your library has rating and genre data.
-        <div class="fs-11 t3 mt-4">Reload in a moment; if it persists, check the server log.</div></div>`;
+      <div class="banner-text"><b>${th('del.cov.unknown_head')}</b> ${th('del.cov.unknown_pre')}${cov.error ? ` (${esc(cov.error)})` : ''}${th('del.cov.unknown_post')}
+        <div class="fs-11 t3 mt-4">${th('del.cov.unknown_hint')}</div></div>`;
   } else if (cov.never_run) {
     banner.className = 'banner danger';
     banner.innerHTML = `<span class="banner-icon">${warn}</span>
-      <div class="banner-text"><b>Library enrichment has never run.</b> Curatarr has no rating or genre data for your library — proposals may be inaccurate.
-        <div class="fs-11 t3 mt-4">Run enrichment once to populate the metadata cache; afterwards it runs nightly (02:30).</div></div>
-      <button type="button" class="btn btn-primary btn-sm" ${act('startArrPreEnrich', EL)}>Enrich library now</button>`;
+      <div class="banner-text"><b>${th('del.cov.never_head')}</b> ${th('del.cov.never_text')}
+        <div class="fs-11 t3 mt-4">${th('del.cov.never_hint')}</div></div>
+      <button type="button" class="btn btn-primary btn-sm" ${act('startArrPreEnrich', EL)}>${th('del.cov.enrich_now')}</button>`;
   } else if (cov.low) {
     banner.className = 'banner warn';
     banner.innerHTML = `<span class="banner-icon">${warn}</span>
-      <div class="banner-text"><b>Low enrichment coverage: ${cov.pct}% (${cov.enriched}/${cov.total} items)</b> Proposals for unenriched items use neutral rating fallbacks — results are less precise.
-        <div class="fs-11 t3 mt-4">Nightly enrichment runs at 02:30; a batch can run now.</div></div>
-      <button type="button" class="btn btn-secondary btn-sm" ${act('startArrPreEnrich', EL)}>Enrich batch now</button>`;
+      <div class="banner-text"><b>${th('del.cov.low_head', {pct: cov.pct, enriched: cov.enriched, total: cov.total})}</b> ${th('del.cov.low_text')}
+        <div class="fs-11 t3 mt-4">${th('del.cov.low_hint')}</div></div>
+      <button type="button" class="btn btn-secondary btn-sm" ${act('startArrPreEnrich', EL)}>${th('del.cov.enrich_batch')}</button>`;
   } else {
     // Coverage is OK — a quiet stat, no warning
     banner.className = 'banner ok';
-    banner.innerHTML = `<span class="banner-icon">${SVG_CHECK}</span><div class="banner-text">Enrichment coverage <b>${cov.pct}%</b> (${cov.enriched} of ${cov.total} titles have ratings and genres)</div>`;
+    banner.innerHTML = `<span class="banner-icon">${SVG_CHECK}</span><div class="banner-text">${th('del.cov.ok_pre')} <b>${th('del.cov.pct', {pct: cov.pct})}</b> ${th('del.cov.ok_post', {enriched: cov.enriched, total: cov.total})}</div>`;
   }
   const delContent = document.getElementById('del-content');
   delContent.parentNode.insertBefore(banner, delContent);
 }
 
 export async function startArrPreEnrich(btn) {
-  btnBusy(btn, 'Starting…');
+  btnBusy(btn, t('del.starting'));
   try {
     await api('/api/enrichment/arr-pre-enrich', 'POST');
-    btnDone(btn, 'Running in background…', {keepDisabled: true});
-    toast('ARR enrichment started — progress shows in Activity', 'success');
+    btnDone(btn, t('del.running_bg'), {keepDisabled: true});
+    toast(t('del.enrich_started'), 'success');
   } catch (e) {
-    toast(_errMsg(e) || 'Failed to start enrichment', 'danger');
+    toast(_errMsg(e) || t('del.enrich_failed'), 'danger');
     btnDone(btn);
   }
 }
@@ -522,7 +520,7 @@ function _returnedBox() {
 }
 
 export function _renderReturnedError(msg) {
-  _returnedBox().innerHTML = `<p class="load-err fs-12" role="status">${SVG_WARN} Couldn't check for titles back after deletion — ${esc(msg)}</p>`;
+  _returnedBox().innerHTML = `<p class="load-err fs-12" role="status">${SVG_WARN} ${th('del.ret.check_failed', {error: msg})}</p>`;
 }
 
 export function _renderReturned(items) {
@@ -534,17 +532,17 @@ export function _renderReturned(items) {
   const rows = items.map(it => `
     <div class="panel-item" data-title="${escAttr(it.title)}" data-service="${escAttr(it.service || '')}">
       <div class="panel-item-head">
-        <div class="panel-item-title">${esc(it.title)} <span class="badge muted badge-sm">${esc(it.category || '')}</span>${it.match === 'title' ? '<span class="badge muted badge-sm" title="Matched by its unique title: the old proposal carried no TMDb/TVDb id">by title</span>' : ''}</div>
+        <div class="panel-item-title">${esc(it.title)} <span class="badge muted badge-sm">${esc(it.category || '')}</span>${it.match === 'title' ? `<span class="badge muted badge-sm" title="${th('del.ret.by_title_hint')}">${th('del.ret.by_title')}</span>` : ''}</div>
         <div class="panel-actions">
-          <button type="button" class="btn btn-secondary btn-sm" ${act('keepReturned', it.id, EL)}>Keep</button>
-          <button type="button" class="btn btn-danger btn-sm ml-8" ${act('deleteReturned', it.id, EL)}>Delete again</button>
+          <button type="button" class="btn btn-secondary btn-sm" ${act('keepReturned', it.id, EL)}>${th('del.keep')}</button>
+          <button type="button" class="btn btn-danger btn-sm ml-8" ${act('deleteReturned', it.id, EL)}>${th('del.delete_again')}</button>
         </div>
       </div>
-      <div class="panel-item-meta">${esc(it.service || '')} · deleted ${_day(it.deleted_at)} · ${it.kind === 'returned' ? `back since ${_day(it.back_since)}` : 'still in the library'}${it.size_gb ? ` · ${it.size_gb} GB` : ''}</div>
+      <div class="panel-item-meta">${esc(it.service || '')} · ${th('del.ret.deleted', {day: _day(it.deleted_at)})} · ${it.kind === 'returned' ? th('del.ret.back_since', {day: _day(it.back_since)}) : th('del.ret.still')}${it.size_gb ? ` · ${it.size_gb} GB` : ''}</div>
     </div>`).join('');
   box.innerHTML = `
-    <div class="section-head"><h3>Back after deletion <span class="badge amber badge-sm">${items.length}</span></h3>
-      <span class="section-hint">Curatarr deleted these and they are in your library again: an arr list, a request or SoulSync's playlist sync brought them back.</span></div>
+    <div class="section-head"><h3>${th('del.ret.head')} <span class="badge amber badge-sm">${items.length}</span></h3>
+      <span class="section-hint">${th('del.ret.hint')}</span></div>
     <div class="section-body">${rows}</div>`;
   const delContent = document.getElementById('del-content');
   delContent.parentNode.insertBefore(box, delContent);
@@ -562,35 +560,35 @@ function _returnedRowGone(row) {
 
 export async function deleteReturned(id, btn) {
   const row = btn.closest('.panel-item');
-  const title = row?.dataset.title || 'this item';
+  const title = row?.dataset.title || t('del.this_item');
   const res = await confirmDialog({
-    title: 'Delete again', danger: true, countdown: 3, confirmLabel: 'Delete',
-    body: _deleteBody(title, ['It came back after Curatarr deleted it.', ...await deleteFateLines([row?.dataset.service])]),
+    title: t('del.delete_again'), danger: true, countdown: 3, confirmLabel: t('del.delete'),
+    body: _deleteBody(title, [t('del.ret.came_back'), ...await deleteFateLines([row?.dataset.service])]),
   });
   if (!res.ok) return;
-  btnBusy(btn, 'Deleting…');
+  btnBusy(btn, t('del.deleting'));
   try {
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/returned/delete`, 'POST');
     _returnedRowGone(row);
     if (!r.ok) {
       // The new proposal stays in the list (parked, protected, or failed).
-      toast(r.error || `"${title}" was not deleted; its proposal waits in the list`, 'amber', {ms: 8000});
+      toast(r.error || t('del.ret.not_deleted', {title}), 'amber', {ms: 8000});
       state._delProposalsAll = null;
       loadDeletions(state.currentDelCategory);
       return;
     }
-    toast(`Deleted "${title}" again`, 'success');
+    toast(t('del.ret.deleted_again', {title}), 'success');
     if (r.warning) toast(r.warning, 'amber', {ms: 10000});
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 
 export async function keepReturned(id, btn) {
   const row = btn.closest('.panel-item');
-  btnBusy(btn, 'Keeping…');
+  btnBusy(btn, t('actions.keeping'));
   try {
     await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/returned/keep`, 'POST');
     _returnedRowGone(row);
-    toast(`Kept "${row?.dataset.title || 'it'}"; it is not reported again`, 'success');
+    toast(t('del.ret.kept', {title: row?.dataset.title || t('del.it')}), 'success');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 
@@ -599,9 +597,9 @@ export async function keepReturned(id, btn) {
 // in a scrolling box so a "Select all" never deletes a title nobody saw.
 export function _deleteBody(what, lines = [], titles = null) {
   return `<div class="t-center"><div class="t-danger">${SVG_TRASH}</div>
-    <div class="b fs-13 mt-4">You're about to delete</div>
+    <div class="b fs-13 mt-4">${th('del.about_to_delete')}</div>
     <div class="t-amber b mt-4">${esc(what)}</div></div>
-    ${titles?.length ? `<ul class="del-list mt-8">${titles.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` : ''}
+    ${titles?.length ? `<ul class="del-list mt-8">${titles.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     ${lines.map(l => `<p class="t2 fs-12 mt-8">${esc(l)}</p>`).join('')}`;
 }
 
@@ -616,28 +614,24 @@ export async function prefetchDeleteTargets(services) {
   if (!need.length) return;
   try {
     const r = await api(`/api/recommendations/deletions/delete-target?services=${encodeURIComponent(need.join(','))}`);
-    for (const [svc, t] of Object.entries(r.targets || {})) _fate[svc] = {...t, at: Date.now()};
+    for (const [svc, tg] of Object.entries(r.targets || {})) _fate[svc] = {...tg, at: Date.now()};
   } catch { /* unknown stays unknown: the dialog says so */ }
 }
 export async function deleteFateLines(services, plural = false) {
   const svcs = [...new Set((services || []).filter(Boolean))];
   await prefetchDeleteTargets(svcs);
   const lines = svcs.map(svc => {
-    const name = _SVC[svc] || svc, t = _fate[svc];
-    if (!t || t.recycle_bin === null || t.recycle_bin === undefined) return `Couldn't check whether ${name} keeps a Recycle Bin — assume the files are gone for good.`;
-    if (!t.recycle_bin) return `${name} deletes the files permanently.`;
-    return t.cleanup_days ? `${name} moves the files to its Recycle Bin and empties it after ${t.cleanup_days} days.`
-                          : `${name} moves the files to its Recycle Bin, where they stay until you empty it.`;
+    const name = _SVC[svc] || svc, f = _fate[svc];
+    if (!f || f.recycle_bin === null || f.recycle_bin === undefined) return t('del.fate.unknown', {name});
+    if (!f.recycle_bin) return t('del.fate.permanent', {name});
+    return f.cleanup_days ? t('del.fate.bin_days', {name, n: f.cleanup_days})
+                          : t('del.fate.bin', {name});
   });
-  if (!svcs.length) lines.push("The files are deleted. Check your Arr app's Recycle Bin setting to know whether they can be restored.");
-  if (svcs.some(s => !_MEDIA_SERVERS.has(s))) lines.push(plural
-    ? "They are also excluded from the Arr apps' import lists, so a list won't add them back."
-    : "It is also excluded from the Arr app's import lists, so a list won't add it back.");
+  if (!svcs.length) lines.push(t('del.fate.none'));
+  if (svcs.some(s => !_MEDIA_SERVERS.has(s))) lines.push(t(plural ? 'del.fate.excluded_many' : 'del.fate.excluded_one'));
   // Music: the delete also bans the artist in SoulSync, whose playlist sync
   // would otherwise fetch a liked song again (deletion_returns.py).
-  if (svcs.some(s => _fate[s]?.soulsync_ban)) lines.push(plural
-    ? "Deleted artists are also blocked in SoulSync, so its playlist sync won't download them again."
-    : "The artist is also blocked in SoulSync, so its playlist sync won't download it again.");
+  if (svcs.some(s => _fate[s]?.soulsync_ban)) lines.push(t(plural ? 'del.fate.soulsync_many' : 'del.fate.soulsync_one'));
   return lines;
 }
 
@@ -673,11 +667,11 @@ export function updateDelBulkCount() {
   if (!bar) return;
   const gb = boxes.reduce((s, b) => s + (parseFloat(b.dataset.gb) || 0), 0);
   bar.classList.toggle('show', boxes.length > 0);
-  document.getElementById('del-select-count').textContent = `${boxes.length} selected`;
+  document.getElementById('del-select-count').textContent = t('del.selected', {n: boxes.length});
   document.getElementById('del-select-gb').textContent = boxes.length ? `${gb.toFixed(1)} GB` : '';
   const btn = document.getElementById('del-bulk-btn');
   btn.disabled = boxes.length === 0;
-  btn.textContent = 'Delete selected';
+  btn.textContent = t('del.delete_selected');
 }
 export function delClearSelection() {
   document.querySelectorAll('#del-content .del-cb:checked').forEach(cb => { cb.checked = false; _syncDelPosterVisual(cb); });
@@ -693,15 +687,15 @@ export async function bulkDelete() {
   if (!boxes.length) return;
   const gb = boxes.reduce((s, b) => s + (parseFloat(b.dataset.gb) || 0), 0);
   const res = await confirmDialog({
-    title: 'Delete selected', danger: true, countdown: 3, confirmLabel: `Delete ${boxes.length}`,
-    body: _deleteBody(`${boxes.length} ${boxes.length === 1 ? 'title' : 'titles'} · ${gb.toFixed(1)} GB`,
+    title: t('del.delete_selected'), danger: true, countdown: 3, confirmLabel: t('del.delete_n', {n: boxes.length}),
+    body: _deleteBody(`${t('del.n_titles', {n: boxes.length})} · ${gb.toFixed(1)} GB`,
       await deleteFateLines(boxes.map(b => b.closest('.card')?.dataset.service), boxes.length > 1),
       boxes.map(b => b.closest('.card')?.dataset.title || '?')),
-    reason: {label: 'Shared reason (optional — Curatarr learns from it)'},
+    reason: {label: t('del.reason_shared')},
   });
   if (!res.ok) return;
   const btn = document.getElementById('del-bulk-btn');
-  btnBusy(btn, `Deleting ${boxes.length}…`);
+  btnBusy(btn, t('del.deleting_n', {n: boxes.length}));
   let started;
   try {
     started = await api('/api/recommendations/deletions/bulk-approve', 'POST', {
@@ -709,9 +703,9 @@ export async function bulkDelete() {
       comment: res.reason || null,
     });
   } catch (e) {
-    let d = e.message || 'failed';
+    let d = e.message || t('common.failed');
     try { d = JSON.parse(d).detail || d; } catch {}
-    toast('Bulk delete failed to start: ' + d, 'danger');
+    toast(t('del.bulk.start_failed', {error: d}), 'danger');
     updateDelBulkCount();
     return;
   }
@@ -733,65 +727,65 @@ export async function bulkDelete() {
       if (e.status === 401 || ++misses >= 5) {
         clearInterval(poll);
         updateDelBulkCount();
-        toast(`Lost track of the bulk delete (${_errMsg(e)}) — it may still be running. Activity shows its progress.`,
+        toast(t('del.bulk.lost', {error: _errMsg(e)}),
           'danger', {sticky: true});
       }
       return;
     }
-    const t = (r.tasks || []).find(x => x.id === tid);
-    if (t && ['running', 'pending'].includes(t.status)) return;
+    const task = (r.tasks || []).find(x => x.id === tid);
+    if (task && ['running', 'pending'].includes(task.status)) return;
     clearInterval(poll);
     state._delProposalsAll = null;
     loadDeletions(state.currentDelCategory);
-    if (!t) {
-      toast('Bulk delete: outcome unknown — the server no longer lists the job (restarted?). The list shows what is left.',
-        'amber', {sticky: true});
+    if (!task) {
+      toast(t('del.bulk.unknown'), 'amber', {sticky: true});
       return;
     }
-    const last = t.logs?.length ? t.logs[t.logs.length - 1].msg : t.status;
-    toast('Bulk delete: ' + last, t.status === 'done' ? 'success' : 'amber', {ms: 8000, sticky: t.status !== 'done'});
+    const last = task.logs?.length ? task.logs[task.logs.length - 1].msg : task.status;
+    toast(t('del.bulk.result', {result: last}), task.status === 'done' ? 'success' : 'amber', {ms: 8000, sticky: task.status !== 'done'});
   }, 2000);
 }
 
 // The reason typed into the Delete / Keep dialog is what Curatarr learns
 // from. Its save used to be .catch(()=>{}) under a success toast; now the
 // toast admits it. Returns the suffix for that toast ('' when saved or none).
-export const REASON_LOST = " — your reason couldn't be saved";
+// The toast's suffix when the reason was lost: a key, read when the toast is said.
+export const REASON_LOST = 'del.reason_lost';
 export async function _saveReason(id, prefix, reason) {
   if (!reason) return '';
   try {
     await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent(prefix + reason)}`, 'POST');
     return '';
   } catch {
-    return REASON_LOST;
+    return t(REASON_LOST);
   }
 }
 
 export async function approveDelete(id, btn) {
   const card = btn.closest('.card');
-  const title = card?.dataset.title || 'this item';
+  const title = card?.dataset.title || t('del.this_item');
   const res = await confirmDialog({
-    title: 'Delete from library', danger: true, countdown: 3, confirmLabel: 'Delete',
+    title: t('del.delete_from_library'), danger: true, countdown: 3, confirmLabel: t('del.delete'),
     body: _deleteBody(title, await deleteFateLines([card?.dataset.service])),
-    reason: {label: 'What made you decide? (optional — Curatarr learns from it)'},
+    reason: {label: t('del.reason_delete')},
   });
   if (!res.ok) return;
-  btnBusy(btn, 'Deleting…');
+  btnBusy(btn, t('del.deleting'));
   try {
     const lost = await _saveReason(id, 'Deleted: ', res.reason);
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
     if (r.limbo) {
       // ARR unreachable — the proposal stays in limbo, the button becomes a retry
-      toast((r.error || 'The proposal is parked — retry once the arr is back or its index is refreshed') + lost, 'amber', {ms: 8000});
-      btnDone(btn, 'Retry delete');
+      toast((r.error || t('del.parked_toast')) + lost, 'amber', {ms: 8000});
+      btnDone(btn, t('del.retry_delete'));
       return;
     }
-    if (!r.ok) { toast((r.error || 'Delete failed') + lost, 'danger'); btnDone(btn); return; }
+    if (!r.ok) { toast((r.error || t('del.delete_failed')) + lost, 'danger'); btnDone(btn); return; }
     // Evict from the client-side cache so switching tabs doesn't show the card
     if (state._delProposalsAll) state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
     card?.classList.add('done');
-    btnDone(btn, 'Deleted', {keepDisabled: true});
-    toast(`Deleted "${title}"${lost}`, lost ? 'amber' : 'success');
+    btnDone(btn, t('del.deleted'), {keepDisabled: true});
+    toast(t('del.deleted_title', {title}) + lost, lost ? 'amber' : 'success');
     // Music: SoulSync did not take the ban, so its playlist sync may fetch it again.
     if (r.warning) toast(r.warning, 'amber', {ms: 10000});
     // Pass 22: no post-delete "tell Curatarr more?" nag — the reason was
@@ -805,24 +799,24 @@ export async function approveDelete(id, btn) {
 // shows so that choice is never hidden; the card's note pre-fills the reason.
 export async function rejectDelete(id, btn) {
   const card = btn.closest('.card');
-  const title = card?.dataset.title || 'this item';
+  const title = card?.dataset.title || t('del.this_item');
   const note = (document.getElementById(`del-comment-${id}`)?.value || '').trim();
   const res = await confirmDialog({
-    title: `Keep "${title}"`, confirmLabel: 'Keep',
-    body: `<p>It stays in your library, and Curatarr won't suggest deleting it again for 90 days.</p>`,
-    reason: {label: 'Why keep it? (optional — Curatarr learns from it)', value: note},
-    check: {label: 'Protect permanently', hint: 'Never suggest deleting it. You can lift this in Curation.'},
+    title: t('del.keep_title_dialog', {title}), confirmLabel: t('del.keep'),
+    body: `<p>${th('del.keep_body')}</p>`,
+    reason: {label: t('del.reason_keep'), value: note},
+    check: {label: t('del.protect'), hint: t('del.protect_hint')},
   });
   if (!res.ok) return;
   const reason = res.reason;
-  btnBusy(btn, 'Keeping…');
+  btnBusy(btn, t('actions.keeping'));
   try {
     const lost = await _saveReason(id, 'Keeping: ', reason);
     await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/reject${res.checked ? '?protect=true' : ''}`, 'POST');
     if (state._delProposalsAll) state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
     card?.classList.add('done');
-    btnDone(btn, res.checked ? 'Protected' : 'Kept', {keepDisabled: true});
-    toast((res.checked ? `Protected "${title}"` : `Kept "${title}" — not suggested again for 90 days`) + lost, lost ? 'amber' : 'success');
+    btnDone(btn, t(res.checked ? 'del.protected' : 'del.kept'), {keepDisabled: true});
+    toast(t(res.checked ? 'del.protected_title' : 'del.kept_title', {title}) + lost, lost ? 'amber' : 'success');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
 
@@ -883,7 +877,7 @@ export async function onReevaluateDeletion(btn) {
     poster_url: poster || null,
     reevaluate: true,
   };
-  if (!await enterThread(ctx, `Reevaluating deletion of "${title}"`,
+  if (!await enterThread(ctx, t('disc.banner_reevaluate', {title}),
                          proposalOpener(title, pitch, btn.dataset.stagnant === '1'))) return;
 
   // 3. Pre-fill a short, readable user message and auto-send. The actual
@@ -893,7 +887,7 @@ export async function onReevaluateDeletion(btn) {
   //    responds.
   const input = document.getElementById('chat-input');
   if (input) {
-    input.value = 'Run a Level 2 thematic scan on this deletion.';
+    input.value = t('disc.level2');
     input.focus();
     setTimeout(() => sendMessage(), 300);
   }

@@ -23,8 +23,8 @@ Rules:
 # ── Deletion discussion (chat anchored on a deletion proposal) ────────────────
 
 DISCUSSION_UI_TEMPLATE = (
-    "UI: this discussion has a 'Delete & exit' button (top right) that "
-    "executes the deletion right here in Curatarr, plus 'Exit discussion'. "
+    "UI: this discussion has a '⟦disc.delete_exit⟧' button (top right) that "
+    "executes the deletion right here in Curatarr, plus '⟦disc.exit⟧'. "
     "When the user decides to delete, point them to that button — never "
     "send them to Sonarr/Radarr/Lidarr to remove it manually. The curator "
     "executes nothing itself: a declared intention to watch is acted on by "
@@ -42,8 +42,8 @@ DISCUSSION_UI_TEMPLATE = (
 STAGNANT_VERDICT_TEMPLATE = (
     "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
     "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
-    "'Your call' badge (every other proposal carries 'Cut') for the OWNER "
-    "to decide. Each card's 'Why?' lists the strongest signals in its "
+    "'⟦del.your_call⟧' badge (every other proposal carries '⟦del.cut⟧') for the OWNER "
+    "to decide. Each card's '⟦del.why⟧' lists the strongest signals in its "
     "deletion score. Weigh keep vs delete "
     "honestly on their terms instead of pushing for deletion.\n"
 )
@@ -58,7 +58,7 @@ PRINCIPLE_REVIEW_TEMPLATE = (
     "but the OWNER decides. When they settle it, confirm the outcome in plain "
     "words (adopt / reject / adopt with their refined wording); the decision "
     "is applied automatically after the conversation, and the "
-    "'Learned principles' panel in the Curation view remains the manual "
+    "'⟦cur.view.principles⟧' panel in the Curation view remains the manual "
     "fallback.\n"
 )
 
@@ -82,31 +82,31 @@ APP_MAP_TEMPLATE = (
     "answers shape their taste profile - the way to "
     "teach it what they watched elsewhere (Netflix, cinema); "
     "'⟦swipe.react.want⟧' does not, it is a plan, not a verdict.\n"
-    "- '⟦nav.deletions⟧' (admin): your deletion proposals, each marked 'Cut' or "
-    "'Your call' with a 'Why?' that lists the strongest signals in its "
-    "deletion score, and each with a 'Delete' "
+    "- '⟦nav.deletions⟧' (admin): your deletion proposals, each marked '⟦del.cut⟧' or "
+    "'⟦del.your_call⟧' with a '⟦del.why⟧' that lists the strongest signals in its "
+    "deletion score, and each with a '⟦del.delete⟧' "
     "button that EXECUTES the deletion from inside Curatarr via "
-    "Sonarr/Radarr/Lidarr, plus Keep/Discuss. 'Keep' pauses proposals for "
+    "Sonarr/Radarr/Lidarr, plus ⟦del.keep⟧/⟦del.discuss⟧. '⟦del.keep⟧' pauses proposals for "
     "that title for 90 days, after which it is judged again; ticking "
-    "'Protect permanently' in the Keep dialog stops them for good. Card "
+    "'⟦del.protect⟧' in the Keep dialog stops them for good. Card "
     "checkboxes + a "
-    "'Delete selected' button bulk-delete several at once. If a card or "
-    "pitch describes the WRONG same-named title, 'Fix match' (behind the card's More menu) "
+    "'⟦del.view.delete_selected⟧' button bulk-delete several at once. If a card or "
+    "pitch describes the WRONG same-named title, '⟦del.fix_match⟧' (behind the card's More menu) "
     "pins the correct entity — the pin survives rescans and the item "
-    "re-enriches on it. 'Back after deletion' (shown only when there are "
+    "re-enriches on it. '⟦del.ret.head⟧' (shown only when there are "
     "any) lists titles you deleted that are in the library again — an arr "
     "list, a request or SoulSync's playlist sync brought them back; a daily "
-    "check finds them, and 'Delete again' or Keep closes each. Deleting an "
+    "check finds them, and '⟦del.delete_again⟧' or ⟦del.keep⟧ closes each. Deleting an "
     "artist also blocks it in SoulSync so it is not downloaded again, and "
     "artists you follow in SoulSync are never proposed.\n"
-    "- '⟦nav.curation⟧' (admin) panels: 'Protected titles' (every title that is "
-    "never proposed — judge keeps, chat protections and 'Protect "
-    "permanently' — with its reasoning, each liftable), 'Downscale "
-    "candidates' (KEPT but flagged for a "
+    "- '⟦nav.curation⟧' (admin) panels: '⟦cur.view.protections⟧' (every title that is "
+    "never proposed — judge keeps, chat protections and '⟦del.protect⟧' "
+    "— with its reasoning, each liftable), '⟦cur.view.downscale⟧' "
+    "(KEPT but flagged for a "
     "lower-bitrate transcode — NOT deletion candidates), "
-    "'Upgrade candidates' (loved titles on weak files worth a better "
-    "version), 'Redundant storage' (duplicate versions/copies and the GB "
-    "they waste), and 'Learned principles' (rules you learned from "
+    "'⟦cur.view.upgrades⟧' (loved titles on weak files worth a better "
+    "version), '⟦cur.view.redundancy⟧' (duplicate versions/copies and the GB "
+    "they waste), and '⟦cur.view.principles⟧' (rules you learned from "
     "debates).\n"
     "- 'Report' (admin): the curation report — monthly resolutions, GB "
     "freed, the Stubbornness Index, and your yearly review.\n"
@@ -114,8 +114,8 @@ APP_MAP_TEMPLATE = (
     "the user's language, e.g. 'Curatarr empfiehlt · Filme'; movies/shows/anime/music) "
     "and the rotating 'Curatarr · ' collection shelves you design weekly, shown on the "
     "home screens, the first one per library a season shelf.\n"
-    "- '⟦nav.kb⟧' (admin) also carries a 'Finish the backfill' panel while the "
-    "metadata behind your verdicts is still incomplete: one 'Fetch now' "
+    "- '⟦nav.kb⟧' (admin) also carries a '⟦kb.backfill⟧' panel while the "
+    "metadata behind your verdicts is still incomplete: one '⟦kb.fetch_now⟧' "
     "button per source (Wikipedia significance, community reception, "
     "on-record facts, OMDb ratings) with its coverage. It disappears on its "
     "own once a source is well covered, and the daily maintenance tick "
@@ -152,14 +152,14 @@ KB_HEALING_TEMPLATE = (
     "(waiting on the backoff), queued / error, ignored, never processed. A "
     "title no source knows is retried two rounds in a row, then after 3, 6, "
     "12 and 24 days, then monthly — for ever; nothing is given up on, and an "
-    "upstream outage never counts as 'not found'. The 'Needs attention' tab of "
+    "upstream outage never counts as 'not found'. The '⟦kb.view.attention⟧' tab of "
     "the Knowledge Base lists what the pipeline cannot settle alone: wrong year, "
     "unsure match, not found after two or more tries, and audit findings "
     "(wrong entity, shared id, pin contradicted). Admin actions there: "
-    "'Search & pin' (the arr's own lookup plus TMDB/AniList candidates; "
+    "'⟦kb.search_pin⟧' (the arr's own lookup plus TMDB/AniList candidates; "
     "'Pin this id' for a typed id; 'Not this one' excludes a wrong candidate "
-    "for good), 'Retry now', 'Ignore' / 'Un-ignore' (an accepted gap leaves "
-    "the open count), 'Dismiss finding'. When asked why the library is not at "
+    "for good), '⟦kb.retry_now⟧', '⟦kb.ignore⟧' / '⟦kb.unignore⟧' (an accepted gap leaves "
+    "the open count), '⟦kb.dismiss_finding⟧'. When asked why the library is not at "
     "100 %, explain from these states — never call an item unfindable when it "
     "is merely waiting on the backoff.\n"
 )
@@ -174,8 +174,8 @@ LIBRARY_ACTIONS_TEMPLATE = (
     "media happens INSIDE Curatarr too: the '⟦recs.add⟧' button on ⟦recs.lane_discovery|Discovery⟧ "
     "cards or the library browsers' add flow (admin) — not by hand in the "
     "arr. DELETING existing media happens INSIDE Curatarr: the user "
-    "approves a proposal in the Deletions view ('Delete', or bulk via "
-    "'Delete selected') or uses 'Delete & exit' in a deletion discussion, "
+    "approves a proposal in the Deletions view ('⟦del.delete⟧', or bulk via "
+    "'⟦del.view.delete_selected⟧') or uses '⟦disc.delete_exit⟧' in a deletion discussion, "
     "and Curatarr executes it via the ARR — never send them to "
     "Sonarr/Radarr/Lidarr to delete files manually.\n"
 )
@@ -223,30 +223,8 @@ REFERENCED_UI_KEYS: tuple[str, ...] = tuple(sorted({
 # The labels still written verbatim (their pages are translated in a later
 # round): each must exist as is in the frontend files, and none be orphaned.
 REFERENCED_UI_LABELS: tuple[str, ...] = (
-    "Delete & exit",
-    "Delete",
-    "Exit discussion",
-    "Your call",
-    "Cut",
-    "Why?",
-    "Protected titles",
-    "Protect permanently",
-    "Downscale candidates",
-    "Upgrade candidates",
-    "Redundant storage",
-    "Learned principles",
-    "Delete selected",
-    "Fix match",
-    "Back after deletion",
-    "Delete again",
     "Report",
     # Knowledge Base health (KB_HEALING_BLOCK)
-    "Needs attention",
-    "Search & pin",
     "Pin this id",
     "Not this one",
-    "Retry now",
-    "Ignore",
-    "Un-ignore",
-    "Dismiss finding",
 )

@@ -16,6 +16,7 @@ The real deleteFromDiscussion runs in node against stubbed UI helpers:
     python tests/test_chat_delete_race.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js
 
 import json
 import re
@@ -71,7 +72,7 @@ def run(switch: bool, answer: dict):
     node = shutil.which("node")
     if not node:
         return None
-    js = (STUBS + _fn("_threadIdForContext") + "\n" + _fn("deleteFromDiscussion") + "\n"
+    js = (i18n_js() + STUBS + _fn("_threadIdForContext") + "\n" + _fn("deleteFromDiscussion") + "\n"
           + RUN.replace("SWITCH", "true" if switch else "false").replace("ANSWER", json.dumps(answer)))
     # stdin, not -e: Windows caps a command line at 32k characters
     r = subprocess.run([node, "-"], input=js, capture_output=True, text=True, encoding="utf-8")

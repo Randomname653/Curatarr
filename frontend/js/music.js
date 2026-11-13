@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { CAT_LABELS, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, loc, toast } from './ui.js';
 import { loadEnrichStatus } from './kb.js';
 import { showView } from './nav.js';
+import { t, th } from './i18n.js';
 let _musicPollTimer = null;
 
 export async function loadMusicStatus() {
@@ -10,7 +11,7 @@ export async function loadMusicStatus() {
     const s = await api('/api/music/status');
     _renderMusicStatus(s);
   } catch(e) {
-    document.getElementById('music-stats-bar').textContent = 'Could not load music stats: ' + _errMsg(e);
+    document.getElementById('music-stats-bar').textContent = t('music.stats_failed', {error: _errMsg(e)});
   }
 }
 
@@ -22,11 +23,11 @@ export function _renderMusicStatus(s) {
   // Stats bar
   const bar = document.getElementById('music-stats-bar');
   bar.innerHTML = [
-    `<b>${stats.total_music ?? '—'}</b> total plays`,
-    `<b>${stats.source_spotify ?? '—'}</b> from Spotify`,
-    `<b>${stats.unmatched_spotify ?? '—'}</b> unmatched`,
-    `<b>${stats.missing_genres ?? '—'}</b> missing genres`,
-    s.last_run ? `last run ${new Date(s.last_run).toLocaleString(loc())}` : 'never run',
+    `<b>${stats.total_music ?? '—'}</b> ${th('music.total_plays')}`,
+    `<b>${stats.source_spotify ?? '—'}</b> ${th('music.from_spotify')}`,
+    `<b>${stats.unmatched_spotify ?? '—'}</b> ${th('music.unmatched')}`,
+    `<b>${stats.missing_genres ?? '—'}</b> ${th('music.missing_genres')}`,
+    s.last_run ? th('music.last_run', {when: new Date(s.last_run).toLocaleString(loc())}) : th('music.never_run'),
   ].join(' · ');
   // Lyrics from Plex: the SoulSync sidecars on file and the artists profiled from them.
   const ly = s.lyrics;
@@ -34,11 +35,11 @@ export function _renderMusicStatus(s) {
   if (lyEl) {
     lyEl.hidden = !ly || !ly.tracks;
     if (ly && ly.tracks) {
-      lyEl.textContent = `Lyrics: ${ly.with_text.toLocaleString(loc())} of ${ly.tracks.toLocaleString(loc())} tracks on file`
-        + ` · ${ly.profiles.toLocaleString(loc())} of ${ly.artists_with_text.toLocaleString(loc())} artists profiled`
-        + (ly.explicit_artists ? ` · ${ly.explicit_artists} explicit` : '')
-        + (ly.unreachable ? ` · ${ly.unreachable} sidecars Plex cannot serve yet` : '')
-        + (ly.last_run ? ` · collected ${new Date(ly.last_run + 'Z').toLocaleString(loc())}` : '');
+      lyEl.textContent = t('music.lyrics_on_file', {x: ly.with_text.toLocaleString(loc()), of: ly.tracks.toLocaleString(loc())})
+        + ` · ${t('music.lyrics_profiled', {x: ly.profiles.toLocaleString(loc()), of: ly.artists_with_text.toLocaleString(loc())})}`
+        + (ly.explicit_artists ? ` · ${t('music.lyrics_explicit', {n: ly.explicit_artists})}` : '')
+        + (ly.unreachable ? ` · ${t('music.lyrics_unreachable', {n: ly.unreachable})}` : '')
+        + (ly.last_run ? ` · ${t('music.lyrics_collected', {when: new Date(ly.last_run + 'Z').toLocaleString(loc())})}` : '');
     }
   }
 
@@ -71,39 +72,39 @@ export function _renderMusicStatus(s) {
 // One entry per pipeline phase: [label, bar position]. Phase 1.4 (MusicBrainz
 // at ~1 req/s) used to leave the UI silent for minutes — it reports too.
 const MUSIC_PHASES = {
-  plex_match:        () => ['Phase 1: matching plays to Plex…', 15],
-  plex_match_done:   p => [`Phase 1 done — matched ${p.matched ?? 0}, unmatched ${p.unmatched ?? 0}. Resolving MBIDs…`, 20],
-  mbid_resolve:      p => [p.batch_size ? `Phase 1.4: MusicBrainz — ${p.queried ?? 0} / ${p.batch_size} artists (${p.resolved ?? 0} resolved, ${p.pct ?? 0}%)` : 'Phase 1.4: resolving artist MBIDs…',
+  plex_match:        () => [t('music.ph.plex_match'), 15],
+  plex_match_done:   p => [t('music.ph.plex_match_done', {matched: p.matched ?? 0, unmatched: p.unmatched ?? 0}), 20],
+  mbid_resolve:      p => [p.batch_size ? t('music.ph.mbid', {q: p.queried ?? 0, of: p.batch_size, resolved: p.resolved ?? 0, pct: p.pct ?? 0}) : t('music.ph.mbid_start'),
                            Math.min(20 + Math.round(7 * (p.pct ?? 0) / 100), 27)],
-  mbid_resolve_done: p => [`Phase 1.4 done — ${p.resolved ?? 0} MBIDs resolved. Starting Spotify…`, 27],
-  spotify_enrich:    () => ['Phase 1.5: fetching genres from Spotify…', 28],
+  mbid_resolve_done: p => [t('music.ph.mbid_done', {resolved: p.resolved ?? 0}), 27],
+  spotify_enrich:    () => [t('music.ph.spotify'), 28],
   lastfm_enrich:     p => {
-    const q = p.tracks_queried ?? 0, t = p.total_unique ?? 0, pct = Math.min(100, p.pct ?? (t ? Math.round(100 * q / t) : 0));
-    return [t ? `Phase 2: Last.fm — ${q} / ${t} tracks (${pct}%)` : `Phase 2: Last.fm — ${q} tracks queried…`, Math.min(35 + Math.round(64 * pct / 100), 99)];
+    const q = p.tracks_queried ?? 0, tot = p.total_unique ?? 0, pct = Math.min(100, p.pct ?? (tot ? Math.round(100 * q / tot) : 0));
+    return [tot ? t('music.ph.lastfm', {q, of: tot, pct}) : t('music.ph.lastfm_open', {q}), Math.min(35 + Math.round(64 * pct / 100), 99)];
   },
-  lastfm_batch_done: p => [`Batch done${p.spotify_enriched > 0 ? ` · Spotify: ${p.spotify_enriched}` : ''} · Last.fm: ${p.tracks_queried ?? 0} queried, ${p.enriched_plays ?? 0} enriched`
-                           + `${p.artist_fallback > 0 ? ` (${p.artist_fallback} via artist fallback)` : ''}${p.no_data > 0 ? `, ${p.no_data} cached as no-data` : ''}.`, 100],
-  done:              p => [`Done — Plex: ${p.matched ?? 0} matched`
-                           + `${(p.mbid_resolved > 0 || p.mbid_remaining > 0) ? ` · MBIDs: ${p.mbid_resolved ?? 0} resolved${p.mbid_remaining > 0 ? `, ${p.mbid_remaining} pending` : ''}` : ''}`
-                           + `${p.spotify_enriched > 0 ? ` · Spotify: ${p.spotify_enriched}` : ''} · Last.fm: ${p.enriched_plays ?? 0} plays enriched`
-                           + `${p.artist_fallback > 0 ? ` · ${p.artist_fallback} via artist fallback` : ''}${p.no_data > 0 ? ` · ${p.no_data} no-data cached` : ''}`, 100],
+  lastfm_batch_done: p => [`${t('music.ph.batch_done')}${p.spotify_enriched > 0 ? ` · Spotify: ${p.spotify_enriched}` : ''} · ${t('music.ph.lastfm_counts', {q: p.tracks_queried ?? 0, e: p.enriched_plays ?? 0})}`
+                           + `${p.artist_fallback > 0 ? ` ${t('music.ph.via_fallback_paren', {n: p.artist_fallback})}` : ''}${p.no_data > 0 ? `, ${t('music.ph.no_data_cached', {n: p.no_data})}` : ''}.`, 100],
+  done:              p => [t('music.ph.done', {matched: p.matched ?? 0})
+                           + `${(p.mbid_resolved > 0 || p.mbid_remaining > 0) ? ` · ${t('music.ph.mbids', {n: p.mbid_resolved ?? 0})}${p.mbid_remaining > 0 ? `, ${t('music.ph.pending', {n: p.mbid_remaining})}` : ''}` : ''}`
+                           + `${p.spotify_enriched > 0 ? ` · Spotify: ${p.spotify_enriched}` : ''} · ${t('music.ph.plays_enriched', {n: p.enriched_plays ?? 0})}`
+                           + `${p.artist_fallback > 0 ? ` · ${t('music.ph.via_fallback', {n: p.artist_fallback})}` : ''}${p.no_data > 0 ? ` · ${t('music.ph.no_data', {n: p.no_data})}` : ''}`, 100],
 };
 export function _musicPhase(p) {
   const f = MUSIC_PHASES[p.phase || ''];
-  return f ? f(p) : ['Starting…', 5];
+  return f ? f(p) : [t('music.starting'), 5];
 }
 
 export async function startMusicPipeline(btn) {
   const batch = parseInt(document.getElementById('music-batch-input').value) || 300;
-  btnBusy(btn, 'Starting…');
-  try { await api('/api/music/start', 'POST', { batch }); toast('Music pipeline started', 'success'); await loadMusicStatus(); }
+  btnBusy(btn, t('music.starting'));
+  try { await api('/api/music/start', 'POST', { batch }); toast(t('music.started'), 'success'); await loadMusicStatus(); }
   catch (e) { toast(_errMsg(e), 'danger'); }
   btnDone(btn);
 }
 
 export async function stopMusicPipeline(btn) {
-  btnBusy(btn, 'Stopping…');
-  try { await api('/api/music/stop', 'POST'); toast('Stop requested — the current batch finishes first', 'info'); await loadMusicStatus(); }
+  btnBusy(btn, t('music.stopping'));
+  try { await api('/api/music/stop', 'POST'); toast(t('music.stop_requested'), 'info'); await loadMusicStatus(); }
   catch (e) { toast(_errMsg(e), 'danger'); }
   btnDone(btn);
 }
@@ -117,10 +118,10 @@ export function _enrichSrc()  { return document.querySelector('input[name="enric
 export async function startEnrichNew(btn) {
   const cats = _enrichCats();
   const el = document.getElementById('enrich-progress-area');
-  btnBusy(btn, 'Starting…');
+  btnBusy(btn, t('music.starting'));
   try {
     await api('/api/enrichment/start', 'POST', {categories: cats, source: _enrichSrc()});
-    toast(`Enrichment started for ${cats.map(c => CAT_LABELS[c] || c).join(', ')}`, 'success');
+    toast(t('music.enrich_started', {list: cats.map(c => CAT_LABELS[c] || c).join(', ')}), 'success');
     el.innerHTML = '';
     setTimeout(loadEnrichStatus, 3000);
   } catch (e) { el.innerHTML = _errHtml(e); }
@@ -129,18 +130,18 @@ export async function startEnrichNew(btn) {
 
 export async function startEnrichForce(btn) {
   const cats = _enrichCats();
-  if (!cats.length) { toast('Select at least one library first.', 'amber'); return; }
+  if (!cats.length) { toast(t('music.select_library'), 'amber'); return; }
   const labels = cats.map(c => CAT_LABELS[c] || c).join(', ');
   const res = await confirmDialog({
-    title: 'Force re-enrich', danger: true, confirmLabel: 'Clear and re-enrich',
-    body: `<p>Every existing profile for <b>${esc(labels)}</b> is cleared and re-processed from scratch.</p><p class="t3 fs-12 mt-8">Use this after changing the model or the enrichment prompts.</p>`,
+    title: t('music.force_title'), danger: true, confirmLabel: t('music.force_confirm'),
+    body: `<p>${th('music.force_body_pre')} <b>${esc(labels)}</b> ${th('music.force_body_post')}</p><p class="t3 fs-12 mt-8">${th('music.force_hint')}</p>`,
   });
   if (!res.ok) return;
   const el = document.getElementById('enrich-progress-area');
-  btnBusy(btn, 'Working…');
+  btnBusy(btn, t('music.working'));
   try {
     await api('/api/enrichment/start', 'POST', {categories: cats, source: _enrichSrc(), force: true});
-    toast(`Force re-enrichment started for ${labels} — cache cleared`, 'amber');
+    toast(t('music.force_started', {list: labels}), 'amber');
     el.innerHTML = '';
     setTimeout(loadEnrichStatus, 3000);
   } catch (e) { el.innerHTML = _errHtml(e); }
@@ -157,12 +158,12 @@ export async function computeTaste(btn) {
   // "no checkboxes = all" behaviour). Lets the user recompute the big
   // movie/show/anime backlog without touching the music vectors.
   const cats = _enrichCats();
-  const label = cats.length ? cats.map(c => CAT_LABELS[c] || c).join(', ') : 'all categories';
-  btnBusy(btn, 'Starting…');
+  const label = cats.length ? cats.map(c => CAT_LABELS[c] || c).join(', ') : t('music.all_categories');
+  btnBusy(btn, t('music.starting'));
   try {
     const qs = cats.map(c => `categories=${encodeURIComponent(c)}`).join('&');
     await api(qs ? `/api/enrichment/compute-taste?${qs}` : '/api/enrichment/compute-taste', 'POST');
-    toast(`Updating the taste profile for ${label}`, 'success');
+    toast(t('music.taste_updating', {list: label}), 'success');
     setTimeout(() => showView('history'), 3000);
   } catch (e) { el.innerHTML = _errHtml(e); }
   btnDone(btn);
@@ -175,38 +176,35 @@ export async function computeTaste(btn) {
 // itself (deliberate — see the Pass-55 design decision).
 export async function auditRequeueEnrichments(btn) {
   const el = document.getElementById('enrich-progress-area');
-  btnBusy(btn, 'Scanning…');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Scanning enrichment cache for incomplete or mis-resolved metadata…</p>';
+  btnBusy(btn, t('music.scanning'));
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('music.audit_scanning')}</p>`;
 
-  const _reasonLabel = {
-    zero_rating: 'missing/zero rating', not_found: 'not found in any API', malformed: 'corrupt cache entry',
-    'wrong_entity:title': 'wrong entity (title mismatch)',
-    'wrong_entity:year': 'wrong entity (year mismatch)',
-    'wrong_entity:mbid': 'wrong entity (artist mismatch)',
-  };
+  // the reasons are server keys; their words are in the dictionary (music.reason.*)
+  const _REASONS = ['zero_rating', 'not_found', 'malformed', 'wrong_entity:title', 'wrong_entity:year', 'wrong_entity:mbid'];
+  const _reasonLabel = k => (_REASONS.includes(k) ? t(`music.reason.${k.replace(':', '_')}`) : k);
   const _fmtBreakdown = (by) => Object.entries(by || {})
-    .map(([k, n]) => `${n}× ${_reasonLabel[k] || k}`).join(', ');
+    .map(([k, n]) => `${n}× ${_reasonLabel(k)}`).join(', ');
 
   try {
     // Step 1 — dry run: scan + count only, change nothing.
     const scan = await api('/api/enrichment/audit-requeue?dry_run=true', 'POST');
     if (!scan.incomplete) {
-      el.innerHTML = `<p class="fs-13 t-success">Scanned ${scan.scanned} profiles — all have complete metadata, nothing to requeue.</p>`;
+      el.innerHTML = `<p class="fs-13 t-success">${th('music.audit_clean', {n: scan.scanned})}</p>`;
       return;
     }
     const res = await confirmDialog({
-      title: 'Requeue flagged profiles', confirmLabel: `Requeue ${scan.incomplete}`,
-      body: `<p>Scanned <b>${scan.scanned}</b> enrichment profiles; <b>${scan.incomplete}</b> need re-enrichment: ${esc(_fmtBreakdown(scan.by_reason))}.</p>
-             <p class="t3 fs-12 mt-8">Their cached profiles are dropped and they are marked pending. The next enrichment run re-fetches them — this does not start a run itself.</p>`,
+      title: t('music.requeue_title'), confirmLabel: t('music.requeue_confirm', {n: scan.incomplete}),
+      body: `<p>${th('music.requeue_body', {scanned: scan.scanned, n: scan.incomplete}).replace(/\{b\}(.*?)\{\/b\}/g, '<b>$1</b>')} ${esc(_fmtBreakdown(scan.by_reason))}.</p>
+             <p class="t3 fs-12 mt-8">${th('music.requeue_hint')}</p>`,
     });
     if (!res.ok) {
-      el.innerHTML = `<p class="fs-13 t3">Audit cancelled — ${scan.incomplete} flagged profiles left untouched.</p>`;
+      el.innerHTML = `<p class="fs-13 t3">${th('music.audit_cancelled', {n: scan.incomplete})}</p>`;
       return;
     }
     // Step 2 — real requeue.
-    el.innerHTML = '<p class="loading" role="status" aria-live="polite">Requeuing incomplete profiles…</p>';
+    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('music.requeuing')}</p>`;
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
-    el.innerHTML = `<p class="fs-13 t-success">Requeued ${r.requeued} of ${r.incomplete} flagged profiles (${esc(_fmtBreakdown(r.by_reason))}). Run "Start enrichment" to fetch them again.</p>`;
+    el.innerHTML = `<p class="fs-13 t-success">${th('music.requeued', {n: r.requeued, of: r.incomplete, why: _fmtBreakdown(r.by_reason)})}</p>`;
     setTimeout(loadEnrichStatus, 2000);
   } catch (e) {
     el.innerHTML = _errHtml(e);
@@ -221,14 +219,14 @@ export async function auditRequeueEnrichments(btn) {
 export async function omdbBackfill(btn) {
   const el = document.getElementById('enrich-progress-area');
   const res = await confirmDialog({
-    title: 'Backfill OMDb', confirmLabel: 'Start backfill',
-    body: '<p>Fetches writer, awards and the extended plot for every cached title with an imdb_id but no OMDb data yet.</p><p class="t3 fs-12 mt-8">Runs in the background over the supporter key — progress shows in Activity.</p>',
+    title: t('music.omdb_title'), confirmLabel: t('music.omdb_confirm'),
+    body: `<p>${th('music.omdb_body')}</p><p class="t3 fs-12 mt-8">${th('music.omdb_hint')}</p>`,
   });
   if (!res.ok) return;
-  btnBusy(btn, 'Starting…');
+  btnBusy(btn, t('music.starting'));
   try {
     await api('/api/enrichment/omdb-backfill', 'POST');
-    toast('OMDb backfill started — progress shows in Activity', 'success');
+    toast(t('music.omdb_started'), 'success');
     el.innerHTML = '';
   } catch (e) { el.innerHTML = _errHtml(e); }
   btnDone(btn);

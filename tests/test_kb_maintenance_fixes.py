@@ -10,6 +10,7 @@
     python tests/test_kb_maintenance_fixes.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import with_words  # noqa: E402
 
 import asyncio
 import json
@@ -147,6 +148,6 @@ check("the card counts the library's anime whose profile names an AniList id, an
       cov == {"anime": 4, "with_anilist": 2, "pinned": 2, "auto_pinned": 1})
 kb = (ROOT / "frontend/js/kb.js").read_text(encoding="utf-8")
 check("the card no longer shows the mapping file's empty AniList column",
-      "AniList pending" not in kb and "library anime with an AniList id" in kb)
+      "AniList pending" not in with_words(kb) and "library anime with an AniList id" in with_words(kb))
 
 check.done()

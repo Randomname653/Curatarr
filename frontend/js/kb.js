@@ -6,40 +6,41 @@ import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
 import { openMatchPicker } from './picker.js';
 import { tabToHash } from './nav.js';
+import { t, th } from './i18n.js';
 export async function loadMappingStats(btn) {
   const el = document.getElementById('mapping-stats');
-  btnBusy(btn, 'Loading…');
+  btnBusy(btn, t('common.loading'));
   try {
     const s = await api('/api/enrichment/mapping-stats');
     el.innerHTML = `
       <div class="gap-16 row mt-4">
-        <span><b class="t-amber">${(s.total_entries || 0).toLocaleString(loc())}</b> <span class="t2">total entries</span></span>
-        <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString(loc())}</b> <span class="t2">TVDB mapped</span></span>
-        ${s.anime != null ? `<span><b>${(s.with_anilist || 0).toLocaleString(loc())} of ${s.anime.toLocaleString(loc())}</b> <span class="t2">library anime with an AniList id</span></span>
-        <span><b>${(s.pinned || 0).toLocaleString(loc())}</b> <span class="t2">pinned (${(s.auto_pinned || 0).toLocaleString(loc())} by the TVDB crossref)</span></span>` : ''}
+        <span><b class="t-amber">${(s.total_entries || 0).toLocaleString(loc())}</b> <span class="t2">${th('kb.total_entries')}</span></span>
+        <span><b class="t-success">${(s.tvdb_mapped || 0).toLocaleString(loc())}</b> <span class="t2">${th('kb.tvdb_mapped')}</span></span>
+        ${s.anime != null ? `<span><b>${th('kb.x_of_y', {x: (s.with_anilist || 0).toLocaleString(loc()), y: s.anime.toLocaleString(loc())})}</b> <span class="t2">${th('kb.anime_with_anilist')}</span></span>
+        <span><b>${(s.pinned || 0).toLocaleString(loc())}</b> <span class="t2">${th('kb.pinned_crossref', {n: (s.auto_pinned || 0).toLocaleString(loc())})}</span></span>` : ''}
       </div>
-      <div class="fs-11 t3 mt-4">Downloaded: ${s.downloaded_at ? esc(new Date(s.downloaded_at).toLocaleString(loc())) : 'never'} · refreshes weekly</div>`;
+      <div class="fs-11 t3 mt-4">${th('kb.downloaded')} ${s.downloaded_at ? esc(new Date(s.downloaded_at).toLocaleString(loc())) : th('kb.never')} · ${th('kb.refreshes_weekly')}</div>`;
   } catch (e) { el.innerHTML = _errHtml(e); }
   btnDone(btn);
 }
 
 export async function checkMappingCoverage(btn) {
   const el = document.getElementById('mapping-coverage');
-  btnBusy(btn, 'Checking…');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Checking Sonarr coverage… this may take a moment</p>';
+  btnBusy(btn, t('kb.checking'));
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('kb.checking_coverage')}</p>`;
   try {
     const c = await api('/api/enrichment/mapping-coverage');
     if (c.error) el.innerHTML = `<p class="load-err">${esc(c.error)}</p>`;
     else el.innerHTML = `
       <div class="gap-16 row mt-8">
-        <span><b class="t-amber">${c.total_anime}</b> <span class="t2">anime in Sonarr</span></span>
-        <span><b class="t-success">${c.covered} (${c.coverage_pct}%)</b> <span class="t2">in mapping</span></span>
-        <span><b>${c.anilist_resolved}</b> <span class="t2">AniList ready</span></span>
-        <span><b class="t-danger">${c.missing}</b> <span class="t2">not in mapping</span></span>
+        <span><b class="t-amber">${c.total_anime}</b> <span class="t2">${th('kb.anime_in_sonarr')}</span></span>
+        <span><b class="t-success">${th('kb.n_pct', {n: c.covered, pct: c.coverage_pct})}</b> <span class="t2">${th('kb.in_mapping')}</span></span>
+        <span><b>${c.anilist_resolved}</b> <span class="t2">${th('kb.anilist_ready')}</span></span>
+        <span><b class="t-danger">${c.missing}</b> <span class="t2">${th('kb.not_in_mapping')}</span></span>
       </div>
       ${c.missing_sample?.length ? `
       <details class="mt-8">
-        <summary class="pointer fs-11 t3">Not mapped (${c.missing} total)</summary>
+        <summary class="pointer fs-11 t3">${th('kb.not_mapped', {n: c.missing})}</summary>
         <div class="mt-4">${c.missing_sample.map(m => `<div class="fs-11 t-danger">${esc(m.title)} tvdb:${m.tvdb_id || '?'} — ${esc(m.reason)}</div>`).join('')}</div>
       </details>` : ''}`;
   } catch (e) { el.innerHTML = _errHtml(e); }
@@ -52,25 +53,25 @@ export async function loadProfiles(offset = 0) {
   const src    = document.getElementById('profile-source')?.value || 'all';
   const search = document.getElementById('profile-search')?.value || '';
   const el = document.getElementById('profile-browser');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading profiles…</p>';
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('kb.loading_profiles')}</p>`;
   try {
     const r = await api(`/api/enrichment/profiles?category=${cat}&source=${src}&limit=${PROFILE_PAGE}&offset=${offset}&search=${encodeURIComponent(search)}`);
     if (!r.profiles?.length) {
-      el.innerHTML = emptyHtml('No enriched profiles found — run an enrichment first.');
+      el.innerHTML = emptyHtml(th('kb.no_profiles'));
       return;
     }
-    const srcLabel = p => p.profile_source === 'watch_history' ? 'watched'
+    const srcLabel = p => p.profile_source === 'watch_history' ? t('kb.watched')
       : (p.profile_source || '').startsWith('arr:') ? p.profile_source.slice(4) : (p.profile_source || '?');
     const block = (label, html, mono) => html
       ? `<div class="mb-8"><div class="caps fs-10 t3">${label}</div><div class="lh-16 break-word ${mono ? 'fs-11 t3 mono' : 'fs-12 t2'} mt-4">${html}</div></div>` : '';
     el.innerHTML = `
-      <div class="fs-12 t3 mb-8">${r.total.toLocaleString(loc())} enriched · showing ${offset + 1}–${Math.min(offset + PROFILE_PAGE, r.total)}</div>
+      <div class="fs-12 t3 mb-8">${th('kb.enriched_showing', {n: r.total.toLocaleString(loc()), from: offset + 1, to: Math.min(offset + PROFILE_PAGE, r.total)})}</div>
       ${r.profiles.map(p => `
         <details class="panel-item">
           <summary class="panel-item-head">
             <div class="grow">
               <div class="panel-item-title">${esc(p.title)}
-                <span class="badge ${p.has_profile ? 'success' : 'muted'} badge-sm">${p.has_profile ? 'profile' : 'no profile'}</span>
+                <span class="badge ${p.has_profile ? 'success' : 'muted'} badge-sm">${th(p.has_profile ? 'kb.profile' : 'kb.no_profile')}</span>
                 <span class="badge ${p.source?.includes('+llm') ? 'success' : p.source?.includes('rule_based') ? 'amber' : 'muted'} badge-sm">${esc(p.source || '?')}</span>
                 <span class="badge muted badge-sm">${esc(srcLabel(p))}</span>
                 ${p.rating ? `<span class="fs-11 t-amber">${SVG_STAR} ${p.rating}</span>` : ''}
@@ -78,13 +79,13 @@ export async function loadProfiles(offset = 0) {
               </div>
               ${p.genres?.length ? `<div class="gap-4 row mt-4">${p.genres.slice(0, 5).map(g => `<span class="badge muted badge-sm">${esc(g)}</span>`).join('')}</div>` : ''}
             </div>
-            <span class="fs-11 t3">details</span>
+            <span class="fs-11 t3">${th('kb.details')}</span>
           </summary>
           <div class="rule-top panel-item-foot">
-            ${block('Themes', p.themes?.length ? esc(p.themes.join(' · ')) : '')}
-            ${block('Mood', p.mood?.length ? esc(p.mood.join(' · ')) : '')}
-            ${block('Summary', p.plot_summary ? esc(p.plot_summary) : '')}
-            ${block('Embedding text', p.embedding_text ? esc(p.embedding_text) : '', true)}
+            ${block(th('kb.themes'), p.themes?.length ? esc(p.themes.join(' · ')) : '')}
+            ${block(th('kb.mood'), p.mood?.length ? esc(p.mood.join(' · ')) : '')}
+            ${block(th('kb.summary'), p.plot_summary ? esc(p.plot_summary) : '')}
+            ${block(th('kb.embedding_text'), p.embedding_text ? esc(p.embedding_text) : '', true)}
           </div>
         </details>`).join('')}
       ${pagerHtml({offset, limit: PROFILE_PAGE, total: r.total, page: o => act('loadProfiles', o)})}`;
@@ -148,15 +149,15 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const order = ['movie', 'show', 'anime', 'music'];
   // Every count is a door: click → the list behind it (same classification).
   const num = (v, cat, keys, tip, cls) => v
-    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${escAttr(tip + ' — click to list')}" ${act('loadKbItems', cat, keys)}>${v.toLocaleString(loc())}</button>`
+    ? `<button type="button" class="link-num${cls ? ' ' + cls : ''}" title="${th('kb.click_to_list', {tip})}" ${act('loadKbItems', cat, keys)}>${v.toLocaleString(loc())}</button>`
     : `<span class="t3" title="${escAttr(tip)}">0</span>`;
   // One card per library: how far enrichment got (a meter over the one
   // denominator, downloaded arr items), the states still open as chips —
   // only the ones that are not zero, each a door to its list — and what the
   // open rows are waiting for. The raw-layer counts sit quietly at the foot.
-  const STATE_CHIPS = [['Dead', ['enriched_dead']], ['Partial', ['rule_based', 'awaiting_llm']],
-    ['Retry due', ['retry_due']], ['Not found', ['not_found']], ['Queued', ['queued', 'processing_error']],
-    ['Never', ['never_processed']], ['Ignored', ['ignored']], ['Credits', ['credit']]];
+  const STATE_CHIPS = [['dead', ['enriched_dead']], ['partial', ['rule_based', 'awaiting_llm']],
+    ['retry_due', ['retry_due']], ['not_found', ['not_found']], ['queued', ['queued', 'processing_error']],
+    ['never', ['never_processed']], ['ignored', ['ignored']], ['credits', ['credit']]];
   const cards = order.filter(c => cats[c]).map(cat => {
     const c = cats[cat], d = c.denominator, s = c.states, op = c.open || {};
     const n = k => s[k] || 0;
@@ -165,24 +166,24 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
     const pct = dl ? Math.round(100 * done / dl) : 0;
     const chips = STATE_CHIPS.map(([label, keys]) => {
       const v = keys.reduce((a, k) => a + n(k), 0);
-      return v ? `<span class="kb-chip">${label} ${num(v, cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</span>` : '';
+      return v ? `<span class="kb-chip">${th(`kb.chip.${label}`)} ${num(v, cat, keys.join(','), keys.map(k => defs[k] || k).join(' · '))}</span>` : '';
     }).join('');
     const waits = [];
-    if (op.due_now) waits.push(`${op.due_now.toLocaleString(loc())} due next run`);
-    if (op.waiting) waits.push(`${op.waiting.toLocaleString(loc())} on the backoff${op.next_due_at ? ` (next ${_fmtDate(op.next_due_at)})` : ''}`);
+    if (op.due_now) waits.push(th('kb.due_next_run', {n: op.due_now.toLocaleString(loc())}));
+    if (op.waiting) waits.push(th('kb.on_backoff', {n: op.waiting.toLocaleString(loc())}) + (op.next_due_at ? ` ${th('kb.next_on', {date: _fmtDate(op.next_due_at)})}` : ''));
     const attnLink = op.needs_attention
-      ? `<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${op.needs_attention.toLocaleString(loc())} need attention</button>` : '';
+      ? `<button type="button" class="link-num t-amber" ${act('showKbTab', 'attention')}>${th('kb.need_attention', {n: op.needs_attention.toLocaleString(loc())})}</button>` : '';
     return `<article class="kb-lib${pct >= 95 ? ' is-done' : ''}">
       <div class="kb-lib-head"><h4>${esc(CAT_LABELS[cat] || cat)}</h4>
-        <span class="fs-12 t3">${dl.toLocaleString(loc())} of ${d.arr_total.toLocaleString(loc())} downloaded</span></div>
-      <div class="kb-lib-pct"><b>${pct}%</b><span>enriched · ${num(done, cat, 'enriched,enriched_provisional', defs.enriched)}</span></div>
-      <progress class="kb-meter" max="100" value="${pct}" aria-label="${escAttr(`${CAT_LABELS[cat] || cat}: ${pct}% enriched`)}"></progress>
-      ${chips ? `<div class="kb-chips">${chips}</div>` : '<div class="kb-chips"><span class="fs-12 t3">Nothing open.</span></div>'}
+        <span class="fs-12 t3">${th('kb.downloaded_of', {n: dl.toLocaleString(loc()), total: d.arr_total.toLocaleString(loc())})}</span></div>
+      <div class="kb-lib-pct"><b>${th('kb.pct', {pct})}</b><span>${th('kb.enriched')} · ${num(done, cat, 'enriched,enriched_provisional', defs.enriched)}</span></div>
+      <progress class="kb-meter" max="100" value="${pct}" aria-label="${th('kb.meter_aria', {cat: CAT_LABELS[cat] || cat, pct})}"></progress>
+      ${chips ? `<div class="kb-chips">${chips}</div>` : `<div class="kb-chips"><span class="fs-12 t3">${th('kb.nothing_open')}</span></div>`}
       ${waits.length || attnLink ? `<div class="kb-lib-wait">${waits.join(' · ')}${waits.length && attnLink ? ' · ' : ''}${attnLink}</div>` : ''}
       <div class="kb-lib-foot">
-        <span title="Items with at least one vector-store entry (deduplicated by item identity)">Vectors <b>${c.vectors.indexed.toLocaleString(loc())}</b></span>
-        <span title="Live raw cache entries carrying Wikipedia significance">Wikipedia <b>${c.wikipedia.significance_cached.toLocaleString(loc())}</b></span>
-        <span title="Live raw cache entries with OMDb data (writer / awards / extended plot)">OMDb <b>${c.omdb.covered.toLocaleString(loc())}</b></span>
+        <span title="${th('kb.vectors_title')}">${th('kb.vectors')} <b>${c.vectors.indexed.toLocaleString(loc())}</b></span>
+        <span title="${th('kb.wikipedia_title')}">Wikipedia <b>${c.wikipedia.significance_cached.toLocaleString(loc())}</b></span>
+        <span title="${th('kb.omdb_title')}">OMDb <b>${c.omdb.covered.toLocaleString(loc())}</b></span>
       </div>
     </article>`;
   }).join('');
@@ -193,57 +194,57 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
   const st = o.storage || {};
 
   const mb = v => (v || 0) >= 1024 ? `${((v || 0) / 1024).toFixed(1)} GB` : `${Math.round(v || 0)} MB`;
-  const store = [['Enrichment cache', st.enrichment_cache_mb], ['Main database', st.main_db_mb], ['Vectors', st.chromadb_mb]]
+  const store = [[th('kb.enrichment_cache'), st.enrichment_cache_mb], [th('kb.main_db'), st.main_db_mb], [th('kb.vectors'), st.chromadb_mb]]
     .map(([l, v]) => `<div class="kb-store-tile"><b>${mb(v)}</b><span>${l}</span></div>`).join('');
 
   document.getElementById('enrich-overview').innerHTML = `
     <section class="section">
-      <div class="section-head"><h3>Library coverage</h3>
-        <span class="section-hint">Share of downloaded items with a full profile. Click a number for the list behind it.</span>
+      <div class="section-head"><h3>${th('kb.coverage')}</h3>
+        <span class="section-hint">${th('kb.coverage_hint')}</span>
         <div class="section-actions">
-          ${running ? '<span class="badge amber badge-sm">Enrichment running <span id="enrich-pct-live"></span></span>' : ''}
-          ${running === null ? `<span class="badge muted badge-sm" title="${escAttr(`Couldn't read the enrichment status — ${statusErr || 'no answer'}. Checking again every 30 s.`)}">Status unknown</span>` : ''}
-          ${lastRun ? `<span class="fs-11 t3" title="${escAttr(_fmtAbs(lastRun))}">last run ${_fmtRel(lastRun)}</span>` : ''}
+          ${running ? `<span class="badge amber badge-sm">${th('kb.enrichment_running')} <span id="enrich-pct-live"></span></span>` : ''}
+          ${running === null ? `<span class="badge muted badge-sm" title="${th('kb.status_unreadable', {error: statusErr || t('kb.no_answer')})}">${th('kb.status_unknown')}</span>` : ''}
+          ${lastRun ? `<span class="fs-11 t3" title="${escAttr(_fmtAbs(lastRun))}">${th('kb.last_run', {when: _fmtRel(lastRun)})}</span>` : ''}
         </div>
       </div>
       <div class="section-body">
         <div class="kb-lib-grid">${cards}</div>
-        <p class="fs-11 t3 mt-12">Dead and metadata-changed entries re-queue automatically on the next enrichment run.</p>
+        <p class="fs-11 t3 mt-12">${th('kb.requeue_note')}</p>
       </div>
     </section>
     <div class="kb-pair">
       <section class="section">
-        <div class="section-head"><h3>Watch-history tracking</h3><span class="section-hint" title="Enrichment tracking rows from playback history (Plex/Spotify) — an independent set, deliberately NOT part of the library percentages">own set, not part of the percentages</span></div>
-        <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Category</th><th class="t-right">Tracking rows</th><th class="t-right" title="Rows with a real profile (a not-found sentinel no longer counts)">Enriched</th><th class="t-right" title="Rows where every metadata source missed">Not found</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
+        <div class="section-head"><h3>${th('kb.wh_tracking')}</h3><span class="section-hint" title="${th('kb.wh_title')}">${th('kb.wh_hint')}</span></div>
+        <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>${th('kb.col_category')}</th><th class="t-right">${th('kb.col_tracking')}</th><th class="t-right" title="${th('kb.col_enriched_title')}">${th('kb.col_enriched')}</th><th class="t-right" title="${th('kb.col_not_found_title')}">${th('kb.chip.not_found')}</th></tr></thead><tbody>${whRows}</tbody></table></div></div>
       </section>
       <section class="section">
-        <div class="section-head"><h3>Storage</h3><span class="section-hint">${mb(st.total_mb)} in all</span>
-          <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('loadCacheInventory', EL)} title="Per-source cache census: how many Wikipedia/OMDb/TVDB/… entries are stored, how many are stale, and what they weigh">Cache inventory</button></div></div>
+        <div class="section-head"><h3>${th('kb.storage')}</h3><span class="section-hint">${th('kb.in_all', {size: mb(st.total_mb)})}</span>
+          <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('loadCacheInventory', EL)} title="${th('kb.cache_inventory_title')}">${th('kb.cache_inventory')}</button></div></div>
         <div class="section-body"><div class="kb-store">${store}</div><div id="cache-inventory"></div></div>
       </section>
     </div>`;
 
   // The Spotify phases live on the Music-pipeline tab, fed by the same payload.
   const mp = o.music_pipeline || {};
-  const phase = (label, pp, def) => pp ? `<tr><td class="cell-primary" title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString(loc())} / ${pp.of.toLocaleString(loc())}</td><td class="t-right">${pp.of ? Math.round(100 * pp.done / pp.of) : 0}%</td></tr>` : '';
+  const phase = (label, pp, def) => pp ? `<tr><td class="cell-primary" title="${def}">${label}</td><td class="t-right">${pp.done.toLocaleString(loc())} / ${pp.of.toLocaleString(loc())}</td><td class="t-right">${th('kb.pct', {pct: pp.of ? Math.round(100 * pp.done / pp.of) : 0})}</td></tr>` : '';
   // A queue that never empties used to read as a stuck bar. MusicBrainz
   // simply does not know every artist a Spotify export carries, and those
   // names are parked with a growing backoff rather than re-queried nightly.
   const _parkedNote = (p) => (p && p.waiting)
-    ? `<p class="fs-12 t3 mt-8">${p.waiting.toLocaleString(loc())} artist name${p.waiting === 1 ? '' : 's'} parked — MusicBrainz had no match, so they wait instead of being queried again every night${p.next_retry_at ? `. Next one is due back ${_fmtRel(p.next_retry_at)}` : ''}.</p>`
+    ? `<p class="fs-12 t3 mt-8">${th('kb.parked', {n: p.waiting, count: p.waiting.toLocaleString(loc())})}${p.next_retry_at ? `. ${th('kb.next_due_back', {when: _fmtRel(p.next_retry_at)})}` : ''}.</p>`
     : '';
   const mpEl = document.getElementById('music-phases');
   if (mpEl) mpEl.innerHTML = `<section class="section">
-    <div class="section-head"><h3>Coverage</h3><span class="section-hint">where the imported plays stand</span></div>
-    <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Phase</th><th class="t-right">Progress</th><th></th></tr></thead><tbody>
-      ${phase('Plex match', mp.plex_match, 'Spotify plays matched to a real Plex track')}
-      ${phase('MBID resolve', mp.mbid_resolve, 'Unique artists resolved to a MusicBrainz id')}
-      ${phase('Genre coverage', mp.genre_coverage, 'Spotify plays carrying genre tags')}
+    <div class="section-head"><h3>${th('kb.mp_coverage')}</h3><span class="section-hint">${th('kb.mp_hint')}</span></div>
+    <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>${th('kb.col_phase')}</th><th class="t-right">${th('kb.col_progress')}</th><th></th></tr></thead><tbody>
+      ${phase(th('kb.ph_plex'), mp.plex_match, th('kb.ph_plex_title'))}
+      ${phase(th('kb.ph_mbid'), mp.mbid_resolve, th('kb.ph_mbid_title'))}
+      ${phase(th('kb.ph_genre'), mp.genre_coverage, th('kb.ph_genre_title'))}
     </tbody></table></div>${_parkedNote(mp.mbid_parked)}</div></section>`;
 }
 
 export async function loadCacheInventory(btn) {
-  btnBusy(btn, 'Loading…');
+  btnBusy(btn, t('common.loading'));
   try {
     const r = await api('/api/enrichment/cache-inventory');
     const rows = r.classes.map(c =>
@@ -254,19 +255,19 @@ export async function loadCacheInventory(btn) {
     const cov = r.coverage;
     document.getElementById('cache-inventory').innerHTML = `
       <div class="mt-8 tbl-wrap"><table class="tbl tbl-cards">
-        <thead><tr><th>Source class</th><th class="t-right">Rows</th>
-          <th class="t-right">Live</th>
-          <th class="t-right" title="Expired — unreadable through the cache API. Kept only where the stale row is still the last record (raw/prefetch of deleted media); the raw-cache refresh task re-pulls what matters.">Stale</th>
+        <thead><tr><th>${th('kb.col_source')}</th><th class="t-right">${th('kb.col_rows')}</th>
+          <th class="t-right">${th('kb.col_live')}</th>
+          <th class="t-right" title="${th('kb.col_stale_title')}">${th('kb.col_stale')}</th>
           <th class="t-right">MB</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       <p class="fs-11 t3 mt-6">
-        Raw-layer coverage: Wikipedia significance ${cov.significance_text.toLocaleString(loc())} with text / ${cov.significance_checked.toLocaleString(loc())} checked ·
-        OMDb writer ${cov.omdb_writer.toLocaleString(loc())} · awards ${cov.omdb_awards.toLocaleString(loc())} ·
-        reception ${cov.reception_checked.toLocaleString(loc())} — of ${cov.raw_total.toLocaleString(loc())} raw entries.
-        Total ${r.totals.rows.toLocaleString(loc())} rows · ${r.totals.mb} MB (${r.totals.expired.toLocaleString(loc())} stale).</p>`;
+        ${th('kb.raw_coverage', {text: cov.significance_text.toLocaleString(loc()), checked: cov.significance_checked.toLocaleString(loc())})} ·
+        ${th('kb.raw_omdb', {writer: cov.omdb_writer.toLocaleString(loc()), awards: cov.omdb_awards.toLocaleString(loc())})} ·
+        ${th('kb.raw_reception', {n: cov.reception_checked.toLocaleString(loc()), total: cov.raw_total.toLocaleString(loc())})}
+        ${th('kb.raw_total', {rows: r.totals.rows.toLocaleString(loc()), mb: r.totals.mb, stale: r.totals.expired.toLocaleString(loc())})}</p>`;
     if (btn) btn.remove();   // a permanent button for a finished job is clutter
   } catch (e) {
-    btnDone(btn, 'Cache inventory (failed — retry)');
+    btnDone(btn, t('kb.cache_inventory_failed'));
   }
 }
 
@@ -277,7 +278,7 @@ let _kbPollTimer = null;
 export async function loadEnrichStatus() {
   if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
   const el = document.getElementById('enrich-overview');
-  if (el && !el.innerHTML) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  if (el && !el.innerHTML) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
   try {
     // A failed status or custodian read used to fall back to {} / null:
     // "not running" in the middle of a run, and the 8 s refresh stopped. It
@@ -311,8 +312,8 @@ function _renderCustodianUnknown(msg) {
   if (!el) return;
   el.innerHTML = `<section class="section">
     <div class="section-head">
-      <h3>Data custodian <span class="badge muted badge-sm" title="${escAttr(msg)}">status unknown</span></h3>
-      <span class="section-hint load-err">${SVG_WARN} Couldn't read the custodian's status — ${esc(msg)}. Checking again every 30 s.</span>
+      <h3>${th('kb.custodian')} <span class="badge muted badge-sm" title="${escAttr(msg)}">${th('kb.status_unknown_lc')}</span></h3>
+      <span class="section-hint load-err">${SVG_WARN} ${th('kb.custodian_unreadable', {error: msg})}</span>
     </div></section>`;
 }
 
@@ -360,26 +361,26 @@ export function _kbItemActions(it) {
   const d = _kbData(it);
   const ign = it.state === 'ignored';
   return `<div class="panel-actions">
-    <button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbFixMatch', EL)} title="Search the arr, TMDB or AniList and pin the entity this item really is">Search &amp; pin</button>
-    <button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbRetry', EL)} title="Attempts back to zero — the next enrichment run tries again">Retry now</button>
-    ${ign ? `<button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbUnignore', EL)} title="Back into the queue">Un-ignore</button>`
-          : `<button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbIgnore', EL)} title="Accept the gap: no more retries, not counted as open">Ignore</button>`}
-    ${menuHtml([it.arr_url ? {label: `Open in ${it.service}`, href: it.arr_url} : null])}
+    <button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbFixMatch', EL)} title="${th('kb.search_pin_title')}">${th('kb.search_pin')}</button>
+    <button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbRetry', EL)} title="${th('kb.retry_now_title')}">${th('kb.retry_now')}</button>
+    ${ign ? `<button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbUnignore', EL)} title="${th('kb.unignore_title')}">${th('kb.unignore')}</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${d} ${act('kbIgnore', EL)} title="${th('kb.ignore_title')}">${th('kb.ignore')}</button>`}
+    ${menuHtml([it.arr_url ? {label: t('actions.open_in', {server: it.service}), href: it.arr_url} : null])}
   </div>`;
 }
 
 // One row per item, the same anatomy everywhere: head (title, badges,
 // actions) → the sentence → attempts/next try/match → findings → sources.
 export function _kbItemCard(it, extraBadges) {
-  const pin = it.pin ? `<span class="badge amber badge-sm" title="${escAttr(JSON.stringify(it.pin))}">pinned</span>` : '';
+  const pin = it.pin ? `<span class="badge amber badge-sm" title="${escAttr(JSON.stringify(it.pin))}">${th('kb.pinned')}</span>` : '';
   const meta = [
-    it.attempt_count ? `tried ${it.attempt_count}×` : '',
-    it.next_retry_at ? `<span title="${escAttr(_fmtAbs(it.next_retry_at))}">next try ${_fmtRel(it.next_retry_at)}</span>` : '',
-    (it.match_confidence != null && it.match_basis === 'title_search') ? `matched by title at ${Math.round(it.match_confidence * 100)}%` : '',
+    it.attempt_count ? th('kb.tried', {n: it.attempt_count}) : '',
+    it.next_retry_at ? `<span title="${escAttr(_fmtAbs(it.next_retry_at))}">${th('kb.next_try', {when: _fmtRel(it.next_retry_at)})}</span>` : '',
+    (it.match_confidence != null && it.match_basis === 'title_search') ? th('kb.matched_by_title', {pct: Math.round(it.match_confidence * 100)}) : '',
   ].filter(Boolean).join(' · ');
   const findings = (it.findings || []).map(f => `<div class="panel-item-meta row mt-4">
       <span class="badge danger badge-sm">${esc(f.label || f.base || f.kind)}</span><span>${esc(_kbFindingText(f))}</span>
-      ${state.currentUser?.is_admin ? `<button type="button" class="btn btn-secondary btn-sm" data-fid="${Number(f.id)}" ${act('kbDismissFinding', EL)} title="Silence this finding for good — the audit will not raise it again">Dismiss finding</button>` : ''}
+      ${state.currentUser?.is_admin ? `<button type="button" class="btn btn-secondary btn-sm" data-fid="${Number(f.id)}" ${act('kbDismissFinding', EL)} title="${th('kb.dismiss_finding_title')}">${th('kb.dismiss_finding')}</button>` : ''}
     </div>`).join('');
   return `<div class="panel-item">
     <div class="panel-item-head">
@@ -398,14 +399,14 @@ export function _kbItemCard(it, extraBadges) {
 export function _kbFindingText(f) {
   const d = f.detail || {};
   const yr = y => (y ? ` (${y})` : '');
-  if (f.base === 'wrong_entity') return `arr says ${d.arr_title || '?'}${yr(d.arr_year)}, the profile is ${d.profile_title || '?'}${yr(d.profile_year)}`;
-  if (f.base === 'id_conflict') return `${d.source || 'id'} ${d.value || ''} is shared by ${(d.titles || []).join(', ')}`;
-  if (f.base === 'pin_violated') return `the profile's ${d.id || 'id'} ${d.profile ?? '?'} contradicts the pinned ${d.pinned ?? '?'}`;
-  if (f.base === 'zero_rating') return 'no rating in any source';
-  if (f.base === 'malformed') return 'the cached profile is not readable';
+  if (f.base === 'wrong_entity') return t('kb.f_wrong_entity', {arr: `${d.arr_title || '?'}${yr(d.arr_year)}`, profile: `${d.profile_title || '?'}${yr(d.profile_year)}`});
+  if (f.base === 'id_conflict') return t('kb.f_id_conflict', {source: d.source || 'id', value: d.value || '', titles: (d.titles || []).join(', ')});
+  if (f.base === 'pin_violated') return t('kb.f_pin_violated', {id: d.id || 'id', profile: d.profile ?? '?', pinned: d.pinned ?? '?'});
+  if (f.base === 'zero_rating') return t('kb.f_zero_rating');
+  if (f.base === 'malformed') return t('kb.f_malformed');
   return f.kind || '';
 }
-export function kbDismissFinding(btn) { return _kbAction(btn, `/api/enrichment/findings/${Number(btn.dataset.fid)}/dismiss`, 'POST', 'Finding dismissed — the audit will not raise it again'); }
+export function kbDismissFinding(btn) { return _kbAction(btn, `/api/enrichment/findings/${Number(btn.dataset.fid)}/dismiss`, 'POST', t('kb.finding_dismissed')); }
 
 // The list behind a number: a section under the overview table with the
 // state explainer as its hint, a pager and a Close.
@@ -414,7 +415,7 @@ export async function loadKbItems(cat, states, offset = 0) {
   if (!el) return;
   const fresh = !_kbDrill || _kbDrill.cat !== cat || _kbDrill.states !== states;
   _kbDrill = {cat, states, offset};
-  if (fresh) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  if (fresh) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
   try {
     const r = await api(`/api/enrichment/items?category=${encodeURIComponent(cat)}&state=${encodeURIComponent(states)}&offset=${offset}&limit=${KB_PAGE}`);
     const defs = Object.values(r.definitions || {});
@@ -422,10 +423,10 @@ export async function loadKbItems(cat, states, offset = 0) {
       <div class="section-head">
         <h3>${esc(CAT_LABELS[cat] || cat)} · ${esc(defs.map(d => d.label).join(' / '))} <span class="badge muted badge-sm">${r.total.toLocaleString(loc())}</span></h3>
         <span class="section-hint">${esc(defs.map(d => `${d.explainer} ${d.next_step || ''}`).join(' '))}</span>
-        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('closeKbDrilldown')}>Close</button></div>
+        <div class="section-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('closeKbDrilldown')}>${th('common.close')}</button></div>
       </div>
       <div class="section-body">
-        ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : emptyHtml('Nothing here.')}
+        ${r.items.length ? r.items.map(it => _kbItemCard(it)).join('') : emptyHtml(th('kb.nothing_here'))}
         ${pagerHtml({offset, limit: KB_PAGE, total: r.total, page: o => act('loadKbItems', cat, states, o)})}
       </div>
     </section>`;
@@ -444,27 +445,27 @@ export async function loadKbAttention(offset = 0, reason = null) {
   const el = document.getElementById('kb-attention');
   if (!el) return;
   _kbAtt = {offset, reason: reason || null};
-  if (!el.dataset.loaded) el.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  if (!el.dataset.loaded) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
   try {
     const q = new URLSearchParams({offset: String(offset), limit: String(KB_ATT_PAGE)});
     if (reason) q.set('reason', reason);
     const r = await api(`/api/enrichment/unmatched?${q.toString()}`);
     el.dataset.loaded = '1';
     const defs = r.reason_definitions || {};
-    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" ${act('loadKbAttention', 0, key || null)} title="${escAttr(defs[key]?.explainer || 'Everything that needs a human')}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString(loc())}</span></button>`;
-    const chips = [chip('', 'All', r.total_all ?? r.total)]
+    const chip = (key, label, n) => `<button type="button" class="chip${(reason || '') === key ? ' active' : ''}" ${act('loadKbAttention', 0, key || null)} title="${escAttr(defs[key]?.explainer || t('kb.everything_human'))}">${esc(label)} <span class="t3">${Number(n || 0).toLocaleString(loc())}</span></button>`;
+    const chips = [chip('', t('common.all'), r.total_all ?? r.total)]
       .concat(Object.entries(r.by_reason || {}).map(([k, n]) => chip(k, defs[k]?.label || k, n))).join('');
     const badgesFor = it => (it.reasons || []).map(k => `<span class="badge amber badge-sm" title="${escAttr(defs[k]?.explainer || '')}">${esc(defs[k]?.label || k)}</span>`).join('');
     const findingsNote = Object.keys(r.findings_summary || {}).length
-      ? ` Open audit findings: ${Object.entries(r.findings_summary).map(([k, n]) => `${esc(defs[k]?.label || k)} ${n}`).join(' · ')}.` : '';
-    const empty = reason ? emptyHtml('Nothing in this group.') : emptyHtml('Nothing needs a human right now.', null, null, {good: true});
+      ? ` ${th('kb.open_findings')} ${Object.entries(r.findings_summary).map(([k, n]) => `${esc(defs[k]?.label || k)} ${n}`).join(' · ')}.` : '';
+    const empty = reason ? emptyHtml(th('kb.nothing_in_group')) : emptyHtml(th('kb.nothing_needs_human'), null, null, {good: true});
     el.innerHTML = `<section class="section">
       <div class="section-head">
-        <h3>Needs attention <span class="badge amber badge-sm">${r.total.toLocaleString(loc())}</span></h3>
-        <span class="section-hint">${reason ? esc(defs[reason]?.label || reason) : 'the items the pipeline cannot settle alone'}</span>
+        <h3>${th('kb.needs_attention')} <span class="badge amber badge-sm">${r.total.toLocaleString(loc())}</span></h3>
+        <span class="section-hint">${reason ? esc(defs[reason]?.label || reason) : th('kb.attention_hint')}</span>
       </div>
       <div class="section-body">
-        <p class="fs-12 t3 mb-8">Tried twice or more without a hit, found under the wrong year, refused as too far off, matched with middling confidence, or flagged by the weekly audit (wrong entity, shared id, pin contradicted). Pin the right entity, retry, dismiss a finding, or accept the gap.${findingsNote}</p>
+        <p class="fs-12 t3 mb-8">${th('kb.attention_intro')}${findingsNote}</p>
         <div class="row mb-12">${chips}</div>
         ${r.items.length ? r.items.map(it => _kbItemCard(it, badgesFor(it))).join('') : empty}
         ${pagerHtml({offset, limit: KB_ATT_PAGE, total: r.total, page: o => act('loadKbAttention', o, reason || null)})}
@@ -480,12 +481,12 @@ export async function _kbAction(btn, path, method, doneText) {
   try {
     const r = await api(path, method);
     if (r.success) { toast(doneText, 'success'); _kbRefresh(); }
-    else { toast(r.error || "Couldn't update the item. Try again.", 'danger'); btnDone(btn); }
+    else { toast(r.error || t('kb.update_failed'), 'danger'); btnDone(btn); }
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }
-export function kbRetry(btn)    { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/retry`, 'POST', 'Attempts reset — the next run tries again'); }
-export function kbIgnore(btn)   { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'POST', 'Ignored — no more retries, not counted as open'); }
-export function kbUnignore(btn) { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'DELETE', 'Back in the queue'); }
+export function kbRetry(btn)    { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/retry`, 'POST', t('kb.attempts_reset')); }
+export function kbIgnore(btn)   { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'POST', t('kb.ignored_toast')); }
+export function kbUnignore(btn) { return _kbAction(btn, `/api/enrichment/items/${encodeURIComponent(btn.dataset.svc)}/${Number(btn.dataset.id)}/ignore`, 'DELETE', t('kb.back_in_queue')); }
 
 export function kbFixMatch(btn) {
   const {svc, id, title, year, cat} = btn.dataset;
@@ -497,45 +498,45 @@ export function _renderCustodianBar(c) {
   const el = document.getElementById('custodian-bar');
   if (!el) return;
   // Tasks that run on every tick are always "due" between two ticks.
-  const due = (c.tasks || []).filter(t => t.due && !t.every_tick).length;
+  const due = (c.tasks || []).filter(x => x.due && !x.every_tick).length;
   // Two queues since 2026-09-27: model work and everything else, side by
   // side. Name what each one is on, so a long deletion scan no longer reads
   // as "maintenance is stuck".
   const Q = c.queues || {};
-  const labelOf = id => ((c.tasks || []).find(t => t.job_id === id) || {}).label || id;
-  const running = [['model', 'GPU work'], ['background', 'other work']]
+  const labelOf = id => ((c.tasks || []).find(x => x.job_id === id) || {}).label || id;
+  const running = [['model', t('kb.q_gpu')], ['background', t('kb.q_other')]]
     .filter(([q]) => Q[q] && Q[q].busy)
-    .map(([q, name]) => `${name}: ${Q[q].current ? labelOf(Q[q].current) : 'starting'}`);
+    .map(([q, name]) => `${name}: ${Q[q].current ? labelOf(Q[q].current) : t('kb.starting_lc')}`);
   const allBusy = !!(Q.model && Q.model.busy && Q.background && Q.background.busy);
   let line;
   if (c.ticking) {
-    line = running.length ? `Running — ${running.join(' · ')}` : 'Maintenance running in the background…';
+    line = running.length ? t('kb.running_list', {list: running.join(' · ')}) : t('kb.maint_running');
   } else if (c.report && c.report.ts) {
     const ago = Math.max(0, Math.round((Date.now() - new Date(c.report.ts + 'Z').getTime()) / 60000));
     const acts = (c.report.actions || []);
     const summary = acts.length
       ? acts.map(a => `${a.task.replace('custodian_', '')}: ${a.result}`).join(' · ')
-      : 'nothing was due';
-    line = `Last run ${ago} min ago (${c.report.duration_s}s) — ${summary}`;
+      : t('kb.nothing_due');
+    line = t('kb.last_run_line', {n: ago, s: c.report.duration_s, summary});
   } else {
-    line = 'No maintenance run yet this session — first tick fires a few minutes after start.';
+    line = t('kb.no_run_yet');
   }
   // Keep working (2026-10-06): a sprint until a set time, two-minute ticks,
   // the large budgets, the PC kept from idle-sleeping. Stop ends it early.
   const sprint = c.sprint && c.sprint.until ? new Date(c.sprint.until + 'Z') : null;
   // "stays awake" only where the server can keep its machine awake (Windows);
   // a container has nothing to keep awake.
-  const awake = c.sprint && c.sprint.awake ? ', this machine stays awake' : '';
-  if (sprint) line = `Keep working until ${sprint.toLocaleTimeString(loc(), {hour: '2-digit', minute: '2-digit'})}${awake} · ${line}`;
+  const awake = c.sprint && c.sprint.awake ? t('kb.stays_awake') : '';
+  if (sprint) line = `${t('kb.keep_working_until', {time: sprint.toLocaleTimeString(loc(), {hour: '2-digit', minute: '2-digit'})})}${awake} · ${line}`;
   const sprintCtl = sprint
-    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopSprint', EL)} title="Back to the 30-minute rhythm">Stop</button>`
-    : `<select id="sprint-hours" class="input w-70" aria-label="How long to keep working">${[2, 4, 6, 8, 10, 12].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h} h</option>`).join('')}</select>
-       <button type="button" class="btn btn-secondary btn-sm" ${act('startSprint', EL)} title="Work through the GPU work that is due (enrichment, Wikipedia significance, reception, lyrics profiles, taste, recommendations) without the 30-minute pauses and with the large budgets until then (a Windows server is also kept from sleeping). Ends by itself once nothing is left.">Keep working</button>`;
+    ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopSprint', EL)} title="${th('kb.stop_sprint_title')}">${th('kb.stop')}</button>`
+    : `<select id="sprint-hours" class="input w-70" aria-label="${th('kb.sprint_hours_aria')}">${[2, 4, 6, 8, 10, 12].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h} h</option>`).join('')}</select>
+       <button type="button" class="btn btn-secondary btn-sm" ${act('startSprint', EL)} title="${th('kb.keep_working_title')}">${th('kb.keep_working')}</button>`;
   el.innerHTML = `<section class="section">
     <div class="section-head">
-      <h3>Data custodian ${due ? `<span class="badge amber badge-sm">${due} task${due > 1 ? 's' : ''} due</span>` : '<span class="badge muted badge-sm">all caught up</span>'}</h3>
-      <span class="section-hint" title="Every maintenance task carries a cadence and a last-run stamp; whatever is overdue runs automatically while the app is open — enrichment, OMDb, Wikipedia significance, Spotify phases, taste vectors, audits, backups. Work that needs the GPU and everything else run in two queues side by side, so a long model job never holds up the rest.">${esc(line)}</span>
-      <div class="section-actions">${sprintCtl}<button type="button" class="btn btn-secondary btn-sm" ${act('runMaintenance', EL)}${allBusy ? ' disabled' : ''}>Run maintenance now</button></div>
+      <h3>${th('kb.custodian')} ${due ? `<span class="badge amber badge-sm">${th('kb.tasks_due', {n: due})}</span>` : `<span class="badge muted badge-sm">${th('kb.all_caught_up')}</span>`}</h3>
+      <span class="section-hint" title="${th('kb.custodian_title')}">${esc(line)}</span>
+      <div class="section-actions">${sprintCtl}<button type="button" class="btn btn-secondary btn-sm" ${act('runMaintenance', EL)}${allBusy ? ' disabled' : ''}>${th('kb.run_maintenance')}</button></div>
     </div></section>`;
 }
 
@@ -551,7 +552,7 @@ export async function loadBackfillPanel() {
   catch (e) {
     // Keep the panel (and its Stop button): removing it on a failed read
     // looked exactly like "the backfill is finished". One line says why.
-    const msg = `${SVG_WARN} Couldn't refresh the backfill status — ${esc(_errMsg(e))}`;
+    const msg = `${SVG_WARN} ${th('kb.backfill_unreadable', {error: _errMsg(e)})}`;
     const line = el.querySelector('.backfill-err');
     if (line) line.innerHTML = msg;
     else el.insertAdjacentHTML('beforeend', `<p class="load-err fs-11 mt-4 backfill-err" role="status">${msg}</p>`);
@@ -561,43 +562,43 @@ export async function loadBackfillPanel() {
   const rows = d.sources.filter(s => s.offer).map(s => `
     <div class="panel-item${s.running ? ' live' : ''}">
       <div class="panel-item-head">
-        <div class="panel-item-title">${esc(s.label)}${s.running ? '<span class="badge amber badge-sm">running</span>' : ''}</div>
+        <div class="panel-item-title">${esc(s.label)}${s.running ? `<span class="badge amber badge-sm">${th('kb.running')}</span>` : ''}</div>
         <div class="panel-actions">${s.running
-          ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopBackfill', s.key, EL)}>Stop</button>`
-          : `<button type="button" class="btn btn-secondary btn-sm" ${act('startBackfill', s.key, EL)}>Fetch now</button>`}</div>
+          ? `<button type="button" class="btn btn-secondary btn-sm" ${act('stopBackfill', s.key, EL)}>${th('kb.stop')}</button>`
+          : `<button type="button" class="btn btn-secondary btn-sm" ${act('startBackfill', s.key, EL)}>${th('kb.fetch_now')}</button>`}</div>
       </div>
       <div class="panel-item-sub">${esc(s.blurb)}</div>
       <div class="panel-item-foot">
         <div class="mt-0 progress-bar"><div class="progress-fill" data-style="width:${Number(s.pct) || 0}%"></div></div>
-        <div class="fs-11 t3 mt-4">${s.pct}% · ${s.missing.toLocaleString(loc())} to go</div>
+        <div class="fs-11 t3 mt-4">${th('kb.pct', {pct: s.pct})} · ${th('kb.to_go', {n: s.missing.toLocaleString(loc())})}</div>
       </div>
     </div>`).join('');
   el.innerHTML = `<section class="section">
-    <div class="section-head"><h3>Finish the backfill</h3><span class="section-hint">These sources feed the deletion judge. The daily tick fills them slowly; fetch them now and this panel disappears above ${d.threshold_pct}% coverage.</span></div>
+    <div class="section-head"><h3>${th('kb.backfill')}</h3><span class="section-hint">${th('kb.backfill_hint', {pct: d.threshold_pct})}</span></div>
     <div class="section-body">${rows}</div></section>`;
 }
 
 export async function startBackfill(source, btn) {
-  btnBusy(btn, 'Starting…');
-  try { await api('/api/enrichment/backfill/' + encodeURIComponent(source), 'POST'); toast('Backfill started — progress shows in Activity', 'success'); }
+  btnBusy(btn, t('kb.starting'));
+  try { await api('/api/enrichment/backfill/' + encodeURIComponent(source), 'POST'); toast(t('kb.backfill_started'), 'success'); }
   catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   // The panel re-reads coverage, so a finished source removes its own row.
   setTimeout(loadBackfillPanel, 1500);
 }
 
 export async function stopBackfill(source, btn) {
-  btnBusy(btn, 'Stopping…');
-  try { await api('/api/enrichment/backfill/' + encodeURIComponent(source) + '/stop', 'POST'); toast('Stop requested', 'info'); }
+  btnBusy(btn, t('kb.stopping'));
+  try { await api('/api/enrichment/backfill/' + encodeURIComponent(source) + '/stop', 'POST'); toast(t('kb.stop_requested'), 'info'); }
   catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadBackfillPanel, 1200);
 }
 
 export async function runMaintenance(btn) {
-  btnBusy(btn, 'Starting…');
+  btnBusy(btn, t('kb.starting'));
   try {
     const r = await api('/api/enrichment/custodian/run', 'POST');
-    if (r.status === 'started') toast('Maintenance started — whatever is due runs now', 'success');
-    else toast('Maintenance is already running', 'info');
+    if (r.status === 'started') toast(t('kb.maint_started'), 'success');
+    else toast(t('kb.maint_already'), 'info');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadEnrichStatus, 4000);
 }
@@ -605,19 +606,19 @@ export async function runMaintenance(btn) {
 // Keep working: the custodian's sprint (data_custodian.set_sprint).
 export async function startSprint(btn) {
   const hours = Number(document.getElementById('sprint-hours')?.value) || 10;
-  btnBusy(btn, 'Starting…');
+  btnBusy(btn, t('kb.starting'));
   try {
     const r = await api(`/api/enrichment/custodian/sprint?hours=${hours}`, 'POST');
-    if (r.until) toast(`Keeping at it for ${hours} h.${r.awake ? ' This machine stays awake meanwhile.' : ''}`, 'success');
+    if (r.until) toast(t('kb.keeping_at_it', {h: hours}) + (r.awake ? ` ${t('kb.awake_meanwhile')}` : ''), 'success');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadEnrichStatus, 3000);
 }
 
 export async function stopSprint(btn) {
-  btnBusy(btn, 'Stopping…');
+  btnBusy(btn, t('kb.stopping'));
   try {
     await api('/api/enrichment/custodian/sprint?hours=0', 'POST');
-    toast('Back to the normal rhythm', 'info');
+    toast(t('kb.normal_rhythm'), 'info');
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
   setTimeout(loadEnrichStatus, 3000);
 }

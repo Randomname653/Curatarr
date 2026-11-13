@@ -74,7 +74,7 @@
   "test_jellyfin_setup.py": 4,
   "test_jellyfin_writes.py": 3,
   "test_judge_record.py": 3,
-  "test_kb_maintenance_fixes.py": 6,
+  "test_kb_maintenance_fixes.py": 4,
   "test_kb_states_contract.py": 6,
   "test_keep_and_delete_feedback.py": 2,
   "test_launcher_interpreter.py": 16,
