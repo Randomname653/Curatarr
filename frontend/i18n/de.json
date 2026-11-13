@@ -457,8 +457,8 @@
  "story.household_median": "Median des Haushalts",
  "story.led": "{name} vorn",
  "story.longest_run": {
-  "one": "Längste Serie: {n} Tag am Stück.",
-  "other": "Längste Serie: {n} Tage am Stück."
+  "one": "Längste Strähne: {n} Tag am Stück.",
+  "other": "Längste Strähne: {n} Tage am Stück."
  },
  "story.milestones": {
   "one": "Ein Meilenstein",
@@ -478,7 +478,7 @@
  "story.quoted": "„{text}“",
  "story.radar_aria": "Geschmack: {list}",
  "story.rhythm": "Der Rhythmus",
- "story.rhythm_share": "{n} aktive Tage, längste Serie {run}",
+ "story.rhythm_share": "{n} aktive Tage, längste Strähne {run}",
  "story.river": "Wie sich der Geschmack bewegt hat",
  "story.river_aria": "Deine Nanogenres Monat für Monat: {list}",
  "story.roast": "Roast",
@@ -668,12 +668,12 @@
  },
  "wrapup.best_find": "bester Fund {title}",
  "wrapup.best_streak": {
-  "one": "beste Serie {n} Tag",
-  "other": "beste Serie {n} Tage"
+  "one": "beste Strähne {n} Tag",
+  "other": "beste Strähne {n} Tage"
  },
  "wrapup.binge_share": {
-  "one": "{n} Folge {series} in 48 Stunden",
-  "other": "{n} Folgen {series} in 48 Stunden"
+  "one": "{n} Folge von {series} in 48 Stunden",
+  "other": "{n} Folgen von {series} in 48 Stunden"
  },
  "wrapup.by_hand": "{n} von Hand geschützt",
  "wrapup.cal_aria": {
@@ -720,26 +720,26 @@
  },
  "wrapup.ep_of": "{n} von {of}",
  "wrapup.eps": "Folgen",
- "wrapup.ev.archivist": "Sehalter {year}",
+ "wrapup.ev.archivist": "im Schnitt Jahrgang {year}",
  "wrapup.ev.binger": {
-  "one": "{n} Folge {series} in 48 Stunden",
-  "other": "{n} Folgen {series} in 48 Stunden"
+  "one": "{n} Folge von {series} in 48 Stunden",
+  "other": "{n} Folgen von {series} in 48 Stunden"
  },
- "wrapup.ev.comfort_seeker": "{pct}% Wiederholungen",
- "wrapup.ev.completionist": "{pct}% der Wiedergaben zu Ende geschaut",
+ "wrapup.ev.comfort_seeker": "{pct} % Wiederholungen",
+ "wrapup.ev.completionist": "{pct} % der Wiedergaben zu Ende geschaut",
  "wrapup.ev.contrarian": "{you} gegen {community} bei {title}",
- "wrapup.ev.day_one": "{pct}% mit Neuerscheinungen dieses Jahres",
+ "wrapup.ev.day_one": "{pct} % mit Neuerscheinungen dieses Jahres",
  "wrapup.ev.defender": {
   "one": "{n} Titel gegen den Curator behalten",
   "other": "{n} Titel gegen den Curator behalten"
  },
- "wrapup.ev.highbrow": "{pct}% Gefeiertes",
- "wrapup.ev.loyalist": "{pct}% mit Titeln, die du schon kanntest",
- "wrapup.ev.matinee": "{pct}% an Wochenend-Nachmittagen",
- "wrapup.ev.night_owl": "{pct}% nach 23 Uhr",
+ "wrapup.ev.highbrow": "{pct} % von der Kritik gefeiert",
+ "wrapup.ev.loyalist": "{pct} % mit Titeln, die du schon kanntest",
+ "wrapup.ev.matinee": "{pct} % an Wochenend-Nachmittagen",
+ "wrapup.ev.night_owl": "{pct} % nach 23 Uhr",
  "wrapup.ev.purger": "{gb} GB frei gemacht",
- "wrapup.ev.sampler": "{pct}% früh abgebrochen",
- "wrapup.ev.scout": "{pct}% mit neuen Titeln",
+ "wrapup.ev.sampler": "{pct} % früh abgebrochen",
+ "wrapup.ev.scout": "{pct} % mit neuen Titeln",
  "wrapup.everyone": "alle",
  "wrapup.everyone_else": "alle anderen geben {score}/10",
  "wrapup.explore": "Entdecken",
@@ -810,7 +810,7 @@
  "wrapup.ms_kinds": "Welche Arten zählen",
  "wrapup.ms_none": "Noch keine – der erste ist zehn Filme, hundert Folgen oder hundert Stunden entfernt.",
  "wrapup.ms_title": "Deine Meilensteine",
- "wrapup.new_share": "{pct}% mit Titeln, die neu für mich waren",
+ "wrapup.new_share": "{pct} % mit Titeln, die neu für mich waren",
  "wrapup.new_time": "der Zeit mit Titeln, die neu für dich waren",
  "wrapup.none": "Keine",
  "wrapup.not_enough": "Noch nicht genug abgespielt",
@@ -887,11 +887,11 @@
   "other": "{n} Titel gegen den Einwand des Curators behalten"
  },
  "wrapup.sitting_share": {
-  "one": "{n} Folge {series} am Stück",
-  "other": "{n} Folgen {series} am Stück"
+  "one": "{n} Folge von {series} am Stück",
+  "other": "{n} Folgen von {series} am Stück"
  },
  "wrapup.snapshot": "Snapshot",
- "wrapup.split_share": "{hb}% Gefeiertes, {cf}% Wohlfühl-Wiederholungen",
+ "wrapup.split_share": "{hb} % von der Kritik gefeiert, {cf} % Wohlfühl-Wiederholungen",
  "wrapup.starting": "Startet…",
  "wrapup.stat_age": "Sehalter",
  "wrapup.stat_freed": "GB frei",
@@ -923,8 +923,8 @@
  "wrapup.tile.stereo": "Auf der Anlage",
  "wrapup.tile_share": "{text} – mein {period} auf Curatarr",
  "wrapup.title_run": {
-  "one": "längste Serie {n} Tag am Stück ({title})",
-  "other": "längste Serie {n} Tage am Stück ({title})"
+  "one": "längste Strähne: {n} Tag am Stück ({title})",
+  "other": "längste Strähne: {n} Tage am Stück ({title})"
  },
  "wrapup.top_artist": "Top-Künstler: {name}",
  "wrapup.trait.archivist": "Archivar",

@@ -188,7 +188,7 @@ from src.services.wrapup_insights import mine  # noqa: E402
 
 said = wr._in_language(FACTS, "de")
 check("the traits' evidence in German on the page; the stored facts stay English",
-      said["traits"][0]["evidence"] == "45% nach 23 Uhr" and FACTS["traits"][0]["evidence"] == "45% after 23:00"
+      said["traits"][0]["evidence"] == "45 % nach 23 Uhr" and FACTS["traits"][0]["evidence"] == "45% after 23:00"
       and wr._in_language(FACTS, "en") is FACTS, said["traits"])
 check("a milestone's phrase in German, the English one unchanged for the curator",
       ms.phrase({"kind": "films", "value": 100}, "de") == "100. Film geschaut"
@@ -220,7 +220,7 @@ check("GET /api/wrapup for a German user: the insights' claims in German (the qu
       de_claims and de_claims != en_claims and [c["id"] for c in page["insights"]] == [c["id"] for c in mine(FACTS)],
       (de_claims[:2], en_claims[:2]))
 check("...the traits' evidence and the milestones in German",
-      page["facts"]["traits"][0]["evidence"] == "45% nach 23 Uhr"
+      page["facts"]["traits"][0]["evidence"] == "45 % nach 23 Uhr"
       and page["milestones"]["history"][0]["phrase"] == "100. Film geschaut")
 check("...and it says the story is English while the user's language is German: the page offers a rewrite",
       page["story_lang"] == "en" and page["user_lang"] == "de")
