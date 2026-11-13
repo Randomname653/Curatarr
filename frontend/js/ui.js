@@ -199,6 +199,15 @@ export function _mount(id) {
 // Toasts are for outcomes of something the user just did; a background
 // job's failure belongs in a banner on its view and its Activity card.
 const _toastRecent = new Map();
+/** Run `fn` once the page has loaded - at once if it already has. i18n.js
+ *  awaits its dictionaries at import, so every module that imports it can
+ *  finish after the load event: a bare `window.onload = …` then never ran,
+ *  and the page sat on the Setup overlay (2026-11-13). */
+export function onPageLoad(fn) {
+  if (document.readyState === 'complete') fn();
+  else window.addEventListener('load', () => fn(), {once: true});
+}
+
 export function toast(text, kind = 'info', opts = {}) {
   const stack = _mount('toast-stack');
   if (kind === 'error') kind = 'danger';

@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**The app starts again instead of the Setup wizard.** Since the UI language the app's modules load
+the dictionaries before they run, and that could end after the page's load event: the start code
+was then hooked to an event that had already fired, never ran, and a configured install sat on the
+Setup screen (depending on timing, so not on every load). The start now runs at once when the page
+has already loaded.
+
 **Activity in three tabs: Queue, Scheduled, History.** The page mixed live work with finished
 runs: "Done" rows clogged "Live tasks", the table below repeated them for this session only, and
 status lines printed Python ("across ['music', 'movie']", "across []", "Enrichment setup: Done",

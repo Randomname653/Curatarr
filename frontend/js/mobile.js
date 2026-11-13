@@ -5,7 +5,7 @@
 // (edge-swipe drawer, pull-to-refresh, tap the active tab to scroll up).
 // Layout itself is CSS (the ≤768px block in app.css); this file only adds
 // behaviour, and every piece is a no-op where the browser lacks the API.
-import { HAPTIC_LEVELS, act, activeDialog, closeModal, haptic, hapticLevel, openModal, setHapticPref, toast } from './ui.js';
+import { HAPTIC_LEVELS, act, activeDialog, closeModal, haptic, hapticLevel, onPageLoad, openModal, setHapticPref, toast } from './ui.js';
 import { showView, toggleMobileSidebar } from './nav.js';
 import { state } from './state.js';
 import { t, th } from './i18n.js';
@@ -56,7 +56,7 @@ function _isIos() {
 // A plain-http LAN address still gets the responsive UI, just no install.
 function _registerServiceWorker() {
   if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
-  window.addEventListener('load', () => {
+  onPageLoad(() => {
     navigator.serviceWorker.register('/sw.js', {scope: '/'})
       .catch(e => console.warn('[pwa] service worker registration failed', e));
   });
