@@ -77,7 +77,7 @@ def test_every_view_heading_can_take_focus():
         block = m[m.index(f'id="{vid}"'):]
         h1 = re.search(r"<h1([^>]*)>", block)
         assert h1 and 'tabindex="-1"' in h1.group(1), f"{vid}: its first heading cannot take focus"
-    assert 'class="sr-only" tabindex="-1">Chat</h1>' in m, "Chat needs a (visually hidden) heading"
+    assert re.search(r'<h1 class="sr-only" tabindex="-1"[^>]*>Chat</h1>', m), "Chat needs a (visually hidden) heading"
     assert "querySelector('h1')?.focus(" in NAV, "showView no longer moves focus to the heading"
     assert "setAttribute('aria-current', 'page')" in NAV, "the active entry must carry aria-current"
     assert len(tags) > 100

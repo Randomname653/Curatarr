@@ -1,5 +1,6 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, openModal, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, openModal, setLocale, setStatus, toast, trackDirty } from './ui.js';
+import { setLanguage, t } from './i18n.js';
 import { api } from './api.js';
 import { loadHistoryStatus } from './history.js';
 import { loadLibrarySettings } from './library_settings.js';
@@ -494,9 +495,44 @@ export function populateSettingsAccount() {
   const roleEl = document.getElementById('settings-plex-role');
   const idEl   = document.getElementById('settings-plex-id');
   if (nameEl) nameEl.textContent = u.username || u.plex_username || '—';
-  if (roleEl) roleEl.textContent = u.is_admin ? '· admin' : '· user';
+  if (roleEl) roleEl.textContent = `· ${t(u.is_admin ? 'account.role_admin' : 'account.role_user')}`;
   if (idEl)   idEl.textContent   = u.plex_user_id || u.id || '—';
   loadCuratorVoice();
+  loadUiLanguage();
+}
+
+// Settings → Account → Language (UX design record 3.8): Automatic (the
+// language the user writes to the curator in), English or Deutsch. It sets
+// the UI and every text the server writes for this user - never the language
+// of a chat answer. Saved on the server; the UI switches at once.
+const _langRadios = () => document.querySelectorAll('input[name="ui-language"]');
+
+export async function loadUiLanguage() {
+  try {
+    const r = await api('/api/users/me/ui-language');
+    for (const el of _langRadios()) el.checked = el.value === r.setting;
+    const hint = document.getElementById('ui-language-detected');
+    // A detected language without a name in the dictionary reads as English (as the UI does).
+    const name = t(`language.${r.detected}`);
+    if (hint) hint.textContent = t('account.language_detected', {language: name.startsWith('language.') ? t('language.en') : name});
+  } catch (_) { /* the radios stay unset; picking one still saves */ }
+}
+
+export async function setUiLanguage(input) {
+  const language = input?.value;
+  if (!language) return;
+  haptic('light');
+  try {
+    const r = await api('/api/users/me/ui-language', 'POST', {language});
+    setLocale(r.locale);
+    setLanguage(r.language);
+    if (state.currentUser) Object.assign(state.currentUser, {ui_language: r.language, locale: r.locale});
+    toast(t('common.saved'), 'success');
+    loadUiLanguage();
+  } catch (e) {
+    toast(_errMsg(e), 'danger');
+    loadUiLanguage();
+  }
 }
 
 // Settings → Account → Curator: the tone the curator talks to this user in
@@ -516,7 +552,7 @@ export async function setCuratorVoice(input) {
   haptic('light');
   try {
     await api('/api/users/me/curator-voice', 'POST', {voice});
-    toast('Saved', 'success');
+    toast(t('common.saved'), 'success');
   } catch (e) {
     toast(_errMsg(e), 'danger');
     loadCuratorVoice();

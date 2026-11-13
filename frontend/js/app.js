@@ -1,4 +1,4 @@
-import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdate, evaluateModelUpdate, loadDepsStatus, loadIntegrations, loadModelUpdates, loadNotificationPreferences, openModelUpdates, openSettingsPane, reattributeHistory, rebuildModels, rerunModelCompare, saveIntegrations, setCuratorVoice, showJellyfinWebhook, showSettingsAccount, startModelCompare, testIntegration } from './settings.js';
+import { _setNotifPref, cleanupOrphans, clearIntegrationSecret, decideModelUpdate, evaluateModelUpdate, loadDepsStatus, loadIntegrations, loadModelUpdates, loadNotificationPreferences, openModelUpdates, openSettingsPane, reattributeHistory, rebuildModels, rerunModelCompare, saveIntegrations, setCuratorVoice, setUiLanguage, showJellyfinWebhook, showSettingsAccount, startModelCompare, testIntegration } from './settings.js';
 import { applyBenchValues, onAdviceModelChange, onAdviceSizeChange } from './host_advice.js';
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, openLibraryItem, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish, sendWantedToSoulSync } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, loadMoreDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
@@ -34,6 +34,7 @@ import { loadNodes, saveNodeName, updateNode } from './nodes.js';
 import { clearNetflixFiles, handleNetflixDrop, onNetflixFile, openNetflixPicker, runNetflixImport } from './netflix_import.js';
 import { answerGameQuestion } from './game.js';
 import { applyIconStyle, setIconStyle } from './brand.js';
+import { t } from './i18n.js';
 import { loadShokoUnmatched, shokoLink, shokoOpenLink, shokoSearch, shokoSearchOnEnter, shokoSkip, shokoUnpin } from './shoko.js';
 
 export function init() {
@@ -47,7 +48,7 @@ document.addEventListener('keydown', (e) => {
 });
 if (localStorage.getItem('curatarr_sidebar_collapsed') === '1') {
   document.getElementById('sidebar').classList.add('collapsed');
-  document.getElementById('sb-collapse-toggle').title = 'Expand sidebar';
+  document.getElementById('sb-collapse-toggle').title = t('nav.expand_title');
 }
 window.onload = async () => {
   // Check if setup is needed. A failed check is NOT a first run: it used to
@@ -57,7 +58,7 @@ window.onload = async () => {
   try {
     status = await api('/api/setup/status');
   } catch (e) {
-    toast(`Can't reach Curatarr (${_errMsg(e)}) — reload once it is back.`, 'danger', {sticky: true});
+    toast(t('boot.unreachable', {error: _errMsg(e)}), 'danger', {sticky: true});
     status = {first_run: false};
   }
   if (status.first_run) {
@@ -87,7 +88,7 @@ window.onload = async () => {
   // api.sessionEnded() reloads into this screen; say why, once.
   let ended = null;
   try { ended = sessionStorage.getItem(SESSION_ENDED_KEY); sessionStorage.removeItem(SESSION_ENDED_KEY); } catch {}
-  if (ended) toast(`${ended} — sign in again.`, 'amber', {sticky: true});
+  if (ended) toast(t('boot.session_ended', {why: ended}), 'amber', {sticky: true});
 };
 // Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
 window.addEventListener('hashchange', () => routeFromHash());
@@ -212,6 +213,7 @@ const actions = {
   setHapticLevel,
   setIconStyle,
   setCuratorVoice,
+  setUiLanguage,
   startModelCompare,
   rerunModelCompare,
   decideModelUpdate,

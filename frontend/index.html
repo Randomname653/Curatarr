@@ -103,10 +103,10 @@
 <!-- PROACTIVE MESSAGES PANEL -->
 <div id="msg-panel">
   <div class="mp-header">
-    <span>Notifications</span>
-    <button class="btn-plain" data-action="toggleMsgPanel" aria-label="Close notifications">×</button>
+    <span data-i18n="top.notifications">Notifications</span>
+    <button class="btn-plain" data-action="toggleMsgPanel" aria-label="Close notifications" data-i18n-aria-label="bell.close">×</button>
   </div>
-  <div id="msg-list"><div id="msg-empty">No new notifications</div></div>
+  <div id="msg-list"><div id="msg-empty" data-i18n="bell.empty">No new notifications</div></div>
 </div>
 
 <!-- ONBOARDING OVERLAY -->
@@ -122,28 +122,28 @@
 
 <!-- APP -->
 <div id="topbar">
-  <button id="sb-hamburger" data-action="toggleMobileSidebar" title="Menu" aria-label="Open menu">
+  <button id="sb-hamburger" data-action="toggleMobileSidebar" title="Menu" data-i18n-title="top.menu" aria-label="Open menu" data-i18n-aria-label="top.open_menu">
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
   <span id="logo" data-brand-slot><svg class="brand-logo" viewBox="201.3 804.4 1597.9 391.6" role="img" aria-label="Curatarr"><path class="brand-c" d="M808.885,1095.953c-15.091,7.307-34.797,10.958-59.115,10.958c-31.72,0-56.663-9.323-74.83-27.972 c-18.167-18.647-27.251-43.493-27.251-74.543c0-33.065,10.212-59.883,30.64-80.454c20.424-20.568,46.931-30.855,79.516-30.855 c20.186,0,37.199,2.548,51.041,7.641v44.841c-13.841-8.265-29.607-12.399-47.292-12.399c-19.418,0-35.086,6.105-47.004,18.31 c-11.92,12.209-17.878,28.743-17.878,49.599c0,19.994,5.623,35.926,16.869,47.796c11.246,11.873,26.386,17.807,45.418,17.807 c18.167,0,34.795-4.42,49.887-13.264V1095.953z"/><path class="brand-c" d="M980.751,1103.307h-45.419v-22.492h-0.721c-11.245,17.399-26.291,26.097-45.128,26.097 c-34.221,0-51.328-20.713-51.328-62.142v-89.105h45.417v85.067c0,20.859,8.266,31.288,24.798,31.288 c8.17,0,14.708-2.859,19.609-8.578c4.902-5.718,7.353-13.481,7.353-23.286v-84.491h45.419V1103.307z"/><path class="brand-c" d="M1115.417,996.756c-5.479-2.978-11.873-4.47-19.177-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M1259.455,1103.307h-43.11v-21.195h-0.577c-9.901,16.534-24.56,24.8-43.975,24.8 c-14.324,0-25.593-4.059-33.81-12.184c-8.219-8.121-12.327-18.959-12.327-32.513c0-28.642,16.963-45.176,50.896-49.598 l40.082-5.335c0-16.148-8.747-24.223-26.241-24.223c-17.591,0-34.316,5.24-50.176,15.716v-34.316 c6.343-3.266,15.017-6.15,26.025-8.651c11.006-2.498,21.026-3.748,30.062-3.748c42.101,0,63.152,21.003,63.152,63.008V1103.307z M1216.632,1043.326v-9.948l-26.818,3.46c-14.803,1.924-22.204,8.604-22.204,20.042c0,5.191,1.802,9.443,5.407,12.759 c3.605,3.317,8.482,4.974,14.635,4.974c8.554,0,15.522-2.956,20.907-8.867 C1213.941,1059.836,1216.632,1052.363,1216.632,1043.326z"/><path class="brand-c" d="M1384.75,1101.576c-6.729,3.555-16.87,5.335-30.423,5.335c-32.106,0-48.157-16.675-48.157-50.031 v-67.622h-23.935v-33.594h23.935v-31.865l45.417-12.976v44.842h33.162v33.594h-33.162v59.692c0,15.38,6.103,23.069,18.311,23.069 c4.806,0,9.755-1.392,14.851-4.181V1101.576z"/><path class="brand-c" d="M1533.258,1103.307h-43.11v-21.195h-0.577c-9.901,16.534-24.56,24.8-43.975,24.8 c-14.324,0-25.592-4.059-33.81-12.184c-8.219-8.121-12.327-18.959-12.327-32.513c0-28.642,16.963-45.176,50.896-49.598 l40.082-5.335c0-16.148-8.747-24.223-26.24-24.223c-17.591,0-34.316,5.24-50.176,15.716v-34.316 c6.343-3.266,15.017-6.15,26.025-8.651c11.006-2.498,21.026-3.748,30.062-3.748c42.101,0,63.152,21.003,63.152,63.008V1103.307z M1490.435,1043.326v-9.948l-26.818,3.46c-14.803,1.924-22.204,8.604-22.204,20.042c0,5.191,1.802,9.443,5.407,12.759 c3.605,3.317,8.482,4.974,14.635,4.974c8.554,0,15.522-2.956,20.907-8.867 C1487.744,1059.836,1490.435,1052.363,1490.435,1043.326z"/><path class="brand-c" d="M1665.618,996.756c-5.479-2.978-11.873-4.47-19.177-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M1783.127,996.756c-5.479-2.978-11.873-4.47-19.176-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M376.99,1111.406c-37.299,19.618-75.467,29.779-87.905,32.784 c-43.847-32.836-72.213-85.2-72.213-144.188c0-29.242,6.97-56.859,19.343-81.273c0,0,0,0.006,0.006,0.025 C236.773,920.852,270.586,1047.142,376.99,1111.406z"/><path class="brand-c" d="M561.693,1072.644c-11.987,27.156-30.492,50.788-53.529,68.919 c-6.792,5.344-13.978,10.212-21.505,14.553c-26.42,15.218-57.066,23.925-89.747,23.925c-31.262,0-60.662-7.968-86.283-21.984 c26.461-5.668,60.659-17.465,98.643-41.486c6.658-4.209,13.435-8.794,20.305-13.791c20.13-14.634,41.075-32.774,62.297-55.248 c17.807,8.026,37.529,15.484,59.358,22.068C554.667,1070.635,558.152,1071.651,561.693,1072.644z"/><path class="brand-c" d="M472.347,849.803c-19.514,9.971-38.66,22.472-57.189,37.326 c4.806,3.164,9.667,6.521,14.578,10.092c20.13,14.634,41.075,32.774,62.297,55.248c17.807-8.026,37.529-15.484,59.358-22.068 c3.435-1.036,6.92-2.052,10.461-3.044c-11.987-27.156-30.492-50.788-53.529-68.919c-6.792-5.344-13.978-10.212-21.505-14.553 c-0.454-0.262-0.913-0.517-1.37-0.775L472.347,849.803z"/><path class="brand-c" d="M463.616,832.723c0,0-0.006,0-0.013,0.006c-1.311,0.371-84.074,24.293-174.159,148.128 c-19.618-28.388-34.856-60.658-41.327-82.252c6.388-9.355,13.639-18.083,21.632-26.057 c32.573-32.496,77.52-52.588,127.16-52.588C420.479,819.96,442.987,824.487,463.616,832.723z"/><path class="brand-diamond" d="M396.911,944.929C364.313,967.837,341.839,1000,341.839,1000s11.807,24.87,55.071,55.072 c43.265-30.201,55.071-55.072,55.071-55.072S429.509,967.837,396.911,944.929z"/></svg><span class="admin-action-row" hidden>beta</span></span>
   <div class="tb-spacer"></div>
   <form id="topbar-search-form" data-on-submit="topbarSearch" data-args='["$event"]' role="search">
     <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input id="topbar-search" type="search" placeholder="Search your library…" aria-label="Search your library" title="Search your library (Ctrl+K)">
+    <input id="topbar-search" type="search" placeholder="Search your library…" data-i18n-placeholder="recs.search" aria-label="Search your library" data-i18n-aria-label="recs.search_aria" title="Search your library (Ctrl+K)" data-i18n-title="top.search_title">
   </form>
   <!-- Phones: the search box folds into this button and opens across the topbar -->
-  <button id="tb-search-btn" data-action="toggleTopbarSearch" title="Search your library" aria-label="Search your library" aria-controls="topbar-search-form">
+  <button id="tb-search-btn" data-action="toggleTopbarSearch" title="Search your library" data-i18n-title="recs.search_aria" aria-label="Search your library" data-i18n-aria-label="recs.search_aria" aria-controls="topbar-search-form">
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
   </button>
-  <div id="game-indicator" title="Game running — AI paused; metadata still updates in the background">
+  <div id="game-indicator" title="Game running — AI paused; metadata still updates in the background" data-i18n-title="top.game_title">
     <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>
-    <span id="game-indicator-label">Game mode</span>
+    <span id="game-indicator-label" data-i18n="top.game_mode">Game mode</span>
   </div>
-  <button id="msg-bell" data-action="toggleMsgPanel" title="Notifications" aria-label="Notifications">
+  <button id="msg-bell" data-action="toggleMsgPanel" title="Notifications" data-i18n-title="top.notifications" aria-label="Notifications" data-i18n-aria-label="top.notifications">
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <div id="msg-badge"></div>
   </button>
-  <button type="button" id="user-pill" data-action="showSettingsAccount" title="Account settings" aria-label="Account settings">
+  <button type="button" id="user-pill" data-action="showSettingsAccount" title="Account settings" data-i18n-title="top.account" aria-label="Account settings" data-i18n-aria-label="top.account">
     <span class="avatar" id="user-avatar">?</span>
     <span id="user-name">Not signed in</span>
   </button>
@@ -158,97 +158,97 @@
         (nav.routeFromHash). Plex libraries and Users live in Settings. -->
    <div class="sb-nav">
     <div class="sb-section">
-      <div class="sb-label">Discover</div>
-      <a class="sb-item active" href="#chat" data-view="chat" title="Chat" aria-current="page">
+      <div class="sb-label" data-i18n="nav.discover">Discover</div>
+      <a class="sb-item active" href="#chat" data-view="chat" title="Chat" data-i18n-title="nav.chat" aria-current="page">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        <span class="sb-text">Chat</span>
+        <span class="sb-text" data-i18n="nav.chat">Chat</span>
       </a>
-      <a class="sb-item" href="#recs" data-view="recs" title="Recommendations">
+      <a class="sb-item" href="#recs" data-view="recs" title="Recommendations" data-i18n-title="nav.recs">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        <span class="sb-text">Recommendations</span>
+        <span class="sb-text" data-i18n="nav.recs">Recommendations</span>
       </a>
-      <a class="sb-item" href="#swipe" data-view="swipe" title="Swipe">
+      <a class="sb-item" href="#swipe" data-view="swipe" title="Swipe" data-i18n-title="nav.swipe">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 12h6M12 9l3 3-3 3"/></svg>
-        <span class="sb-text">Swipe</span>
+        <span class="sb-text" data-i18n="nav.swipe">Swipe</span>
       </a>
-      <a class="sb-item" href="#history" data-view="history" title="History &amp; Taste">
+      <a class="sb-item" href="#history" data-view="history" title="History &amp; Taste" data-i18n-title="nav.history">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <span class="sb-text">History &amp; Taste</span>
+        <span class="sb-text" data-i18n="nav.history">History &amp; Taste</span>
       </a>
-      <a class="sb-item" href="#wrapup" data-view="wrapup" title="Wrap-Up">
+      <a class="sb-item" href="#wrapup" data-view="wrapup" title="Wrap-Up" data-i18n-title="nav.wrapup">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="10" rx="1.5"/><rect x="13" y="3" width="8" height="6" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/></svg>
-        <span class="sb-text">Wrap-Up</span>
+        <span class="sb-text" data-i18n="nav.wrapup">Wrap-Up</span>
       </a>
     </div>
     <div class="sb-section">
-      <div class="sb-label">Library</div>
-      <a class="sb-item" href="#arr-sonarr" data-view="arr-sonarr" title="TV Shows">
+      <div class="sb-label" data-i18n="nav.library">Library</div>
+      <a class="sb-item" href="#arr-sonarr" data-view="arr-sonarr" title="TV Shows" data-i18n-title="nav.shows">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
-        <span class="sb-text">TV Shows</span>
+        <span class="sb-text" data-i18n="nav.shows">TV Shows</span>
       </a>
-      <a class="sb-item" href="#arr-radarr" data-view="arr-radarr" title="Movies">
+      <a class="sb-item" href="#arr-radarr" data-view="arr-radarr" title="Movies" data-i18n-title="nav.movies">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        <span class="sb-text">Movies</span>
+        <span class="sb-text" data-i18n="nav.movies">Movies</span>
       </a>
-      <a class="sb-item" href="#arr-lidarr" data-view="arr-lidarr" title="Music">
+      <a class="sb-item" href="#arr-lidarr" data-view="arr-lidarr" title="Music" data-i18n-title="nav.music">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-        <span class="sb-text">Music</span>
+        <span class="sb-text" data-i18n="nav.music">Music</span>
       </a>
     </div>
     <div class="sb-section admin-action-row" hidden>
-      <div class="sb-label">Curate</div>
-      <a class="sb-item" id="sb-deletions" href="#deletions" data-view="deletions" title="Deletions">
+      <div class="sb-label" data-i18n="nav.curate">Curate</div>
+      <a class="sb-item" id="sb-deletions" href="#deletions" data-view="deletions" title="Deletions" data-i18n-title="nav.deletions">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-        <span class="sb-text">Deletions</span>
-        <span hidden id="sb-deletions-pulse" class="sb-pulse-dot" title="Deletion analysis running…"></span>
+        <span class="sb-text" data-i18n="nav.deletions">Deletions</span>
+        <span hidden id="sb-deletions-pulse" class="sb-pulse-dot" title="Deletion analysis running…" data-i18n-title="nav.deletions_running"></span>
       </a>
-      <a class="sb-item" href="#curation" data-view="curation" title="Curation">
+      <a class="sb-item" href="#curation" data-view="curation" title="Curation" data-i18n-title="nav.curation">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span class="sb-text">Curation</span>
+        <span class="sb-text" data-i18n="nav.curation">Curation</span>
       </a>
-      <a class="sb-item" href="#reclassify" data-view="reclassify" title="Reclassify">
+      <a class="sb-item" href="#reclassify" data-view="reclassify" title="Reclassify" data-i18n-title="nav.reclassify">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-        <span class="sb-text">Reclassify</span>
+        <span class="sb-text" data-i18n="nav.reclassify">Reclassify</span>
       </a>
     </div>
     <div class="sb-section">
-      <div class="sb-label">System</div>
-      <a class="sb-item admin-action-row" hidden href="#enrich" data-view="enrich" title="Knowledge Base">
+      <div class="sb-label" data-i18n="nav.system">System</div>
+      <a class="sb-item admin-action-row" hidden href="#enrich" data-view="enrich" title="Knowledge Base" data-i18n-title="nav.kb">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
-        <span class="sb-text">Knowledge Base</span>
-        <span class="sb-badge" hidden id="kb-badge" title="Items that need a human: wrong year, unsure match, or not found after two or more tries">0</span>
+        <span class="sb-text" data-i18n="nav.kb">Knowledge Base</span>
+        <span class="sb-badge" hidden id="kb-badge" title="Items that need a human: wrong year, unsure match, or not found after two or more tries" data-i18n-title="nav.kb_badge">0</span>
       </a>
-      <a class="sb-item admin-action-row" hidden id="tasks-nav" href="#tasks" data-view="tasks" title="Activity">
+      <a class="sb-item admin-action-row" hidden id="tasks-nav" href="#tasks" data-view="tasks" title="Activity" data-i18n-title="nav.activity">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        <span class="sb-text">Activity</span>
+        <span class="sb-text" data-i18n="nav.activity">Activity</span>
         <span class="sb-badge" hidden id="tasks-badge">0</span>
       </a>
-      <a class="sb-item" href="#settings" data-view="settings" title="Settings">
+      <a class="sb-item" href="#settings" data-view="settings" title="Settings" data-i18n-title="nav.settings">
         <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span class="sb-text">Settings</span>
-        <span class="sb-badge" hidden id="settings-badge" title="Waiting for an admin decision: a model update to test or a result to decide">0</span>
+        <span class="sb-text" data-i18n="nav.settings">Settings</span>
+        <span class="sb-badge" hidden id="settings-badge" title="Waiting for an admin decision: a model update to test or a result to decide" data-i18n-title="nav.settings_badge">0</span>
       </a>
     </div>
    </div>
     <div class="sb-footer">
       <!-- Shown only when the browser offers installation (or on iOS Safari,
            where it opens the Add-to-Home-Screen steps) — js/mobile.js -->
-      <button id="pwa-install" class="pwa-install" data-action="installApp" title="Install Curatarr as an app" hidden>
+      <button id="pwa-install" class="pwa-install" data-action="installApp" title="Install Curatarr as an app" data-i18n-title="nav.install_title" hidden>
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v7m-3-3 3 3 3-3"/></svg>
-        <span class="sb-text">Install app</span>
+        <span class="sb-text" data-i18n="nav.install">Install app</span>
       </button>
-      <button data-action="logout" title="Sign out" aria-label="Sign out">
+      <button data-action="logout" title="Sign out" data-i18n-title="nav.sign_out" aria-label="Sign out" data-i18n-aria-label="nav.sign_out">
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-        <span class="sb-text">Sign out</span>
+        <span class="sb-text" data-i18n="nav.sign_out">Sign out</span>
       </button>
-      <button id="sb-collapse-toggle" data-action="toggleSidebar" title="Collapse sidebar" aria-label="Collapse sidebar">
+      <button id="sb-collapse-toggle" data-action="toggleSidebar" title="Collapse sidebar" data-i18n-title="nav.collapse_title" aria-label="Collapse sidebar" data-i18n-aria-label="nav.collapse_title">
         <svg class="transition-transform" aria-hidden="true" id="sb-collapse-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
-        <span class="sb-text">Collapse</span>
+        <span class="sb-text" data-i18n="nav.collapse">Collapse</span>
       </button>
       <!-- The build, and for admins a newer published one — js/version.js -->
-      <button id="sb-update" class="sb-update" data-action="showUpdateInfo" title="A newer Curatarr is published" hidden>
+      <button id="sb-update" class="sb-update" data-action="showUpdateInfo" title="A newer Curatarr is published" data-i18n-title="nav.update_title" hidden>
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 21h14"/></svg>
-        <span class="sb-text">Update available</span>
+        <span class="sb-text" data-i18n="nav.update">Update available</span>
       </button>
       <div id="sb-version" class="sb-version sb-text" hidden></div>
     </div>
@@ -262,7 +262,7 @@
 
     <!-- CHAT -->
     <div class="view active" id="chat-view">
-      <h1 class="sr-only" tabindex="-1">Chat</h1>
+      <h1 class="sr-only" tabindex="-1" data-i18n="nav.chat">Chat</h1>
       <!-- Pass 27: active discussion banner — visible only when pendingDiscussContext is set -->
       <!-- Pass 53: "Delete & exit" lets the user act on a deletion proposal
            straight from the discussion thread — no bounce back to the
@@ -274,9 +274,9 @@
         <button class="btn-ghost-danger" hidden id="discuss-delete-btn" data-action="deleteFromDiscussion">Delete &amp; exit</button>
         <button class="btn-ghost-amber" data-action="exitDiscussion">Exit discussion</button>
       </div>
-      <div id="messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+      <div id="messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation" data-i18n-aria-label="chat.conversation">
         <div class="msg assistant">
-          Hey! I'm Curatarr — your personal media curator. Ask me what to watch<span class="admin-action-row" hidden>, how to clean up your library,</span> or anything about your taste.
+          <span data-i18n="chat.welcome">Hey! I'm Curatarr — your personal media curator. Ask me what to watch</span><span class="admin-action-row" hidden data-i18n="chat.welcome_admin">, how to clean up your library,</span> <span data-i18n="chat.welcome_end">or anything about your taste.</span>
         </div>
         <!-- landing panels: inside the live log, not conversation, so not read out -->
         <div id="followup-panel" aria-live="off"></div>
@@ -284,19 +284,16 @@
         <div id="tonight-panel" aria-live="off"></div>
         <div id="glance-panel" aria-live="off"></div>
         <div id="last-played-panel" aria-live="off"></div>
-        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off">
-          <button class="sp-chip" data-action="fillPrompt" data-args='["What should I watch tonight?","tonight"]'>What should I watch tonight?</button>
-          <button class="sp-chip admin-action-row" hidden data-action="fillPrompt" data-args='["What can I clean up in my library?"]'>What can I clean up in my library?</button>
-          <button class="sp-chip" data-action="fillPrompt" data-args='["What does my watch history say about my taste?"]'>What does my watch history say about my taste?</button>
-        </div>
+        <!-- the fallback chips, in the user's language: chat.paintStaticChips at sign-in -->
+        <div class="flex gap-8 flex-wrap mt-14" id="suggested-prompts" aria-live="off"></div>
       </div>
-      <button type="button" class="btn btn-secondary btn-sm" id="jump-latest" data-action="jumpLatest" hidden>New reply ↓</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="jump-latest" data-action="jumpLatest" hidden data-i18n="chat.jump_latest">New reply ↓</button>
       <div id="chat-input-area">
         <!-- Icon + label: phones show the icon alone (aria-label carries the name) -->
-        <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." aria-label="New chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label">New</span></button>
-        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." aria-label="Re-fetch metadata"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label">Re-fetch</span></button>
-        <textarea id="chat-input" aria-label="Chat message" placeholder="Ask about your library, get recommendations, or just chat…" data-on-keydown="handleKey" data-args='["$event"]' enterkeyhint="send" rows="1"></textarea>
-        <button id="send-btn" data-action="sendMessage" aria-label="Send message"><svg class="btn-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span class="btn-label">Send</span></button>
+        <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." data-i18n-title="chat.new_title" aria-label="New chat" data-i18n-aria-label="chat.new_chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label" data-i18n="chat.new">New</span></button>
+        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-fetch metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-fetch</span></button>
+        <textarea id="chat-input" aria-label="Chat message" data-i18n-aria-label="chat.input_aria" placeholder="Ask about your library, get recommendations, or just chat…" data-i18n-placeholder="chat.input_placeholder" data-on-keydown="handleKey" data-args='["$event"]' enterkeyhint="send" rows="1"></textarea>
+        <button id="send-btn" data-action="sendMessage" aria-label="Send message" data-i18n-aria-label="chat.send_aria"><svg class="btn-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span class="btn-label" data-i18n="chat.send">Send</span></button>
       </div>
     </div>
 
@@ -328,32 +325,32 @@
     <!-- RECOMMENDATIONS -->
     <div class="view" id="recs-view">
       <div class="view-header">
-        <h1 tabindex="-1">Recommendations</h1>
-        <p>Picks from your library and beyond, based on your taste.</p>
+        <h1 tabindex="-1" data-i18n="nav.recs">Recommendations</h1>
+        <p data-i18n="recs.lead">Picks from your library and beyond, based on your taste.</p>
       </div>
       <div class="view-body">
         <div class="cat-tabs">
-          <button class="cat-tab active" data-action="loadRecs" data-args='[null,"$el"]'>All</button>
-          <button class="cat-tab" data-action="loadRecs" data-args='["movie","$el"]'>Movies</button>
-          <button class="cat-tab" data-action="loadRecs" data-args='["show","$el"]'>TV Shows</button>
-          <button class="cat-tab" data-action="loadRecs" data-args='["anime","$el"]'>Anime</button>
-          <button class="cat-tab" data-action="loadRecs" data-args='["music","$el"]'>Music</button>
+          <button class="cat-tab active" data-action="loadRecs" data-args='[null,"$el"]' data-i18n="common.all">All</button>
+          <button class="cat-tab" data-action="loadRecs" data-args='["movie","$el"]' data-i18n="nav.movies">Movies</button>
+          <button class="cat-tab" data-action="loadRecs" data-args='["show","$el"]' data-i18n="nav.shows">TV Shows</button>
+          <button class="cat-tab" data-action="loadRecs" data-args='["anime","$el"]' data-i18n="common.anime">Anime</button>
+          <button class="cat-tab" data-action="loadRecs" data-args='["music","$el"]' data-i18n="nav.music">Music</button>
         </div>
         <div class="toolbar">
-          <div class="row" role="group" aria-label="Lane">
-            <button id="lane-all-btn" class="chip active" data-action="setRecLane" data-args='["all","$el"]'>All</button>
-            <button id="lane-because-btn" class="chip" data-action="setRecLane" data-args='["because","$el"]' title="Close to three titles you watched recently">Because you watched</button>
-            <button id="lane-rediscover-btn" class="chip" data-action="setRecLane" data-args='["rediscover","$el"]' title="Loved once, untouched for two years">Rediscover</button>
-            <button id="lane-lib-btn" class="chip" data-action="setRecLane" data-args='["library","$el"]' title="In your library — still unwatched">In library</button>
-            <button id="lane-disc-btn" class="chip" data-action="setRecLane" data-args='["discovery","$el"]' title="Not in your library — worth acquiring">Discover new</button>
+          <div class="row" role="group" aria-label="Lane" data-i18n-aria-label="recs.lane">
+            <button id="lane-all-btn" class="chip active" data-action="setRecLane" data-args='["all","$el"]' data-i18n="common.all">All</button>
+            <button id="lane-because-btn" class="chip" data-action="setRecLane" data-args='["because","$el"]' title="Close to three titles you watched recently" data-i18n-title="recs.lane_because_title" data-i18n="recs.lane_because">Because you watched</button>
+            <button id="lane-rediscover-btn" class="chip" data-action="setRecLane" data-args='["rediscover","$el"]' title="Loved once, untouched for two years" data-i18n-title="recs.lane_rediscover_title" data-i18n="recs.lane_rediscover">Rediscover</button>
+            <button id="lane-lib-btn" class="chip" data-action="setRecLane" data-args='["library","$el"]' title="In your library — still unwatched" data-i18n-title="recs.lane_library_title" data-i18n="recs.lane_library">In library</button>
+            <button id="lane-disc-btn" class="chip" data-action="setRecLane" data-args='["discovery","$el"]' title="Not in your library — worth acquiring" data-i18n-title="recs.lane_discovery_title" data-i18n="recs.lane_discovery">Discover new</button>
           </div>
-          <button class="btn btn-secondary" data-action="regenerateRecs">Regenerate</button>
+          <button class="btn btn-secondary" data-action="regenerateRecs" data-i18n="recs.regenerate">Regenerate</button>
           <div class="toolbar-right">
-            <input id="lib-search" type="search" class="w-220 input" aria-label="Search your library" placeholder="Search your library…" data-on-keydown="searchOnEnter" data-args='["$event"]'>
-            <button class="btn btn-secondary btn-sm" data-action="searchLibrary" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" aria-label="Semantic search over what you own"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+            <input id="lib-search" type="search" class="w-220 input" aria-label="Search your library" data-i18n-aria-label="recs.search_aria" placeholder="Search your library…" data-i18n-placeholder="recs.search" data-on-keydown="searchOnEnter" data-args='["$event"]'>
+            <button class="btn btn-secondary btn-sm" data-action="searchLibrary" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" data-i18n-title="recs.search_title" aria-label="Semantic search over what you own" data-i18n-aria-label="recs.search_button"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
           </div>
         </div>
-        <div id="recs-content"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
+        <div id="recs-content"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div>
       </div>
     </div>
 
@@ -718,22 +715,22 @@
     <!-- SETTINGS -->
     <div class="view" id="settings-view">
       <div class="view-header">
-        <h1 tabindex="-1">Settings</h1>
-        <p>Your account, notifications and server settings.</p>
+        <h1 tabindex="-1" data-i18n="nav.settings">Settings</h1>
+        <p data-i18n="settings.lead">Your account, notifications and server settings.</p>
       </div>
       <div class="view-body">
         <div class="flex gap-24 items-start flex-wrap settings-shell">
 
           <!-- LEFT SUB-NAV -->
           <nav class="side-col-200 settings-nav">
-            <button class="settings-tab active" data-pane="account" data-action="openSettingsPane" data-args='["account","$el"]'>Account</button>
-            <button class="settings-tab" data-pane="notifications" data-action="openSettingsPane" data-args='["notifications","$el"]'>Notifications</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="plex-libraries" data-action="openSettingsPane" data-args='["plex-libraries","$el"]'>Plex libraries</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="library" data-action="openSettingsPane" data-args='["library","$el"]'>Arr apps</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="integrations" data-action="openSettingsPane" data-args='["integrations","$el"]'>Integrations</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="media-server" data-action="openSettingsPane" data-args='["media-server","$el"]'>Media server</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="users" data-action="openSettingsPane" data-args='["users","$el"]'>Users</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="maintenance" data-action="openSettingsPane" data-args='["maintenance","$el"]'>Maintenance</button>
+            <button class="settings-tab active" data-pane="account" data-action="openSettingsPane" data-args='["account","$el"]' data-i18n="settings.account">Account</button>
+            <button class="settings-tab" data-pane="notifications" data-action="openSettingsPane" data-args='["notifications","$el"]' data-i18n="settings.notifications">Notifications</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="plex-libraries" data-action="openSettingsPane" data-args='["plex-libraries","$el"]' data-i18n="settings.plex_libraries">Plex libraries</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="library" data-action="openSettingsPane" data-args='["library","$el"]' data-i18n="settings.arr_apps">Arr apps</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="integrations" data-action="openSettingsPane" data-args='["integrations","$el"]' data-i18n="settings.integrations">Integrations</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="media-server" data-action="openSettingsPane" data-args='["media-server","$el"]' data-i18n="settings.media_server">Media server</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="users" data-action="openSettingsPane" data-args='["users","$el"]' data-i18n="settings.users">Users</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="maintenance" data-action="openSettingsPane" data-args='["maintenance","$el"]' data-i18n="settings.maintenance">Maintenance</button>
           </nav>
 
           <!-- RIGHT PANES: one .section per topic, the status next to its Save -->
@@ -742,48 +739,61 @@
             <!-- Account pane -->
             <section class="settings-pane" data-pane="account">
               <section class="section">
-                <div class="section-head"><h3>Signed in via Plex</h3></div>
+                <div class="section-head"><h3 data-i18n="account.signed_in_plex">Signed in via Plex</h3></div>
                 <div class="section-body" id="settings-plex-info">
                   <div class="fs-13"><b id="settings-plex-username">—</b> <span id="settings-plex-role" class="fs-12 t3"></span></div>
-                  <div class="fs-12 t3 mt-4">Plex ID: <code id="settings-plex-id">—</code></div>
+                  <div class="fs-12 t3 mt-4"><span data-i18n="account.plex_id">Plex ID:</span> <code id="settings-plex-id">—</code></div>
                 </div>
               </section>
               <section class="section">
-                <div class="section-head"><h3>Curator</h3><span class="section-hint">How the curator talks to you in chat, its openers and its messages. Saves immediately.</span></div>
+                <div class="section-head"><h3 data-i18n="account.curator">Curator</h3><span class="section-hint" data-i18n="account.curator_hint">How the curator talks to you in chat, its openers and its messages. Saves immediately.</span></div>
                 <div class="section-body">
                   <div class="pref-row">
-                    <span class="pref-text" id="curator-voice-label">Tone<small>Sharp is a touch elitist about titles. Every tone judges the work, not you.</small></span>
+                    <span class="pref-text" id="curator-voice-label"><span data-i18n="account.tone">Tone</span><small data-i18n="account.tone_hint">Sharp is a touch elitist about titles. Every tone judges the work, not you.</small></span>
                     <div class="segmented" role="radiogroup" aria-labelledby="curator-voice-label">
-                      <label for="voice-friendly"><input type="radio" name="curator-voice" id="voice-friendly" value="friendly" data-on-change="setCuratorVoice" data-args='["$el"]'>Friendly</label>
-                      <label for="voice-neutral"><input type="radio" name="curator-voice" id="voice-neutral" value="neutral" data-on-change="setCuratorVoice" data-args='["$el"]'>Neutral</label>
-                      <label for="voice-elite"><input type="radio" name="curator-voice" id="voice-elite" value="elite" data-on-change="setCuratorVoice" data-args='["$el"]'>Sharp</label>
+                      <label for="voice-friendly"><input type="radio" name="curator-voice" id="voice-friendly" value="friendly" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_friendly">Friendly</span></label>
+                      <label for="voice-neutral"><input type="radio" name="curator-voice" id="voice-neutral" value="neutral" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_neutral">Neutral</span></label>
+                      <label for="voice-elite"><input type="radio" name="curator-voice" id="voice-elite" value="elite" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_sharp">Sharp</span></label>
                     </div>
                   </div>
                 </div>
               </section>
               <section class="section">
-                <div class="section-head"><h3>This device</h3><span class="section-hint">Saved in this browser only.</span></div>
+                <div class="section-head"><h3 data-i18n="account.language_head">Language</h3><span class="section-hint" data-i18n="account.language_hint">The words of Curatarr and every text it writes for you. The curator answers in the language you write in. Saves immediately.</span></div>
                 <div class="section-body">
                   <div class="pref-row">
-                    <span class="pref-text" id="haptics-label">Vibration<small>Taps, sends and warnings. Android phones; iPhones don't let web apps vibrate. Off under reduced motion either way.</small></span>
-                    <div class="segmented" role="radiogroup" aria-labelledby="haptics-label">
-                      <label for="haptics-off"><input type="radio" name="haptics" id="haptics-off" value="off" data-on-change="setHapticLevel" data-args='["$el"]'>Off</label>
-                      <label for="haptics-light"><input type="radio" name="haptics" id="haptics-light" value="light" data-on-change="setHapticLevel" data-args='["$el"]'>Light</label>
-                      <label for="haptics-full"><input type="radio" name="haptics" id="haptics-full" value="full" data-on-change="setHapticLevel" data-args='["$el"]'>Full</label>
-                    </div>
-                  </div>
-                  <div class="pref-row">
-                    <span class="pref-text" id="icon-style-label">App icon<small>The tab's icon and the logo in the top bar. The tray icon has its own switch in the tray menu; an installed app keeps the icon it was installed with.</small></span>
-                    <div class="segmented" role="radiogroup" aria-labelledby="icon-style-label">
-                      <label for="icon-modern"><input type="radio" name="icon-style" id="icon-modern" value="modern" data-on-change="setIconStyle" data-args='["$el"]'>Modern</label>
-                      <label for="icon-classic"><input type="radio" name="icon-style" id="icon-classic" value="classic" data-on-change="setIconStyle" data-args='["$el"]'>Classic</label>
+                    <span class="pref-text" id="ui-language-label"><span data-i18n="account.language">Language</span><small id="ui-language-detected"></small></span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="ui-language-label">
+                      <label for="ui-language-auto"><input type="radio" name="ui-language" id="ui-language-auto" value="auto" data-on-change="setUiLanguage" data-args='["$el"]'><span data-i18n="account.language_auto">Automatic</span></label>
+                      <label for="ui-language-en"><input type="radio" name="ui-language" id="ui-language-en" value="en" data-on-change="setUiLanguage" data-args='["$el"]'>English</label>
+                      <label for="ui-language-de"><input type="radio" name="ui-language" id="ui-language-de" value="de" data-on-change="setUiLanguage" data-args='["$el"]'>Deutsch</label>
                     </div>
                   </div>
                 </div>
               </section>
               <section class="section">
-                <div class="section-head"><h3>Session</h3><span class="section-hint">Ends your session on every device.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="logout">Sign out everywhere</button></div></div>
+                <div class="section-head"><h3 data-i18n="account.device">This device</h3><span class="section-hint" data-i18n="account.device_hint">Saved in this browser only.</span></div>
+                <div class="section-body">
+                  <div class="pref-row">
+                    <span class="pref-text" id="haptics-label"><span data-i18n="account.vibration">Vibration</span><small data-i18n="account.vibration_hint">Taps, sends and warnings. Android phones; iPhones don't let web apps vibrate. Off under reduced motion either way.</small></span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="haptics-label">
+                      <label for="haptics-off"><input type="radio" name="haptics" id="haptics-off" value="off" data-on-change="setHapticLevel" data-args='["$el"]'><span data-i18n="account.off">Off</span></label>
+                      <label for="haptics-light"><input type="radio" name="haptics" id="haptics-light" value="light" data-on-change="setHapticLevel" data-args='["$el"]'><span data-i18n="account.light">Light</span></label>
+                      <label for="haptics-full"><input type="radio" name="haptics" id="haptics-full" value="full" data-on-change="setHapticLevel" data-args='["$el"]'><span data-i18n="account.full">Full</span></label>
+                    </div>
+                  </div>
+                  <div class="pref-row">
+                    <span class="pref-text" id="icon-style-label"><span data-i18n="account.app_icon">App icon</span><small data-i18n="account.app_icon_hint">The tab's icon and the logo in the top bar. The tray icon has its own switch in the tray menu; an installed app keeps the icon it was installed with.</small></span>
+                    <div class="segmented" role="radiogroup" aria-labelledby="icon-style-label">
+                      <label for="icon-modern"><input type="radio" name="icon-style" id="icon-modern" value="modern" data-on-change="setIconStyle" data-args='["$el"]'><span data-i18n="account.modern">Modern</span></label>
+                      <label for="icon-classic"><input type="radio" name="icon-style" id="icon-classic" value="classic" data-on-change="setIconStyle" data-args='["$el"]'><span data-i18n="account.classic">Classic</span></label>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="section">
+                <div class="section-head"><h3 data-i18n="account.session">Session</h3><span class="section-hint" data-i18n="account.session_hint">Ends your session on every device.</span>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="logout" data-i18n="account.sign_out_everywhere">Sign out everywhere</button></div></div>
               </section>
             </section>
 
@@ -934,32 +944,32 @@
      the drawer behind "More". Admins get Deletions, members History & Taste
      (auth.setUser). nav.showView marks the tab whose data-views names the view
      on screen. -->
-<nav id="mobile-tabbar" aria-label="Quick navigation">
-  <a class="mt-item" href="#recs" data-views="recs" aria-label="Recommendations">
+<nav id="mobile-tabbar" aria-label="Quick navigation" data-i18n-aria-label="tabbar.aria">
+  <a class="mt-item" href="#recs" data-views="recs" aria-label="Recommendations" data-i18n-aria-label="nav.recs">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-    <span>For you</span>
+    <span data-i18n="tabbar.for_you">For you</span>
   </a>
   <a class="mt-item" href="#swipe" data-views="swipe">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 12h6M12 9l3 3-3 3"/></svg>
-    <span>Swipe</span>
+    <span data-i18n="nav.swipe">Swipe</span>
   </a>
   <a class="mt-item mt-center" href="#chat" data-views="chat">
     <span class="mt-fab">
       <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
     </span>
-    <span>Chat</span>
+    <span data-i18n="nav.chat">Chat</span>
   </a>
   <a class="mt-item admin-action-row" hidden href="#deletions" data-views="deletions">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-    <span>Deletions</span>
+    <span data-i18n="nav.deletions">Deletions</span>
   </a>
-  <a class="mt-item member-only-row" href="#history" data-views="history" aria-label="History &amp; Taste">
+  <a class="mt-item member-only-row" href="#history" data-views="history" aria-label="History &amp; Taste" data-i18n-aria-label="nav.history">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-    <span>History</span>
+    <span data-i18n="tabbar.history">History</span>
   </a>
-  <button type="button" class="mt-item" id="mt-more" data-views="" data-action="toggleMobileSidebar" aria-label="More: all views and settings">
+  <button type="button" class="mt-item" id="mt-more" data-views="" data-action="toggleMobileSidebar" aria-label="More: all views and settings" data-i18n-aria-label="tabbar.more_aria">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
-    <span>More</span>
+    <span data-i18n="tabbar.more">More</span>
     <span class="mt-dot" id="mt-more-dot" hidden></span>
   </button>
 </nav>

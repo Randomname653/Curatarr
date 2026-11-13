@@ -22,7 +22,7 @@ Rules:
 
 # ── Deletion discussion (chat anchored on a deletion proposal) ────────────────
 
-DISCUSSION_UI_BLOCK = (
+DISCUSSION_UI_TEMPLATE = (
     "UI: this discussion has a 'Delete & exit' button (top right) that "
     "executes the deletion right here in Curatarr, plus 'Exit discussion'. "
     "When the user decides to delete, point them to that button — never "
@@ -39,7 +39,7 @@ DISCUSSION_UI_BLOCK = (
 
 # The STAGNANT verdict class: gray zone — the OWNER decides. Without this the
 # discussion doesn't know the verdict class exists and defaults to delete-mode.
-STAGNANT_VERDICT_BLOCK = (
+STAGNANT_VERDICT_TEMPLATE = (
     "JUDGE VERDICT: STAGNANT — the pillar judge classed this title as "
     "merely 'fine' (gray zone, not a clear cut) and surfaced it with a "
     "'Your call' badge (every other proposal carries 'Cut') for the OWNER "
@@ -50,7 +50,7 @@ STAGNANT_VERDICT_BLOCK = (
 
 # ── Learned-principle review (chat anchored on a shadow principle) ───────────
 
-PRINCIPLE_REVIEW_BLOCK = (
+PRINCIPLE_REVIEW_TEMPLATE = (
     "This is a PRINCIPLE REVIEW: you and the owner are deciding whether a rule "
     "you extracted from a past debate should govern future curation. Moderate "
     "honestly — lay out what adopting it changes, where it collides with the "
@@ -64,24 +64,24 @@ PRINCIPLE_REVIEW_BLOCK = (
 
 # ── General chat: the compact app map ("where do I find …?") ─────────────────
 
-APP_MAP_BLOCK = (
+APP_MAP_TEMPLATE = (
     "APP MAP (Curatarr's own UI — point the user to the right place; never "
     "invent or deny capabilities):\n"
-    "- Chat (you) · 'History & Taste' (watch history + taste profile) · "
-    "'Recommendations' (your picks; a 'Search your library…' box for "
+    "- Chat (you) · '⟦nav.history⟧' (watch history + taste profile) · "
+    "'⟦nav.recs⟧' (your picks; a '⟦recs.search⟧' box for "
     "curated semantic search over what they own — understands "
     "'like <title> but …' queries and ranks by fit, falling back to "
-    "plain similarity when the ranker is unavailable — and on Discovery "
-    "cards an '+ Add' button (admin) that adds the title to the right "
+    "plain similarity when the ranker is unavailable — and on ⟦recs.lane_discovery|Discovery⟧ "
+    "cards an '⟦recs.add⟧' button (admin) that adds the title to the right "
     "arr).\n"
-    "- 'Swipe': titles near the user's taste that they have not played in "
+    "- '⟦nav.swipe⟧': titles near the user's taste that they have not played in "
     "Plex, one card at a time. Not seen: 'Not seen' moves on, 'Want to "
     "watch' also puts the title on their own Plex watchlist. Seen: "
     "Disliked / Meh / Liked / Loved, or exact 1-10 stars ('Seen it - how "
     "good'). Seen-and-rated answers shape their taste profile - the way to "
     "teach it what they watched elsewhere (Netflix, cinema); 'Want to "
     "watch' does not, it is a plan, not a verdict.\n"
-    "- 'Deletions' (admin): your deletion proposals, each marked 'Cut' or "
+    "- '⟦nav.deletions⟧' (admin): your deletion proposals, each marked 'Cut' or "
     "'Your call' with a 'Why?' that lists the strongest signals in its "
     "deletion score, and each with a 'Delete' "
     "button that EXECUTES the deletion from inside Curatarr via "
@@ -98,7 +98,7 @@ APP_MAP_BLOCK = (
     "check finds them, and 'Delete again' or Keep closes each. Deleting an "
     "artist also blocks it in SoulSync so it is not downloaded again, and "
     "artists you follow in SoulSync are never proposed.\n"
-    "- 'Curation' (admin) panels: 'Protected titles' (every title that is "
+    "- '⟦nav.curation⟧' (admin) panels: 'Protected titles' (every title that is "
     "never proposed — judge keeps, chat protections and 'Protect "
     "permanently' — with its reasoning, each liftable), 'Downscale "
     "candidates' (KEPT but flagged for a "
@@ -113,29 +113,28 @@ APP_MAP_BLOCK = (
     "the user's language, e.g. 'Curatarr empfiehlt · Filme'; movies/shows/anime/music) "
     "and the rotating 'Curatarr · ' collection shelves you design weekly, shown on the "
     "home screens, the first one per library a season shelf.\n"
-    "- 'Knowledge Base' (admin) also carries a 'Finish the backfill' panel while the "
+    "- '⟦nav.kb⟧' (admin) also carries a 'Finish the backfill' panel while the "
     "metadata behind your verdicts is still incomplete: one 'Fetch now' "
     "button per source (Wikipedia significance, community reception, "
     "on-record facts, OMDb ratings) with its coverage. It disappears on its "
     "own once a source is well covered, and the daily maintenance tick "
     "handles the remainder — so its absence means the data is there, not "
     "that the feature is missing.\n"
-    "- 'TV Shows' / 'Movies' / 'Music' (library browsers) · 'Reclassify' "
-    "(admin) · 'Knowledge Base' (admin; enrichment) · 'Activity' (admin; live "
+    "- '⟦nav.shows⟧' / '⟦nav.movies⟧' / '⟦nav.music⟧' (library browsers) · '⟦nav.reclassify⟧' "
+    "(admin) · '⟦nav.kb⟧' (admin; enrichment) · '⟦nav.activity⟧' (admin; live "
     "card for EVERY background job — syncs, maintenance, memory extraction, "
-    "LLM runs — with progress and history) · 'Settings' ('Account', for every "
-    "user, sets the tone you talk to them in — Friendly, Neutral or Sharp — "
-    "for chat, openers and messages; admin panes: 'Plex "
-    "libraries' maps each Plex library to a category, 'Arr apps' holds the "
-    "Sonarr/Radarr/Lidarr connections, 'Users' includes the Spotify and "
+    "LLM runs — with progress and history) · '⟦nav.settings⟧' ('⟦settings.account⟧', for every "
+    "user, sets the tone you talk to them in — ⟦account.tone_friendly⟧, ⟦account.tone_neutral⟧ or ⟦account.tone_sharp⟧ — "
+    "for chat, openers and messages; admin panes: '⟦settings.plex_libraries⟧' maps each Plex library to a category, '⟦settings.arr_apps⟧' holds the "
+    "Sonarr/Radarr/Lidarr connections, '⟦settings.users⟧' includes the Spotify and "
     "Netflix history imports (a member's Netflix viewing counts like their "
-    "Plex viewing), 'Media server' connects Jellyfin and moves the install "
+    "Plex viewing), '⟦settings.media_server⟧' connects Jellyfin and moves the install "
     "from Plex to Jellyfin or back with all history and curation kept, "
-    "'Integrations' holds the service connections, among them an optional "
+    "'⟦settings.integrations⟧' holds the service connections, among them an optional "
     "Shoko server that gets every finished anime episode reported as "
     "watched; under its card, 'Without a Shoko episode' lists the series "
     "the sync could not place, to link to their AniDB entry or skip, "
-    "'Maintenance' has sync and repair actions and 'Compute "
+    "'⟦settings.maintenance⟧' has sync and repair actions and 'Compute "
     "nodes': this server and the node that lends its card, with what each "
     "card is doing right now, which the owner can rename and update there).\n"
 )
@@ -145,7 +144,7 @@ APP_MAP_BLOCK = (
 # (STATE_DEFINITIONS / ATTENTION_REASONS); the numbers come from the same
 # per-item classification the KB tile is counted from, so the curator can
 # explain a percentage instead of guessing at it.
-KB_HEALING_BLOCK = (
+KB_HEALING_TEMPLATE = (
     "KNOWLEDGE BASE (enrichment health): every count in the Knowledge Base "
     "table opens the list behind it. States: enriched (incl. provisional), "
     "dead cache, partial (rule-based / awaiting LLM), retry due, not found "
@@ -168,10 +167,10 @@ KB_HEALING_BLOCK = (
 # this. The old wording claimed "there is no ARR integration that lets you
 # act", which predates the deletion flow and made the curator send the user to
 # Sonarr to delete files by hand while the 🗑 buttons sat in the Deletions view.
-LIBRARY_ACTIONS_BLOCK = (
+LIBRARY_ACTIONS_TEMPLATE = (
     "LIBRARY ACTIONS: You never execute changes yourself from chat and never "
     "claim something was added, downloaded, queued, or removed. ADDING new "
-    "media happens INSIDE Curatarr too: the '+ Add' button on Discovery "
+    "media happens INSIDE Curatarr too: the '⟦recs.add⟧' button on ⟦recs.lane_discovery|Discovery⟧ "
     "cards or the library browsers' add flow (admin) — not by hand in the "
     "arr. DELETING existing media happens INSIDE Curatarr: the user "
     "approves a proposal in the Deletions view ('Delete', or bulk via "
@@ -180,9 +179,48 @@ LIBRARY_ACTIONS_BLOCK = (
     "Sonarr/Radarr/Lidarr to delete files manually.\n"
 )
 
+# ── Rendering: the UI's names in the user's language ──────────────────────────
+# A UI name in a template is ⟦key⟧, a key of frontend/i18n/<lang>.json - the
+# same dictionary the UI is drawn from (services/i18n), so the curator names
+# the button the user sees, in the user's UI language (UX design record 3.8),
+# and the two cannot drift apart. The prose around it stays English: it is
+# the curator's prompt, not the user's text.
+import re as _re  # noqa: E402
+
+# ⟦key|words⟧ keeps ``words`` in English where the prose names a thing by
+# its kind ("Discovery cards") rather than by its English label.
+_MARK = _re.compile(r"⟦([\w.]+)(?:\|([^⟧]*))?⟧")
+
+
+def render(template: str, lang: str = "en") -> str:
+    """``template`` with every ⟦key⟧ as its UI name in ``lang``."""
+    from src.services.i18n import t
+    return _MARK.sub(lambda m: m.group(2) if (m.group(2) is not None and lang == "en") else t(m.group(1), lang),
+                     template)
+
+
+def keys_in(template: str) -> list:
+    return [m.group(1) for m in _MARK.finditer(template)]
+
+
+# The blocks in English, as every caller without a user's language reads them.
+DISCUSSION_UI_BLOCK = render(DISCUSSION_UI_TEMPLATE)
+STAGNANT_VERDICT_BLOCK = render(STAGNANT_VERDICT_TEMPLATE)
+PRINCIPLE_REVIEW_BLOCK = render(PRINCIPLE_REVIEW_TEMPLATE)
+APP_MAP_BLOCK = render(APP_MAP_TEMPLATE)
+KB_HEALING_BLOCK = render(KB_HEALING_TEMPLATE)
+LIBRARY_ACTIONS_BLOCK = render(LIBRARY_ACTIONS_TEMPLATE)
+
+
 # ── Drift-test registry ───────────────────────────────────────────────────────
-# Every label the blocks above mention. tests/test_app_context_drift.py asserts
-# each exists verbatim in the frontend files (and that none is orphaned here).
+# The dictionary keys the templates name (⟦key⟧): tests/test_app_context_drift
+# asserts each is in both dictionaries and drawn by the frontend.
+REFERENCED_UI_KEYS: tuple[str, ...] = tuple(sorted({
+    k for name, v in list(globals().items()) if name.endswith("_TEMPLATE") and isinstance(v, str)
+    for k in keys_in(v)}))
+
+# The labels still written verbatim (their pages are translated in a later
+# round): each must exist as is in the frontend files, and none be orphaned.
 REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Delete & exit",
     "Delete",
@@ -196,34 +234,14 @@ REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Upgrade candidates",
     "Redundant storage",
     "Learned principles",
-    "History & Taste",
-    "Recommendations",
-    "Swipe",
     "Not seen",
     "Want to watch",
     "Seen it",
-    "Search your library…",
-    "+ Add",
     "Delete selected",
     "Fix match",
     "Back after deletion",
     "Delete again",
-    "Curation",
     "Report",
-    "Deletions",
-    "TV Shows",
-    "Movies",
-    "Music",
-    "Reclassify",
-    "Knowledge Base",
-    "Activity",
-    "Plex libraries",
-    "Arr apps",
-    "Media server",
-    "Users",
-    "Maintenance",
-    "Settings",
-    "Account",
     # Knowledge Base health (KB_HEALING_BLOCK)
     "Needs attention",
     "Search & pin",

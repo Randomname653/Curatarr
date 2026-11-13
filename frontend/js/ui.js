@@ -1,5 +1,6 @@
 /* global DOMPurify, marked */
 import { state } from './state.js';
+import { t, th } from './i18n.js';
 
 export const API = '';
 // Moved state.token to state
@@ -11,7 +12,9 @@ let lastJobId = null;
 // Moved setupData to state
 // Moved state.setupStep to state
 export const SETUP_STEPS = ['plex','ollama','metadata','arr','import','done'];
-export const CAT_LABELS = {music:'Music', movie:'Movies', show:'TV Shows', anime:'Anime'};
+// The categories' names in the UI's language, read when drawn (CAT_LABELS[cat]).
+const _CAT_KEYS = {music: 'nav.music', movie: 'nav.movies', show: 'nav.shows', anime: 'common.anime'};
+export const CAT_LABELS = new Proxy({}, {get: (_, k) => (_CAT_KEYS[k] ? t(_CAT_KEYS[k]) : undefined)});
 // Small inline status glyphs — reuse the sidebar's stroke-icon language
 // (currentColor so they follow whatever text color already wraps them)
 // instead of platform emoji, which render inconsistently across OSes.
@@ -111,15 +114,15 @@ export function _errMsg(e) {
     const j = JSON.parse(e?.message || '');
     if (j?.detail) return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
   } catch {}
-  return e?.message || 'Something went wrong';
+  return e?.message || t('common.something_wrong');
 }
 // Standard "this view failed to load" block: reuses the .loading slot's
 // layout but marks it as an error, and always offers a way back in instead
 // of leaving the view stuck on a bare "Loading…" forever. `retry` is the
 // attribute text from act(): _errHtml(e, act('loadUsers')).
 export function _errHtml(e, retry) {
-  const button = retry ? `<br><button class="mt-8 btn btn-secondary btn-sm" ${retry}>Retry</button>` : '';
-  return `<p class="load-err">${SVG_WARN} Couldn't load — ${esc(_errMsg(e))}</p>${button}`;
+  const button = retry ? `<br><button class="mt-8 btn btn-secondary btn-sm" ${retry}>${th('common.retry')}</button>` : '';
+  return `<p class="load-err">${SVG_WARN} ${th('common.load_failed', {error: _errMsg(e)})}</p>${button}`;
 }
 
 // Shared poster/cover-art thumbnail. Every card that puts a title next to
@@ -207,7 +210,7 @@ export function toast(text, kind = 'info', opts = {}) {
   if (kind === 'danger') haptic('warn');
   el.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
   el.setAttribute('aria-live', kind === 'danger' ? 'assertive' : 'polite');
-  el.innerHTML = (opts.actions?.length ? '' : '<button type="button" class="toast-close" aria-label="Dismiss">×</button>') +
+  el.innerHTML = (opts.actions?.length ? '' : `<button type="button" class="toast-close" aria-label="${th('common.dismiss')}">×</button>`) +
     (opts.title ? `<div class="toast-title">${esc(opts.title)}</div>` : '') + `<div>${esc(text)}</div>` +
     (opts.actions?.length ? `<div class="toast-actions">${opts.actions.map((a, i) =>
       `<button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : 'btn-secondary'}" data-i="${i}">${esc(a.label)}</button>`).join('')}</div>` : '');
@@ -243,7 +246,7 @@ export function openModal(o = {}) {
   _closeModal(false);
   const root = _mount('modal-root');
   root.innerHTML = `<div class="modal ${o.size || ''}${o.danger ? ' danger' : ''}" role="dialog" aria-modal="true" aria-label="${escAttr(o.title || '')}">
-      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="Close" ${act('closeModal')}>×</button></div>
+      <div class="modal-head"><h3>${esc(o.title || '')}</h3><button type="button" class="modal-close" aria-label="${th('common.close')}" ${act('closeModal')}>×</button></div>
       <div class="modal-body">${o.body || ''}</div>
       ${o.foot ? `<div class="modal-foot">${o.foot}</div>` : ''}
     </div>`;
@@ -312,7 +315,7 @@ function _closeModal(restoreFocus) {
 export function confirmDialog(o = {}) {
   return new Promise(resolve => {
     let timer = null, done = false;
-    const label = o.confirmLabel || 'Confirm';
+    const label = o.confirmLabel || t('common.confirm');
     const finish = ok => {
       if (done) return;
       done = true;
@@ -323,16 +326,16 @@ export function confirmDialog(o = {}) {
       resolve({ok, reason, checked});
     };
     const reasonHtml = o.reason
-      ? `<label class="stack mt-12 fs-12 t2" for="confirm-reason">${esc(o.reason.label || 'Reason (optional — Curatarr learns from it)')}
+      ? `<label class="stack mt-12 fs-12 t2" for="confirm-reason">${esc(o.reason.label || t('common.reason_optional'))}
            <input id="confirm-reason" class="w-full input" placeholder="${escAttr(o.reason.placeholder || '')}" value="${escAttr(o.reason.value || '')}"></label>`
       : '';
     const checkHtml = o.check
       ? `<label class="row mt-12 fs-13" for="confirm-check"><input type="checkbox" id="confirm-check"> ${esc(o.check.label)}</label>${o.check.hint ? `<div class="fs-12 t3 mt-4">${esc(o.check.hint)}</div>` : ''}`
       : '';
     openModal({
-      title: o.title || 'Are you sure?', size: 'narrow', danger: !!o.danger,
+      title: o.title || t('common.are_you_sure'), size: 'narrow', danger: !!o.danger,
       body: `${o.body || ''}${reasonHtml}${checkHtml}${o.countdown ? `<div class="confirm-count" id="confirm-count">${o.countdown}</div>` : ''}`,
-      foot: `<button type="button" class="btn btn-secondary row-end" id="confirm-cancel">${esc(o.cancelLabel || 'Cancel')}</button>
+      foot: `<button type="button" class="btn btn-secondary row-end" id="confirm-cancel">${esc(o.cancelLabel || t('common.cancel'))}</button>
              <button type="button" class="btn ${o.danger ? 'btn-danger' : 'btn-primary'}" id="confirm-ok"${o.countdown ? ' disabled' : ''}>${esc(label)}${o.countdown ? ` (${o.countdown})` : ''}</button>`,
       onClose: () => finish(false),
     });
@@ -357,7 +360,7 @@ export function confirmDialog(o = {}) {
 // "More" overflow behind a row's visible actions. `call` is the inline
 // handler (rows are string templates; `this` is the menu item, so pass data
 // through `attrs`, e.g. attrs: 'data-pid="7"'); `href` renders a link.
-export function menuHtml(items, label = 'More') {
+export function menuHtml(items, label = t('common.more')) {
   const list = (items || []).filter(Boolean);
   if (!list.length) return '';
   return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
@@ -391,9 +394,9 @@ export function pagerHtml(p) {
   const total = Number(p.total || 0), limit = Number(p.limit || 50), offset = Number(p.offset || 0);
   if (offset === 0 && total <= limit) return '';
   const from = total ? offset + 1 : 0, to = Math.min(offset + limit, total);
-  return `<div class="pager"><span>${from.toLocaleString(loc())}–${to.toLocaleString(loc())} of ${total.toLocaleString(loc())}</span><span class="row-end"></span>
-    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.page(Math.max(0, offset - limit))}>Prev</button>
-    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.page(offset + limit)}>Next</button></div>`;
+  return `<div class="pager"><span>${th('common.range_of', {from: from.toLocaleString(loc()), to: to.toLocaleString(loc()), total: total.toLocaleString(loc())})}</span><span class="row-end"></span>
+    <button type="button" class="btn btn-secondary btn-sm"${offset <= 0 ? ' disabled' : ''} ${p.page(Math.max(0, offset - limit))}>${th('common.prev')}</button>
+    <button type="button" class="btn btn-secondary btn-sm"${to >= total ? ' disabled' : ''} ${p.page(offset + limit)}>${th('common.next')}</button></div>`;
 }
 
 // btnBusy(btn, label) / btnDone(btn, label, {revertMs, keepDisabled}) — the
@@ -451,9 +454,9 @@ export function _fmtRel(iso) {
   const t = new Date(iso).getTime();
   if (isNaN(t)) return '';
   const d = t - Date.now(), a = Math.abs(d);
-  if (a < 60e3) return 'now';
+  if (a < 60e3) return t('time.now');
   const [n, u] = a < 3600e3 ? [Math.round(a / 60e3), 'min'] : a < 86400e3 ? [Math.round(a / 3600e3), 'h'] : [Math.round(a / 86400e3), 'd'];
-  return d > 0 ? `in ${n} ${u}` : `${n} ${u} ago`;
+  return t(d > 0 ? 'time.in' : 'time.ago', {n, unit: t(`time.unit.${u}`)});
 }
 export function _fmtAbs(iso) { const dt = new Date(iso); return isNaN(dt.getTime()) ? '' : dt.toLocaleString(loc()); }
 

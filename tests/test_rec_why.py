@@ -17,6 +17,7 @@ cached rec and rendered through the Deletions card's Why? button.
     python tests/test_rec_why.py
 """
 from _harness import app_db, check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js
 
 import asyncio
 import json
@@ -206,7 +207,7 @@ check("...a load started on another lane is abandoned, not rendered over the new
 
 node = shutil.which("node")
 if node:
-    js = r"""
+    js = i18n_js() + r"""
 const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const act = (name, ...args) => `data-action="${name}"` + (args.length ? ` data-args='${JSON.stringify(args)}'` : '');
 const EL = '$el';

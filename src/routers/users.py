@@ -178,6 +178,34 @@ def set_timezone(
     return {"timezone": name}
 
 
+class UiLanguageUpdate(BaseModel):
+    language: str
+
+
+@router.get("/me/ui-language")
+def get_ui_language(user: User = Depends(get_current_user)):
+    """The language setting (Settings → Account): what was picked ("auto",
+    "en", "de"), what "Automatic" detects, and what the UI is drawn in. A
+    plain def: FastAPI runs it on a worker thread."""
+    from src.services import user_language as ul
+    return {"setting": ul.stored_setting(user.id), "detected": ul.detected_language(user.id),
+            "language": ul.ui_language(user.id), "choices": list(ul.SETTINGS)}
+
+
+@router.post("/me/ui-language")
+def set_ui_language(body: UiLanguageUpdate, user: User = Depends(get_current_user)):
+    """Pick the UI language: "auto" (the language the user writes to the
+    curator in), "en" or "de". It sets the UI and every text the server
+    writes for this user - never the language of a chat answer."""
+    from src.services import user_language as ul
+    try:
+        ul.set_setting(user.id, body.language)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"language must be one of {', '.join(ul.SETTINGS)}")
+    return {"setting": body.language, "language": ul.ui_language(user.id),
+            "locale": ul.user_locale(user.id)}
+
+
 class CuratorVoiceUpdate(BaseModel):
     voice: str
 

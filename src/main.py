@@ -705,7 +705,7 @@ async def catch_all(full_path: str):
         # sw.js and the manifest too: a stale service worker keeps serving
         # the old shell, and the browser re-checks both on every launch. The
         # icons revalidate as well (304 when unchanged), so a new logo shows.
-        if full_path.startswith(("js/", "css/", "icons/")) or full_path in ("sw.js", "manifest.json"):
+        if full_path.startswith(("js/", "css/", "icons/", "i18n/")) or full_path in ("sw.js", "manifest.json"):
             headers["Cache-Control"] = "no-cache"
         return FileResponse(candidate, headers=headers)
     return FileResponse(

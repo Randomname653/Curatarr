@@ -1,12 +1,13 @@
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 import { api } from './api.js';
 import { API, _errMsg, btnDone, setLocale, toast } from './ui.js';
+import { setLanguage, t } from './i18n.js';
 import { state } from './state.js';
 import { loadUnreadMessages } from './notifications.js';
 import { showOnboarding } from './setup.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
-import { loadFollowupCard, loadGlancePanel, loadMomentsCards, loadTonightCard, loadLastPlayed, loadStarters, restoreChatHistory } from './chat.js';
+import { loadFollowupCard, loadGlancePanel, loadMomentsCards, loadTonightCard, loadLastPlayed, loadStarters, paintStaticChips, restoreChatHistory } from './chat.js';
 import { startTaskStream, stopTaskStream } from './activity.js';
 import { startProcessMonitor } from './game.js';
 import { routeFromHash } from './nav.js';
@@ -232,8 +233,9 @@ async function showMyPicture(u) {
 export function setUser(u) {
   state.currentUser = u;
   setLocale(u.locale);
+  setLanguage(u.ui_language);    // the UI's words: the setting, else the chat's language
   syncTimezone(u);
-  document.getElementById('user-name').textContent = u.username || 'User';
+  document.getElementById('user-name').textContent = u.username || t('top.user');
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
   showMyPicture(u);
   if (u.server === 'jellyfin') {
@@ -303,6 +305,7 @@ export async function showApp() {
   loadTonightCard();
   loadGlancePanel();
   loadLastPlayed();
+  paintStaticChips();
   loadStarters();
   startTaskStream();
   // Process monitor polls the admin-only /api/processes router — only start it

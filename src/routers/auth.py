@@ -568,12 +568,13 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
     token = _create_jwt(user_id, is_admin, token_version)
     _pin_bindings.pop(int(pin_id), None)   # one PIN, one session
     from src.database.runner import run_read
-    from src.services.user_language import user_locale
+    from src.services.user_language import ui_language, user_locale
     return {
         "status": "ok",
         "token": token,
         "user": {"id": user_id, "username": username, "is_admin": is_admin,
-                 "locale": await run_read(user_locale, user_id)},
+                 "locale": await run_read(user_locale, user_id),
+                 "ui_language": await run_read(ui_language, user_id)},
     }
 
 
@@ -692,10 +693,11 @@ async def _finish_jellyfin_login(who, background_tasks: BackgroundTasks) -> dict
             background_tasks.add_task(_bootstrap_user_data, info[0])
     user_id, is_admin, token_version, username = info
     from src.database.runner import run_read
-    from src.services.user_language import user_locale
+    from src.services.user_language import ui_language, user_locale
     return {"status": "ok", "token": _create_jwt(user_id, is_admin, token_version),
             "user": {"id": user_id, "username": username, "is_admin": is_admin,
-                     "locale": await run_read(user_locale, user_id)}}
+                     "locale": await run_read(user_locale, user_id),
+                     "ui_language": await run_read(ui_language, user_id)}}
 
 
 @router.get("/server")
@@ -793,7 +795,7 @@ async def jellyfin_password_login(body: JellyfinPasswordLogin, request: Request,
 @router.get("/status")
 def auth_status(user: User = Depends(get_current_user)):
     from src.services.media_server import active_kind
-    from src.services.user_language import user_locale
+    from src.services.user_language import ui_language, user_locale
     return {
         "server": active_kind(),
         "authenticated": True,
@@ -801,8 +803,10 @@ def auth_status(user: User = Depends(get_current_user)):
         "username": user.plex_username,
         "is_admin": user.is_admin,
         "timezone": user.timezone,
-        # Numbers and dates in the language the user writes to the curator in.
+        # Numbers and dates, and the UI, in the user's language: the setting,
+        # else the one they write to the curator in (services/user_language).
         "locale": user_locale(user.id),
+        "ui_language": ui_language(user.id),
     }
 
 

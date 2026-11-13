@@ -48,6 +48,29 @@ def main() -> int:
             failures.append(label)
         print(f"  {status} {label}" + (f"  — {'; '.join(detail)}" if detail else ""))
 
+    # The UI names the templates take from the dictionary (⟦key⟧): in both
+    # dictionaries, and drawn by the frontend - data-i18n*="key" in the
+    # markup or t('key') in a module - so the curator names what the user sees.
+    import json
+    import re
+    i18n = os.path.join(root, "frontend", "i18n")
+    dicts = {lang: json.load(open(os.path.join(i18n, f"{lang}.json"), encoding="utf-8")) for lang in ("en", "de")}
+    print(f"\nchecking {len(app_context.REFERENCED_UI_KEYS)} dictionary keys")
+    for key in app_context.REFERENCED_UI_KEYS:
+        missing = [lang for lang, d in dicts.items() if key not in d]
+        drawn = re.search(r'data-i18n(?:-[\w-]+)?="%s"|\bth?\(\s*[\'"]%s[\'"]' % (re.escape(key), re.escape(key)), html)
+        status = "OK  " if not missing and drawn else "FAIL"
+        detail = ([f"missing in {', '.join(missing)}.json"] if missing else []) + ([] if drawn else ["not drawn by the UI"])
+        if detail:
+            failures.append(key)
+        print(f"  {status} {key}" + (f"  — {'; '.join(detail)}" if detail else ""))
+    templates = {name: val for name, val in vars(app_context).items() if name.endswith("_TEMPLATE")}
+    for lang in ("en", "de"):
+        for name, val in templates.items():
+            if "⟦" in app_context.render(val, lang):
+                failures.append(f"{name}:{lang}")
+                print(f"  FAIL {name} keeps a marker in {lang}")
+
     print()
     if failures:
         print(f"DRIFT: {len(failures)} problem(s) — sync app_context.py with the UI.")

@@ -29,6 +29,11 @@ class User(Base):
     # IANA zone the user's browser reports (e.g. "Europe/Berlin"): their
     # evening is a local notion, and a container clock is often UTC.
     timezone = Column(String(64), nullable=True)
+    # The language of the UI and of every server-written text (cards, chips,
+    # playlist names, the Wrap-Up): "en" / "de", or NULL for "Automatic" (the
+    # language the user writes to the curator in). Never the chat answer's
+    # language - that follows each message (services/user_language).
+    ui_language = Column(String(8), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
     # The user's OWN plex.tv token, captured at PIN login. Powers per-account

@@ -12,6 +12,18 @@ their insert had committed and closed the session. The batch was saved, but the 
 used stayed pending (so it could be offered again) and every member after that got no new
 openers. The check now reads the openers before the insert.
 
+**Curatarr speaks German, starting with the everyday screens** (design record 3.8, first of three
+rounds). Settings → Account has "Language: Automatic / English / Deutsch" for every user, the
+owner too. Automatic is the language they write to the curator in, as before; a pick wins over
+it. The setting decides the UI and every text the server writes for that user (the chat's
+status and error lines, the GPU-busy notice, the bell's labels, the cards, chips and playlist
+names); it never decides the language of a chat answer, which still follows the message. This
+round covers the navigation (sidebar and the phone's dock), the chat landing (greeting, chips,
+the follow-up, Tonight and moment cards, the action row under a reply), the bell, Settings →
+Account and Recommendations; Swipe, Wrap-Up and History follow, then the admin views. The words
+live in `frontend/i18n/en.json` and `de.json`, which the server reads too: the curator's map of
+the app names the buttons the user sees, in the user's language, so the two cannot drift apart.
+
 **Last played shows the pinned title's poster.** A play row without an id got its poster from a
 title search, and a short title found the wrong show (another series' artwork next to the right
 episode), although the owner had pinned the right one in the Knowledge Base. The recent-history

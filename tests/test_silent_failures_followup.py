@@ -40,6 +40,7 @@ from pydantic import SecretStr  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _i18n_js import i18n_js
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 from src.config import settings  # noqa: E402
@@ -92,7 +93,7 @@ def test_401_ends_the_session():
     body = api[:api.index("// ── SWR VIEW CACHE")]   # api() + the session-end block
     body = "\n".join(l for l in body.splitlines() if not l.startswith("import "))
     body = body.replace("export ", "")
-    js = """
+    js = i18n_js() + """
 const state = {token: 'tok'};
 const API = '';
 const confirmDialog = async () => ({ok: false});
@@ -142,7 +143,9 @@ globalThis.fetch = async (path) => ({
     act = (_JS / "activity.js").read_text(encoding="utf-8")
     bell = (_JS / "notifications.js").read_text(encoding="utf-8")
     check("the sign-in screen shows why the session ended",
-          "SESSION_ENDED_KEY" in app and "sign in again" in app)
+          "SESSION_ENDED_KEY" in app and "t('boot.session_ended', {why: ended})" in app
+          and json.loads((_JS.parent / "i18n" / "en.json").read_text(encoding="utf-8"))["boot.session_ended"]
+          == "{why} — sign in again.")
     check("task stream: a 401 ends the session instead of returning silently",
           "if (r.status === 401) { sessionEnded(" in act)
     check("task stream: ticket failures back off and say the stream is down",
