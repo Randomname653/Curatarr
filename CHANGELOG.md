@@ -6,6 +6,9 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**opentelemetry 1.45.2.** The lock moves the opentelemetry packages ChromaDB pulls in from 1.45.1
+to 1.45.2 for GHSA-mf5v-w3w3-f6cg (moderate); nothing else in the lock changes.
+
 **The app starts again instead of the Setup wizard.** Since the UI language the app's modules load
 the dictionaries before they run, and that could end after the page's load event: the start code
 was then hooked to an event that had already fired, never ran, and a configured install sat on the
