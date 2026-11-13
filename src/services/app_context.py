@@ -133,10 +133,10 @@ APP_MAP_TEMPLATE = (
     "from Plex to Jellyfin or back with all history and curation kept, "
     "'⟦settings.integrations⟧' holds the service connections, among them an optional "
     "Shoko server that gets every finished anime episode reported as "
-    "watched; under its card, 'Without a Shoko episode' lists the series "
+    "watched; under its card, '⟦shoko.without_episode⟧' lists the series "
     "the sync could not place, to link to their AniDB entry or skip, "
-    "'⟦settings.maintenance⟧' has sync and repair actions and 'Compute "
-    "nodes': this server and the node that lends its card, with what each "
+    "'⟦settings.maintenance⟧' has sync and repair actions and '⟦set.view.nodes⟧"
+    "': this server and the node that lends its card, with what each "
     "card is doing right now, which the owner can rename and update there).\n"
 )
 
@@ -157,7 +157,7 @@ KB_HEALING_TEMPLATE = (
     "unsure match, not found after two or more tries, and audit findings "
     "(wrong entity, shared id, pin contradicted). Admin actions there: "
     "'⟦kb.search_pin⟧' (the arr's own lookup plus TMDB/AniList candidates; "
-    "'Pin this id' for a typed id; 'Not this one' excludes a wrong candidate "
+    "'⟦picker.pin_this⟧' for a typed id; '⟦picker.reject⟧' excludes a wrong candidate "
     "for good), '⟦kb.retry_now⟧', '⟦kb.ignore⟧' / '⟦kb.unignore⟧' (an accepted gap leaves "
     "the open count), '⟦kb.dismiss_finding⟧'. When asked why the library is not at "
     "100 %, explain from these states — never call an item unfindable when it "
@@ -220,11 +220,9 @@ REFERENCED_UI_KEYS: tuple[str, ...] = tuple(sorted({
     k for name, v in list(globals().items()) if name.endswith("_TEMPLATE") and isinstance(v, str)
     for k in keys_in(v)}))
 
-# The labels still written verbatim (their pages are translated in a later
-# round): each must exist as is in the frontend files, and none be orphaned.
+# The labels still written verbatim: none has a UI key ('Report' names a
+# view the UI no longer draws under that word in any language). Each must
+# exist as is in the frontend files, and none be orphaned.
 REFERENCED_UI_LABELS: tuple[str, ...] = (
     "Report",
-    # Knowledge Base health (KB_HEALING_BLOCK)
-    "Pin this id",
-    "Not this one",
 )

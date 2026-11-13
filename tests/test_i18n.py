@@ -42,13 +42,20 @@ check("English and German hold the same keys", set(EN) == set(DE),
       (sorted(set(EN) - set(DE))[:10], sorted(set(DE) - set(EN))[:10]))
 check("...with the same plural forms", all(set(_forms(EN[k])) == set(_forms(DE[k])) for k in EN if k in DE),
       [k for k in EN if k in DE and set(_forms(EN[k])) != set(_forms(DE[k]))])
+# A German singular may say the number in words ("jede Stunde" for "every {x} h"):
+# its values are a subset of the English; every other form has the same ones.
 mismatch = [k for k in EN if k in DE and any(
-    set(_VARS.findall(e)) != set(_VARS.findall(_forms(DE[k]).get(f, ""))) for f, e in _forms(EN[k]).items())]
-check("...and the same {values} in every text", not mismatch, mismatch)
+    (set(_VARS.findall(_forms(DE[k]).get(f, ""))) - set(_VARS.findall(e))) if f == "one"
+    else set(_VARS.findall(e)) != set(_VARS.findall(_forms(DE[k]).get(f, ""))) for f, e in _forms(EN[k]).items())]
+check("...and the same {values} in every text (a German singular may spell the one out)", not mismatch, mismatch)
 # German word order can leave the lead or the tail of a sentence empty.
 _MAY_BE_EMPTY = {"recs.add_question_pre", "pwa.ios_step1_post"}
 check("...no German text is empty where the English is not (a sentence's lead or tail may be)",
       [k for k in EN if _forms(EN[k]).get("") and not _forms(DE[k]).get("") and k not in _MAY_BE_EMPTY] == [])
+
+# An old find-and-replace turned "token" into "state.token" in three UI texts.
+code_words = [k for d in (EN, DE) for k, v in d.items() if any("state.token" in x for x in _forms(v).values())]
+check("no UI text says a variable's name ('state.token')", not code_words, code_words)
 
 # ── the markup and the modules ──────────────────────────────────────────────
 

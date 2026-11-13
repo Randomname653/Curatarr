@@ -20,6 +20,7 @@ Each behavioural check fails on the code before this change.
     python tests/test_fail_closed_s2_g4.py
 """
 from _harness import app_db, check  # noqa: I001 - first: temp stores
+from _i18n_js import with_words  # noqa: E402
 
 import asyncio
 import json
@@ -145,7 +146,7 @@ check("...and is a WARNING on the server",
       any("quality_profiles" in r.getMessage() for r in cap.at(logging.WARNING)))
 ls_js = _js_fn(_src("frontend/js/library_settings.js"), "loadArrProfiles")
 check("loadArrProfiles renders the *_error fields and disables the dropdown",
-      "_error`]" in ls_js and "couldn't read from" in ls_js
+      "_error`]" in ls_js and "couldn't read from" in with_words(ls_js)
       and "dis('quality_profiles')" in ls_js and "dis('root_folders')" in ls_js)
 
 # ── 3. starters: written on the writer, increment in SQL ───────────────────

@@ -7,6 +7,7 @@
 import { api } from './api.js';
 import { act, esc, openModal } from './ui.js';
 import { state } from './state.js';
+import { t, th } from './i18n.js';
 
 const REFRESH_MS = 15 * 60_000;
 let _last = null;
@@ -18,7 +19,7 @@ export async function loadVersion() {
   const el = document.getElementById('sb-version');
   if (el) {
     el.textContent = `v${v.version || '?'}${v.short ? ` · ${v.short}` : ''}`;
-    el.title = v.sha ? `Build ${v.sha}${v.built ? `, built ${v.built}` : ''}` : 'Build unknown';
+    el.title = v.sha ? (v.built ? t('version.build_built', {sha: v.sha, built: v.built}) : t('version.build', {sha: v.sha})) : t('version.build_unknown');
     el.hidden = false;
   }
   const btn = document.getElementById('sb-update');
@@ -29,14 +30,17 @@ export async function loadVersion() {
 export function showUpdateInfo() {
   const v = _last || {};
   const u = v.update || {};
-  const behind = u.behind_by ? `${u.behind_by} commit${u.behind_by === 1 ? '' : 's'} newer` : 'newer';
+  const code = x => `<code>${esc(x)}</code>`;
+  // the build ids go in as markup: the words around them are escaped first
+  const published = (u.behind_by ? th('version.published_behind', {n: u.behind_by, x: '\u0001'}) : th('version.published', {x: '\u0001'}))
+    .replace('\u0001', u.latest_short ? ` (${code(u.latest_short)})` : '');
   openModal({
-    title: 'Update available',
+    title: t('version.update_available'),
     size: 'narrow',
-    body: `<p>A ${esc(behind)} Curatarr is published${u.latest_short ? ` (<code>${esc(u.latest_short)}</code>)` : ''}.
-        This one runs <code>${esc(v.short || '?')}</code>.</p>
+    body: `<p>${published}
+        ${th('version.this_runs', {x: '\u0001'}).replace('\u0001', code(v.short || '?'))}</p>
       <p class="t2 mt-8">${esc(u.how || '')}</p>
-      <p class="t3 fs-12 mt-8"><a href="https://github.com/Randomname653/Curatarr/blob/main/CHANGELOG.md" target="_blank" rel="noopener">What changed</a></p>`,
-    foot: `<button class="btn btn-primary w-full" ${act('closeModal')}>Got it</button>`,
+      <p class="t3 fs-12 mt-8"><a href="https://github.com/Randomname653/Curatarr/blob/main/CHANGELOG.md" target="_blank" rel="noopener">${th('version.what_changed')}</a></p>`,
+    foot: `<button class="btn btn-primary w-full" ${act('closeModal')}>${th('common.got_it')}</button>`,
   });
 }

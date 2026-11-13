@@ -19,7 +19,7 @@ import { loadVersion } from './version.js';
 // PIN's whole 15 minutes. Three misses in a row say so (and keep retrying).
 const PLEX_POLL_MISSES = 3;
 export function _plexPollNote(misses) {
-  return misses >= PLEX_POLL_MISSES ? 'Plex sign-in is not answering — retrying' : 'Waiting for authentication…';
+  return t(misses >= PLEX_POLL_MISSES ? 'auth.plex_not_answering' : 'auth.waiting_auth');
 }
 
 export async function startPlexLogin() {
@@ -28,7 +28,7 @@ export async function startPlexLogin() {
     data = await api('/api/auth/plex/pin','POST');
   } catch (e) {
     // The button used to do nothing at all on a failure here.
-    toast(`Couldn't start the Plex sign-in — ${_errMsg(e)}`, 'danger');
+    toast(t('auth.plex_start_failed', {error: _errMsg(e)}), 'danger');
     return;
   }
   document.getElementById('pin-box').hidden = false;
@@ -64,7 +64,7 @@ export async function startPlexLogin() {
       clearInterval(state.pollInterval);
       state.pollInterval = null;
       const codeEl = document.getElementById('pin-code');
-      if (codeEl) codeEl.textContent = 'Code expired — select Sign in with Plex again';
+      if (codeEl) codeEl.textContent = t('auth.plex_code_expired');
       return;
     }
     try {
@@ -77,7 +77,7 @@ export async function startPlexLogin() {
         clearInterval(state.pollInterval);
         state.pollInterval = null;
         state.token=r.token; localStorage.setItem('curatarr_token',state.token);
-        // Restart stream with new state.token
+        // Restart stream with new token
         stopTaskStream();
         state.taskStreamRetries = 0;
         setUser(r.user); showApp();
@@ -90,7 +90,7 @@ export async function startPlexLogin() {
       else if (e.status === 403) {
         clearInterval(state.pollInterval);
         state.pollInterval = null;
-        let why = 'Sign-in expired — select Sign in with Plex again';
+        let why = t('auth.plex_signin_expired');
         try { why = JSON.parse(e.message).detail || why; } catch { /* plain-text body */ }
         const codeEl = document.getElementById('pin-code');
         if (codeEl) codeEl.textContent = why;
@@ -102,23 +102,38 @@ export async function startPlexLogin() {
   schedulePoll(POLL_MS);
 }
 
+// The sign-in screen's tagline and password intro, and History's libraries
+// button, name the media server: auth.js writes them, so they come from the
+// dictionary on every path (Plex and Jellyfin) and again when the language
+// changes - markup's data-i18n cannot carry them.
+const _login = {server: 'Plex', quickConnect: true};
+let _libsServer = 'Plex';
+function _paintAuthTexts() {
+  const tagline = document.getElementById('auth-tagline');
+  if (tagline) tagline.textContent = t('auth.tagline', {server: _login.server});
+  const intro = document.getElementById('jf-pw-intro');
+  if (intro) intro.textContent = t(_login.quickConnect ? 'auth.jf_pw_intro_or' : 'auth.jf_pw_intro');
+  const lib = document.getElementById('libraries-btn');
+  if (lib) lib.textContent = t('auth.libraries_btn', {server: _libsServer});
+}
+globalThis.addEventListener?.('i18n:changed', _paintAuthTexts);
+
 // ── Jellyfin (docs/JELLYFIN_DESIGN.md) ───────────────────────────────────────
 // The login screen asks which server signs people in before it draws its
 // buttons; a failed ask keeps the Plex screen, which is every install from
 // before Jellyfin support.
 export async function prepareLogin() {
   let srv;
-  try { srv = await api('/api/auth/server'); } catch (e) { console.warn('[auth] server kind not read - Plex screen stays', e); return; }
-  if (srv?.kind !== 'jellyfin') return;
-  document.getElementById('auth-tagline').textContent = 'Your personal AI media curator for Jellyfin. Sign in to continue.';
+  try { srv = await api('/api/auth/server'); } catch (e) { console.warn('[auth] server kind not read - Plex screen stays', e); _paintAuthTexts(); return; }
+  if (srv?.kind !== 'jellyfin') { _paintAuthTexts(); return; }
+  _login.server = 'Jellyfin';
+  _login.quickConnect = srv.quick_connect !== false;
+  _paintAuthTexts();
   document.getElementById('plex-login-btn').hidden = true;
   document.getElementById('jf-login').hidden = false;
   // Quick Connect is off by default on a Jellyfin server: then the password
   // form is the way in, and says so instead of offering a dead button.
-  if (srv.quick_connect === false) {
-    document.getElementById('jf-qc-btn').hidden = true;
-    document.getElementById('jf-pw-intro').textContent = 'Sign in with your Jellyfin name and password:';
-  }
+  if (srv.quick_connect === false) document.getElementById('jf-qc-btn').hidden = true;
 }
 
 function _signedIn(r) {
@@ -137,14 +152,14 @@ export async function startJellyfinQuickConnect() {
   try {
     data = await api('/api/auth/jellyfin/quickconnect', 'POST');
   } catch (e) {
-    toast(`Couldn't start Quick Connect — ${_detail(e, _errMsg(e))}`, 'danger');
+    toast(t('auth.qc_start_failed', {error: _detail(e, _errMsg(e))}), 'danger');
     return;
   }
   const code = String(data.code || '');
   document.getElementById('jf-qc-box').hidden = false;
   document.getElementById('jf-qc-code').textContent = code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code;
   const status = document.getElementById('jf-qc-status');
-  status.textContent = 'Waiting for approval…';
+  status.textContent = t('auth.waiting_approval');
   if (state.pollInterval) clearInterval(state.pollInterval);
   const expiresAt = Date.now() + (data.expires_in || 600) * 1000;
   // 5 s: the poll is a LAN call to Curatarr and one to Jellyfin, budgeted
@@ -153,17 +168,17 @@ export async function startJellyfinQuickConnect() {
   let misses = 0;
   const stop = (note) => { clearInterval(state.pollInterval); state.pollInterval = null; if (note) status.textContent = note; };
   state.pollInterval = setInterval(async () => {
-    if (Date.now() > expiresAt) { stop('Code expired — select Sign in with Quick Connect again'); return; }
+    if (Date.now() > expiresAt) { stop(t('auth.qc_code_expired')); return; }
     try {
       const r = await api(`/api/auth/jellyfin/quickconnect/${encodeURIComponent(data.login_id)}`, 'GET', null, false,
                           {'X-Jellyfin-Login-Nonce': data.nonce});
       misses = 0;
-      status.textContent = 'Waiting for approval…';
+      status.textContent = t('auth.waiting_approval');
       if (r.status === 'ok') { stop(); _signedIn(r); }
     } catch (e) {
       // 403: the server no longer knows this sign-in, or refused the account.
-      if (e.status === 403) stop(_detail(e, 'Sign-in expired — select Sign in with Quick Connect again'));
-      else if (++misses >= 3) status.textContent = 'Jellyfin is not answering — retrying';
+      if (e.status === 403) stop(_detail(e, t('auth.qc_signin_expired')));
+      else if (++misses >= 3) status.textContent = t('auth.jf_not_answering');
     }
   }, POLL_MS);
 }
@@ -181,7 +196,7 @@ export async function jellyfinPasswordLogin(ev) {
     _signedIn(r);
   } catch (e) {
     pass.value = '';
-    toast(_detail(e, `Sign-in failed — ${_errMsg(e)}`), 'danger');
+    toast(_detail(e, t('auth.signin_failed', {error: _errMsg(e)})), 'danger');
   } finally {
     btn.disabled = false;
   }
@@ -192,9 +207,9 @@ export async function copyPlexCode(btn) {
   const code = (document.getElementById('pin-code')?.textContent || '').replace(/\s+/g, '');
   try {
     await navigator.clipboard.writeText(code);
-    btnDone(btn, 'Copied', {revertMs: 2000});
+    btnDone(btn, t('auth.copied'), {revertMs: 2000});
   } catch {
-    toast("Couldn't copy — select the code and copy it by hand.", 'amber');
+    toast(t('auth.copy_failed'), 'amber');
   }
 }
 
@@ -238,10 +253,8 @@ export function setUser(u) {
   document.getElementById('user-name').textContent = u.username || t('top.user');
   document.getElementById('user-avatar').textContent = (u.username||'?')[0].toUpperCase();
   showMyPicture(u);
-  if (u.server === 'jellyfin') {
-    const lib = document.getElementById('libraries-btn');
-    if (lib) lib.textContent = 'Jellyfin libraries';
-  }
+  _libsServer = u.server === 'jellyfin' ? 'Jellyfin' : 'Plex';
+  _paintAuthTexts();
   if (u.is_admin) {
     // Admin-only chrome: the sidebar's Curate section, the admin Settings
     // tabs, inline admin actions (e.g. Force sync) — let CSS decide layout
@@ -276,7 +289,7 @@ export async function showApp() {
     // Check if onboarding is needed
     let cfg = null;
     try { cfg = await api('/api/libraries/config'); }
-    catch (e) { toast(`Couldn't check the library setup — ${_errMsg(e)}. Opening the app anyway.`, 'amber', {ms: 8000}); }
+    catch (e) { toast(t('auth.check_libs_failed', {error: _errMsg(e)}), 'amber', {ms: 8000}); }
     if (cfg && (!cfg.configured || !cfg.libraries?.length)) {
       showOnboarding('libraries');
       return;
@@ -286,7 +299,7 @@ export async function showApp() {
     let hist = null;
     if (cfg) {
       try { hist = await api('/api/history/status'); }
-      catch (e) { toast(`Couldn't check the watch-history sync — ${_errMsg(e)}. Opening the app anyway.`, 'amber', {ms: 8000}); }
+      catch (e) { toast(t('auth.check_sync_failed', {error: _errMsg(e)}), 'amber', {ms: 8000}); }
     }
     if (hist && hist.watch_history_entries === 0) {
       showOnboarding('sync');

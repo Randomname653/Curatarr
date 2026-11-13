@@ -29,6 +29,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
 from _harness import wait_until  # noqa: E402,I001 - first: temp stores
+from _i18n_js import with_words  # noqa: E402
 from _checks import check, real_state  # noqa: E402
 
 from src.services import activity  # noqa: E402
@@ -409,7 +410,7 @@ check("the view has the three tabs and the history filters",
       and all(f'data-args=\'["area","{v}"]\'' in html for v in ("sync", "enrichment", "taste", "maintenance"))
       and 'id="act-hide-noop" checked' in html)
 check("the empty queue says all queues are idle",
-      "No active tasks running — all queues idle." in js)
+      "No active tasks running — all queues idle." in with_words(js))
 check("Run now posts to the scheduled endpoint, encoded",
       "`/api/tasks/scheduled/${encodeURIComponent(jobId)}/run`" in js)
 

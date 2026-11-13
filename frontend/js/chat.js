@@ -813,7 +813,7 @@ export function addMsg(text,role) {
   return div;
 }
 
-// The thinking badge (brand.js) as the placeholder while we wait for the first state.token
+// The thinking badge (brand.js) as the placeholder while we wait for the first token
 // from the streaming chat endpoint. Same structure as addMsg() so the
 // caller can later replace innerHTML with the real response.
 export function addThinkingMsg() {

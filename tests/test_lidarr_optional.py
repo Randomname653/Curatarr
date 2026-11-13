@@ -4,6 +4,7 @@ artist universe, the settings hint and the docs.
     python tests/test_lidarr_optional.py
 """
 import _harness  # noqa: F401,I001 - first: temp stores
+from _i18n_js import with_words  # noqa: E402
 
 import asyncio
 import pathlib
@@ -87,7 +88,7 @@ def test_the_readers_and_the_docs_know_the_index():
     disc = (_ROOT / "src/services/discogs_offline.py").read_text(encoding="utf-8")
     assert "from src.services.lyrics import plex_artists" in disc
     js = (_ROOT / "frontend/js/library_settings.js").read_text(encoding="utf-8")
-    assert "Optional. Without Lidarr the Music page" in js
+    assert "Optional. Without Lidarr the Music page" in with_words(js)
     arch = (_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
     assert "| Lidarr optional |" in arch and "**Lidarr optional (2026-09-15).**" in arch
     assert "**Lidarr is optional.**" in (_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")

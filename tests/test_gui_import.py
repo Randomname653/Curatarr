@@ -129,7 +129,7 @@ for f in SETUP_FIELDS:
 
 check("no stale model generation left in the frontend", "qwen2.5" not in _f)
 check("the frontend fallback matches the benchmarked default",
-      "gemma4:31b (recommended" in _f)
+      "gemma4:31b (${th('setup.recommended_docs')})" in _f)
 
 shutil.rmtree(TMP, ignore_errors=True)
 check.done()

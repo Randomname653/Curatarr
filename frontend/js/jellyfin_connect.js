@@ -6,6 +6,7 @@
 // caller says what a finished connect means with onConnected.
 import { EVENT, _errMsg, act, actOn, esc, escAttr } from './ui.js';
 import { api } from './api.js';
+import { t, th } from './i18n.js';
 
 let _onConnected = null;
 let _poll = null;
@@ -24,37 +25,37 @@ function _detail(e, fallback) {
 export function jellyfinConnectHtml(url, connected, onConnected) {
   _onConnected = onConnected;
   if (connected) {
-    return `<div class="test-status ok">Connected to ${esc(connected.server_name || 'Jellyfin')}${connected.version ? ` (Jellyfin ${esc(connected.version)})` : ''}, approved by ${esc(connected.admin || 'its admin')}. Curatarr made its own API key — Dashboard → API Keys → Curatarr.</div>
-      <button class="btn btn-secondary btn-sm mt-8" ${act('jellyfinConnectAgain')}>Connect a different server</button>`;
+    return `<div class="test-status ok">${th('jfconn.connected_to', {server: connected.server_name || 'Jellyfin'})}${connected.version ? ` (Jellyfin ${esc(connected.version)})` : ''}${th('jfconn.approved_by', {admin: connected.admin || t('jfconn.its_admin')})}</div>
+      <button class="btn btn-secondary btn-sm mt-8" ${act('jellyfinConnectAgain')}>${th('jfconn.connect_other')}</button>`;
   }
   return `<div class="form-group">
-      <label for="s-jellyfin-url">Jellyfin server</label>
-      <div id="jf-found" class="mb-8" role="status" aria-live="polite"><span class="t3 fs-12">Looking for Jellyfin on your network…</span></div>
+      <label for="s-jellyfin-url">${th('jfconn.server')}</label>
+      <div id="jf-found" class="mb-8" role="status" aria-live="polite"><span class="t3 fs-12">${th('jfconn.looking')}</span></div>
       <input id="s-jellyfin-url" type="url" placeholder="http://192.168.1.100:8096" value="${escAttr(url || '')}">
-      <div class="hint">Picked from the servers found, or any address of a Jellyfin 10.9 or newer.</div>
+      <div class="hint">${th('jfconn.url_hint')}</div>
     </div>
     <div class="row">
-      <button class="btn btn-primary btn-sm" id="jf-connect-btn" ${act('jellyfinConnectStart')}>Connect with Quick Connect</button>
-      <button class="btn btn-secondary btn-sm" ${act('jellyfinShowPassword')}>Use the admin password</button>
+      <button class="btn btn-primary btn-sm" id="jf-connect-btn" ${act('jellyfinConnectStart')}>${th('jfconn.connect_qc')}</button>
+      <button class="btn btn-secondary btn-sm" ${act('jellyfinShowPassword')}>${th('jfconn.use_password')}</button>
     </div>
     <div hidden id="jf-setup-qc" class="boxed mt-8 t-center">
-      <p class="fs-13 t2">In Jellyfin, signed in as an administrator: your user menu → Quick Connect, then enter</p>
+      <p class="fs-13 t2">${th('jfconn.qc_where')}</p>
       <div class="setup-qc-code" id="jf-setup-code">··· ···</div>
-      <small class="t2" id="jf-setup-status" role="status" aria-live="polite">Waiting for approval…</small>
+      <small class="t2" id="jf-setup-status" role="status" aria-live="polite">${th('jfconn.waiting')}</small>
     </div>
     <form hidden id="jf-setup-pw" class="boxed mt-8" ${actOn('submit', 'jellyfinPasswordConnect', EVENT)}>
       <div class="form-group">
-        <label for="jf-setup-user">Jellyfin administrator</label>
+        <label for="jf-setup-user">${th('jfconn.admin')}</label>
         <input id="jf-setup-user" autocomplete="username" required maxlength="256">
       </div>
       <div class="form-group">
-        <label for="jf-setup-pass">Password</label>
+        <label for="jf-setup-pass">${th('jfconn.password')}</label>
         <input id="jf-setup-pass" type="password" autocomplete="current-password" maxlength="1024">
-        <div class="hint">Goes to Jellyfin once, to make Curatarr's API key; never stored.</div>
+        <div class="hint">${th('jfconn.password_hint')}</div>
       </div>
-      <button class="btn btn-primary btn-sm" id="jf-setup-pw-btn" type="submit">Connect</button>
+      <button class="btn btn-primary btn-sm" id="jf-setup-pw-btn" type="submit">${th('jfconn.connect')}</button>
     </form>
-    <div class="fs-11 t3 mt-8 lh-15">Household members later sign in with their own Jellyfin accounts; Quick Connect (Dashboard → General) lets them without typing a password into Curatarr.</div>`;
+    <div class="fs-11 t3 mt-8 lh-15">${th('jfconn.members_hint')}</div>`;
 }
 
 // Fills #jf-found with the servers on the LAN; one found = picked.
@@ -63,10 +64,10 @@ export async function findJellyfinServers() {
   if (!box) return;
   let servers = [];
   try { servers = (await api('/api/setup/jellyfin/servers')).servers || []; }
-  catch (e) { box.innerHTML = `<span class="t3 fs-12">Could not look for servers — ${esc(_errMsg(e))}. Enter the address below.</span>`; return; }
+  catch (e) { box.innerHTML = `<span class="t3 fs-12">${th('jfconn.search_failed', {error: _errMsg(e)})}</span>`; return; }
   if (!document.getElementById('jf-found')) return;   // the step moved on meanwhile
   if (!servers.length) {
-    box.innerHTML = '<span class="t3 fs-12">No Jellyfin found on its usual ports — enter its address below.</span>';
+    box.innerHTML = `<span class="t3 fs-12">${th('jfconn.none_found')}</span>`;
     return;
   }
   box.innerHTML = `<div class="row">${servers.map(s => `<button class="btn btn-secondary btn-sm" ${act('jellyfinPick', s.url)}>${esc(s.name)} <span class="t3">· ${esc(s.version)}</span></button>`).join('')}</div>`;
@@ -98,28 +99,28 @@ export async function jellyfinConnectStart() {
   catch (e) {
     box.hidden = false;
     code.textContent = '';
-    status.textContent = _detail(e, `Couldn't start Quick Connect — ${_errMsg(e)}`);
+    status.textContent = _detail(e, t('jfconn.qc_failed', {error: _errMsg(e)}));
     return;
   }
   const c = String(data.code || '');
   box.hidden = false;
   code.textContent = c.length === 6 ? `${c.slice(0, 3)} ${c.slice(3)}` : c;
-  status.textContent = 'Waiting for approval…';
+  status.textContent = t('jfconn.waiting');
   _stopPoll();
   const expiresAt = Date.now() + (data.expires_in || 600) * 1000;
   let misses = 0;
   const stop = (note) => { _stopPoll(); if (note) status.textContent = note; };
   _poll = setInterval(async () => {
     if (!document.getElementById('jf-setup-status')) { _stopPoll(); return; }   // the step was left
-    if (Date.now() > expiresAt) { stop('Code expired — select Connect with Quick Connect again'); return; }
+    if (Date.now() > expiresAt) { stop(t('jfconn.expired')); return; }
     try {
       const r = await api(`/api/setup/jellyfin/connect/${encodeURIComponent(data.login_id)}`, 'GET', null, false,
                           {'X-Jellyfin-Login-Nonce': data.nonce});
       misses = 0;
       if (r.status === 'ok') _finish(r);
     } catch (e) {
-      if (e.status === 403 || (e.status === 502 && misses >= 2)) stop(_detail(e, 'Connect failed — start again'));
-      else if (++misses >= 3) status.textContent = 'Jellyfin is not answering — retrying';
+      if (e.status === 403 || (e.status === 502 && misses >= 2)) stop(_detail(e, t('jfconn.failed_restart')));
+      else if (++misses >= 3) status.textContent = t('jfconn.not_answering');
     }
   }, POLL_MS);
 }
@@ -147,7 +148,7 @@ export async function jellyfinPasswordConnect(ev) {
     const status = document.getElementById('jf-setup-status');
     document.getElementById('jf-setup-qc').hidden = false;
     document.getElementById('jf-setup-code').textContent = '';
-    status.textContent = _detail(e, `Connect failed — ${_errMsg(e)}`);
+    status.textContent = _detail(e, t('jfconn.failed', {error: _errMsg(e)}));
   } finally {
     btn.disabled = false;
   }

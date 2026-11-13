@@ -6,35 +6,36 @@
 // carry two links (episodes 1-11 -> part 1, from episode 12 -> part 2).
 import { EL, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, closeModal, emptyHtml, esc, loc, openModal, toast } from './ui.js';
 import { api } from './api.js';
+import { t, th } from './i18n.js';
 
 let _groups = [];
 let _pinTarget = null;     // the group the search dialog links
 
-function _seasonLabel(s) { return s === null || s === undefined ? 'no season' : `season ${s}`; }
+function _seasonLabel(s) { return s === null || s === undefined ? t('shoko.no_season') : t('shoko.season', {n: s}); }
 
 function _when(iso) { return iso ? new Date(iso).toLocaleDateString(loc()) : ''; }
 
 function _pinLine(p) {
-  const from = p.from_episode > 1 ? `from episode ${p.from_episode}: ` : '';
-  const what = p.action === 'skip' ? 'skipped (not in Shoko)'
-    : `linked to ${esc(p.shoko_title || 'AniDB ' + p.anidb_id)} (AniDB ${esc(String(p.anidb_id))})`;
+  const from = p.from_episode > 1 ? `${t('shoko.from_episode', {n: p.from_episode})} ` : '';
+  const what = p.action === 'skip' ? th('shoko.skipped_not_in')
+    : th('shoko.linked_to', {title: p.shoko_title || 'AniDB ' + p.anidb_id, id: String(p.anidb_id)});
   return `<div class="row panel-item-sub fs-12 t3"><span class="grow">${esc(from)}${what}</span>
-    <button type="button" class="btn btn-secondary btn-sm" ${act('shokoUnpin', p.id, EL)}>Unpin</button></div>`;
+    <button type="button" class="btn btn-secondary btn-sm" ${act('shokoUnpin', p.id, EL)}>${th('shoko.unpin')}</button></div>`;
 }
 
 function _row(g, i) {
   const pins = g.pins || [];
-  const badge = !pins.length ? '<span class="badge muted badge-sm">No match</span>'
-    : pins.every(p => p.action === 'skip') ? '<span class="badge muted badge-sm">Skipped</span>'
-    : '<span class="badge amber badge-sm">Linked</span>';
-  const meta = `${esc(_seasonLabel(g.season))} · ${g.plays} play${g.plays === 1 ? '' : 's'}${g.last_watched ? ' · last ' + esc(_when(g.last_watched)) : ''}`;
+  const badge = !pins.length ? `<span class="badge muted badge-sm">${th('shoko.no_match')}</span>`
+    : pins.every(p => p.action === 'skip') ? `<span class="badge muted badge-sm">${th('shoko.skipped')}</span>`
+    : `<span class="badge amber badge-sm">${th('shoko.linked')}</span>`;
+  const meta = `${esc(_seasonLabel(g.season))} · ${th('shoko.plays', {n: g.plays})}${g.last_watched ? ' · ' + th('shoko.last', {date: _when(g.last_watched)}) : ''}`;
   // Linked plays that are still listed fall outside every pinned entry
   // (a cour the pins do not cover yet): Link... adds the next one.
-  const skip = pins.length ? '' : `<button type="button" class="btn btn-secondary btn-sm" ${act('shokoSkip', i, EL)} title="Not in Shoko (not on AniDB): stop retrying these plays">Skip</button>`;
+  const skip = pins.length ? '' : `<button type="button" class="btn btn-secondary btn-sm" ${act('shokoSkip', i, EL)} title="${th('shoko.skip_title')}">${th('shoko.skip')}</button>`;
   return `<div class="panel-item">
     <div class="panel-item-head">
       <div class="panel-item-title">${esc(g.series)} ${badge}<span class="panel-item-meta">${meta}</span></div>
-      <div class="panel-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('shokoOpenLink', i)}>Link…</button>${skip}</div>
+      <div class="panel-actions"><button type="button" class="btn btn-secondary btn-sm" ${act('shokoOpenLink', i)}>${th('shoko.link_more')}</button>${skip}</div>
     </div>${pins.map(_pinLine).join('')}
   </div>`;
 }
@@ -43,24 +44,24 @@ function _row(g, i) {
 export async function loadShokoUnmatched() {
   const box = document.getElementById('shoko-unmatched');
   if (!box) return;
-  box.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  box.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
   let r;
   try { r = await api('/api/shoko/unmatched'); }
   catch (e) { box.innerHTML = _errHtml(e, act('loadShokoUnmatched')); return; }
   _groups = r.groups || [];
   const shown = new Set(_groups.flatMap(g => (g.pins || []).map(p => p.id)));
   const others = (r.pins || []).filter(p => !shown.has(p.id));
-  const more = r.total_groups > _groups.length ? `<p class="fs-12 t3">${r.total_groups - _groups.length} more not shown.</p>` : '';
+  const more = r.total_groups > _groups.length ? `<p class="fs-12 t3">${th('shoko.more_not_shown', {n: r.total_groups - _groups.length})}</p>` : '';
   const otherRows = others.map(p => `<div class="panel-item">
     <div class="panel-item-head"><div class="panel-item-title">${esc(p.series)}<span class="panel-item-meta">${esc(_seasonLabel(p.season))}</span></div></div>
     ${_pinLine(p)}</div>`).join('');
   box.innerHTML = `
-    <div class="section-head"><h3>Without a Shoko episode</h3><span class="badge muted badge-sm">${r.total_groups || 0}</span>
-      <span class="section-hint">Plays the sync could not place on its own. Link a series and season to its AniDB entry, or skip what is not on AniDB. A pin wins over the automatic match; the next sync run tries those plays again.</span></div>
+    <div class="section-head"><h3>${th('shoko.without_episode')}</h3><span class="badge muted badge-sm">${r.total_groups || 0}</span>
+      <span class="section-hint">${th('shoko.without_episode_hint')}</span></div>
     <div class="section-body">
       ${_groups.length ? _groups.map(_row).join('') + more
-                       : emptyHtml('Every play the sync has tried found its Shoko episode.', null, null, {good: true})}
-      ${otherRows ? `<h4 class="mt-12 fs-12 t2">Pins whose plays all reached Shoko</h4>${otherRows}` : ''}
+                       : emptyHtml(th('shoko.all_found'), null, null, {good: true})}
+      ${otherRows ? `<h4 class="mt-12 fs-12 t2">${th('shoko.pins_done')}</h4>${otherRows}` : ''}
     </div>`;
 }
 
@@ -72,12 +73,12 @@ export function shokoOpenLink(i) {
   const starts = (g.pins || []).map(p => p.from_episode);
   const next = starts.length ? Math.max(...starts) + 1 : 1;
   openModal({
-    title: `Link ${g.series} (${_seasonLabel(g.season)})`, size: 'wide',
-    body: `<p class="fs-12 t3 mb-8">Pick the AniDB entry these plays belong to. AniDB keeps one entry per season, and often one per half-season (cour): link the first part from episode 1, then the second from the episode it starts at.</p>
-      <div class="row"><label for="shoko-from" class="fs-12">Starts at the season's episode</label>
+    title: t('shoko.link_title', {series: g.series, season: _seasonLabel(g.season)}), size: 'wide',
+    body: `<p class="fs-12 t3 mb-8">${th('shoko.link_hint')}</p>
+      <div class="row"><label for="shoko-from" class="fs-12">${th('shoko.starts_at')}</label>
         <input id="shoko-from" class="input w-auto" type="number" min="1" value="${next}"></div>
-      <div class="row mt-8"><input id="shoko-q" class="grow" type="search" value="${esc(g.series)}" aria-label="Search your Shoko collection" ${actOn('keydown', 'shokoSearchOnEnter', '$event')}>
-        <button type="button" class="btn btn-secondary btn-sm" ${act('shokoSearch', EL)}>Search</button></div>
+      <div class="row mt-8"><input id="shoko-q" class="grow" type="search" value="${esc(g.series)}" aria-label="${th('shoko.search_aria')}" ${actOn('keydown', 'shokoSearchOnEnter', '$event')}>
+        <button type="button" class="btn btn-secondary btn-sm" ${act('shokoSearch', EL)}>${th('shoko.search')}</button></div>
       <div id="shoko-results" class="mt-8" role="status" aria-live="polite"></div>`,
   });
   shokoSearch();
@@ -89,27 +90,27 @@ export async function shokoSearch(btn) {
   const q = document.getElementById('shoko-q')?.value?.trim();
   const out = document.getElementById('shoko-results');
   if (!q || !out) return;
-  if (btn) btnBusy(btn, 'Searching…');
-  out.innerHTML = '<p class="loading">Searching your Shoko collection…</p>';
+  if (btn) btnBusy(btn, t('common.searching'));
+  out.innerHTML = `<p class="loading">${th('shoko.searching')}</p>`;
   try {
     const r = await api(`/api/shoko/search?q=${encodeURIComponent(q)}`);
     const list = r.results || [];
     out.innerHTML = list.length ? list.map(a => `<div class="panel-item">
         <div class="panel-item-head">
           <div class="panel-item-title">${esc(a.title)} <span class="badge muted badge-sm">${esc(a.type || '?')}</span>
-            <span class="panel-item-meta">${a.air_date ? esc(String(a.air_date).slice(0, 4)) + ' · ' : ''}${esc(String(a.episodes ?? '?'))} episodes · AniDB ${esc(String(a.anidb_id))}</span></div>
-          <div class="panel-actions"><button type="button" class="btn btn-primary btn-sm" ${act('shokoLink', a.anidb_id, EL)}>Link</button></div>
+            <span class="panel-item-meta">${a.air_date ? esc(String(a.air_date).slice(0, 4)) + ' · ' : ''}${th('shoko.episodes', {x: String(a.episodes ?? '?')})} · AniDB ${esc(String(a.anidb_id))}</span></div>
+          <div class="panel-actions"><button type="button" class="btn btn-primary btn-sm" ${act('shokoLink', a.anidb_id, EL)}>${th('shoko.link')}</button></div>
         </div></div>`).join('')
-      : emptyHtml('Nothing in your Shoko collection matches. Try the Japanese title or an AniDB id.');
+      : emptyHtml(th('shoko.nothing_matches'));
   } catch (e) { out.innerHTML = _errHtml(e); }
   if (btn) btnDone(btn);
 }
 
 async function _pin(body, btn) {
-  if (btn) btnBusy(btn, 'Saving…');
+  if (btn) btnBusy(btn, t('shoko.saving'));
   try {
     const r = await api('/api/shoko/pins', 'POST', body);
-    toast(body.action === 'skip' ? `${body.series}: skipped` : `${body.series} linked to ${r.shoko_title || 'AniDB ' + body.anidb_id}`, 'success');
+    toast(body.action === 'skip' ? t('shoko.skipped_toast', {series: body.series}) : t('shoko.linked_toast', {series: body.series, title: r.shoko_title || 'AniDB ' + body.anidb_id}), 'success');
     return true;
   } catch (e) { toast(_errMsg(e), 'danger'); return false; }
   finally { if (btn) btnDone(btn); }
@@ -131,10 +132,10 @@ export async function shokoSkip(i, btn) {
 }
 
 export async function shokoUnpin(pinId, btn) {
-  btnBusy(btn, 'Unpinning…');
+  btnBusy(btn, t('shoko.unpinning'));
   try {
     await api(`/api/shoko/pins/${encodeURIComponent(pinId)}`, 'DELETE');
-    toast('Pin lifted: the next sync run tries those plays again', 'success');
+    toast(t('shoko.unpinned'), 'success');
     loadShokoUnmatched();
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }

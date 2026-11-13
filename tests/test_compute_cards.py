@@ -8,6 +8,7 @@ in Settings -> Maintenance.
     python tests/test_compute_cards.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import asyncio
 import json
@@ -114,7 +115,7 @@ node = shutil.which("node")
 if node:
     body = re.sub(r"^import .*$", "", JS, flags=re.M).replace("export async function", "async function") \
         .replace("export function", "function")
-    harness = r"""
+    harness = i18n_js() + r"""
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const escAttr = esc; const act = () => ''; const _errHtml = () => ''; const _errMsg = e => String(e);
 const _fmtRel = () => ''; const btnBusy = () => {}; const btnDone = () => {}; const toast = () => {};
@@ -129,9 +130,7 @@ console.log(JSON.stringify({
   away: _pcNow({state: 'away'}),
 }));
 """
-    hp = Path(tempfile.mkdtemp()) / "h.js"
-    hp.write_text(harness, encoding="utf-8")
-    r = subprocess.run([node, str(hp)], capture_output=True, text=True, encoding="utf-8")
+    r = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
     if r.returncode:
         print(r.stderr[:1500])
     res = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else {}

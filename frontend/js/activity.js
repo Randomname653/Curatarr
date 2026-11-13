@@ -4,6 +4,7 @@
 import { state } from './state.js';
 import { CAT_LABELS, EL, EVENT, SVG_CHECK, SVG_WARN, SVG_X, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, hydrateStyles, loc, pulseHeldBy, setBadge, setPulse, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api, sessionEnded } from './api.js';
+import { t, th } from './i18n.js';
 
 // One task stream per tab. The guard used to sit BEFORE the ticket fetch, so
 // a retry timer and showApp() (or the Plex login poll) could both pass it
@@ -30,9 +31,9 @@ function _ticketFailed(why) {
 
 function _showStreamDown(why) {
   const el = document.getElementById('tasks-list');
-  if (el) el.innerHTML = `<p class="t-danger loading" role="status" aria-live="polite">
-    ${SVG_WARN} Task stream disconnected (${esc(why)}) — retrying, or
-    <a class="t-amber" href="#" ${act('reloadPage', EVENT)} aria-label="Reload page to reconnect">reload page</a>.
+  if (el) el.innerHTML = `<p class="t-danger loading js-stream-down" role="status" aria-live="polite">
+    ${SVG_WARN} ${th('activity.stream_down', {why})}
+    <a class="t-amber" href="#" ${act('reloadPage', EVENT)} aria-label="${th('activity.reload_aria')}">${th('activity.reload_page')}</a>.
   </p>`;
 }
 
@@ -75,7 +76,7 @@ async function _openTaskStream() {
   es.onopen = () => {
     state.taskStreamRetries = 0;
     const el = document.getElementById('tasks-list');
-    if (el && /Connecting|disconnected/.test(el.textContent)) el.innerHTML = '';
+    if (el && (el.querySelector('.js-stream-down') || /Connecting|disconnected/.test(el.textContent))) el.innerHTML = '';
   };
 
   es.onmessage = (e) => {
@@ -120,23 +121,21 @@ async function _openTaskStream() {
 // Queue never fills up with "Done" rows again.
 
 const LIVE = new Set(['running', 'queued']);
-const OUTCOME = {
-  running:   {label: 'Running',   badge: 'amber'},
-  queued:    {label: 'Queued',    badge: 'muted'},
-  completed: {label: 'Completed', badge: 'success'},
-  warning:   {label: 'Warnings',  badge: 'amber'},
-  partial:   {label: 'Partial',   badge: 'amber'},
-  failed:    {label: 'Failed',    badge: 'danger'},
-  cancelled: {label: 'Cancelled', badge: 'muted'},
-  skipped:   {label: 'Skipped',   badge: 'muted'},
-};
-const AREA_LABELS = {sync: 'Sync', enrichment: 'Enrichment', taste: 'Taste / vectors', maintenance: 'Maintenance', system: 'System'};
+// Outcome codes and areas are identifiers; their words are in the dictionary
+// (activity.outcome.*, activity.area.*), read when drawn.
+const _BADGE = {running: 'amber', queued: 'muted', completed: 'success', warning: 'amber', partial: 'amber',
+  failed: 'danger', cancelled: 'muted', skipped: 'muted'};
+const OUTCOME = Object.fromEntries(Object.entries(_BADGE).map(([k, badge]) => [k, Object.defineProperty({badge}, 'label',
+  {get: () => t(`activity.outcome.${k}`), enumerable: true})]));
+const _AREAS = ['sync', 'enrichment', 'taste', 'maintenance', 'system'];
+const AREA_LABELS = Object.fromEntries(_AREAS.map(a => [a, null]));
+const _areaLabel = a => (a in AREA_LABELS ? t(`activity.area.${a}`) : a || '');
 const FADE_MS = 2600;
 const SVG_CLOCK = '<svg class="icon-inline" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>';
 
 const _isAdmin = () => !!state.currentUser?.is_admin;
-const _outcomeOf = t => t.outcome || ({running: 'running', pending: 'queued', done: 'completed', error: 'failed', skipped: 'cancelled'})[t.status] || 'completed';
-const _isLive = t => LIVE.has(_outcomeOf(t));
+const _outcomeOf = x => x.outcome || ({running: 'running', pending: 'queued', done: 'completed', error: 'failed', skipped: 'cancelled'})[x.status] || 'completed';
+const _isLive = x => LIVE.has(_outcomeOf(x));
 
 function _store(key, val) {
   try { if (val === undefined) return localStorage.getItem(key); localStorage.setItem(key, val); } catch { /* private window */ }
@@ -146,12 +145,49 @@ function _store(key, val) {
 export function fmtTime(s) {
   s = Math.max(0, Math.round(Number(s) || 0));
   if (!s) return '';
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`;
-  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+  if (s < 60) return t('activity.fmt_s', {s});
+  if (s < 3600) return t('activity.fmt_ms', {m: Math.floor(s/60), s: s%60});
+  return t('activity.fmt_hm', {h: Math.floor(s/3600), m: Math.floor((s%3600)/60)});
 }
 
+// The server says a job's interval in a closed set of English phrases
+// (services/activity fmt_cadence / _trigger_cadence, the custodian's tick);
+// they are UI words, so they are said in the UI language here. Anything
+// else (a cron spec) is shown as it came.
+const _CADENCE = [
+  [/^on demand$/, () => t('activity.fmt_on_demand')],
+  [/^daily$/, () => t('activity.fmt_daily')],
+  [/^weekly$/, () => t('activity.fmt_weekly')],
+  [/^hourly$/, () => t('activity.fmt_hourly')],
+  [/^once after start$/, () => t('activity.fmt_once')],
+  [/^every (\d+) min$/, m => t('activity.fmt_every_min', {n: +m[1], x: m[1]})],
+  [/^every (\d+) days$/, m => t('activity.fmt_every_days', {n: +m[1], x: m[1]})],
+  [/^every (\d+) s$/, m => t('activity.fmt_every_s', {n: +m[1], x: m[1]})],
+  [/^every ([\d.]+) h$/, m => t('activity.fmt_every_h', {n: +m[1], x: Number(m[1]).toLocaleString(loc())})],
+  [/^hourly at :(\d\d)$/, m => t('activity.fmt_hourly_at', {mm: m[1]})],
+];
+export function fmtCadence(text) {
+  const s = String(text ?? '');
+  const sprint = / \(sprint\)$/.test(s);
+  const core = sprint ? s.slice(0, -' (sprint)'.length) : s;
+  for (const [re, say] of _CADENCE) {
+    const m = core.match(re);
+    if (m) return sprint ? t('activity.fmt_sprint', {x: say(m)}) : say(m);
+  }
+  return s;
+}
+
+// The scheduler's notes beside a job (services/activity): a closed set of
+// UI phrases, said in the UI language; anything else as it came.
+const _NOTES = {'running now': 'activity.note.running_now', 'queued': 'activity.note.queued',
+  'due — next custodian tick': 'activity.note.due_next_tick', 'due now': 'activity.note.due_now', 'paused': 'activity.note.paused',
+  'waiting for the GPU (a game holds it)': 'activity.note.wait_gpu', 'waiting for the PC agent': 'activity.note.wait_agent',
+  'backing off after a failed run': 'activity.note.backoff'};
+export const fmtNote = s => (_NOTES[s] ? t(_NOTES[s]) : String(s ?? ''));
+
 function _num(n) { return (Number(n) || 0).toLocaleString(loc()); }
+// one decimal in the UI's locale, no grouping (as toFixed(1) wrote it)
+const _dec1 = v => v.toLocaleString(loc(), {minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false});
 
 function _tagPills(tags) {
   return (tags || []).map(c => `<span class="act-tag">${esc(CAT_LABELS[c] || c)}</span>`).join('');
@@ -192,16 +228,16 @@ let _lastLive = [];
 // user may be working in.
 let _delAnalysisSeen = false;
 export function updateTaskBadge(tasks) {
-  const top = tasks.filter(t => !t.parent_id && (t.status === 'running' || t.status === 'pending'));
+  const top = tasks.filter(x => !x.parent_id && (x.status === 'running' || x.status === 'pending'));
   setBadge('tasks-badge', top.length);
   setBadge('act-count-queue', top.length);
-  const running = tasks.some(t => (t.status === 'running' || t.status === 'pending') && String(t.id || '').startsWith('del-analysis-'));
+  const running = tasks.some(x => (x.status === 'running' || x.status === 'pending') && String(x.id || '').startsWith('del-analysis-'));
   setPulse('sb-deletions-pulse', 'stream', running);
   if (_delAnalysisSeen && !running && !pulseHeldBy('sb-deletions-pulse', 'local')
       && document.getElementById('deletions-view')?.classList.contains('active')) {
-    toast('Deletion analysis finished in another tab.', 'info', {actions: [
-      {label: 'Reload proposals', primary: true, onClick: () => import('./deletions.js').then(m => m.reloadDeletions())},
-      {label: 'Later'},
+    toast(t('activity.del_analysis_done'), 'info', {actions: [
+      {label: t('activity.reload_proposals'), primary: true, onClick: () => import('./deletions.js').then(m => m.reloadDeletions())},
+      {label: t('activity.later')},
     ]});
   }
   _delAnalysisSeen = running;
@@ -219,69 +255,72 @@ export function renderTasks(tasks) {
   _tasksRaf = requestAnimationFrame(() => { _tasksRaf = 0; _renderTasksNow(_tasksPending || []); });
 }
 
-function _metaLine(t) {
-  const o = _outcomeOf(t);
+function _metaLine(x) {
+  const o = _outcomeOf(x);
   if (o !== 'running') return '';
   return [
-    t.total > 0 ? `${_num(t.processed)} / ${_num(t.total)}` : '',
-    _rate(t.rate),
-    t.eta_s ? `<span class="t-amber">ETA ${fmtTime(t.eta_s)}</span>` : '',
+    x.total > 0 ? `${_num(x.processed)} / ${_num(x.total)}` : '',
+    _rate(x.rate),
+    x.eta_s ? `<span class="t-amber">${th('activity.eta', {time: fmtTime(x.eta_s)})}</span>` : '',
   ].filter(Boolean).join(' · ');
 }
 
 // A slow job read "0.0/s": below one item per ten seconds the rate is per minute.
 function _rate(r) {
   if (!(r > 0)) return '';
-  return r >= 0.1 ? `${r.toFixed(1)}/s` : `${(r * 60).toFixed(1)}/min`;
+  return r >= 0.1 ? t('activity.rate_s', {x: _dec1(r)})
+    : t('activity.rate_min', {x: _dec1(r * 60)});
 }
 
 // Sub-steps of a grouped run (the per-category taste vectors of one
 // recompute) as one compact badge row instead of rows of their own.
-function _subStepsHtml(t, kids) {
+function _subStepsHtml(run, kids) {
   const seen = new Set();
   const pills = kids.map(k => {
     const label = (k.tags && k.tags[0]) || k.name;
     seen.add(label);
     const o = _outcomeOf(k);
-    const extra = o === 'running' && k.total > 0 ? ` ${k.progress}%` : '';
+    const extra = o === 'running' && k.total > 0 ? ` ${th('activity.pct', {pct: k.progress})}` : '';
     return `<span class="act-sub s-${o}" title="${escAttr(`${k.name}: ${OUTCOME[o]?.label || o}`)}">${o === 'running' ? '<span class="act-spin sm" aria-hidden="true"></span>' : _icon(o)}${esc(CAT_LABELS[label] || label)}${extra}</span>`;
   });
-  if (_isLive(t) && kids.length) {          // a grouped run: the steps still to come
-    for (const tag of t.tags || []) {
-      if (!seen.has(tag)) pills.push(`<span class="act-sub s-queued" title="Waiting">${SVG_CLOCK}${esc(CAT_LABELS[tag] || tag)}</span>`);
+  if (_isLive(run) && kids.length) {          // a grouped run: the steps still to come
+    for (const tag of run.tags || []) {
+      if (!seen.has(tag)) pills.push(`<span class="act-sub s-queued" title="${th('activity.waiting')}">${SVG_CLOCK}${esc(CAT_LABELS[tag] || tag)}</span>`);
     }
   }
   return pills.join('');
 }
 
-function _stepLine(t) {
-  const o = _outcomeOf(t);
-  if (!LIVE.has(o)) return t.error || t.summary || '';
-  if (o === 'queued') return 'Waiting for a free slot';
-  return t.logs?.slice(-1)[0]?.msg || '';
+// A run's name, its error and summary and its log lines are the server's
+// (job names are technical identifiers): they pass through as they came.
+function _stepLine(run) {
+  const o = _outcomeOf(run);
+  if (!LIVE.has(o)) return run.error || run.summary || '';
+  if (o === 'queued') return t('activity.waiting_slot');
+  return run.logs?.slice(-1)[0]?.msg || '';
 }
 
-function _queueRowHtml(t, kids) {
-  const o = _outcomeOf(t);
+function _queueRowHtml(run, kids) {
+  const o = _outcomeOf(run);
   const live = LIVE.has(o);
-  const meta = _metaLine(t);
-  const step = _stepLine(t);
-  const subs = _subStepsHtml(t, kids);
-  const pct = live ? (t.progress || 0) : 100;
+  const meta = _metaLine(run);
+  const step = _stepLine(run);
+  const subs = _subStepsHtml(run, kids);
+  const pct = live ? (run.progress || 0) : 100;
   const showBar = o === 'running' || (!live && o !== 'cancelled' && o !== 'skipped' && o !== 'failed');
-  const pctLabel = o === 'running' && !t.indeterminate ? `<span class="t-amber b fs-12">${t.progress || 0}%</span>` : '';
-  return `<div class="act-row act-${o}${live ? '' : ' act-fade'}" role="listitem" data-run-id="${escAttr(String(t.run_id || t.id))}" data-started="${escAttr(t.started_at || '')}">
+  const pctLabel = o === 'running' && !run.indeterminate ? `<span class="t-amber b fs-12">${th('activity.pct', {pct: run.progress || 0})}</span>` : '';
+  return `<div class="act-row act-${o}${live ? '' : ' act-fade'}" role="listitem" data-run-id="${escAttr(String(run.run_id || run.id))}" data-started="${escAttr(run.started_at || '')}">
       <div class="act-ico js-ico">${_icon(o)}</div>
       <div class="act-main">
-        <div class="act-title js-title"><span class="b">${esc(t.name)}</span>${kids.length ? '' : _tagPills(t.tags)}${_outcomeBadge(o)}${pctLabel}</div>
+        <div class="act-title js-title"><span class="b">${esc(run.name)}</span>${kids.length ? '' : _tagPills(run.tags)}${_outcomeBadge(o)}${pctLabel}</div>
         <div class="act-step ellipsis js-step"${step ? '' : ' hidden'} title="${escAttr(step)}">${esc(step)}</div>
-        ${_barHtml(pct, !!t.indeterminate, !showBar)}
+        ${_barHtml(pct, !!run.indeterminate, !showBar)}
         <div class="act-meta js-meta"${meta ? '' : ' hidden'}>${meta}</div>
         <div class="act-subs js-subs"${subs ? '' : ' hidden'}>${subs}</div>
       </div>
       <div class="act-side">
-        <span class="act-elapsed mono js-elapsed">${fmtTime(t.elapsed_s)}</span>
-        <span class="js-actions"${live ? '' : ' hidden'}><button type="button" class="btn btn-secondary btn-sm" ${act('cancelTask', t.id, EL)} aria-label="${escAttr(`Cancel ${t.name}`)}">Cancel</button></span>
+        <span class="act-elapsed mono js-elapsed">${fmtTime(run.elapsed_s)}</span>
+        <span class="js-actions"${live ? '' : ' hidden'}><button type="button" class="btn btn-secondary btn-sm" ${act('cancelTask', run.id, EL)} aria-label="${th('activity.cancel_aria', {name: run.name})}">${th('common.cancel')}</button></span>
       </div>
     </div>`;
 }
@@ -309,51 +348,51 @@ function _renderTasksNow(tasks) {
   const el = document.getElementById('tasks-list');
   if (!el) return;
   const now = Date.now();
-  const ids = new Set(tasks.map(t => t.id));
+  const ids = new Set(tasks.map(x => x.id));
   const kidsOf = new Map();
-  for (const t of tasks) {
-    if (t.parent_id && ids.has(t.parent_id)) {
-      if (!kidsOf.has(t.parent_id)) kidsOf.set(t.parent_id, []);
-      kidsOf.get(t.parent_id).push(t);
+  for (const x of tasks) {
+    if (x.parent_id && ids.has(x.parent_id)) {
+      if (!kidsOf.has(x.parent_id)) kidsOf.set(x.parent_id, []);
+      kidsOf.get(x.parent_id).push(x);
     }
   }
   let finishedNow = false;
   const visible = [];
-  for (const t of tasks) {
-    if (t.parent_id && ids.has(t.parent_id)) continue;
-    const key = String(t.run_id || t.id);
-    if (_isLive(t)) { _finishedSeen.delete(key); visible.push(t); continue; }
+  for (const x of tasks) {
+    if (x.parent_id && ids.has(x.parent_id)) continue;
+    const key = String(x.run_id || x.id);
+    if (_isLive(x)) { _finishedSeen.delete(key); visible.push(x); continue; }
     if (!_finishedSeen.has(key)) { _finishedSeen.set(key, now); finishedNow = true; }
-    if (now - _finishedSeen.get(key) < FADE_MS) visible.push(t);
+    if (now - _finishedSeen.get(key) < FADE_MS) visible.push(x);
   }
   if (_finishedSeen.size > 200) _finishedSeen.clear();
   if (finishedNow) _onRunFinished();
   // Re-render when the next fading row is due to leave.
   clearTimeout(_fadeTimer);
-  if (visible.some(t => !_isLive(t))) _fadeTimer = setTimeout(() => renderTasks(_lastLive), 400);
+  if (visible.some(x => !_isLive(x))) _fadeTimer = setTimeout(() => renderTasks(_lastLive), 400);
 
   const liveCount = visible.filter(_isLive).length;
   const hint = document.getElementById('act-queue-hint');
-  if (hint) hint.textContent = liveCount ? `${liveCount} active` : 'idle';
+  if (hint) hint.textContent = liveCount ? t('activity.n_active', {n: liveCount}) : t('activity.idle');
 
   if (!visible.length) {
     if (!el.querySelector(':scope > .empty')) {
-      el.innerHTML = emptyHtml('No active tasks running — all queues idle.', null, null, {good: true});
+      el.innerHTML = emptyHtml(th('activity.queue_empty'), null, null, {good: true});
     }
     _syncElapsedTicker();
     return;
   }
   let list = el.querySelector(':scope > .act-list');
   if (!list) {
-    el.innerHTML = '<div class="act-list" role="list" aria-label="Active tasks"></div>';
+    el.innerHTML = `<div class="act-list" role="list" aria-label="${th('activity.active_aria')}"></div>`;
     list = el.firstElementChild;
   }
   const rows = new Map([...list.children].map(r => [r.dataset.runId, r]));
   const scratch = document.createElement('div');
   let prev = null;
-  for (const t of visible) {
-    const key = String(t.run_id || t.id);
-    scratch.innerHTML = _queueRowHtml(t, kidsOf.get(t.id) || []);
+  for (const x of visible) {
+    const key = String(x.run_id || x.id);
+    scratch.innerHTML = _queueRowHtml(x, kidsOf.get(x.id) || []);
     const fresh = scratch.firstElementChild;
     let row = rows.get(key);
     if (row) { _patchRow(row, fresh); rows.delete(key); }
@@ -400,11 +439,11 @@ function _onRunFinished() {
 }
 
 export async function cancelTask(taskId, btn) {
-  btnBusy(btn, 'Cancelling…');
+  btnBusy(btn, t('activity.cancelling'));
   try {
     await api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, 'POST');
     _swrInvalidate('tasks'); // next visit reflects the cancellation instead of a stale pre-cancel snapshot
-    toast('Cancel requested — the task stops at its next checkpoint', 'info');
+    toast(t('activity.cancel_requested'), 'info');
   } catch (e) {
     toast(_errMsg(e), 'danger');
     btnDone(btn);
@@ -478,40 +517,42 @@ let _schedData = null;
 function _resultCell(j) {
   if (!j.last_result) return '<span class="t3">—</span>';
   const map = {
-    done: ['success', 'OK'], partial: ['amber', 'Partial — continues next tick'],
-    error: ['danger', 'Failed'], waiting: ['muted', 'Waiting'], skipped: ['muted', 'Skipped'],
+    done: ['success', 'activity.result.done'], partial: ['amber', 'activity.result.partial'],
+    error: ['danger', 'activity.result.error'], waiting: ['muted', 'activity.result.waiting'], skipped: ['muted', 'activity.result.skipped'],
   };
-  const [cls, label] = map[j.last_result] || ['muted', j.last_result];
+  const [cls, key] = map[j.last_result] || ['muted', null];
+  const label = key ? t(key) : j.last_result;
+  // the summary is the server's (English, like the job's name); its "Partial…" lead is the badge already
   const summary = j.last_summary && !(j.last_result === 'partial' && /^Partial/.test(j.last_summary)) ? j.last_summary : '';
   return `<span class="badge ${cls} badge-sm">${esc(label)}</span>${summary ? ` <span class="t3 fs-12 act-sum" title="${escAttr(summary)}">${esc(summary)}</span>` : ''}`;
 }
 
 function _nextCell(j) {
-  if (j.state === 'running') return '<span class="badge amber badge-sm"><span class="act-spin sm" aria-hidden="true"></span>Running</span>';
-  if (j.state === 'queued') return `<span class="badge muted badge-sm">${SVG_CLOCK} Queued</span>`;
-  if (j.blocked) return `<span class="t-amber fs-12">${esc(j.blocked)}</span>`;
+  if (j.state === 'running') return `<span class="badge amber badge-sm"><span class="act-spin sm" aria-hidden="true"></span>${th('activity.outcome.running')}</span>`;
+  if (j.state === 'queued') return `<span class="badge muted badge-sm">${SVG_CLOCK} ${th('activity.outcome.queued')}</span>`;
+  if (j.blocked) return `<span class="t-amber fs-12">${esc(fmtNote(j.blocked))}</span>`;
   if (j.due) {
     const when = j.next_run ? _fmtRel(j.next_run) : '';
-    return `<span class="t-amber" title="${escAttr(j.next_run ? _fmtAbs(j.next_run) : '')}">due now</span>${when && when !== 'now' ? ` <span class="t3 fs-12">· next tick ${esc(when)}</span>` : ''}`;
+    return `<span class="t-amber" title="${escAttr(j.next_run ? _fmtAbs(j.next_run) : '')}">${th('activity.due_now')}</span>${when && when !== t('time.now') ? ` <span class="t3 fs-12">· ${th('activity.next_tick', {when})}</span>` : ''}`;
   }
-  if (!j.next_run) return `<span class="t3">${esc(j.next_note || '—')}</span>`;
-  return `<span title="${escAttr(_fmtAbs(j.next_run))}">${esc(_fmtRel(j.next_run) || 'now')}</span>`;
+  if (!j.next_run) return `<span class="t3">${esc(fmtNote(j.next_note) || '—')}</span>`;
+  return `<span title="${escAttr(_fmtAbs(j.next_run))}">${esc(_fmtRel(j.next_run) || t('time.now'))}</span>`;
 }
 
 function _schedRowHtml(j) {
   const last = j.last_run
-    ? `<span title="${escAttr(_fmtAbs(j.last_run))}">${esc(_fmtRel(j.last_run) || 'now')}</span>`
-    : '<span class="t3">never</span>';
-  const dur = j.last_duration_s != null && j.last_duration_s > 0 ? fmtTime(j.last_duration_s) : (j.last_duration_s === 0 ? '<1s' : '—');
+    ? `<span title="${escAttr(_fmtAbs(j.last_run))}">${esc(_fmtRel(j.last_run) || t('time.now'))}</span>`
+    : `<span class="t3">${th('activity.never')}</span>`;
+  const dur = j.last_duration_s != null && j.last_duration_s > 0 ? fmtTime(j.last_duration_s) : (j.last_duration_s === 0 ? th('activity.under_1s') : '—');
   const busy = j.state !== 'idle';
   return `<tr data-job="${escAttr(j.job_id)}">
-      <td class="cell-primary"><span class="b">${esc(j.name)}</span>${j.uses_model ? ' <span class="badge theme badge-sm" title="Runs a model — waits while a game holds the GPU">model</span>' : ''}</td>
-      <td class="t2 nowrap">${esc(j.cadence)}</td>
+      <td class="cell-primary"><span class="b">${esc(j.name)}</span>${j.uses_model ? ` <span class="badge theme badge-sm" title="${th('activity.model_title')}">${th('activity.model')}</span>` : ''}</td>
+      <td class="t2 nowrap">${esc(fmtCadence(j.cadence))}</td>
       <td class="nowrap">${last}</td>
       <td class="t2 nowrap">${dur}</td>
       <td class="act-result">${_resultCell(j)}</td>
       <td class="nowrap">${_nextCell(j)}</td>
-      <td class="t-right"><button type="button" class="btn btn-secondary btn-sm" ${act('runScheduledJob', j.job_id, EL)}${j.can_run ? '' : ' disabled'} aria-label="${escAttr(`Run ${j.name} now`)}" title="${escAttr(busy ? 'Already in the queue' : j.can_run ? 'Run now, outside its schedule' : 'Not available')}">${busy ? 'In queue' : 'Run now'}</button></td>
+      <td class="t-right"><button type="button" class="btn btn-secondary btn-sm" ${act('runScheduledJob', j.job_id, EL)}${j.can_run ? '' : ' disabled'} aria-label="${th('activity.run_aria', {name: j.name})}" title="${th(busy ? 'activity.in_queue_title' : j.can_run ? 'activity.run_now_title' : 'activity.not_available')}">${th(busy ? 'activity.in_queue' : 'activity.run_now')}</button></td>
     </tr>`;
 }
 
@@ -523,13 +564,17 @@ function _renderScheduled(d) {
   // The badge: jobs due or running now (a job due on every tick says nothing).
   const due = jobs.filter(j => j.state !== 'idle' || (j.due && !(j.cadence_h != null && j.cadence_h < 0.55))).length;
   setBadge('act-count-scheduled', due);
-  if (!jobs.length) { el.innerHTML = emptyHtml('No background jobs are registered — the scheduler is not running.'); return; }
+  if (!jobs.length) { el.innerHTML = emptyHtml(th('activity.sched_empty')); return; }
   const c = d.custodian || {};
-  const busy = Object.entries(c.queues || {}).filter(([, q]) => q.busy).map(([n, q]) => `${n} queue on ${q.current || '…'}`);
-  const head = `<p class="t3 fs-12 mb-8">Maintenance work runs on the data custodian's tick (${esc(c.tick || '')}${c.next_tick ? `, next <span title="${escAttr(_fmtAbs(c.next_tick))}">${esc(_fmtRel(c.next_tick))}</span>` : ''})${busy.length ? ` — ${esc(busy.join(', '))}` : ''}.</p>`;
+  // queue names and job names are identifiers: as they came
+  const busy = Object.entries(c.queues || {}).filter(([, q]) => q.busy).map(([n, q]) => t('activity.queue_on', {name: n, job: q.current || '…'}));
+  const next = c.next_tick ? th('activity.tick_next', {when: '\u0000'}).replace('\u0000', `<span title="${escAttr(_fmtAbs(c.next_tick))}">${esc(_fmtRel(c.next_tick))}</span>`) : '';
+  const head = `<p class="t3 fs-12 mb-8">${th('activity.tick_head', {tick: fmtCadence(c.tick || '')})}${next ? `, ${next}` : ''})${busy.length ? ` — ${esc(busy.join(', '))}` : ''}.</p>`;
+  // a group's name by its area id (the server's label where the id is new)
+  const groupLabel = g => (_AREAS.includes(g.area) ? t(`activity.group.${g.area}`) : g.label);
   el.innerHTML = head + d.groups.map(g => `<section class="section">
-      <div class="section-head"><h3>${esc(g.label)} <span class="badge muted badge-sm">${g.jobs.length}</span></h3></div>
-      <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards act-sched"><thead><tr><th>Task</th><th>Interval</th><th>Last execution</th><th>Last duration</th><th>Last result</th><th>Next execution</th><th class="t-right"><span class="sr-only">Actions</span></th></tr></thead>
+      <div class="section-head"><h3>${esc(groupLabel(g))} <span class="badge muted badge-sm">${g.jobs.length}</span></h3></div>
+      <div class="section-body"><div class="tbl-wrap"><table class="tbl tbl-cards act-sched"><thead><tr><th>${th('activity.col.task')}</th><th>${th('activity.col.interval')}</th><th>${th('activity.col.last_run')}</th><th>${th('activity.col.last_duration')}</th><th>${th('activity.col.last_result')}</th><th>${th('activity.col.next_run')}</th><th class="t-right"><span class="sr-only">${th('activity.col.actions')}</span></th></tr></thead>
       <tbody>${g.jobs.map(_schedRowHtml).join('')}</tbody></table></div></div></section>`).join('');
 }
 
@@ -544,13 +589,13 @@ export async function loadScheduled(quiet) {
 }
 
 export async function runScheduledJob(jobId, btn) {
-  btnBusy(btn, 'Starting…');
+  btnBusy(btn, t('activity.starting'));
   try {
     const r = await api(`/api/tasks/scheduled/${encodeURIComponent(jobId)}/run`, 'POST');
-    toast(r.state === 'queued' ? 'Queued — it runs right after the task its queue is on' : 'Started — follow it in the Queue', 'info');
-    btnDone(btn, 'In queue', {keepDisabled: true});
+    toast(t(r.state === 'queued' ? 'activity.queued_toast' : 'activity.started_toast'), 'info');
+    btnDone(btn, t('activity.in_queue'), {keepDisabled: true});
   } catch (e) {
-    toast(e.status === 409 ? 'Already running or queued' : _errMsg(e), e.status === 409 ? 'info' : 'danger');
+    toast(e.status === 409 ? t('activity.already_running') : _errMsg(e), e.status === 409 ? 'info' : 'danger');
     btnDone(btn);
   }
   _swrInvalidate('tasks-scheduled');
@@ -606,7 +651,7 @@ function _stepsHtml(r) {
   return `<div class="act-subs mt-4">${r.steps.map(s => {
     const label = (s.tags && s.tags[0]) || s.name;
     const o = s.outcome || 'completed';
-    const tip = `${s.name}: ${OUTCOME[o]?.label || o}${s.elapsed_s ? ` · ${fmtTime(s.elapsed_s)}` : ''}${s.summary ? ` — ${s.summary}` : ''}`;
+    const tip = `${s.name}: ${OUTCOME[o]?.label || o}${s.elapsed_s ? ` · ${fmtTime(s.elapsed_s)}` : ''}${s.summary ? ` — ${s.summary}` : ''}`;   // name and summary: the server's
     return `<span class="act-sub s-${o}" title="${escAttr(tip)}">${_icon(o)}${esc(CAT_LABELS[label] || label)}</span>`;
   }).join('')}</div>`;
 }
@@ -614,16 +659,16 @@ function _stepsHtml(r) {
 function _historyRowHtml(r) {
   const o = r.outcome || 'completed';
   const when = r.finished_at || r.started_at;
-  const count = r.total > 0 && r.processed < r.total ? `${_num(r.processed)} of ${_num(r.total)} items`
-    : r.total > 0 ? `${_num(r.total)} items` : '';
+  const count = r.total > 0 && r.processed < r.total ? th('activity.items_of', {n: r.total, done: _num(r.processed), total: _num(r.total)})
+    : r.total > 0 ? th('activity.items', {n: r.total, total: _num(r.total)}) : '';
   const summary = r.error || r.summary || '';
   const logs = (r.logs || []).filter(l => l.msg && l.msg !== summary);
-  const details = logs.length ? `<details class="act-log mt-4"><summary class="t3 fs-11">Log</summary><div class="mono fs-11 t3">${logs.map(l => `<div class="${l.level === 'error' ? 't-danger' : l.level === 'warn' ? 't-amber' : ''}">${esc(l.msg)}</div>`).join('')}</div></details>` : '';
+  const details = logs.length ? `<details class="act-log mt-4"><summary class="t3 fs-11">${th('activity.log')}</summary><div class="mono fs-11 t3">${logs.map(l => `<div class="${l.level === 'error' ? 't-danger' : l.level === 'warn' ? 't-amber' : ''}">${esc(l.msg)}</div>`).join('')}</div></details>` : '';
   return `<tr class="${r.noop ? 'act-noop' : ''}">
       <td class="cell-primary"><div class="act-title"><span class="act-hico">${_icon(o)}</span><span class="b">${esc(r.name)}</span>${r.steps?.length ? '' : _tagPills(r.tags)}</div>${summary ? `<div class="fs-12 t2 act-sum" title="${escAttr(summary)}">${esc(summary)}</div>` : ''}${_stepsHtml(r)}${details}</td>
-      <td class="t2 nowrap">${esc(AREA_LABELS[r.area] || r.area || '')}</td>
-      <td class="nowrap">${when ? `<span title="${escAttr(_fmtAbs(when))}">${esc(_fmtRel(when) || 'now')}</span>` : '—'}</td>
-      <td class="t2 nowrap t-right">${r.elapsed_s >= 1 ? fmtTime(r.elapsed_s) : '<1s'}</td>
+      <td class="t2 nowrap">${esc(_areaLabel(r.area))}</td>
+      <td class="nowrap">${when ? `<span title="${escAttr(_fmtAbs(when))}">${esc(_fmtRel(when) || t('time.now'))}</span>` : '—'}</td>
+      <td class="t2 nowrap t-right">${r.elapsed_s >= 1 ? fmtTime(r.elapsed_s) : th('activity.under_1s')}</td>
       <td class="nowrap">${_outcomeBadge(o)}${count ? ` <span class="t3 fs-12">${count}</span>` : ''}</td>
     </tr>`;
 }
@@ -641,14 +686,14 @@ function _renderHistory(d) {
   const hidden = byStatus.length - shown.length;
   const count = document.getElementById('act-history-count');
   if (count) count.textContent = runs.length
-    ? `${shown.length} of ${runs.length} runs${hidden ? ` · ${hidden} empty hidden` : ''}` : '';
-  if (!runs.length) { el.innerHTML = emptyHtml('No finished runs yet — syncs, enrichment and maintenance land here once they end.'); return; }
+    ? `${t('activity.runs_shown', {n: runs.length, shown: shown.length, total: runs.length})}${hidden ? ` · ${t('activity.empty_hidden', {n: hidden})}` : ''}` : '';
+  if (!runs.length) { el.innerHTML = emptyHtml(th('activity.history_empty')); return; }
   if (!shown.length) {
-    el.innerHTML = emptyHtml(hidden ? `Only empty runs match — ${hidden} hidden.` : 'No runs match these filters.',
-      hidden ? 'Show empty runs' : null, hidden ? act('showNoopRuns') : null);
+    el.innerHTML = emptyHtml(hidden ? th('activity.only_empty', {n: hidden}) : th('activity.no_match'),
+      hidden ? t('activity.show_empty') : null, hidden ? act('showNoopRuns') : null);
     return;
   }
-  el.innerHTML = `<div class="tbl-wrap"><table class="tbl tbl-cards act-hist"><thead><tr><th>Task</th><th>Area</th><th>Finished</th><th class="t-right">Duration</th><th>Result</th></tr></thead>
+  el.innerHTML = `<div class="tbl-wrap"><table class="tbl tbl-cards act-hist"><thead><tr><th>${th('activity.col.task')}</th><th>${th('activity.col.area')}</th><th>${th('activity.col.finished')}</th><th class="t-right">${th('activity.col.duration')}</th><th>${th('activity.col.result')}</th></tr></thead>
     <tbody>${shown.map(_historyRowHtml).join('')}</tbody></table></div>`;
 }
 
@@ -669,14 +714,14 @@ export async function loadHistory(quiet) {
   }
 }
 
-function _enrichRowHtml(t) {
-  const cat = t.category.replace('enrich-', '');
-  const pct = t.progress || 0;
-  const eta = t.eta_s ? ` · ETA ${fmtTime(Math.round(t.eta_s))}` : '';
-  const rate = t.rate > 0 ? ` · ${t.rate.toFixed(1)}/s` : '';
-  const current = t.logs && t.logs.length ? t.logs[t.logs.length - 1].msg : '';
-  return `<div class="mb-8" data-enrich-cat="${escAttr(t.category)}">
-        <div class="row fs-12 js-count-line"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(t.processed || 0).toLocaleString(loc())} / ${(t.total || 0).toLocaleString(loc())}${rate}${eta}</span></div>
+function _enrichRowHtml(run) {
+  const cat = run.category.replace('enrich-', '');
+  const pct = run.progress || 0;
+  const eta = run.eta_s ? ` · ${esc(t('activity.eta', {time: fmtTime(Math.round(run.eta_s))}))}` : '';
+  const rate = run.rate > 0 ? ` · ${esc(t('activity.rate_s', {x: _dec1(run.rate)}))}` : '';
+  const current = run.logs && run.logs.length ? run.logs[run.logs.length - 1].msg : '';
+  return `<div class="mb-8" data-enrich-cat="${escAttr(run.category)}">
+        <div class="row fs-12 js-count-line"><span class="b">${esc(CAT_LABELS[cat] || cat)}</span><span class="t3 row-end">${(run.processed || 0).toLocaleString(loc())} / ${(run.total || 0).toLocaleString(loc())}${rate}${eta}</span></div>
         <div class="mt-4 progress-bar"><div class="progress-fill" data-style="width:${pct}%"></div></div>
         <div class="ellipsis fs-10 t3 mono mt-4 js-current"${current ? '' : ' hidden'} title="${escAttr(current)}">${esc(current)}</div>
       </div>`;
@@ -685,23 +730,23 @@ function _enrichRowHtml(t) {
 export function updateEnrichLiveSection(tasks) {
   const el = document.getElementById('enrich-live-section');
   if (!el) return;
-  const active = tasks.filter(t => t.category && t.category.startsWith('enrich-') && (t.status === 'running' || t.status === 'pending'));
+  const active = tasks.filter(x => x.category && x.category.startsWith('enrich-') && (x.status === 'running' || x.status === 'pending'));
   el.hidden = !active.length;
   if (!active.length) { el.dataset.cats = ''; return; }
-  const cats = active.map(t => t.category).join('\u0001');
+  const cats = active.map(x => x.category).join('\u0001');
   if (el.dataset.cats !== cats) {            // a category started or finished: one rebuild
     el.innerHTML = `<section class="section">
-    <div class="section-head"><h3>Enrichment running <span class="badge amber badge-sm">${active.length} categor${active.length === 1 ? 'y' : 'ies'}</span></h3><span class="section-hint">in parallel, one slot each</span></div>
+    <div class="section-head"><h3>${th('activity.enrich_running')} <span class="badge amber badge-sm">${th('activity.categories', {n: active.length})}</span></h3><span class="section-hint">${th('activity.enrich_parallel')}</span></div>
     <div class="section-body">${active.map(_enrichRowHtml).join('')}</div></section>`;
     el.dataset.cats = cats;
     return;
   }
   const rows = new Map([...el.querySelectorAll('[data-enrich-cat]')].map(r => [r.dataset.enrichCat, r]));
   const scratch = document.createElement('div');
-  for (const t of active) {
-    const row = rows.get(t.category);
+  for (const x of active) {
+    const row = rows.get(x.category);
     if (!row) continue;
-    scratch.innerHTML = _enrichRowHtml(t);
+    scratch.innerHTML = _enrichRowHtml(x);
     const fresh = scratch.firstElementChild;
     for (const sel of ['.js-count-line', '.js-current']) {
       const a = row.querySelector(sel), b = fresh.querySelector(sel);

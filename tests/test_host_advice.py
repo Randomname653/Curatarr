@@ -14,6 +14,7 @@ compare them against, while the app knows each card. Now:
     python tests/test_host_advice.py
 """
 from _harness import app_db, check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import asyncio
 import json
@@ -180,7 +181,7 @@ if node:
                 "server": {"OLLAMA_KV_CACHE_TYPE": "q8_0"}},
                 "by_model": {"gemma4:26b-a4b-it-qat": {"profile": "large", "num_ctx": 16384, "num_gpu": -1},
                              "gemma4:e4b-it-qat": {"profile": "small", "num_ctx": 8192, "num_gpu": 99}}}}}
-    js = ("const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');\n"
+    js = (i18n_js() + "const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');\nconst escAttr = esc;\n"
           "const act = (n, ...a) => `data-action=\"${n}\"`;\nconst actOn = (e, n, ...a) => `data-on-${e}=\"${n}\"`;\n"
           + "\n".join(_const(js_src, n) for n in ("SIZES", "PROFILE_CTX", "_window"))
           + "\n" + "\n".join(_fn(js_src, n) for n in ("_measured", "_row", "_adviceHtml"))
