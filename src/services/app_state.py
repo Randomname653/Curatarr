@@ -139,7 +139,9 @@ def set_states_if_changed(values: dict) -> dict:
     return changed
 
 
-_game_flag_warned_at = 0.0
+# None until the first warning: time.monotonic() counts from boot, so a 0.0
+# start swallowed the first one on a host up for less than the window.
+_game_flag_warned_at: Optional[float] = None
 
 
 def game_active() -> bool:
@@ -154,7 +156,7 @@ def game_active() -> bool:
     except Exception as e:
         import time
         now = time.monotonic()
-        if now - _game_flag_warned_at > 60:
+        if _game_flag_warned_at is None or now - _game_flag_warned_at > 60:
             _game_flag_warned_at = now
             logging.getLogger(__name__).warning(
                 "[app_state] game flag unreadable - treating as a game: %s", e)

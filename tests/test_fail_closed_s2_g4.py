@@ -367,12 +367,17 @@ def _lookup_down(**k):
 
 _real_lookup = lyr.plex_artist_lookup
 lyr.plex_artist_lookup = _lookup_down
-lib._wish_lookup_warned_at = 0.0
+lib._wish_lookup_warned_at = None
+# A host up for 30 s (fresh container, CI runner): time.monotonic() counts
+# from boot, and a throttle that started at 0.0 swallowed this first warning.
+_real_monotonic = time.monotonic
+time.monotonic = lambda: 30.0
 cap, undo = captured("src.routers.library")
 try:
     got = lib._wish_in_library("Low", None)
 finally:
     lyr.plex_artist_lookup = _real_lookup
+    time.monotonic = _real_monotonic
     undo()
 check(f"a failed lookup answers None, not False ({got!r})", got is None)
 check("...with a WARNING", any("in_library unknown" in r.getMessage()
