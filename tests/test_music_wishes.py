@@ -162,7 +162,7 @@ def test_members_get_a_wish_button_and_the_list_names_who_asked():
     assert "act('onWishRec', EL)" in recs and "_membersWishViaPlex" in recs
     assert "rec.category === 'music' && _membersWishViaPlex" in recs
     arr = (_ROOT / "frontend/js/arr.js").read_text(encoding="utf-8")
-    assert "w.can_remove ?" in arr and "wished by ${w.own ? 'you'" in arr
+    assert "w.can_remove ?" in arr and "th('arr.wished_by', {who: w.own ? t('arr.you')" in arr
     app = (_ROOT / "frontend/js/app.js").read_text(encoding="utf-8")
     assert "  onWishRec," in app
     lib = (_ROOT / "src/routers/library.py").read_text(encoding="utf-8")
@@ -172,7 +172,7 @@ def test_members_get_a_wish_button_and_the_list_names_who_asked():
 
 def test_the_pages_write_and_show_wishes():
     arr = (_ROOT / "frontend/js/arr.js").read_text(encoding="utf-8")
-    assert "{ id: 'wanted', label: 'Wanted' }" in arr and "export async function renderWanted" in arr
+    assert "{ id: 'wanted', key: 'arr.tab.wanted' }" in arr and "export async function renderWanted" in arr
     assert "act('wishArtist', svc, idx, EL)" in arr and "act('removeWish', w.id, EL)" in arr
     assert "['all', 'backlog', 'wanted'].includes(t.id)" in arr and "t.id !== 'wanted'" in arr
     recs = (_ROOT / "frontend/js/recs.js").read_text(encoding="utf-8")

@@ -13,6 +13,7 @@ Runs against a throwaway in-memory SQLite DB; the arr is a fake client.
     python tests/test_keep_and_delete_feedback.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import with_words  # noqa: E402
 
 import asyncio
 import re
@@ -83,7 +84,7 @@ check("protecting twice leaves one row", len(protections("Already Kept")) == 1)
 # ── The Keep copy states the engine's real cooldown ──────────────────────────
 
 ui = everything()
-keep_fn = ui.split("export async function rejectDelete")[1][:2000]
+keep_fn = with_words(ui.split("export async function rejectDelete")[1][:2000])
 days = set(re.findall(r"(\d+) days", keep_fn))
 check(f"Keep dialog and toast state the engine's {eng.KEEP_COOLDOWN_DAYS}-day cooldown",
       days == {str(eng.KEEP_COOLDOWN_DAYS)})
@@ -139,7 +140,7 @@ check("a Plex delete has no recycle bin",
 
 check("no delete dialog claims 'cannot be undone' unconditionally any more",
       "cannot be undone" not in ui)
-fate = ui.split("export async function deleteFateLines")[1][:1600]
+fate = with_words(ui.split("export async function deleteFateLines")[1].split("\n}\n")[0])
 check("the dialog names the unknown case instead of guessing",
       "Couldn't check whether" in fate and "Recycle Bin" in fate)
 check("the dialog mentions the import-list exclusion every arr delete adds",
@@ -201,7 +202,7 @@ check("a music delete says it bans the artist in SoulSync, a film delete does no
       out["targets"]["plex"].get("soulsync_ban") is True
       and out["targets"]["lidarr"].get("soulsync_ban") is True
       and "soulsync_ban" not in out["targets"]["radarr"])
-fate_all = ui.split("export async function deleteFateLines")[1].split("\n}\n")[0]
+fate_all = with_words(ui.split("export async function deleteFateLines")[1].split("\n}\n")[0])
 check("the music delete dialog mentions the SoulSync ban",
       "blocked in SoulSync" in fate_all and "soulsync_ban" in fate_all)
 

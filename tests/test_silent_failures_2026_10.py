@@ -41,6 +41,7 @@ from sqlalchemy.exc import OperationalError  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import _harness  # noqa: E402,F401  (first: temp stores and .env, never the live data/)
+from _i18n_js import with_words  # noqa: E402
 import src.database.connection as conn  # noqa: E402
 import src.services.app_state as app_state  # noqa: E402
 import src.services.bg_tasks as bg_tasks  # noqa: E402
@@ -309,7 +310,7 @@ def test_frontend():
     body = body[:body.index("\nexport ")]
     poll = body[body.index("const poll"):]
     check("bulk-delete poll does not swallow errors", "catch {}" not in poll)
-    check("bulk-delete poll gives up and says so", "Lost track of the bulk delete" in body)
+    check("bulk-delete poll gives up and says so", "Lost track of the bulk delete" in with_words(body))
 
     app = (ROOT / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
     check("a failed setup-status check is not a first run",

@@ -28,6 +28,7 @@ Each check fails on the code before this change:
     python tests/test_silent_failures_r3_frontend.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import with_words  # noqa: E402
 from _i18n_js import i18n_js
 
 import json
@@ -239,8 +240,8 @@ def test_kb_status_unknown_and_backfill_kept():
     load = _fn(kb, "loadEnrichStatus")
     check("status / custodian failures are not {} / null",
           ".catch(() => ({}))" not in load and ".catch(() => null)" not in load and "_err: e" in load)
-    check("overview shows a status-unknown badge", "Status unknown" in _fn(kb, "_renderKbOverview"))
-    check("custodian shows status unknown", "status unknown" in _fn(kb, "_renderCustodianUnknown"))
+    check("overview shows a status-unknown badge", "Status unknown" in with_words(_fn(kb, "_renderKbOverview")))
+    check("custodian shows status unknown", "status unknown" in with_words(_fn(kb, "_renderCustodianUnknown")))
     out = _node(_fn(kb, "_kbStatusDelay") + """
 console.log(JSON.stringify([
   _kbStatusDelay({_err: 1}, {}), _kbStatusDelay({}, {_err: 1}), _kbStatusDelay({running: true}, {}),
@@ -297,12 +298,12 @@ def test_deletions_failures_are_said():
     ret = _fn(dl, "_loadReturned")
     check("Back-after-deletion failure is an error line, not an empty list",
           "catch { items = []; }" not in ret and "_renderReturnedError(" in ret)
-    check("...which renders a load-err line", "Couldn't check for titles back after deletion" in _fn(dl, "_renderReturnedError"))
+    check("...which renders a load-err line", "Couldn't check for titles back after deletion" in with_words(_fn(dl, "_renderReturnedError")))
     for name in ("approveDelete", "rejectDelete"):
         fn = _fn(dl, name)
         check(f"{name}: the reason save is not .catch(()=>{{}})", ".catch(()=>{})" not in _nospace(fn) and "_saveReason(" in fn)
         check(f"{name}: the toast admits a lost reason", "+ lost" in fn or "${lost}" in fn)
-    check("REASON_LOST suffix", "your reason couldn't be saved" in _const(dl, "REASON_LOST"))
+    check("REASON_LOST suffix", "your reason couldn't be saved" in with_words(_const(dl, "REASON_LOST")))
     load = _fn(dl, "loadDeletions")
     check("analysis failure: _errHtml with a Run-analysis retry, not raw JSON in .loading",
           "esc(e.message || 'Analyse failed')" not in load

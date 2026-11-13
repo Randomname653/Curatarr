@@ -20,6 +20,16 @@ has already loaded.
 Activity's Scheduled and History tabs, the Knowledge Base, Deletions, the arr browsers and the
 compute nodes call it. The local is renamed; a test draws relative times in English and German
 and guards every module that imports `t()` against a local `t` followed by a `t('…')` call.
+**The admin views in German, part one** (design record 3.8, round three, C1). Deletions (the
+cards, Cut / Your call, Why?, the Keep dialog, the bulk bar, Back after deletion, Fix match), the
+deletion discussion in the chat with its banner and "Delete & exit", Curation (Protected titles,
+Downscale, Upgrade and Redundant storage, Learned principles), Reclassify, the Knowledge Base
+(including Finish the backfill and the healing actions) and the Series, Movies and Music browsers
+with adding through the arr apps and Wanted / Backlog follow the language setting. The curator's
+map of the app names these buttons as the user's UI draws them; in English it is the text it
+always read. Titles, the curator's pitches and signal labels, service names and what the server
+or the arr apps report stay as they come. Activity, the remaining Settings, setup and onboarding
+follow in part two.
 
 **Activity in three tabs: Queue, Scheduled, History.** The page mixed live work with finished
 runs: "Done" rows clogged "Live tasks", the table below repeated them for this session only, and

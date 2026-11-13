@@ -35,3 +35,17 @@ function th(key, vars) {
 }
 """ % (json.dumps(dictionary("en"), ensure_ascii=False), json.dumps(lang),
        json.dumps(dictionary(lang), ensure_ascii=False), json.dumps(lang))
+
+
+def with_words(src: str, lang: str = "en") -> str:
+    """A piece of frontend code plus the text of every dictionary key it
+    names in quotes (t('…'), th(cond ? '…' : '…'), a constant holding a
+    key), so a check on what a dialog SAYS reads the words wherever they
+    live (UX design record 3.8)."""
+    import re
+    d = dictionary(lang)
+    texts = []
+    for key in dict.fromkeys(k for k in re.findall(r"'([\w.]+)'", src) if k in d):
+        v = d.get(key)
+        texts += list(v.values()) if isinstance(v, dict) else [v] if v else []
+    return src + "\n" + "\n".join(texts)

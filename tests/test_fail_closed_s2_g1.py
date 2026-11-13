@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 _TMP = Path(tempfile.mkdtemp())
 from _harness import check  # noqa: E402  (first: temp stores and .env, never the live data/)
+from _i18n_js import with_words  # noqa: E402
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'curatarr.db').as_posix()}"
 
 import httpx  # noqa: E402
@@ -204,7 +205,7 @@ js = (ROOT / "frontend/js/deletions.js").read_text(encoding="utf-8")
 cov_fn = js.split("export function _renderEnrichmentCoverageBanner")[1].split("\n}\n")[0]
 check("the coverage banner handles unknown before never_run",
       "cov.unknown" in cov_fn and cov_fn.index("cov.unknown") < cov_fn.index("cov.never_run")
-      and "coverage unknown" in cov_fn)
+      and "coverage unknown" in with_words(cov_fn).lower())
 load_fn = js.split("export async function loadDeletions")[1].split("\n}\n")[0]
 check("loadDeletions renders the history-unreadable note",
       "_renderActivityBanner(" in load_fn and "activity_note" in load_fn)

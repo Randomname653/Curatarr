@@ -129,7 +129,7 @@ check("update_db.py runs the column migrations, not create_all alone",
 ui = everything()
 card = ui.split("export function _renderDeletionProposals")[1][:6000]
 check("the card no longer shows the score as a percentage", "(p.confidence||0)*100" not in card)
-check("the card says Cut or Your call", ">Cut</span>" in card and ">Your call</span>" in card)
+check("the card says Cut or Your call", "${th('del.cut')}</span>" in card and "${th('del.your_call')}</span>" in card)
 check("Why? is a disclosure: aria-expanded + aria-controls", 'aria-expanded="false" aria-controls="why-${p.id}"' in ui)
 check("toggleWhy is a registered action", re.search(r"\n  toggleWhy,\n", ui) is not None)
 check("Recommendations never invents a 70% fit", "rec.confidence||0.7" not in ui)
@@ -143,6 +143,6 @@ check("the engine cuts the shortlist on SHORTLIST_SCORE, never a bare 30",
 m = re.search(r"const _SHORTLIST_SCORE = (\d+);", ui)
 check(f"the card's Why? names the engine's cut ({eng.SHORTLIST_SCORE})",
       m is not None and int(m.group(1)) == eng.SHORTLIST_SCORE
-      and "above ${_SHORTLIST_SCORE}" in ui)
+      and "th('del.why_shortlist', {min: _SHORTLIST_SCORE})" in ui)
 
 check.done()
