@@ -338,7 +338,9 @@ def _arr_enriched_ids(service: str) -> set:
         ).all()}
 
 
-_vec_count_warned_at = 0.0
+# None until the first warning: time.monotonic() counts from boot, so a 0.0
+# start swallowed the first one on a host up for less than the window.
+_vec_count_warned_at: Optional[float] = None
 
 
 def _vector_counts_by_service() -> dict:
@@ -352,7 +354,7 @@ def _vector_counts_by_service() -> dict:
         # The panel's 0 then means "unreadable", not "nothing vectorised";
         # the status endpoint is polled, so at most once a minute.
         now = time.monotonic()
-        if now - _vec_count_warned_at > 60:
+        if _vec_count_warned_at is None or now - _vec_count_warned_at > 60:
             _vec_count_warned_at = now
             logger.warning("[enrichment] vector counts unavailable (panel shows 0): %s", e)
         return {}

@@ -22,7 +22,7 @@ def _src(rel: str) -> str:
 
 def _fresh():
     lp._reset_lanes()
-    lp._last_interactive = 0.0
+    lp._last_interactive = float("-inf")
 
 
 async def _no_evict(target, url=None):
@@ -121,7 +121,7 @@ async def _preempt():
     chat_got_slot = True
     lp.curator_done()
     # the re-run waits out the 5 s back-off quiet window: shorten it
-    lp._last_interactive = 0.0
+    lp._last_interactive = float("-inf")
     result = await asyncio.wait_for(bg, timeout=10)
     return runs, chat_got_slot, result
 
@@ -162,7 +162,7 @@ async def _preempt_budget():
             if lp.lane().preemptible:
                 await lp.curator_start("chat", priority=lp.INTERACTIVE)
                 lp.curator_done()
-                lp._last_interactive = 0.0
+                lp._last_interactive = float("-inf")
             await asyncio.sleep(0.01)
 
     bg = asyncio.create_task(lp.background_curator_call("x", call, max_preempts=1))
@@ -189,7 +189,7 @@ async def _quiet():
 
     # an interactive HOLDER keeps background work waiting past the window
     await lp.curator_start("chat", priority=lp.INTERACTIVE)
-    lp._last_interactive = 0.0
+    lp._last_interactive = float("-inf")
     w = asyncio.create_task(lp.wait_quiet(0.2))
     await asyncio.sleep(1.2)
     held = not w.done()
@@ -218,7 +218,7 @@ async def _make_room():
         before = list(evicted)
         await lp.curator_start("chat", priority=lp.INTERACTIVE)
         lp.curator_done()
-        lp._last_interactive = 0.0
+        lp._last_interactive = float("-inf")
         await lp.make_room_for_summarizer(0)
         return before, evicted, lp.lane().warm
     finally:

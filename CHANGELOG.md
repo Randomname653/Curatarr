@@ -12,6 +12,12 @@ was then hooked to an event that had already fired, never ran, and a configured 
 Setup screen (depending on timing, so not on every load). The start now runs at once when the page
 has already loaded.
 
+**Relative times work again.** Since the UI-language round 1, every relative time ("2 h ago",
+"in 3 d") threw "t is not a function": `_fmtRel` named a local `t` and so hid the UI's `t()`.
+Activity's Scheduled and History tabs, the Knowledge Base, Deletions, the arr browsers and the
+compute nodes call it. The local is renamed; a test draws relative times in English and German
+and guards every module that imports `t()` against a local `t` followed by a `t('…')` call.
+
 **Activity in three tabs: Queue, Scheduled, History.** The page mixed live work with finished
 runs: "Done" rows clogged "Live tasks", the table below repeated them for this session only, and
 status lines printed Python ("across ['music', 'movie']", "across []", "Enrichment setup: Done",
