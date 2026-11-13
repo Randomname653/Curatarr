@@ -46,7 +46,7 @@ lp.REROUTE_CHECK_S = 0.05
 def run(coro_fn):
     async def wrapper():
         lp._reset_lanes()
-        lp._last_interactive = 0.0
+        lp._last_interactive = float("-inf")
         pc_state["usable"] = True
         try:
             return await coro_fn()

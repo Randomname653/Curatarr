@@ -35,7 +35,7 @@ def _src(rel: str) -> str:
 def _fresh_gate():
     """Module state bound to the loop asyncio.run() is about to create."""
     lp._reset_lanes()
-    lp._last_interactive = 0.0
+    lp._last_interactive = float("-inf")
 
 
 def _db():

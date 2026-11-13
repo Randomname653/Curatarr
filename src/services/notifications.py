@@ -75,7 +75,9 @@ def _model_update_items() -> list[dict]:
 
 
 _GAME_Q_MAX = 3
-_game_q_cache: dict = {"at": 0.0, "items": []}
+# "at" is time.monotonic(), which counts from boot: -inf means "never read",
+# so a host up for under 30 s still asks (0.0 served the empty list).
+_game_q_cache: dict = {"at": float("-inf"), "items": []}
 
 
 def _game_question_items() -> list[dict]:
@@ -116,7 +118,7 @@ def _game_question_items() -> list[dict]:
 
 def forget_game_questions() -> None:
     """An answer came in: the next bell read asks again."""
-    _game_q_cache["at"] = 0.0
+    _game_q_cache["at"] = float("-inf")
 
 
 _pc_update_hidden = {"until": 0.0}
