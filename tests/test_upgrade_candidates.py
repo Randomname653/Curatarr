@@ -68,6 +68,6 @@ check("redundancy endpoint enriches per-version files + both jump-offs",
 check("arr match is category-scoped (same-name titles can't steal the link)",
       '(cat, normalize_title(t))' in rec)
 check("panel renders both links + file lines",
-      "Open in Plex" in html and "per-file detail unavailable" in html)
+      "th('actions.open_in', {server: 'Plex'})" in html and "per-file detail unavailable" in html)
 
 check.done()

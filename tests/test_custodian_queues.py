@@ -295,9 +295,9 @@ every = {t["job_id"]: t["every_tick"] for t in dc.custodian_status()["tasks"]}
 dc._registry = _stub
 check("a task that runs on every tick is marked so; the badge leaves it out",
       every["plex_followup"] is True and every["memory_catchup"] is True
-      and every["arr_sync"] is False and "t.due && !t.every_tick" in kb)
+      and every["arr_sync"] is False and "x.due && !x.every_tick" in kb)
 check("the Knowledge Base names what each queue is on",
-      "c.queues" in kb and "'GPU work'" in kb and "allBusy ? ' disabled'" in kb)
+      "c.queues" in kb and "t('kb.q_gpu')" in kb and "allBusy ? ' disabled'" in kb)
 check("the old single tick lock is gone",
       "_tick_lock" not in (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8"))
 

@@ -972,7 +972,7 @@ export function discussInChat(type, data) {
   if (type === 'rec') {
     primer = t('chat.discuss_rec', {title: data.title, reason: data.reason});
   } else if (type === 'delete') {
-    primer = `I just deleted "${data.title}" from my library. My reason: "${data.reason || 'no specific reason given'}". What does this tell you about my taste? What should I avoid in the future?`;
+    primer = t('disc.just_deleted', {title: data.title, reason: data.reason || t('disc.no_reason')});
   } else if (type === 'custom') {
     primer = data.message || '';
   }
@@ -994,19 +994,19 @@ export async function saveComment(id) {
   if (!ta) return;
   const comment = ta.value.trim();
   if (comment === (ta.dataset.saved || '')) return;   // nothing new
-  if (hint) hint.textContent = 'Saving…';
+  if (hint) hint.textContent = t('del.saving');
   try {
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/comment?comment=${encodeURIComponent(comment)}`, 'POST');
     ta.dataset.saved = comment;
     if (r && r.is_kept) {
-      if (hint) hint.textContent = 'Saved — read as "keep", the proposal is closed.';
+      if (hint) hint.textContent = t('del.note_kept');
       ta.closest('.card')?.classList.add('done');
       if (state._delProposalsAll) state._delProposalsAll = state._delProposalsAll.filter(p => p.id !== id);
     } else if (hint) {
-      hint.textContent = comment ? 'Note saved.' : 'Note cleared.';
+      hint.textContent = t(comment ? 'del.note_saved' : 'del.note_cleared');
     }
   } catch (e) {
-    if (hint) hint.textContent = 'Could not save the note — ' + _errMsg(e);
+    if (hint) hint.textContent = t('del.note_failed', {error: _errMsg(e)});
   }
 }
 
@@ -1029,7 +1029,7 @@ export function _setDiscussBanner(text) {
       const isDeletion = state.pendingDiscussContext?.kind === 'deletion_proposal';
       delBtn.hidden = !isDeletion;
       delBtn.disabled = false;
-      delBtn.textContent = 'Delete & exit';
+      delBtn.textContent = t('disc.delete_exit');
     }
   } else {
     banner.hidden = true;
@@ -1107,10 +1107,10 @@ export function _threadIdForContext(ctx) {
 // endpoint answers {ok: false} (HTTP 200) when the extraction itself failed.
 function _flushThreadMemories(tid) {
   api('/api/chat/flush-memories', 'POST', { thread_id: tid })
-    .then(r => { if (r && r.ok === false) throw new Error(r.error || 'memory extraction failed'); })
+    .then(r => { if (r && r.ok === false) throw new Error(r.error || t('disc.extraction_failed')); })
     .catch(e => {
       console.warn('[chat] flush-memories failed', tid, e);
-      toast("Couldn't save this conversation's memories yet: " + _errMsg(e), 'amber');
+      toast(t('disc.memories_failed', {error: _errMsg(e)}), 'amber');
     });
 }
 
@@ -1135,7 +1135,7 @@ export async function exitDiscussion() {
   if (msgs) {
     const note = document.createElement('div');
     note.className = 'msg system';
-    note.textContent = 'Exited the discussion thread. The next message is free chat.';
+    note.textContent = t('disc.exited');
     msgs.appendChild(note);
     _follow(msgs, true);
   }
@@ -1150,7 +1150,7 @@ export async function deleteFromDiscussion() {
   const ctx = state.pendingDiscussContext;
   if (!ctx || ctx.kind !== 'deletion_proposal' || !ctx.proposal_id) return;
   const id    = ctx.proposal_id;
-  const title = ctx.title || 'this item';
+  const title = ctx.title || t('del.this_item');
   // The approve waits on the arr deleting the files, long enough to open
   // another discussion meanwhile. Its answer then closed THAT thread and
   // flushed its memories, and the next message went to free chat without
@@ -1166,13 +1166,13 @@ export async function deleteFromDiscussion() {
   // Deletion is irreversible — keep the 3-second-countdown confirm. No
   // reason field here: the discussion thread itself IS the reasoning.
   const res = await confirmDialog({
-    title: 'Delete from library', danger: true, countdown: 3, confirmLabel: 'Delete',
+    title: t('del.delete_from_library'), danger: true, countdown: 3, confirmLabel: t('del.delete'),
     body: _deleteBody(title, await deleteFateLines([(state._delProposalsAll || []).find(p => String(p.id) === String(id))?.service])),
   });
   if (!res.ok) return;
 
   const btn = document.getElementById('discuss-delete-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  if (btn) { btn.disabled = true; btn.textContent = t('del.deleting'); }
 
   try {
     // Lightweight audit trail — the actual reasoning lives in the thread
@@ -1184,7 +1184,7 @@ export async function deleteFromDiscussion() {
 
     const r = await api(`/api/recommendations/deletions/${encodeURIComponent(id)}/approve`, 'POST');
     // The banner re-arms its button for whichever discussion opened since.
-    const rearm = () => { if (btn && stillHere()) { btn.disabled = false; btn.textContent = 'Delete & exit'; } };
+    const rearm = () => { if (btn && stillHere()) { btn.disabled = false; btn.textContent = t('disc.delete_exit'); } };
 
     if (r.limbo) {
       // ARR unreachable — proposal kept in limbo, user can retry.
@@ -1207,7 +1207,7 @@ export async function deleteFromDiscussion() {
       }
       if (!stillHere()) {
         // Another discussion owns the pane now: it stays as it is.
-        toast(`Deleted "${title}".`, 'success');
+        toast(t('disc.deleted', {title}), 'success');
         return;
       }
       // Close the discussion — same end-state as exitDiscussion(), minus
@@ -1216,22 +1216,21 @@ export async function deleteFromDiscussion() {
       state.pendingDiscussContext = null;
       _setDiscussBanner(null);
       if (!_stream) await _showThread('general');
-      addMsg(`Deleted "${title}". Discussion thread closed.`, 'assistant');
+      addMsg(t('disc.deleted_closed', {title}), 'assistant');
     } else {
-      say(`Delete failed for "${title}". Try again from the Deletions view.`, 'danger');
+      say(t('disc.delete_failed', {title}), 'danger');
       rearm();
     }
   } catch (e) {
-    say(`Delete request failed for "${title}". Try again from the Deletions view.`, 'danger');
-    if (btn && stillHere()) { btn.disabled = false; btn.textContent = 'Delete & exit'; }
+    say(t('disc.request_failed', {title}), 'danger');
+    if (btn && stillHere()) { btn.disabled = false; btn.textContent = t('disc.delete_exit'); }
   }
 }
 
 // The pane's first bubble: what the card proposed. A "Your call" card is no
 // deletion suggestion - its text is the case for the owner to weigh.
 export function proposalOpener(title, pitch, stagnant) {
-  return stagnant ? `I have put "${title}" up as your call. Reason: "${pitch}"`
-    : `I have suggested "${title}" for deletion. Reason: "${pitch}"`;
+  return t(stagnant ? 'disc.opener_your_call' : 'disc.opener_cut', {title, pitch});
 }
 
 export async function discussDeletion(id, title, pitch, category, poster_url, stagnant = false) {
@@ -1259,15 +1258,15 @@ export async function discussDeletion(id, title, pitch, category, poster_url, st
     title: title || null,
     poster_url: poster_url || null,
   };
-  if (!await enterThread(ctx, `Discussing deletion of "${title}"`,
+  if (!await enterThread(ctx, t('disc.banner_deletion', {title}),
                          proposalOpener(title, pitch, stagnant))) return;
 
   // 4. Prepare the input field for the user
   const input = document.getElementById('chat-input');
   if (userNote) {
-    input.value = `My note on this: "${userNote}". Let's discuss it.`;
+    input.value = t('disc.ask_note', {note: userNote});
   } else {
-    input.value = `Let's discuss whether this should stay in my library.`;
+    input.value = t('disc.ask_stay');
   }
 
   input.focus();

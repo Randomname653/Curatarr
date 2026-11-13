@@ -320,7 +320,7 @@ def test_page_endpoints_and_frontend_wiring():
     assert '"_match_basis"' in me and '"_reason":        "low_confidence"' in me
     fe = _frontend_everything()
     for needle in ("renderMatchPicker", "loadKbItems", "loadKbAttention", 'id="kb-badge"',
-                   "Not this one", "Retry now", "Search &amp; pin", "Un-ignore", "_updateKbBadge",
+                   "Not this one", "Retry now", "Search & pin", "Un-ignore", "_updateKbBadge",
                    'id="kb-attention"', 'id="kb-drilldown"', "Pin this id"):
         assert needle in fe, needle
     assert "p.category||'movie'" not in fe, "the client no longer invents a category"
