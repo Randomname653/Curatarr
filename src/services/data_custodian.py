@@ -76,6 +76,7 @@ _AFTER_CAP_S = 1800.0
 _queue_busy = {q: False for q in _QUEUES}
 _queue_current: dict = {q: None for q in _QUEUES}    # job_id running right now
 _queue_pending: dict = {q: set() for q in _QUEUES}   # due job_ids not reached yet
+_queue_forced: dict = {q: False for q in _QUEUES}     # this run ignores cadence (Run maintenance now)
 _first_run_done = {q: False for q in _QUEUES}
 
 _SETTLE_SECONDS = 300          # first tick waits this long after app start
@@ -129,6 +130,18 @@ def _prog(task, message: str = None, processed: int = None,
         pass
 
 
+def _report(task, summary: str = None, *, noop: bool) -> None:
+    """A wrapper-carded runner states what its run did: the line the History
+    and the Scheduled tab show, and whether the run was empty. Said here,
+    not guessed from the wording ("+0 so far" read as work, "7 candidates"
+    as empty — the 2026-11 live check)."""
+    if task is None:
+        return
+    task.noop = bool(noop)
+    if summary:
+        _prog(task, message=summary)
+
+
 # ── runners ───────────────────────────────────────────────────────────────────
 # Each returns True when fully done (stamp the cadence) or False when work
 # remains / the task was blocked (stay due — continue next tick).
@@ -165,6 +178,8 @@ async def _run_omdb(deep: bool = False, task=None) -> bool:
     r = await run_omdb_backfill(task=task, limit=limit)
     cand, done = r.get("candidates", 0), r.get("enriched", 0)
     left = r.get("remaining", 0)
+    _report(task, f"{done:,} of {cand:,} candidates enriched" if cand
+            else "No titles without OMDb data", noop=not cand)
     logger.info("[custodian] omdb top-up: %d/%d, %d remaining", done, cand, left)
     # Done only when nothing is left beyond this run's budget. ``candidates``
     # is counted after the [:limit] cut, so the old ``cand <= limit`` was
@@ -181,8 +196,16 @@ async def _run_significance(deep: bool = False, task=None) -> bool:
 
 
 async def _run_reread_spotify_history(deep: bool = False, task=None) -> bool:
-    from src.services.spotify_import import reread_imported
-    return await reread_imported(task=task)
+    from src.services.app_state import get_state
+    from src.services.spotify_import import REREAD_KEY, reread_imported
+    if (await run_read(get_state, REREAD_KEY)) == "1":
+        # A one-off: every run after the first is empty.
+        _report(task, "Already re-read — nothing to do", noop=True)
+        return True
+    done = await reread_imported(task=task)
+    if task is not None and not task.total:
+        _report(task, "No imported Spotify files to re-read", noop=True)
+    return done
 
 
 async def _run_spotify(deep: bool = False, task=None) -> bool:
@@ -235,6 +258,9 @@ async def _run_spotify(deep: bool = False, task=None) -> bool:
         sp.get("enriched_plays", 0) or 0,
         lf.get("tracks_queried", 0) or 0,
     )
+    # Nothing looked up in any phase: an empty run ("Done: 0 tracks queried
+    # on Last.fm"), whatever its summary line says.
+    _report(task, noop=busy == 0)
     return busy < batch
 
 
@@ -280,6 +306,9 @@ async def _run_wikidata(deep: bool = False, task=None) -> bool:
     r = await run_source("wikidata", limit=400 if deep else 150, task=task)
     left = next((s["missing"] for s in (await run_read(coverage))["sources"]
                  if s["key"] == "wikidata"), 0)
+    added, visited = r.get("added", 0) or 0, r.get("visited", 0) or 0
+    _report(task, f"+{added:,} facts over {visited:,} title(s), {left:,} left",
+            noop=added == 0)
     logger.info("[custodian] wikidata: +%d over %d title(s), %d remaining",
                 r.get("added", 0), r.get("visited", 0), left)
     return left == 0
@@ -292,6 +321,7 @@ async def _run_discogs_styles(deep: bool = False, task=None) -> bool:
     from src.services.discogs_offline import refresh_discogs_styles
     r = await refresh_discogs_styles(task=task)
     if r.get("skipped"):
+        _report(task, "Styles dump is current — nothing to download", noop=True)
         return True
     logger.info("[custodian] discogs styles: %s", r)
     # An error (429, a broken stream, no library artists) stays due and backs
@@ -1330,6 +1360,7 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool,
     finally:
         _queue_pending[queue] = set()
         _queue_current[queue] = None
+        _queue_forced[queue] = False
         _queue_busy[queue] = False
     report = {
         "queue": queue,
@@ -1345,12 +1376,23 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool,
     return report
 
 
-def job_state(job_id: str) -> str:
-    """running | queued | idle — for one custodian task."""
+def job_state(job_id: str, due: bool | None = None) -> str:
+    """running | queued | idle — for one custodian task.
+
+    "queued" only for a task this run will really reach: asked for with Run
+    now, or still ahead in a run that ignores cadence, or ahead and due.
+    ``due`` is the caller's reading of the task's stamp (it reads the
+    database, so it is passed in); a task ahead in the run but not due is
+    skipped when its turn comes, so it is "idle". The pending set used to
+    say "queued" for every task of a busy queue — a weekly job run five
+    days ago read "Queued" with Run now locked (2026-11 live check)."""
     for q in _QUEUES:
         if _queue_current[q] == job_id:
             return "running"
-        if job_id in _run_requests[q] or (_queue_busy[q] and job_id in _queue_pending[q]):
+        if job_id in _run_requests[q]:
+            return "queued"
+        if (_queue_busy[q] and job_id in _queue_pending[q]
+                and (_queue_forced[q] or due is not False)):
             return "queued"
     return "idle"
 
@@ -1364,14 +1406,18 @@ def request_run(job_id: str) -> str:
     t = next((x for x in _registry() if x.job_id == job_id), None)
     if t is None:
         raise KeyError(job_id)
-    state = job_state(job_id)
-    if state != "idle":
-        return state
     q = queue_of(t)
+    if _queue_current[q] == job_id:
+        return "running"
+    if job_id in _run_requests[q]:
+        return "queued"
     if _queue_busy[q]:
+        # Also for a task already ahead in this run: the request makes it
+        # run at its turn whether due or not, and only once.
         _run_requests[q].append(job_id)
         return "queued"
     _queue_busy[q] = True
+    _queue_forced[q] = False
     _queue_pending[q] = set()
     _run_requests[q].append(job_id)
     try:
@@ -1401,6 +1447,11 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
     """
     if first_tick:
         await asyncio.sleep(_SETTLE_SECONDS)
+        # The start tick is the interval job's first run: the Scheduled tab
+        # records it like the others (it read "never" until the 30-min tick).
+        from src.services.scheduler import _watched
+        return await _watched("data_custodian")(custodian_tick)(
+            force=force, deep=deep, wait=wait, quiet=quiet, queues=queues)
     from src.services.scheduler import _job_overdue, _track_task
     registry = _registry()
 
@@ -1431,6 +1482,7 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
             due = {t.job_id for t in tasks}
         # Claimed before the first await, so two ticks can never both start it.
         _queue_busy[q] = True
+        _queue_forced[q] = bool(force)
         _queue_pending[q] = due
         try:
             started.append(_track_task(asyncio.create_task(_run_queue(q, tasks, force, deep))))

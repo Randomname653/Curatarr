@@ -122,6 +122,10 @@ check("not a no-op: a backup's '439.2 MB · kept 7', a run that processed items,
       not _run("439.2 MB · kept 7", secs=1) and not _run("done", processed=3, total=3)
       and not _run("Partial — continues next tick", partial=True))
 check("an explicit noop= wins", _run("12 things", noop=True) and not _run("", noop=False))
+# 2026-11 live check: the OMDb card's last progress tick never came (it ticks
+# every 100), so "7 candidates" with 0 of 7 processed was hidden as empty.
+check("a count in the summary is work, even when the progress count stayed 0",
+      not _run("OMDb backfill: 7 candidates", total=7, secs=2))
 
 # Grouping: sub-steps fold into their run
 g = TaskMonitor(); g.persist = False
@@ -161,6 +165,11 @@ check("the bar moves while a category is judged (half of a 20-item step = 25%)",
 s.update(arr, processed=20)
 check("the category's end counts its items and ends the step",
       arr.progress == 50 and arr.step_size == 0 and arr.sub_total == 0)
+s.begin_step(arr, 10, message="movie: scoring 10 candidates")
+check("a step that has begun but reported nothing yet pulses (no stale %)",
+      arr.to_dict()["indeterminate"] is True)
+s.substep(arr, 1, 10)
+check("...its first substep turns the pulse into a bar", arr.to_dict()["indeterminate"] is False)
 check("a substep without an item count still gives a percentage",
       (lambda t: (s.start(t), s.substep(t, 3, 4), t.progress)[-1])(s.create("Deletion analysis", "curation")) == 75)
 
@@ -300,6 +309,71 @@ _slow_row = next(j for g_ in activity.scheduled_overview()["groups"] for j in g_
                  if j["job_id"] == "slow_job")
 check("a due job in backoff says why it waits",
       "backing off" in _slow_row["blocked"] and _slow_row["next_note"] == _slow_row["blocked"])
+
+# A busy queue: only the tasks this run will reach read "queued".
+bg = dc.QUEUE_BACKGROUND
+dc._queue_busy[bg] = True
+dc._queue_pending[bg] = {"cache_prune", "slow_job"}     # the tick's due set, as taken
+rows = {j["job_id"]: j for g_ in activity.scheduled_overview()["groups"] for j in g_["jobs"]}
+check("a task ahead in a busy queue but not due stays idle, with its next run and Run now",
+      rows["cache_prune"]["state"] == "idle" and rows["cache_prune"]["can_run"]
+      and rows["cache_prune"]["next_run"])
+check("...a due one ahead in the run is queued", rows["slow_job"]["state"] == "queued"
+      and not rows["slow_job"]["can_run"])
+dc._queue_forced[bg] = True
+check("...in a run that ignores cadence every task ahead is queued",
+      dc.job_state("cache_prune", due=False) == "queued")
+dc._queue_forced[bg] = False
+check("Run now on such an idle task queues it behind the busy queue",
+      dc.request_run("cache_prune") == "queued" and dc._run_requests[bg] == ["cache_prune"]
+      and dc.job_state("cache_prune", due=False) == "queued")
+dc._run_requests[bg].clear()
+dc._queue_pending[bg] = set()
+dc._queue_busy[bg] = False
+
+# The start tick is recorded like the interval job's runs (it read "never").
+dc._SETTLE_SECONDS = 0
+activity._job_results.pop("data_custodian", None)
+asyncio.run(dc.custodian_tick(first_tick=True, wait=False, queues=()))
+check("the start tick is recorded as the custodian tick's run",
+      "data_custodian" in activity._job_results)
+
+# Runners say themselves whether their run was empty.
+import src.services.archive_backfill as ab  # noqa: E402
+import src.services.discogs_offline as do  # noqa: E402
+
+
+def _card(name):
+    c = task_monitor.create(name, "custodian")      # own names: create() dedupes running ones
+    task_monitor.start(c)
+    return c
+
+
+async def _skipped(task=None):
+    return {"skipped": "fresh"}
+
+do.refresh_discogs_styles = _skipped
+c_disc = _card("Discogs styles dump")
+asyncio.run(dc._run_discogs_styles(task=c_disc))
+added = {"n": 0}
+
+
+async def _source(name, limit=0, task=None):
+    return {"added": added["n"], "visited": 5}
+
+ab.run_source = _source
+ab.coverage = lambda: {"sources": [{"key": "wikidata", "missing": 0}]}
+c_wd0 = _card("On-record facts (none)")
+asyncio.run(dc._run_wikidata(task=c_wd0))
+added["n"] = 3
+c_wd3 = _card("On-record facts (three)")
+asyncio.run(dc._run_wikidata(task=c_wd3))
+for c in (c_disc, c_wd0, c_wd3):
+    task_monitor.done(c, "Complete")
+check("an up-to-date Discogs dump is an empty run, said by the runner",
+      c_disc.is_noop and "current" in c_disc.summary)
+check("on-record facts: +0 is empty, +3 is not; the summary says which",
+      c_wd0.is_noop and not c_wd3.is_noop and c_wd3.summary.startswith("+3 facts"))
 
 # ── 7. the router ───────────────────────────────────────────────────────────
 
