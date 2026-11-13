@@ -133,16 +133,19 @@ check("manual analysis feeds the card into generate_deletion_proposals "
 # where the old map needed a manual entry per category. What must hold now:
 # the row renders the name, and no half-removed icon map lingers.
 from tests.frontend_files import everything
+from _i18n_js import dictionary  # noqa: E402
 fe = everything()
 check("activity rows render the task's backend-sent name",
-      "${esc(t.name)}" in fe)
+      "${esc(run.name)}" in fe)
 check("the old per-category icon map is fully gone, not half-removed",
       "TASK_ICONS" not in fe)
 # 2026-11 (the Activity redesign): rows are coloured by the task's OUTCOME
 # (Task.outcome), with a fallback from the raw status for older payloads.
-_outcomes = fe.split("const OUTCOME = {")[1].split("};")[0]
+# the colours by outcome; the words are the dictionary's (activity.outcome.*)
+_outcomes = fe.split("const _BADGE = {")[1].split("};")[0]
+_EN = dictionary("en")
 check("every outcome the backend emits has a color and a label",
-      all(f"{s}:" in _outcomes and "label:" in _outcomes for s in (
+      all(f"{s}:" in _outcomes and f"activity.outcome.{s}" in _EN for s in (
           "running", "queued", "completed", "warning", "partial",
           "failed", "cancelled", "skipped")))
 check("...and every raw status maps to an outcome",
@@ -197,7 +200,7 @@ check("audit reports its stages (ground truth -> scan -> requeue)",
 
 check("frontend hides the fake 0% chip when a running card has no total "
       "(an indeterminate pulse instead)",
-      "o === 'running' && !t.indeterminate ?" in fe
+      "o === 'running' && !run.indeterminate ?" in fe
       and "indeterminate ? ' indeterminate' : ''" in fe)   # the backend flag: test_activity_view
 
 check("queue rows are patched in place (keyed data-run-id) and renders coalesce per frame",

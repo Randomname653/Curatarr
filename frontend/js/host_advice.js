@@ -8,6 +8,7 @@
 // catalog's choices marked installed / too big for that card.
 import { api } from './api.js';
 import { _errMsg, act, actOn, esc, escAttr, setStatus } from './ui.js';
+import { t, th } from './i18n.js';
 
 // Which form field holds which value, per host card.
 export const ADVICE_FIELDS = {
@@ -38,7 +39,7 @@ export async function loadHostAdvice() {
   catch (e) {
     for (const h of hosts) {
       document.getElementById(`int-advice-${h}`).innerHTML =
-        `<p class="fs-12 t-amber">The bench's advice is not available: ${esc(_errMsg(e))}</p>`;
+        `<p class="fs-12 t-amber">${th('hostadv.unavailable', {error: _errMsg(e)})}</p>`;
     }
     return;
   }
@@ -66,17 +67,17 @@ function _fillSelect(host, role) {
   const names = entries.map(e => e.model);
   const opts = entries.map(e => {
     const tags = [];
-    if (e.model === pick) tags.push(`the bench's pick for ${part.advice.package.tier_gb} GB`);
-    if (e.installed) tags.push('installed');
-    if (e.fits === false) tags.push(`needs ~${Math.round(e.need_gb)} GB`);
-    else if (e.tight) tags.push('tight fit');
+    if (e.model === pick) tags.push(t('hostadv.bench_pick', {gb: part.advice.package.tier_gb}));
+    if (e.installed) tags.push(t('hostadv.installed'));
+    if (e.fits === false) tags.push(t('hostadv.needs', {gb: Math.round(e.need_gb)}));
+    else if (e.tight) tags.push(t('hostadv.tight'));
     return `<option value="${esc(e.model)}">${esc(e.model)} — ${esc(e.label)}${tags.length ? esc(` · ${tags.join(' · ')}`) : ''}</option>`;
   });
   // Curatarr's own bakes are built FROM these bases, never one of them.
   const extra = installed.filter(m => !names.includes(m) && !m.startsWith('curatarr-'))
-    .map(m => `<option value="${esc(m)}">${esc(m)} — installed, not benchmarked</option>`);
+    .map(m => `<option value="${esc(m)}">${esc(m)} — ${th('hostadv.installed_unbenched')}</option>`);
   if (cur && !names.includes(cur) && !installed.includes(cur)) {
-    extra.unshift(`<option value="${esc(cur)}">${esc(cur)} — set now, not on this host</option>`);
+    extra.unshift(`<option value="${esc(cur)}">${esc(cur)} — ${th('hostadv.set_not_here')}</option>`);
   }
   sel.innerHTML = opts.concat(extra).join('');
   sel.value = cur;
@@ -95,24 +96,24 @@ const _window = (profile, ctx) => Number(ctx) || PROFILE_CTX[profile] || 16384;
 // too (an alternative) - a choice, not a mismatch.
 function _row(label, now, bench, same, passed = false) {
   const badge = bench === null ? ''
-    : same ? ' <span class="badge success badge-sm">as measured</span>'
-      : passed ? ` <span class="badge badge-sm" title="The bench's pick here is ${escAttr(bench)}">passed the bench here</span>`
-        : ` <span class="badge amber badge-sm">bench: ${esc(bench)}</span>`;
+    : same ? ` <span class="badge success badge-sm">${th('hostadv.as_measured')}</span>`
+      : passed ? ` <span class="badge badge-sm" title="${th('hostadv.pick_here', {model: bench})}">${th('hostadv.passed_here')}</span>`
+        : ` <span class="badge amber badge-sm">${th('hostadv.bench', {value: bench})}</span>`;
   return `<div class="fs-12">${esc(label)}: <b>${esc(now)}</b>${badge}</div>`;
 }
 
 export function _adviceHtml(host, part, form) {
   const card = part.card || {};
-  const who = host === 'server' ? "This server's card" : `${part.name || 'The node'}'s card`;
-  const size = card.vram_gb ? `${card.vram_gb} GB` : 'not read';
+  const who = host === 'server' ? t('hostadv.server_card') : t('hostadv.node_card', {name: part.name || t('hostadv.the_node')});
+  const size = card.vram_gb ? `${card.vram_gb} GB` : t('hostadv.not_read');
   const src = card.source ? ` (${card.source})` : '';
   const sizes = SIZES.map(g => `<option value="${g}"${Number(card.vram_gb) === g ? ' selected' : ''}>${g} GB</option>`).join('');
-  const picker = `<select class="w-auto" id="int-advice-size-${host}" aria-label="${esc(who)} memory" ${actOn('change', 'onAdviceSizeChange', host)}>
-      <option value=""${card.vram_gb ? '' : ' selected'}>Card memory…</option>${sizes}</select>`;
+  const picker = `<select class="w-auto" id="int-advice-size-${host}" aria-label="${th('hostadv.memory_aria', {who})}" ${actOn('change', 'onAdviceSizeChange', host)}>
+      <option value=""${card.vram_gb ? '' : ' selected'}>${th('hostadv.card_memory')}</option>${sizes}</select>`;
   const head = `<div class="row fs-12"><span>${esc(who)}: <b>${esc(card.name ? `${card.name} · ${size}` : size)}</b>${esc(src)}</span>${picker}</div>`;
   const pkg = part.advice.package;
   if (!pkg?.recommended) {
-    const why = pkg?.note || (card.vram_gb ? 'the bench has no package for this card size' : "pick the card's memory to see the bench's advice");
+    const why = pkg?.note || t(card.vram_gb ? 'hostadv.no_package' : 'hostadv.pick_memory');
     return `${head}<p class="fs-12 t3 mt-4">${esc(why)}</p>`;
   }
   const rec = pkg.recommended;
@@ -122,29 +123,27 @@ export function _adviceHtml(host, part, form) {
   const profile = form.profile || part.current.profile;
   const win = _window(profile, form.num_ctx);
   const rows = [
-    _row('Curator model', curator, rec.model, curator === rec.model,
+    _row(t('hostadv.curator_model'), curator, rec.model, curator === rec.model,
          (pkg.alternatives || []).some(a => a.model === curator)),
-    _row('Profile', profile, vals ? vals.profile : null, vals && vals.profile === profile),
-    _row('Context window', String(win), vals ? String(_window(vals.profile, vals.num_ctx)) : null,
+    _row(t('hostadv.profile'), profile, vals ? vals.profile : null, vals && vals.profile === profile),
+    _row(t('hostadv.context_window'), String(win), vals ? String(_window(vals.profile, vals.num_ctx)) : null,
          vals && _window(vals.profile, vals.num_ctx) === win),
-    _row('Layers on the card', String(form.num_gpu), vals ? String(vals.num_gpu) : null,
+    _row(t('hostadv.layers'), String(form.num_gpu), vals ? String(vals.num_gpu) : null,
          vals && Number(vals.num_gpu) === Number(form.num_gpu)),
   ].join('');
-  const which = mine
-    ? `The profile badges are the bench's values for ${curator} on ${pkg.tier_gb} GB.`
-    : `The bench has not measured ${curator} on ${pkg.tier_gb} GB, so there is nothing to compare its profile with.`;
+  const which = t(mine ? 'hostadv.badges_are' : 'hostadv.not_measured', {model: curator, gb: pkg.tier_gb});
   const ex = rec.expected || {};
   const q = rec.quality || {};
-  const ran = `On the bench ${rec.model} wrote ${ex.gen_tok_s ?? '?'} tok/s, ~${ex.judge_s ?? '?'} s per verdict`
-    + `${q.score25 != null ? `, quality ${q.score25}/25` : ''}`
-    + `${ex.gpu_share_pct != null && ex.gpu_share_pct < 100 ? `, ${ex.gpu_share_pct} % on the card` : ''}.`;
+  const ran = t('hostadv.ran', {model: rec.model, tok: ex.gen_tok_s ?? '?', judge: ex.judge_s ?? '?'})
+    + `${q.score25 != null ? `, ${t('hostadv.quality', {score: q.score25})}` : ''}`
+    + `${ex.gpu_share_pct != null && ex.gpu_share_pct < 100 ? `, ${t('hostadv.on_card', {pct: ex.gpu_share_pct})}` : ''}.`;
   const srv = Object.entries(rec.server || {})
     .filter(([k]) => k === 'OLLAMA_KV_CACHE_TYPE' || k === 'OLLAMA_FLASH_ATTENTION')
     .map(([k, v]) => `${k}=${v}`);
-  const server = srv.length ? `<div class="fs-12 t3">Set on that Ollama server itself: ${esc(srv.join(' · '))}</div>` : '';
+  const server = srv.length ? `<div class="fs-12 t3">${th('hostadv.set_on_ollama', {vars: srv.join(' · ')})}</div>` : '';
   return `${head}<div class="mt-8">${rows}</div>
     <div class="fs-12 t3 mt-4">${esc(which)} ${esc(ran)}</div>${server}
-    <div class="row mt-8"><button type="button" class="btn btn-secondary btn-sm" ${act('applyBenchValues', host)}>Use the bench's values</button>
+    <div class="row mt-8"><button type="button" class="btn btn-secondary btn-sm" ${act('applyBenchValues', host)}>${th('hostadv.use_bench')}</button>
       <span id="int-advice-note-${host}" class="status"></span></div>`;
 }
 
@@ -184,7 +183,7 @@ export function applyBenchValues(host) {
   _set(sel, rec.model);
   _applyProfile(host, _measured(part, rec.model) || rec);
   _render(host);
-  setStatus(document.getElementById(`int-advice-note-${host}`), 'filled in — Save to keep it', 'ok');
+  setStatus(document.getElementById(`int-advice-note-${host}`), t('hostadv.filled_in'), 'ok');
 }
 
 // A curator the bench measured on this card brings its own profile along,

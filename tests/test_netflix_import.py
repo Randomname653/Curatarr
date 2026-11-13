@@ -9,6 +9,7 @@ writer that rewrites or hides it.
     python tests/test_netflix_import.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import asyncio
 import io
@@ -271,7 +272,7 @@ if node:
     import re  # noqa: E402
     body = re.sub(r"^import .*$", "", JS, flags=re.M).replace("export async function", "async function") \
         .replace("export function", "function")
-    harness = r"""
+    harness = i18n_js() + r"""
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const act = n => `data-action="${n}"`; const actOn = () => ''; const EL = 0; const EVENT = 0; const _errMsg = String;
 const api = () => ({}); const state = {}; const dropzoneLeave = () => {};
@@ -282,9 +283,7 @@ const html = _netflixPendingHtml({pending: [{kind: 'full', profiles: {Anna: 4, B
 const assign = _netflixAssign([{value: '2', dataset: {nfProfile: 'Anna'}}, {value: '', dataset: {nfProfile: 'Ben'}}]);
 console.log(JSON.stringify({html, assign, empty: _netflixPendingHtml({pending: []})}));
 """
-    hp = Path(tempfile.mkdtemp()) / "h.js"
-    hp.write_text(harness, encoding="utf-8")
-    rr = subprocess.run([node, str(hp)], capture_output=True, text=True, encoding="utf-8")
+    rr = subprocess.run([node, "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
     if rr.returncode:
         print(rr.stderr[:1500])
     out = json.loads(rr.stdout.strip().splitlines()[-1]) if rr.returncode == 0 else {}

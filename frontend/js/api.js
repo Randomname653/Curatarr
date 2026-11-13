@@ -1,6 +1,6 @@
 // ── API ───────────────────────────────────────────────────────────────────────
 import { state } from './state.js';
-import { t } from './i18n.js';
+import { t, th } from './i18n.js';
 import { API, confirmDialog } from './ui.js';
 export async function api(path, method='GET', body=null, _retried=false, headers=null) {
   const opts = {method, headers:{'Content-Type':'application/json'}};
@@ -17,9 +17,9 @@ export async function api(path, method='GET', body=null, _retried=false, headers
     const msg = await r.clone().text();
     if (/setup code/i.test(msg)) {
       const ask = await confirmDialog({
-        title: 'Setup code required', confirmLabel: 'Continue',
-        body: '<p>This Curatarr is being set up from another device (or through a proxy). Enter the one-time setup code printed in the Curatarr console window (start.bat) or log file. A browser on the Curatarr machine itself, at http://localhost:8000, does not need it.</p>',
-        reason: {label: 'Setup code'},
+        title: t('api.setup_code_title'), confirmLabel: t('api.setup_code_continue'),
+        body: `<p>${th('api.setup_code_body')}</p>`,
+        reason: {label: t('api.setup_code')},
       });
       const entered = ask.ok ? ask.reason : '';
       if (entered && entered.trim()) {

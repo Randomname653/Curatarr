@@ -17,6 +17,17 @@ has already loaded.
 Activity's Scheduled and History tabs, the Knowledge Base, Deletions, the arr browsers and the
 compute nodes call it. The local is renamed; a test draws relative times in English and German
 and guards every module that imports `t()` against a local `t` followed by a `t('…')` call.
+**The admin views in German, part two** (design record 3.8, round three, C2). Activity (the
+Queue, Scheduled and History tabs, filters, outcome badges, intervals and durations: "alle 24
+Min.", "täglich", "1 Min. 5 s"), the remaining Settings (media server, Plex libraries with the
+History view's pane, arr apps, users with the Spotify and Netflix imports, integrations with
+Shoko, notifications, maintenance with the compute nodes and model updates), the setup wizard,
+onboarding and the sign-in screen follow the language setting. Job names and the summaries the
+server writes for a run stay as they come; so do model, host and service names and every text
+an external app reports. With this every frontend module is on the English-literal ratchet; 22
+literals remain, each a server phrase used as a lookup key, a fallback the server replaces, or a
+unit.
+
 **The admin views in German, part one** (design record 3.8, round three, C1). Deletions (the
 cards, Cut / Your call, Why?, the Keep dialog, the bulk bar, Back after deletion, Fix match), the
 deletion discussion in the chat with its banner and "Delete & exit", Curation (Protected titles,
@@ -26,7 +37,7 @@ with adding through the arr apps and Wanted / Backlog follow the language settin
 map of the app names these buttons as the user's UI draws them; in English it is the text it
 always read. Titles, the curator's pitches and signal labels, service names and what the server
 or the arr apps report stay as they come. Activity, the remaining Settings, setup and onboarding
-follow in part two.
+follow in part two (below).
 
 **Activity in three tabs: Queue, Scheduled, History.** The page mixed live work with finished
 runs: "Done" rows clogged "Live tasks", the table below repeated them for this session only, and

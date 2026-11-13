@@ -2,8 +2,8 @@
 record 3.8): every module translated so far has its count of English
 literals (tests/i18n_literals) in tests/i18n_literal_baseline.json, and a
 module may never write more of them than that. A translated module stays at
-its number or below; lower it in the same change when it goes down. By the
-end of the round every module is listed.
+its number or below; lower it in the same change when it goes down. Every
+module is listed (since round 3); a new one joins with its count.
 
     python tests/test_i18n_ratchet.py            # check
     python tests/test_i18n_ratchet.py --update   # rewrite the baseline (only ever lower)
@@ -28,6 +28,10 @@ if "--update" in sys.argv:
 for module in sorted(base):
     check(f"{module}: {now[module]} English literals, at most {base[module]}", now[module] <= base[module],
           f"{now[module]} > {base[module]}: put the new words in frontend/i18n/en.json and de.json")
+# Round 3 closed the list: every module is in it, a new one joins with its count.
+modules = sorted(x.name for x in i18n_literals.JS.glob("*.js"))
+check("every frontend module is in the baseline (a new module: add it with its count)",
+      sorted(base) == modules, sorted(set(modules) - set(base)))
 lower = [m for m in base if now[m] < base[m]]
 check("a module that went down has its baseline lowered in the same change (--update)", not lower, lower)
 check("the counter still sees English: a sentence counts, a class list and a key do not",

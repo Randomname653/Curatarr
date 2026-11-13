@@ -160,7 +160,7 @@ check("the deletions view shows the queued note", dele_js.count("_renderQueuedBa
 nodes_js = (ROOT / "frontend/js/nodes.js").read_text(encoding="utf-8")
 check("a failed node check shows its reason, never 'up to date'; the check time is shown",
       "if (b.behind == null) return" in nodes_js and nodes_js.index("if (b.behind == null)") < nodes_js.index("if (!b.behind)")
-      and "checked ${" in nodes_js)
+      and "th('nodes.checked'" in nodes_js)
 
 # ── a run that did not judge everything replaces only what it judged ────────
 from src.services import recommendations_engine as eng2  # noqa: E402

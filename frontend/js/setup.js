@@ -6,15 +6,16 @@ import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
 import { findJellyfinServers, jellyfinConnectHtml, stopJellyfinConnect } from './jellyfin_connect.js';
+import { t, th } from './i18n.js';
 function serverChoice() {
   const kind = state.setupData.media_server_type === 'jellyfin' ? 'jellyfin' : 'plex';
   return `<div class="form-group">
-      <label for="s-media-server">Media server</label>
+      <label for="s-media-server">${th('setup.media_server')}</label>
       <select id="s-media-server" ${actOn('change', 'setupServerKind')}>
         <option value="plex"${kind === 'plex' ? ' selected' : ''}>Plex</option>
         <option value="jellyfin"${kind === 'jellyfin' ? ' selected' : ''}>Jellyfin</option>
       </select>
-      <div class="hint">One media server per install. Curatarr reads who watched what from it and writes its playlists there.</div>
+      <div class="hint">${th('setup.media_server_hint')}</div>
     </div>`;
 }
 
@@ -44,48 +45,48 @@ export function setupServerKind() {
 const SETUP_CONTENT = {
   // One media server per install (docs/JELLYFIN_DESIGN.md): Plex, or Jellyfin.
   plex: () => state.setupData.media_server_type === 'jellyfin' ? `
-    <h2 class="setup-heading">Jellyfin Connection</h2>
+    <h2 class="setup-heading">${th('setup.connection', {server: 'Jellyfin'})}</h2>
     ${serverChoice()}
     ${jellyfinConnectHtml(state.setupData.jellyfin_url, state.setupData.jellyfin_ticket ? state.setupData.jellyfin_connected : null, setupJellyfinConnected)}
     ${state.setupData.jellyfin_ticket ? '' : `<details class="mt-12">
-      <summary class="fs-12 t2 pointer">Paste an API key instead</summary>
+      <summary class="fs-12 t2 pointer">${th('setup.paste_key')}</summary>
       <div class="form-group mt-8">
-        <label for="s-jellyfin-key">Jellyfin API Key</label>
+        <label for="s-jellyfin-key">${th('setup.api_key_of', {service: 'Jellyfin'})}</label>
         <input id="s-jellyfin-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(state.setupData.jellyfin_api_key||'')}">
-        <div class="hint">Dashboard → API Keys → +, for the address above.</div>
+        <div class="hint">${th('setup.jf_key_hint')}</div>
       </div>
-      <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>Test connection</button>
+      <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>${th('setup.test_connection')}</button>
       <div id="test-jellyfin-result"></div>
     </details>`}` : `
-    <h2 class="setup-heading">Plex Connection</h2>
+    <h2 class="setup-heading">${th('setup.connection', {server: 'Plex'})}</h2>
     ${serverChoice()}
     <div class="form-group">
-      <label for="s-plex-url">Plex Server URL</label>
+      <label for="s-plex-url">${th('setup.plex_url')}</label>
       <input id="s-plex-url" type="url" placeholder="http://192.168.1.100:32400" value="${state.setupData.plex_url||''}">
-      <div class="hint">The local IP address of your Plex server.</div>
+      <div class="hint">${th('setup.plex_url_hint')}</div>
     </div>
     <div class="form-group">
-      <label for="s-plex-token">Plex Auth Token</label>
+      <label for="s-plex-token">${th('setup.plex_token')}</label>
       <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${state.setupData.plex_token||''}">
-      <div class="hint">Settings → Troubleshooting → "Show XML" → copy the X-Plex-Token from the URL.</div>
+      <div class="hint">${th('setup.plex_token_hint')}</div>
     </div>
-    <button class="btn btn-secondary btn-sm" ${act('testConn', 'plex')}>Test connection</button>
+    <button class="btn btn-secondary btn-sm" ${act('testConn', 'plex')}>${th('setup.test_connection')}</button>
     <div id="test-plex-result"></div>`,
 
   ollama: () => `
-    <h2 class="setup-heading">Ollama — Local AI</h2>
+    <h2 class="setup-heading">${th('setup.ollama_heading')}</h2>
     <div class="form-group">
-      <label for="s-ollama">Ollama Endpoint</label>
+      <label for="s-ollama">${th('setup.ollama_endpoint')}</label>
       <input id="s-ollama" type="url" placeholder="http://localhost:11434" value="${state.setupData.ollama_endpoint||'http://localhost:11434'}">
     </div>
-    <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>Detect models</button>
+    <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>${th('setup.detect_models')}</button>
     <div class="my-8" id="test-ollama-result"></div>
     <div class="mt-12 form-group">
       <label for="s-vram">GPU / VRAM</label>
       <div class="row">
-        <button class="btn btn-secondary btn-sm" ${act('detectGpu')}>Detect GPU (nvidia-smi)</button>
+        <button class="btn btn-secondary btn-sm" ${act('detectGpu')}>${th('setup.detect_gpu')}</button>
         <select class="w-auto" id="s-vram" ${actOn('change', 'refreshModelRecs')}>
-          <option value="">VRAM: pick manually…</option>
+          <option value="">${th('setup.vram_manual')}</option>
           <option value="8">8 GB</option>
           <option value="12">12 GB</option>
           <option value="16">16 GB</option>
@@ -94,118 +95,118 @@ const SETUP_CONTENT = {
         </select>
       </div>
       <div class="mt-6" id="gpu-result"></div>
-      <div class="hint">Detection runs on the Curatarr host. If Ollama runs on a different machine, pick that machine's VRAM manually — the model recommendations below follow it.</div>
+      <div class="hint">${th('setup.vram_hint')}</div>
     </div>
     <div class="my-8" id="model-recs"></div>
     <details class="mt-12" id="s-profile-wrap">
-      <summary>Curator profile (filled in from the bench result)</summary>
+      <summary>${th('setup.profile_summary')}</summary>
       <div class="hint" id="s-profile-note"></div>
       <div class="form-group mt-8">
-        <label for="s-llm-profile">Profile</label>
+        <label for="s-llm-profile">${th('setup.profile')}</label>
         <select class="w-auto" id="s-llm-profile">
-          <option value="large"${state.setupData.llm_profile === 'small' ? '' : ' selected'}>large: the full rules, 16k window</option>
-          <option value="small"${state.setupData.llm_profile === 'small' ? ' selected' : ''}>small: a checklist, 8k window</option>
+          <option value="large"${state.setupData.llm_profile === 'small' ? '' : ' selected'}>${th('setup.profile_large')}</option>
+          <option value="small"${state.setupData.llm_profile === 'small' ? ' selected' : ''}>${th('setup.profile_small')}</option>
         </select>
-        <div class="hint">Which rules the deletion judge gets and how much evidence fits. On 16 GB and more the bench measured large as clearly better, also for the smaller models.</div>
+        <div class="hint">${th('setup.profile_hint')}</div>
       </div>
       <div class="form-group">
-        <label for="s-num-ctx">Context window in tokens (0 = the profile's)</label>
+        <label for="s-num-ctx">${th('setup.num_ctx')}</label>
         <input id="s-num-ctx" type="number" min="0" max="131072" step="1024" value="${state.setupData.curator_num_ctx ?? 0}">
       </div>
       <div class="form-group">
-        <label for="s-num-gpu">Curator layers on the graphics card (-1 = Ollama decides, 99 = all)</label>
+        <label for="s-num-gpu">${th('setup.num_gpu')}</label>
         <input id="s-num-gpu" type="number" min="-1" max="999" value="${state.setupData.curator_num_gpu ?? 99}">
-        <div class="hint">-1 lets Ollama keep part of the model in system memory when the card is too small for it.</div>
+        <div class="hint">${th('setup.num_gpu_hint')}</div>
       </div>
     </details>
     <div class="mt-12 form-group">
-      <label for="s-curator-model">Curator model (large — for chat & recommendations)</label>
-      <select id="s-curator-model" ${actOn('change', 'onSetupCuratorChange')}><option value="gemma4:31b">gemma4:31b (recommended — see docs/BENCHMARKS.md)</option></select>
-      <div class="hint">This model will be baked with Curatarr's system prompt via <code>ollama create</code>.</div>
+      <label for="s-curator-model">${th('setup.curator_model')}</label>
+      <select id="s-curator-model" ${actOn('change', 'onSetupCuratorChange')}><option value="gemma4:31b">gemma4:31b (${th('setup.recommended_docs')})</option></select>
+      <div class="hint">${th('setup.bake_hint')} <code>ollama create</code>.</div>
     </div>
     <div class="form-group">
-      <label for="s-summarizer-model">Summarizer model (small — for metadata processing)</label>
-      <select id="s-summarizer-model"><option value="granite4.1:8b">granite4.1:8b (recommended)</option></select>
-      <div class="hint">Fast model used to structure metadata. Runs thousands of times during enrichment.</div>
+      <label for="s-summarizer-model">${th('setup.summarizer_model')}</label>
+      <select id="s-summarizer-model"><option value="granite4.1:8b">granite4.1:8b (${th('setup.recommended')})</option></select>
+      <div class="hint">${th('setup.summarizer_hint')}</div>
     </div>
     <div class="form-group">
-      <label for="s-embed-model">Embedding model</label>
-      <select id="s-embed-model"><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe (recommended)</option></select>
+      <label for="s-embed-model">${th('setup.embed_model')}</label>
+      <select id="s-embed-model"><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe (${th('setup.recommended')})</option></select>
     </div>
     <div class="mt-12 form-group">
       <label class="inline-flex pointer">
         <input type="checkbox" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${state.setupData.enable_pitcher?'checked':''}>
-        Dedicated deletion judge (two-bake split)
+        ${th('setup.pitcher')}
       </label>
-      <div class="hint">A second bake that ONLY judges deletions — benchmarked more precise and 2.4× faster at pitches than the chat curator. It needs its own VRAM while it runs (the curator is evicted meanwhile), so it pays off on 24 GB cards; below that the curator judges deletions too.</div>
+      <div class="hint">${th('setup.pitcher_hint')}</div>
       <div id="s-pitcher-wrap" class="mt-8"${state.setupData.enable_pitcher ? '' : ' hidden'}>
-        <label for="s-pitcher-model">Judge model</label>
-        <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (recommended for the split)</option></select>
+        <label for="s-pitcher-model">${th('setup.pitcher_model')}</label>
+        <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (${th('setup.recommended_split')})</option></select>
         <div id="pitcher-note" class="hint"></div>
       </div>
     </div>
     <div class="form-group mt-12">
       <label class="row fs-13">
         <input type="checkbox" id="s-cpu-lane" ${state.setupData.llm_cpu_lane === false ? '' : 'checked'}>
-        Keep working when something else takes the card
+        ${th('setup.cpu_lane')}
       </label>
-      <div class="hint">An image generator, a benchmark or a game can hold the graphics card for hours. With this on, the background work — enrichment, lyrics profiles, memory extraction — moves to the processor instead of stopping, measured at about 145 s per item on a loaded 24 GB machine without touching the card. A conversation still needs the card back, and Curatarr says so instead of hanging.</div>
-      <label for="s-cpu-threads" class="mt-8">Processor threads for that work</label>
+      <div class="hint">${th('setup.cpu_lane_hint')}</div>
+      <label for="s-cpu-threads" class="mt-8">${th('setup.cpu_threads')}</label>
       <input id="s-cpu-threads" type="number" min="1" max="64" value="${state.setupData.llm_cpu_threads || 6}">
-      <div class="hint">Six are as fast as twelve — generation is limited by memory bandwidth, not by cores — so the rest of the processor stays with whatever is holding the card.</div>
+      <div class="hint">${th('setup.cpu_threads_hint')}</div>
     </div>`,
 
   metadata: () => `
-    <h2 class="setup-heading">Metadata APIs</h2>
-    <p class="fs-12 t2 mb-16">These are optional but significantly improve recommendation quality. Skip any you don't need.</p>
+    <h2 class="setup-heading">${th('setup.metadata_heading')}</h2>
+    <p class="fs-12 t2 mb-16">${th('setup.metadata_lead')}</p>
     <div class="form-group">
-      <label for="s-tmdb">TMDB API Key <span class="fs-10 badge muted">Movies &amp; Series</span></label>
+      <label for="s-tmdb">${th('setup.api_key_of', {service: 'TMDB'})} <span class="fs-10 badge muted">${th('setup.badge_movies_series')}</span></label>
       <input id="s-tmdb" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.tmdb_api_key||''}">
-      <div class="hint">Free at <a class="t-amber" href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org/settings/api</a>. Needed for movie and TV metadata, cast, themes.</div>
+      <div class="hint">${th('setup.free_at')} <a class="t-amber" href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org/settings/api</a>${th('setup.tmdb_hint')}</div>
     </div>
     <div class="form-group">
-      <label for="s-omdb">OMDb API Key <span class="fs-10 badge muted">Movies &amp; Series</span></label>
+      <label for="s-omdb">${th('setup.api_key_of', {service: 'OMDb'})} <span class="fs-10 badge muted">${th('setup.badge_movies_series')}</span></label>
       <input id="s-omdb" placeholder="xxxxxxxx" value="${state.setupData.omdb_api_key||''}">
-      <div class="hint">Free at <a class="t-amber" href="https://www.omdbapi.com/apikey.aspx" target="_blank">omdbapi.com</a> (1,000 req/day). Adds Rotten Tomatoes / Metacritic scores, awards, richer plots.</div>
+      <div class="hint">${th('setup.free_at')} <a class="t-amber" href="https://www.omdbapi.com/apikey.aspx" target="_blank">omdbapi.com</a>${th('setup.omdb_hint')}</div>
     </div>
     <div class="form-group">
-      <label for="s-lastfm">Last.fm API Key <span class="fs-10 badge muted">Music only</span></label>
+      <label for="s-lastfm">${th('setup.api_key_of', {service: 'Last.fm'})} <span class="fs-10 badge muted">${th('setup.badge_music_only')}</span></label>
       <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.lastfm_api_key||''}">
-      <div class="hint">Free at last.fm/api. Adds music tags, similar artists, and bio. MusicBrainz works without a key.</div>
-      <div class="used-for">Skip if you don't use Curatarr for music.</div>
+      <div class="hint">${th('setup.lastfm_hint')}</div>
+      <div class="used-for">${th('setup.skip_music')}</div>
     </div>
     <div class="form-group">
-      <label for="s-spotify-id">Spotify Client ID <span class="fs-10 badge muted">Music only</span></label>
+      <label for="s-spotify-id">${th('setup.spotify_id')} <span class="fs-10 badge muted">${th('setup.badge_music_only')}</span></label>
       <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_id||''}">
-      <div class="hint">Free at <a class="t-amber" href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com</a> → Create App. Enables genre enrichment via Client Credentials — no user login needed.</div>
-      <div class="used-for">Skip if you don't use Curatarr for music.</div>
+      <div class="hint">${th('setup.free_at')} <a class="t-amber" href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com</a>${th('setup.spotify_hint')}</div>
+      <div class="used-for">${th('setup.skip_music')}</div>
     </div>
     <div class="form-group">
-      <label for="s-spotify-secret">Spotify Client Secret</label>
+      <label for="s-spotify-secret">${th('setup.spotify_secret')}</label>
       <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_secret||''}">
-      <button class="mt-6 btn btn-secondary btn-sm" ${act('testConn', 'spotify')}>Test Spotify</button>
+      <button class="mt-6 btn btn-secondary btn-sm" ${act('testConn', 'spotify')}>${th('setup.test_service', {service: 'Spotify'})}</button>
       <div class="mt-4 fs-12" id="test-spotify-result"></div>
     </div>
     <div class="form-group">
-      <label for="s-soulsync-url">SoulSync URL <span class="fs-10 badge muted">Optional · Music</span></label>
+      <label for="s-soulsync-url">${th('setup.soulsync_url')} <span class="fs-10 badge muted">${th('setup.badge_optional_music')}</span></label>
       <input id="s-soulsync-url" type="url" placeholder="http://192.168.1.100:12279" value="${state.setupData.soulsync_url||''}">
-      <div class="hint">A SoulSync instance on your LAN adds a second music-metadata opinion. Read-only — Curatarr never triggers its downloads. Skip if you don't run one.</div>
+      <div class="hint">${th('setup.soulsync_hint')}</div>
     </div>
     <div class="form-group">
-      <label for="s-soulsync-key">SoulSync API Key</label>
+      <label for="s-soulsync-key">${th('setup.api_key_of', {service: 'SoulSync'})}</label>
       <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${state.setupData.soulsync_api_key||''}">
     </div>
     <div class="form-group">
-      <label for="s-listenbrainz">ListenBrainz user token <span class="fs-10 badge muted">Optional · Music</span></label>
+      <label for="s-listenbrainz">${th('setup.listenbrainz')} <span class="fs-10 badge muted">${th('setup.badge_optional_music')}</span></label>
       <input id="s-listenbrainz" type="password" placeholder="free account state.token" value="${state.setupData.listenbrainz_token||''}">
-      <div class="hint">Global listener counts as deletion evidence for music. Free account at <a class="t-amber" href="https://listenbrainz.org/settings/" target="_blank">listenbrainz.org/settings</a> — ListenBrainz requires the state.token since it auth-locked its API.</div>
+      <div class="hint">${th('setup.listenbrainz_hint')} <a class="t-amber" href="https://listenbrainz.org/settings/" target="_blank">listenbrainz.org/settings</a>${th('setup.listenbrainz_hint_post')}</div>
     </div>`,
 
   arr: () => `
-    <h2 class="setup-heading">*arr Services</h2>
-    <p class="fs-12 t2 mb-16">Skip services you don't use. These enable library management and deletion proposals.</p>
-    ${['Radarr:Movies:7878','Sonarr:TV & Anime:8989','Lidarr:Music:8686'].map(s=>{
-      const [name,what,port] = s.split(':');
+    <h2 class="setup-heading">${th('setup.arr_heading')}</h2>
+    <p class="fs-12 t2 mb-16">${th('setup.arr_lead')}</p>
+    ${[['Radarr', 'nav.movies', 7878], ['Sonarr', 'setup.arr_tv_anime', 8989], ['Lidarr', 'nav.music', 8686]].map(([name, whatKey, port])=>{
+      const what = th(whatKey);
       const id = name.toLowerCase();
       return `<div class="boxed mb-12">
         <div class="inline-flex mb-10">
@@ -217,37 +218,33 @@ const SETUP_CONTENT = {
           <input id="s-${id}-url" type="url" placeholder="http://192.168.1.100:${port}" value="${state.setupData[id+'_url']||''}">
         </div>
         <div class="mb-8 form-group">
-          <label for="s-${id}-key">API Key</label>
+          <label for="s-${id}-key">${th('setup.api_key')}</label>
           <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${state.setupData[id+'_api_key']||''}">
         </div>
-        <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>Test ${name}</button>
+        <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>${th('setup.test_service', {service: name})}</button>
         <div id="test-${id}-result"></div>
       </div>`;
     }).join('')}`,
 
   import: () => `
-    <h2 class="setup-heading">Listening history import</h2>
+    <h2 class="setup-heading">${th('setup.import_heading')}</h2>
     <p class="fs-12 t2 mb-16">
-      Optional. If you have a Spotify <strong>extended streaming history</strong>
-      (privacy.spotify.com → Download your data → extended streaming history),
-      drop it here — years of listening give the music curator a head start.
-      The files wait until after the first sync; you then attach them to a user
-      under <strong>Settings → Users → Spotify history import</strong>.
+      ${th('setup.import_p1')} <strong>${th('setup.import_s1')}</strong>
+      ${th('setup.import_p2')} <strong>${th('setup.import_s2')}</strong>.
     </p>
     ${spotifyDropZone('su-sp')}
     <p class="fs-11 t3 mt-12">
-      No export yet? Skip this — you can import it later in Settings → Users.
+      ${th('setup.import_later')}
     </p>`,
 
   done: () => `
     <div class="t-center py-20">
-      <h2 class="fs-16 b t-amber mb-8">Ready to launch!</h2>
+      <h2 class="fs-16 b t-amber mb-8">${th('setup.ready_heading')}</h2>
       <p class="setup-lead">
-        Curatarr will save your configuration, build the AI models with <code>ollama create</code>,
-        then start the initial sync. This will take a few minutes the first time.
+        ${th('setup.ready_pre')} <code>ollama create</code>${th('setup.ready_post')}
       </p>
       <button class="pad-12-32 fs-14 btn btn-primary" ${act('finishSetup')}>
-        Save and start
+        ${th('setup.save_start')}
       </button>
       <div class="mt-16 t2 fs-13" id="setup-saving"></div>
     </div>`,
@@ -259,7 +256,7 @@ export function renderSetupStep(step) {
   stopJellyfinConnect();
   document.getElementById('setup-body').innerHTML = SETUP_CONTENT[key]();
   const steps = SETUP_STEPS.length - 1;   // the closing summary is not a step
-  document.getElementById('setup-step-label').textContent = step < steps ? `Step ${step+1} of ${steps}` : 'Ready';
+  document.getElementById('setup-step-label').textContent = step < steps ? t('setup.step_of', {n: step + 1, total: steps}) : t('setup.ready');
   document.getElementById('setup-back').style.visibility = step > 0 ? 'visible' : 'hidden';
   document.getElementById('setup-next').style.display = step === SETUP_STEPS.length-1 ? 'none' : 'inline-block';
   const firstDot = document.getElementById('step-dot-0');   // the media server's step, named after it
@@ -334,7 +331,7 @@ export function setupNav(dir) {
 
 export async function testConn(service) {
   const resultEl = document.getElementById(`test-${service}-result`);
-  if (resultEl) resultEl.innerHTML = '<div class="test-status">Testing…</div>';
+  if (resultEl) resultEl.innerHTML = `<div class="test-status">${th('setup.testing')}</div>`;
 
   let url='', token_='', apiKey='';
   if (service==='plex') { url=document.getElementById('s-plex-url')?.value; token_=document.getElementById('s-plex-token')?.value; }
@@ -351,7 +348,7 @@ export async function testConn(service) {
     try {
       const r = await api('/api/setup/test', 'POST', {service, client_id: clientId, client_secret: clientSecret});
       if (resultEl) resultEl.innerHTML = r.ok
-        ? `<div class="test-status ok">Spotify credentials valid</div>`
+        ? `<div class="test-status ok">${th('setup.spotify_ok')}</div>`
         : `<div class="test-status err">${esc(r.error)}</div>`;
     } catch(e) { if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`; }
     return;
@@ -367,7 +364,7 @@ export async function testConn(service) {
       ? `<div class="t-amber mt-4 test-status">${SVG_WARN} ${esc(r.privacy_warning)}</div>`
   : '';
     if (resultEl) resultEl.innerHTML = (r.ok
-      ? `<div class="test-status ok">Connected${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
+      ? `<div class="test-status ok">${th('setup.connected')}${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
       : `<div class="test-status err">${esc(r.error)}</div>`) + warnBlock;
 
     // Feed the recommendation panel. This used to overwrite the three
@@ -386,7 +383,7 @@ export async function testConn(service) {
 // ── GPU DETECTION + MODEL RECOMMENDATIONS (setup wizard, Ollama step) ────────
 export async function detectGpu() {
   const el = document.getElementById('gpu-result');
-  if (el) el.innerHTML = '<div class="test-status">Probing GPU…</div>';
+  if (el) el.innerHTML = `<div class="test-status">${th('setup.probing_gpu')}</div>`;
   try {
     const r = await api('/api/setup/gpu');
     if (!r.ok) {
@@ -403,7 +400,7 @@ export async function detectGpu() {
     if (sel) {
       [...sel.options].filter(o => o.dataset.detected).forEach(o => o.remove());
       const opt = document.createElement('option');
-      opt.value = r.vram_gb; opt.textContent = `${r.vram_gb} GB (detected)`;
+      opt.value = r.vram_gb; opt.textContent = t('setup.gb_detected', {gb: r.vram_gb});
       opt.dataset.detected = '1'; opt.selected = true;
       sel.appendChild(opt);
     }
@@ -453,8 +450,8 @@ export function onSetupCuratorChange() {
   if (found) _applyPackageProfile(found);
   if (note) {
     note.textContent = found
-      ? `The bench's values for ${model} on ${pkg.tier_gb} GB.`
-      : `The bench has not measured ${model || 'this model'} on ${pkg.tier_gb} GB; check these values yourself.`;
+      ? t('setup.bench_values', {model, gb: pkg.tier_gb})
+      : t('setup.bench_unmeasured', {model: model || t('setup.this_model'), gb: pkg.tier_gb});
   }
 }
 
@@ -480,11 +477,11 @@ export function renderHardwarePackage(pkg) {
   if (!r) return pkg.note ? `<div class="t3 fs-12 test-status">${esc(pkg.note)}</div>` : '';
   const ex = r.expected || {};
   const speed = pkg.estimate
-    ? `~${pkg.estimate.gen_tok_s} tok/s on your card (estimate: ${esc(pkg.estimate.basis)})`
-    : `${ex.gen_tok_s ?? '?'} tok/s measured on ${esc((r.measured_on || {}).gpu || 'the bench card')}`;
+    ? th('setup.speed_estimate', {tok: pkg.estimate.gen_tok_s, basis: pkg.estimate.basis})
+    : th('setup.speed_measured', {tok: ex.gen_tok_s ?? '?', gpu: (r.measured_on || {}).gpu || t('setup.bench_card')});
   const q = r.quality || {};
-  const quality = q.score25 != null ? `quality ${q.score25}/25${q.provisional ? ' (provisional)' : ''}`
-    : 'quality not scored yet';
+  const quality = q.score25 != null ? `${t('setup.quality', {score: q.score25})}${q.provisional ? ` ${t('setup.provisional')}` : ''}`
+    : t('setup.quality_none');
   const env = [`LLM_PROFILE=${r.profile}`, `CURATOR_NUM_CTX=${r.num_ctx}`,
                `CURATOR_NUM_GPU=${r.num_gpu}`];
   const srv = Object.entries(r.server || {})
@@ -495,20 +492,20 @@ export function renderHardwarePackage(pkg) {
   const rf = pkg.ram_fallback;
   const ramNote = !rf ? ''
     : rf.instead_of
-      ? `<div class="t-amber test-status">${SVG_WARN} ${esc(rf.instead_of)} would need ~${esc(rf.needs_gb)} GB of system RAM on this card (this host has ${esc(rf.host_gb)} GB) — recommending ${esc(r.model)} instead.</div>`
-      : `<div class="t-amber test-status">${SVG_WARN} This package needs ~${esc(rf.needs_gb)} GB of system RAM; this host has ${esc(rf.host_gb)} GB. Expect swapping.</div>`;
+      ? `<div class="t-amber test-status">${SVG_WARN} ${th('setup.ram_instead', {model: rf.instead_of, need: rf.needs_gb, host: rf.host_gb, rec: r.model})}</div>`
+      : `<div class="t-amber test-status">${SVG_WARN} ${th('setup.ram_short', {need: rf.needs_gb, host: rf.host_gb})}</div>`;
   // How this curator argues, on one fictional example (docs/CURATOR_EXAMPLES.md has all of them).
   const sample = pkg.example;
-  const example = !sample ? '' : `<details class="fs-12"><summary>How ${esc(r.model)} judges — an example</summary>`
-    + `<div class="t3">${esc(sample.title)} · owner: ${esc(sample.owner)}. ${esc(sample.setup)}</div>`
+  const example = !sample ? '' : `<details class="fs-12"><summary>${th('setup.example_summary', {model: r.model})}</summary>`
+    + `<div class="t3">${esc(sample.title)} · ${th('setup.owner')} ${esc(sample.owner)}. ${esc(sample.setup)}</div>`
     + `<div><b>${esc(sample.verdict_words || sample.verdict)}</b> (${esc(sample.protecting_pillar)}): ${esc(sample.reason)}</div>`
     + (sample.note ? `<blockquote class="t2">${esc(sample.note)}</blockquote>` : '')
-    + `<div class="t3">All examples, including where the models miss: docs/CURATOR_EXAMPLES.md</div></details>`;
-  return ramNote + `<div class="test-status">Bench result for ${pkg.tier_gb} GB: <b>${esc(r.model)}</b>`
-    + `${r.installed ? ' (installed)' : ''} — ${speed}; judge ~${ex.judge_s ?? '?'} s per title;`
-    + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${ex.gpu_share_pct} % on the GPU, rest in RAM` : ''}.</div>`
-    + `<div class="t3 fs-12">Saved with the setup (Curator profile below): ${esc(env.join(' · '))}`
-    + (srv.length ? ` — set on the Ollama server: ${esc(srv.join(' · '))}` : '') + `</div>` + example;
+    + `<div class="t3">${th('setup.all_examples')}</div></details>`;
+  return ramNote + `<div class="test-status">${th('setup.bench_result', {gb: pkg.tier_gb})} <b>${esc(r.model)}</b>`
+    + `${r.installed ? ` (${th('setup.installed')})` : ''} — ${speed}; ${th('setup.judge_per_title', {s: ex.judge_s ?? '?'})}`
+    + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${th('setup.gpu_share', {pct: ex.gpu_share_pct})}` : ''}.</div>`
+    + `<div class="t3 fs-12">${th('setup.saved_with', {env: env.join(' · ')})}`
+    + (srv.length ? ` ${th('setup.set_on_ollama', {srv: srv.join(' · ')})}` : '') + `</div>` + example;
 }
 
 export function renderRecSelect(id, entries, installed) {
@@ -518,18 +515,18 @@ export function renderRecSelect(id, entries, installed) {
   const catalogNames = entries.map(e => e.model);
   const opts = entries.map(e => {
     const tags = [];
-    if (e.installed) tags.push('installed — no download');
+    if (e.installed) tags.push(t('setup.installed_no_download'));
     // need_gb is the bench's MEASURED footprint at the role's context when it
     // has one; otherwise the weight file + headroom, said to be an estimate.
-    if (e.fits === false) tags.push(`needs ~${Math.round(e.need_gb)} GB${e.fit_basis === 'measured' ? ' (measured)' : ' (estimate)'}`);
-    else if (e.tight) tags.push('tight fit');
+    if (e.fits === false) tags.push(`${t('setup.needs_gb', {gb: Math.round(e.need_gb)})} ${t(e.fit_basis === 'measured' ? 'setup.measured' : 'setup.estimate')}`);
+    else if (e.tight) tags.push(t('setup.tight_fit'));
     const suffix = tags.length ? ` · ${tags.join(' · ')}` : '';
     const unfit = e.fits === false ? 'data-unfit="1"' : '';
     return `<option value="${esc(e.model)}" ${unfit}>${esc(e.model)} — ${esc(e.label)}${esc(suffix)}</option>`;
   });
   // Everything else on the server stays reachable — labeled honestly.
   const extra = (installed || []).filter(m => !catalogNames.includes(m))
-    .map(m => `<option value="${esc(m)}">${esc(m)} — untested (installed on server)</option>`);
+    .map(m => `<option value="${esc(m)}">${esc(m)} — ${th('setup.untested')}</option>`);
   sel.innerHTML = opts.concat(extra).join('');
   // Keep the user's pick unless it no longer fits; the list is
   // preference-ordered (fitting + installed first), so index 0 is the call.
@@ -560,8 +557,8 @@ export async function renderOnboardingStep(step) {
   const sub = document.getElementById('onboarding-sub');
 
   if (step === 'libraries') {
-    title.textContent = `Step 1 — Configure your ${serverLabel()} libraries`;
-    sub.textContent = `Tell Curatarr what each ${serverLabel()} library contains so it can handle them correctly.`;
+    title.textContent = t('setup.ob_libs_title', {server: serverLabel()});
+    sub.textContent = t('setup.ob_libs_sub', {server: serverLabel()});
 
     // A failed discover used to read as "no libraries": an empty table whose
     // Save & Continue stored an empty mapping. It is an error with a Retry.
@@ -570,69 +567,69 @@ export async function renderOnboardingStep(step) {
     catch (e) {
       state.discoverSections = [];
       body.innerHTML = `${_errHtml(e, act('retryOnboardingStep'))}
-        <p class="fs-12 t3 mt-8">Curatarr could not reach ${serverLabel()} to list your libraries. Check that ${serverLabel()} is running, then retry.</p>`;
+        <p class="fs-12 t3 mt-8">${th('setup.ob_unreachable', {server: serverLabel()})}</p>`;
       return;
     }
     state.discoverSections = disc.sections || [];
 
     body.innerHTML = `
       <div class="mb-20 tbl-wrap">
-        <table class="tbl tbl-cards"><thead><tr><th>Library</th><th>${serverLabel()} type</th><th>Category</th></tr></thead><tbody>
+        <table class="tbl tbl-cards"><thead><tr><th>${th('setup.ob_library')}</th><th>${th('setup.ob_server_type', {server: serverLabel()})}</th><th>${th('setup.ob_category')}</th></tr></thead><tbody>
         ${state.discoverSections.map(s=>`<tr>
           <td class="cell-primary fw-500">${esc(s.title)}</td>
           <td class="t3 fs-12">${esc(s.type)}</td>
-          <td><select class="field-sm" id="ob-libcat-${s.key}" aria-label="Select category for library">
-            ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${o}</option>`).join('')}
+          <td><select class="field-sm" id="ob-libcat-${s.key}" aria-label="${th('setup.ob_category_aria')}">
+            ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${th(`setup.cat.${o}`)}</option>`).join('')}
           </select></td>
         </tr>`).join('')}
         </tbody></table>
       </div>
       <button class="w-full p-12 btn btn-primary" ${act('saveOnboardingLibraries', EL)}>
-        Save & Continue →
+        ${th('setup.ob_save_continue')}
       </button>`;
   }
 
   else if (step === 'sync') {
-    title.textContent = 'Step 2 — Initial sync';
-    sub.textContent = `Curatarr will now pull your complete watch history from ${serverLabel()} and compute your taste profile. This takes a moment.`;
+    title.textContent = t('setup.ob_sync_title');
+    sub.textContent = t('setup.ob_sync_sub', {server: serverLabel()});
     body.innerHTML = `
       <div class="mb-20" id="ob-sync-status">
         <div class="mb-8 progress-bar"><div class="w-0 progress-fill" id="ob-sync-bar"></div></div>
-        <div class="fs-12 t2" id="ob-sync-label" role="status" aria-live="polite">Waiting to start…</div>
+        <div class="fs-12 t2" id="ob-sync-label" role="status" aria-live="polite">${th('setup.ob_waiting')}</div>
       </div>
       <button class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
-        Start sync
+        ${th('setup.ob_start_sync')}
       </button>`;
   }
 
   else if (step === 'models') {
-    title.textContent = 'Step 3 — Build AI models';
-    sub.textContent = 'Curatarr will bake its personality into the Ollama models. This only happens once.';
+    title.textContent = t('setup.ob_models_title');
+    sub.textContent = t('setup.ob_models_sub');
     body.innerHTML = `
       <p class="fs-13 t2 mb-16">
-        This creates <code>curatarr-curator</code> and <code>curatarr-summarizer</code>
-        with Curatarr's system prompt baked in.
+        ${th('setup.ob_creates')} <code>curatarr-curator</code> ${th('common.and')} <code>curatarr-summarizer</code>
+        ${th('setup.ob_creates_post')}
       </p>
       <div class="mb-20" id="ob-model-status"></div>
       <button class="w-full p-12 btn btn-primary" ${act('buildOnboardingModels')}>
-        Build models
+        ${th('setup.ob_build')}
       </button>
       <button class="w-full p-10 mt-8 btn btn-secondary" ${act('hideOnboarding')}>
-        Skip for now (use base models)
+        ${th('setup.ob_skip')}
       </button>`;
   }
 
   else if (step === 'done') {
-    title.textContent = 'All set!';
-    sub.textContent = 'Curatarr is ready. Your taste profile has been computed.';
+    title.textContent = t('setup.ob_done_title');
+    sub.textContent = t('setup.ob_done_sub');
     body.innerHTML = `
       <div class="t-center py-20">
         <p class="fs-13 t2 lh-17 mb-24">
-          Watch history synced and taste vectors computed.<br>
-          You can now chat with your curator, get recommendations, and manage your library.
+          ${th('setup.ob_done_p1')}<br>
+          ${th('setup.ob_done_p2')}
         </p>
         <button class="pad-12-32 fs-14 btn btn-primary" ${act('hideOnboarding')}>
-          Open Curatarr
+          ${th('setup.ob_open')}
         </button>
       </div>`;
   }
@@ -646,12 +643,12 @@ export async function saveOnboardingLibraries(btn) {
     key: s.key, title: s.title, plex_type: s.type,
     category: document.getElementById(`ob-libcat-${s.key}`)?.value || s.suggested_category,
   }));
-  btnBusy(btn, 'Saving…');
+  btnBusy(btn, t('setup.saving'));
   try {
     await api('/api/libraries/configure','POST',{libraries});
   } catch (e) {
     // Used to be an unhandled rejection: the button did nothing, silently.
-    toast(`Couldn't save the library mapping — ${_errMsg(e)}`, 'danger');
+    toast(t('setup.ob_save_failed', {error: _errMsg(e)}), 'danger');
     btnDone(btn);
     return;
   }
@@ -670,14 +667,14 @@ export async function startOnboardingSync() {
   const btn = document.getElementById('ob-sync-btn');
   const lbl = document.getElementById('ob-sync-label');
   const bar = document.getElementById('ob-sync-bar');
-  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+  if (btn) { btn.disabled = true; btn.textContent = t('setup.syncing'); }
 
   // If a previous attempt was running, kill it before we start the new one.
   _stopOnboardingPoll();
 
   try {
     await api('/api/history/sync?force=true','POST');
-    lbl.textContent = 'Fetching your library…';
+    lbl.textContent = t('setup.fetching');
 
     // Sync should finish well within 30 minutes — past that, give up so we
     // don't keep hitting /api/history/status forever if onboarding is left
@@ -690,25 +687,25 @@ export async function startOnboardingSync() {
     const giveUp = why => {
       _stopOnboardingPoll();
       if (lbl) lbl.textContent = why;
-      if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+      if (btn) { btn.disabled = false; btn.textContent = t('common.retry'); }
     };
 
     _onboardingPoll = setInterval(async () => {
       // If onboarding moved on or the user navigated, stop hitting the API.
       if (onboardingStep !== 'sync') { _stopOnboardingPoll(); return; }
       if (Date.now() > deadline) {
-        giveUp('The sync has not finished after 30 minutes — Activity shows whether it is still running. Retry to start it again.');
+        giveUp(t('setup.sync_timeout'));
         return;
       }
       try {
         const s = await api('/api/history/status');
         fails = 0;
         const entries = s.watch_history_entries || 0;
-        lbl.textContent = `${entries.toLocaleString(loc())} entries synced…`;
+        lbl.textContent = t('setup.entries_synced', {x: entries.toLocaleString(loc())});
         if (entries > 0) bar.style.width = '60%';
         if (s.taste_vector?.computed) {
           bar.style.width = '100%';
-          lbl.textContent = `${entries.toLocaleString(loc())} entries · taste profile computed`;
+          lbl.textContent = t('setup.entries_done', {x: entries.toLocaleString(loc())});
           _stopOnboardingPoll();
           setTimeout(() => {
             renderOnboardingStep('models');
@@ -717,26 +714,26 @@ export async function startOnboardingSync() {
         }
       } catch (e) {
         if (++fails >= ONBOARDING_POLL_MAX_FAILS) {
-          giveUp(`Lost track of the sync — ${_errMsg(e)}. It may still be running; Retry, or check Activity.`);
+          giveUp(t('setup.sync_lost', {error: _errMsg(e)}));
         }
       }
     }, 3000);
   } catch(e) {
     _stopOnboardingPoll();
-    if (lbl) lbl.textContent = `Error: ${_errMsg(e)}`;
-    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+    if (lbl) lbl.textContent = t('setup.error', {error: _errMsg(e)});
+    if (btn) { btn.disabled = false; btn.textContent = t('common.retry'); }
   }
 }
 
 export async function buildOnboardingModels() {
   const el = document.getElementById('ob-model-status');
-  el.innerHTML = '<p class="loading" role="status" aria-live="polite">Building models… this may take a few minutes.</p>';
+  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('setup.building')}</p>`;
 
   try {
     const r = await api('/api/setup/build-models','POST');
     if (r.curator && r.summarizer) {
-      const okLine = '<p class="t-success">curatarr-curator and curatarr-summarizer created!</p>';
-      el.innerHTML = okLine + '<p class="loading" role="status" aria-live="polite">Mini-bench: the curator judges two sample titles and writes one card note on this machine (about a minute)…</p>';
+      const okLine = `<p class="t-success">${th('setup.models_created')}</p>`;
+      el.innerHTML = okLine + `<p class="loading" role="status" aria-live="polite">${th('setup.mb_running')}</p>`;
       // A model that doesn't quite fit VRAM runs silently part-on-CPU and
       // the whole app just feels broken-slow. Catch that HERE, not on the
       // user's first real conversation - with the calls production makes.
@@ -750,9 +747,9 @@ export async function buildOnboardingModels() {
                  !mb || !mb.ok || mb.verdict !== 'ok' ? 12000 : 4000);
     } else {
       let msg = '';
-      if (!r.curator) msg += `${SVG_X} curatarr-curator failed<br>`;
-      if (!r.summarizer) msg += `${SVG_X} curatarr-summarizer failed<br>`;
-      msg += '<br>Make sure base models are pulled in Ollama.';
+      if (!r.curator) msg += `${SVG_X} ${th('setup.model_failed', {model: 'curatarr-curator'})}<br>`;
+      if (!r.summarizer) msg += `${SVG_X} ${th('setup.model_failed', {model: 'curatarr-summarizer'})}<br>`;
+      msg += `<br>${th('setup.pull_base')}`;
       el.innerHTML = `<div class="t-danger fs-13">${msg}</div>`;
     }
   } catch(e) {
@@ -765,28 +762,24 @@ export async function buildOnboardingModels() {
 // "fits" - a check that could not run says so.
 export function renderMinibench(mb, err) {
   if (err || !mb || !mb.ok) {
-    return `<p class="t-amber">${SVG_WARN} The mini-bench could not run (${esc(err || mb?.error || 'no answer')}) — whether the curator runs well on this machine is unknown. If chat feels slow, check Ollama and consider a smaller curator model.</p>`;
+    return `<p class="t-amber">${SVG_WARN} ${th('setup.mb_failed', {error: err || mb?.error || t('setup.no_answer')})}</p>`;
   }
   const w = mb.warmup || {};
   const gen = mb.gen_tok_s ?? w.tokens_per_s;
   const pkg = mb.package;
   const exp = pkg?.expected || {};
   const bench = pkg
-    ? ` · the bench measured ${esc(exp.judge_s ?? '?')} s / ${esc((pkg.estimate?.gen_tok_s ?? exp.gen_tok_s) ?? '?')} tok/s for ${pkg.tier_gb} GB`
+    ? ` · ${th('setup.mb_bench', {s: exp.judge_s ?? '?', tok: (pkg.estimate?.gen_tok_s ?? exp.gen_tok_s) ?? '?', gb: pkg.tier_gb})}`
     : '';
-  const line = `${esc(mb.judge_s_median ?? '?')} s per judge verdict · ${esc(gen ?? '?')} tok/s writing`
-    + (w.load_s ? ` · one-time load ${esc(w.load_s)} s` : '') + bench;
+  const line = th('setup.mb_line', {s: mb.judge_s_median ?? '?', tok: gen ?? '?'})
+    + (w.load_s ? ` · ${th('setup.mb_load', {s: w.load_s})}` : '') + bench;
   const srv = Object.entries(pkg?.server || {}).map(([k, v]) => `${k}=${v}`).join(' · ');
-  const kv = srv ? `<div class="t3 fs-12">The bench package also sets the Ollama server to ${esc(srv)} — that lives in Ollama's own settings, not in Curatarr.</div>` : '';
+  const kv = srv ? `<div class="t3 fs-12">${th('setup.mb_kv', {srv})}</div>` : '';
   const reason = mb.reason ? ` — ${esc(mb.reason)}` : '';
   if (mb.verdict === 'ok')
-    return `<p class="t-success">Mini-bench passed: ${line}${reason}</p>${kv}`;
-  const advice = {
-    spill: 'The curator does not fit this GPU and parts run from system RAM. Pick the package for a smaller card, or a smaller curator model (re-run setup, or edit BASE_CURATOR_MODEL in .env and rebuild).',
-    slow: 'It runs, but slower than is comfortable for a deletion run. A smaller package will feel much faster.',
-    unreliable: 'The curator did not produce valid verdicts. Pick another curator model before the first deletion run.',
-  }[mb.verdict] || '';
-  return `<p class="t-amber">${SVG_WARN} Mini-bench: ${esc(mb.verdict)}${reason}. ${esc(advice)}</p><div class="t3 fs-12">${line}</div>${kv}`;
+    return `<p class="t-success">${th('setup.mb_passed')} ${line}${reason}</p>${kv}`;
+  const advice = ['spill', 'slow', 'unreliable'].includes(mb.verdict) ? t(`setup.mb_advice.${mb.verdict}`) : '';
+  return `<p class="t-amber">${SVG_WARN} ${th('setup.mb_label')} ${esc(mb.verdict)}${reason}. ${esc(advice)}</p><div class="t3 fs-12">${line}</div>${kv}`;
 }
 
 export async function logout() {

@@ -208,7 +208,7 @@ def test_onboarding_sync_and_saves_report_failures():
     check("the sync poll does not swallow errors", "catch {}" not in poll)
     check("five misses give up with a message and a Retry",
           "ONBOARDING_POLL_MAX_FAILS" in poll and "giveUp(" in poll
-          and "btn.textContent = 'Retry'" in sync)
+          and "btn.textContent = t('common.retry')" in sync)
     check("the 30-minute deadline also gives the button back",
           re.search(r"Date\.now\(\) > deadline\)\s*\{\s*giveUp\(", sync) is not None)
     save = _fn(setup, "saveOnboardingLibraries")
@@ -219,7 +219,7 @@ def test_onboarding_sync_and_saves_report_failures():
     render = _fn(setup, "renderMinibench")
     check("a failed warm-up / mini-bench is said, not skipped",
           "catch {}" not in build and "renderMinibench(mb, mbErr)" in build
-          and "mini-bench could not run" in render and "is unknown" in render)
+          and "mini-bench could not run" in with_words(render) and "is unknown" in with_words(render))
     check("retryOnboardingStep is registered", "  retryOnboardingStep," in _read("app.js"))
 
 
@@ -262,7 +262,7 @@ console.log(JSON.stringify([
 def test_game_badge_does_not_freeze():
     game = _read("game.js")
     check("status failure is not null", "/api/processes/status').catch(() => null)" not in game)
-    js = """
+    js = i18n_js() + """
 const classes = new Set(['show']);
 const indicator = {title: '', classList: {contains: c => classes.has(c), add: c => classes.add(c),
   toggle: (c, on) => on ? classes.add(c) : classes.delete(c)}};
@@ -347,7 +347,7 @@ console.log(JSON.stringify(out));
 def test_spotify_pending_checks_ok():
     sp = _read("spotify_import.js")
     check("refreshSpotifyPending reads r.ok", "r.ok" in _fn(sp, "refreshSpotifyPending"))
-    out = _node(_fn(sp, "_spotifyPendingText") + """
+    out = _node(i18n_js() + _fn(sp, "_spotifyPendingText") + """
 console.log(JSON.stringify([
   _spotifyPendingText(false, {detail: 'Admin only'}, 403),
   _spotifyPendingText(false, null, 500),
@@ -368,10 +368,10 @@ def test_plex_login_failures_are_said():
     auth = _read("auth.js")
     start = _fn(auth, "startPlexLogin")
     check("PIN request failure is toasted", start.index("try {") < start.index("/api/auth/plex/pin")
-          and "toast(`Couldn't start the Plex sign-in" in start)
+          and "Couldn't start the Plex sign-in" in with_words(start) and "toast(t('auth.plex_start_failed'" in start)
     check("poll counts non-429/403 failures", "else if (++misses >= PLEX_POLL_MISSES) showMisses();" in start)
     check("...and writes to #poll-status", "getElementById('poll-status')" in start)
-    out = _node(_const(auth, "PLEX_POLL_MISSES") + "\n" + _fn(auth, "_plexPollNote")
+    out = _node(i18n_js() + _const(auth, "PLEX_POLL_MISSES") + "\n" + _fn(auth, "_plexPollNote")
                 + "\nconsole.log(JSON.stringify([_plexPollNote(0), _plexPollNote(2), _plexPollNote(3)]));")
     if out is not None:
         check("three misses: 'Plex sign-in is not answering — retrying'",

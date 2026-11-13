@@ -4,14 +4,15 @@ import { EL, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, esc, toast
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
 import { netflixDropZone, refreshNetflixPending } from './netflix_import.js';
+import { t, th } from './i18n.js';
 export function _renderUsers(users) {
   const targets = document.querySelectorAll('.user-list-target');
-  const html = `<div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th class="t-right">Actions</th></tr></thead><tbody>
+  const html = `<div class="tbl-wrap"><table class="tbl tbl-cards"><thead><tr><th>${th('admin.col.username')}</th><th>${th('admin.col.role')}</th><th>${th('admin.col.status')}</th><th class="t-right">${th('admin.col.actions')}</th></tr></thead><tbody>
     ${users.map(u=>`<tr>
       <td class="cell-primary">${esc(u.plex_username)}</td>
-      <td><span class="badge ${u.is_admin?'amber':'muted'}">${u.is_admin?'admin':'user'}</span></td>
-      <td><span class="badge ${u.is_active?'success':'danger'}">${u.is_active?'active':'disabled'}</span></td>
-      <td class="t-right"><button type="button" class="btn btn-secondary btn-sm" ${act('toggleUser', u.id, !u.is_active, EL)}>${u.is_active?'Disable':'Enable'}</button></td>
+      <td><span class="badge ${u.is_admin?'amber':'muted'}">${th(u.is_admin?'admin.role_admin':'admin.role_user')}</span></td>
+      <td><span class="badge ${u.is_active?'success':'danger'}">${th(u.is_active?'admin.active':'admin.disabled')}</span></td>
+      <td class="t-right"><button type="button" class="btn btn-secondary btn-sm" ${act('toggleUser', u.id, !u.is_active, EL)}>${th(u.is_active?'admin.disable':'admin.enable')}</button></td>
     </tr>`).join('')}
   </tbody></table></div>`;
   targets.forEach(el => el.innerHTML = html);
@@ -43,14 +44,14 @@ export async function loadUsers(force = false) {
 }
 export async function toggleUser(id, active, btn) {
   if (!active) {
-    const res = await confirmDialog({title: 'Disable this user', danger: true, confirmLabel: 'Disable',
-      body: '<p>They are signed out on every device at once and cannot sign in again until re-enabled. Their watch history stays for re-attribution.</p>'});
+    const res = await confirmDialog({title: t('admin.disable_title'), danger: true, confirmLabel: t('admin.disable'),
+      body: `<p>${th('admin.disable_body')}</p>`});
     if (!res.ok) return;
   }
   btnBusy(btn);
   try {
     await api(`/api/users/${encodeURIComponent(id)}`, 'PATCH', {is_active: active});
-    toast(active ? 'User enabled' : 'User disabled — their sessions are gone', 'success');
+    toast(t(active ? 'admin.enabled_toast' : 'admin.disabled_toast'), 'success');
     loadUsers(true);
   } catch (e) { toast(_errMsg(e), 'danger'); btnDone(btn); }
 }

@@ -1,10 +1,11 @@
 // ── Pass 16b: Library Settings (admin only) ───────────────────────────────
 import { api } from './api.js';
 import { EL, _errHtml, _errMsg, _showTestResult, act, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
+import { t, th } from './i18n.js';
 export async function loadLibrarySettings() {
   const shell = document.getElementById('library-settings-shell');
   if (!shell) return;
-  shell.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading…</p>';
+  shell.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
   try {
     const status = await api('/api/library/status');
     shell.innerHTML = '';
@@ -16,34 +17,36 @@ export async function loadLibrarySettings() {
   }
 }
 
-const ARR_LABELS = { sonarr: 'Sonarr (TV)', radarr: 'Radarr (Movies)', lidarr: 'Lidarr (Music)' };
+// "Sonarr (TV)": the app's name stays, the kind is a word
+const _ARR_KEY = { sonarr: 'libset.arr_sonarr', radarr: 'libset.arr_radarr', lidarr: 'libset.arr_lidarr' };
+const ARR_LABELS = new Proxy({}, { get: (_, svc) => (_ARR_KEY[svc] ? t(_ARR_KEY[svc]) : undefined) });
 
 export function renderArrCard(svc, info) {
   const card = document.createElement('section');
   card.className = 'section';
   const last = info.last_test || '';
-  const state = !info.configured ? '<span class="badge amber badge-sm">not configured</span>'
-    : last.startsWith('ok|') ? `<span class="badge success badge-sm">connected${last.split('|')[1] ? ' · ' + esc(last.split('|')[1]) : ''}</span>`
-    : last.startsWith('fail|') ? `<span class="badge danger badge-sm" title="${escAttr(last.split('|')[1] || 'failed')}">connection failed</span>`
-    : '<span class="badge muted badge-sm">not tested</span>';
+  const state = !info.configured ? `<span class="badge amber badge-sm">${th('libset.not_configured')}</span>`
+    : last.startsWith('ok|') ? `<span class="badge success badge-sm">${th('libset.connected')}${last.split('|')[1] ? ' · ' + esc(last.split('|')[1]) : ''}</span>`
+    : last.startsWith('fail|') ? `<span class="badge danger badge-sm" title="${escAttr(last.split('|')[1] || t('common.failed'))}">${th('libset.connection_failed')}</span>`
+    : `<span class="badge muted badge-sm">${th('libset.not_tested')}</span>`;
   const port = svc === 'sonarr' ? '8989' : svc === 'radarr' ? '7878' : '8686';
   card.innerHTML = `
     <div class="section-head"><h3>${esc(ARR_LABELS[svc])} ${state}</h3></div>
     <div class="section-body">
-      ${svc === 'lidarr' ? '<p class="fs-12 t3 mb-12">Optional. Without Lidarr the Music page, the deletion proposals and the curator run on the Plex music index (deletions go through Plex, wanted artists become wishes you fulfil in SoulSync).</p>' : ''}
+      ${svc === 'lidarr' ? `<p class="fs-12 t3 mb-12">${th('libset.lidarr_optional')}</p>` : ''}
       <div id="arr-form-${svc}" class="grid-form-120 fs-12 mb-12">
         <label for="arr-url-${svc}" class="t3">URL</label>
         <input type="url" id="arr-url-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} URL" value="${esc(info.url || '')}" placeholder="http://localhost:${port}">
-        <label for="arr-key-${svc}" class="t3">API key</label>
-        <input type="password" id="arr-key-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${info.has_key ? '(saved — leave blank to keep)' : 'paste API key'}">
+        <label for="arr-key-${svc}" class="t3">${th('libset.api_key')}</label>
+        <input type="password" id="arr-key-${svc}" class="input" aria-label="${esc(ARR_LABELS[svc])} API Key" placeholder="${th(info.has_key ? 'libset.key_saved' : 'libset.key_paste')}">
       </div>
       <div class="row mb-12">
-        <button type="button" class="btn btn-primary btn-sm" id="arr-save-${svc}" ${act('saveArrConfig', svc, EL)}>Save URL + key</button>
-        <button type="button" class="btn btn-secondary btn-sm" ${act('testArr', svc, EL)}>Test connection</button>
+        <button type="button" class="btn btn-primary btn-sm" id="arr-save-${svc}" ${act('saveArrConfig', svc, EL)}>${th('libset.save_url_key')}</button>
+        <button type="button" class="btn btn-secondary btn-sm" ${act('testArr', svc, EL)}>${th('libset.test_connection')}</button>
         <span id="arr-msg-${svc}" class="status"></span>
       </div>
       <div class="rule-top" id="arr-defaults-${svc}"${info.configured ? '' : ' hidden'}>
-        ${info.configured ? `<div class="row"><span class="fs-11 t3">Root folder, quality profile and the other defaults come from the arr itself.</span><button type="button" class="btn btn-secondary btn-sm row-end" ${act('loadArrProfiles', svc, EL)}>Load profiles</button></div>` : ''}
+        ${info.configured ? `<div class="row"><span class="fs-11 t3">${th('libset.defaults_hint')}</span><button type="button" class="btn btn-secondary btn-sm row-end" ${act('loadArrProfiles', svc, EL)}>${th('libset.load_profiles')}</button></div>` : ''}
       </div>
     </div>`;
   trackDirty(card.querySelector(`#arr-form-${svc}`), card.querySelector(`#arr-save-${svc}`));
@@ -57,8 +60,8 @@ export async function testArr(svc, btn) {
   const url = document.getElementById(`arr-url-${svc}`).value.trim();
   const key = document.getElementById(`arr-key-${svc}`).value.trim();
   const msg = document.getElementById(`arr-msg-${svc}`);
-  btnBusy(btn, 'Testing…');
-  setStatus(msg, 'testing…', 'busy');
+  btnBusy(btn, t('libset.testing_btn'));
+  setStatus(msg, t('libset.testing'), 'busy');
   try {
     const body = { service: svc };
     if (url) body.url = url;
@@ -74,13 +77,13 @@ export async function saveArrConfig(svc, btn) {
   const url = document.getElementById(`arr-url-${svc}`).value.trim();
   const key = document.getElementById(`arr-key-${svc}`).value.trim();
   const msg = document.getElementById(`arr-msg-${svc}`);
-  if (!url || !key) { setStatus(msg, 'URL + key required', 'err'); return; }
-  btnBusy(btn, 'Saving…');
-  setStatus(msg, 'saving…', 'busy');
+  if (!url || !key) { setStatus(msg, t('libset.url_key_required'), 'err'); return; }
+  btnBusy(btn, t('libset.saving_btn'));
+  setStatus(msg, t('libset.saving'), 'busy');
   try {
     await api('/api/library/configure', 'POST', { service: svc, url, api_key: key });
-    setStatus(msg, 'saved + connected', 'ok');
-    toast(`${ARR_LABELS[svc]} saved and connected`, 'success');
+    setStatus(msg, t('libset.saved_connected'), 'ok');
+    toast(t('libset.saved_connected_toast', {app: ARR_LABELS[svc]}), 'success');
     // Reload the whole pane so the defaults section becomes visible
     setTimeout(loadLibrarySettings, 600);
   } catch (e) { setStatus(msg, _errMsg(e), 'err'); btnDone(btn); }
@@ -88,8 +91,8 @@ export async function saveArrConfig(svc, btn) {
 
 export async function loadArrProfiles(svc, btn) {
   const target = document.getElementById(`arr-defaults-${svc}`);
-  btnBusy(btn, 'Loading…');
-  target.innerHTML = '<p class="loading" role="status" aria-live="polite">Loading profiles…</p>';
+  btnBusy(btn, t('common.loading'));
+  target.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('libset.loading_profiles')}</p>`;
   try {
     const [profiles, defaults] = await Promise.all([
       api(`/api/library/profiles/${encodeURIComponent(svc)}`),
@@ -100,11 +103,11 @@ export async function loadArrProfiles(svc, btn) {
     // the dropdown disabled, instead of "(none configured)" as if it were fact.
     const arrName = ARR_LABELS[svc] || svc;
     const readErr = (field) => profiles[`${field}_error`];
-    const errOption = (field) => `<option value="">couldn't read from ${esc(arrName)}: ${esc(readErr(field))}</option>`;
+    const errOption = (field) => `<option value="">${th('libset.couldnt_read_from', {app: arrName, error: readErr(field)})}</option>`;
     const dis = (field) => (readErr(field) ? 'disabled' : '');
     const failed = ['root_folders', 'quality_profiles', 'metadata_profiles'].filter(readErr);
     const errBanner = failed.length
-      ? `<p class="load-err">Couldn't read ${failed.map(f => esc(f.replace('_', ' '))).join(', ')} from ${esc(arrName)} — the lists below are incomplete. <button type="button" class="btn btn-secondary btn-sm" ${act('loadArrProfiles', svc, EL)}>Retry</button></p>`
+      ? `<p class="load-err">${th('libset.couldnt_read_lists', {fields: failed.map(f => t(`libset.field.${f}`)).join(', '), app: arrName})} <button type="button" class="btn btn-secondary btn-sm" ${act('loadArrProfiles', svc, EL)}>${th('common.retry')}</button></p>`
       : '';
     const rootFolderOptions = (profiles.root_folders || []).map(rf =>
       `<option value="${esc(rf.path)}" ${cur.root_folder_path === rf.path ? 'selected' : ''}>${esc(rf.path)}</option>`
@@ -116,21 +119,21 @@ export async function loadArrProfiles(svc, btn) {
     if (svc === 'sonarr') {
       // Pass 16b.1: language profiles dropped — Sonarr v4 doesn't have them.
       extra += `
-        <label for="arr-series-type-${svc}" class="t3">Series type</label>
+        <label for="arr-series-type-${svc}" class="t3">${th('libset.series_type')}</label>
         <select id="arr-series-type-${svc}" class="input">
-          <option value="standard" ${cur.series_type === 'standard' ? 'selected' : ''}>Standard</option>
-          <option value="anime" ${cur.series_type === 'anime' ? 'selected' : ''}>Anime</option>
-          <option value="daily" ${cur.series_type === 'daily' ? 'selected' : ''}>Daily</option>
+          <option value="standard" ${cur.series_type === 'standard' ? 'selected' : ''}>${th('libset.type_standard')}</option>
+          <option value="anime" ${cur.series_type === 'anime' ? 'selected' : ''}>${th('common.anime')}</option>
+          <option value="daily" ${cur.series_type === 'daily' ? 'selected' : ''}>${th('libset.type_daily')}</option>
         </select>
       `;
     }
     if (svc === 'lidarr' && profiles.metadata_profiles) {
       extra += `
-        <label for="arr-meta-${svc}" class="t3">Metadata profile</label>
+        <label for="arr-meta-${svc}" class="t3">${th('libset.metadata_profile')}</label>
         <select id="arr-meta-${svc}" class="input" ${dis('metadata_profiles')}>
           ${readErr('metadata_profiles') ? errOption('metadata_profiles') : (profiles.metadata_profiles || []).map(m => `<option value="${m.id}" ${cur.metadata_profile_id === m.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
         </select>
-        <label for="arr-monitor-${svc}" class="t3">Monitor option</label>
+        <label for="arr-monitor-${svc}" class="t3">${th('libset.monitor_option')}</label>
         <select id="arr-monitor-${svc}" class="input">
           ${['all','future','missing','existing','first','latest','none'].map(m => `<option value="${m}" ${cur.monitor_option === m ? 'selected' : ''}>${m}</option>`).join('')}
         </select>
@@ -139,18 +142,18 @@ export async function loadArrProfiles(svc, btn) {
     target.innerHTML = `
       ${errBanner}
       <div id="arr-defaults-form-${svc}" class="grid-form-140 fs-12 mb-8">
-        <label for="arr-root-${svc}" class="t3">Root folder</label>
+        <label for="arr-root-${svc}" class="t3">${th('libset.root_folder')}</label>
         <select id="arr-root-${svc}" class="input" ${dis('root_folders')}>
-          ${readErr('root_folders') ? errOption('root_folders') : (rootFolderOptions || '<option value="">(none configured in arr)</option>')}
+          ${readErr('root_folders') ? errOption('root_folders') : (rootFolderOptions || `<option value="">${th('libset.none_in_arr')}</option>`)}
         </select>
-        <label for="arr-quality-${svc}" class="t3">Quality profile</label>
+        <label for="arr-quality-${svc}" class="t3">${th('libset.quality_profile')}</label>
         <select id="arr-quality-${svc}" class="input" ${dis('quality_profiles')}>
-          ${readErr('quality_profiles') ? errOption('quality_profiles') : (qualityOptions || '<option value="">(none configured)</option>')}
+          ${readErr('quality_profiles') ? errOption('quality_profiles') : (qualityOptions || `<option value="">${th('libset.none_configured')}</option>`)}
         </select>
         ${extra}
       </div>
       <div class="row">
-        <button type="button" class="btn btn-primary btn-sm" id="arr-defaults-save-${svc}" ${act('saveArrDefaults', svc, EL)}>Save defaults</button>
+        <button type="button" class="btn btn-primary btn-sm" id="arr-defaults-save-${svc}" ${act('saveArrDefaults', svc, EL)}>${th('libset.save_defaults')}</button>
         <span id="arr-defaults-msg-${svc}" class="status"></span>
       </div>
     `;
@@ -168,8 +171,8 @@ export async function saveArrDefaults(svc, btn) {
   const mon   = document.getElementById(`arr-monitor-${svc}`)?.value || '';
   const stype = document.getElementById(`arr-series-type-${svc}`)?.value || '';
   const msg   = document.getElementById(`arr-defaults-msg-${svc}`);
-  btnBusy(btn, 'Saving…');
-  setStatus(msg, 'saving…', 'busy');
+  btnBusy(btn, t('libset.saving_btn'));
+  setStatus(msg, t('libset.saving'), 'busy');
   const body = {};
   if (root) body.root_folder_path = root;
   if (qual) body.quality_profile_id = qual;
@@ -178,8 +181,8 @@ export async function saveArrDefaults(svc, btn) {
   if (mon) body.monitor_option = mon;
   try {
     await api(`/api/library/defaults/${encodeURIComponent(svc)}`, 'PUT', body);
-    setStatus(msg, 'saved', 'ok');
-    toast(`${ARR_LABELS[svc]} defaults saved`, 'success');
+    setStatus(msg, t('libset.saved'), 'ok');
+    toast(t('libset.defaults_saved', {app: ARR_LABELS[svc]}), 'success');
     btnDone(btn, null, {keepDisabled: true});
   } catch (e) { setStatus(msg, _errMsg(e), 'err'); btnDone(btn); }
 }
