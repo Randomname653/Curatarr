@@ -298,8 +298,10 @@ def interactive_active(ln: "_Lane | None" = None) -> bool:
 # a typing / focus ping (POST /api/chat/warm). Background LLM work that would
 # load a model or hold the GPU waits until this is a quiet window old — the
 # post-turn jobs used to fire the instant a reply ended and cost the user's
-# very next message a 20 GB reload.
-_last_interactive = 0.0
+# very next message a 20 GB reload. -inf until the first sign: time.monotonic()
+# counts from boot, so a 0.0 start read as "the user was just here" on a host
+# up for less than the quiet window.
+_last_interactive = float("-inf")
 
 
 def touch_interactive() -> None:

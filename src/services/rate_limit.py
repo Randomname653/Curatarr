@@ -35,7 +35,7 @@ _BUCKETS: dict[tuple[str, str], list[float]] = {}
 _LOCK = threading.Lock()
 _MAX_KEYS = 5000
 _FAIL_OPEN_WARN_S = 60.0
-_fail_open_warned_at = 0.0
+_fail_open_warned_at: Optional[float] = None   # None until the first warning
 
 # Budgets. Generous for a human, tight for a script. Owner-tunable later via
 # settings if a household ever hits them in earnest.
@@ -82,7 +82,7 @@ def enforce(scope: str, key: Hashable, limit: int, window_s: float,
         # the setup-code brute-force limit and every per-user budget are off.
         # Rate-limited - enforce() sits on hot request paths.
         global _fail_open_warned_at
-        if now - _fail_open_warned_at > _FAIL_OPEN_WARN_S:
+        if _fail_open_warned_at is None or now - _fail_open_warned_at > _FAIL_OPEN_WARN_S:
             _fail_open_warned_at = now
             logger.warning("[rate_limit] limiter error on %r - request let through, "
                            "budgets NOT enforced", scope, exc_info=True)

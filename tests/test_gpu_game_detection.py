@@ -124,6 +124,13 @@ try:
     nt.forget_game_questions()
     saved_prov = nt.PROVIDERS
     nt.PROVIDERS = [(nt._game_question_items, True)]
+    # A host up for 20 s (fresh container, CI runner): time.monotonic()
+    # counts from boot, and a cache stamped 0.0 read as fresh for the
+    # first 30 s - the bell served its empty start list, and an answer
+    # did not clear it.
+    import time
+    real_monotonic = time.monotonic
+    time.monotonic = lambda: 20.0
     n = nt.system_notifications(type("U", (), {"is_admin": True})())
     items = n["items"]
     check("the bell asks, the card-drawing program first, with both answers",
@@ -139,12 +146,15 @@ try:
     check("...cached between bell reads", len(nt._game_question_items()) == 2)
     nt.forget_game_questions()
     check("...and asked again after an answer", len(nt._game_question_items()) == 1)
+    time.monotonic = real_monotonic
     pc_host.configured = lambda: False
     nt.forget_game_questions()
     check("no agent (a desktop install): the toast on that machine asks, the bell does not",
           nt._game_question_items() == [])
     nt.PROVIDERS = saved_prov
 finally:
+    if "real_monotonic" in globals():
+        time.monotonic = real_monotonic
     pm._classified, pm._game_targets, pc_host.configured, pc_host.snapshot = saved
     pm._gpu_proc_streak.clear()
     pm._gpu_drawing_seen.clear()

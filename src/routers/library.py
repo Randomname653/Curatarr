@@ -1055,7 +1055,9 @@ class WishRequest(BaseModel):
     note: Optional[str] = Field(None, max_length=300)
 
 
-_wish_lookup_warned_at = 0.0
+# None until the first warning: time.monotonic() counts from boot, so a 0.0
+# start swallowed the first one on a host up for less than the window.
+_wish_lookup_warned_at: Optional[float] = None
 
 
 def _wish_in_library(title: str, mbid: Optional[str]) -> Optional[bool]:
@@ -1068,8 +1070,9 @@ def _wish_in_library(title: str, mbid: Optional[str]) -> Optional[bool]:
     except Exception as e:
         import time as _t
         # once a minute: list_wishes looks up every row
-        if _t.monotonic() - _wish_lookup_warned_at > 60:
-            _wish_lookup_warned_at = _t.monotonic()
+        now = _t.monotonic()
+        if _wish_lookup_warned_at is None or now - _wish_lookup_warned_at > 60:
+            _wish_lookup_warned_at = now
             logger.warning("[wishes] Plex artist lookup failed for %r - "
                            "in_library unknown: %s", title, e)
         return None

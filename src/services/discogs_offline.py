@@ -415,7 +415,9 @@ async def refresh_discogs_styles(max_bytes: int = None, force: bool = False,
     return result
 
 
-_styles_warned_at = 0.0
+# None until the first warning: time.monotonic() counts from boot, so a 0.0
+# start swallowed the first one on a host up for less than the window.
+_styles_warned_at: Optional[float] = None
 
 
 def artist_styles(artist: str) -> list[str]:
@@ -435,7 +437,7 @@ def artist_styles(artist: str) -> list[str]:
         # A broken snapshot reads as "no styles" for every artist; read per
         # title, so at most once a minute.
         now = time.monotonic()
-        if now - _styles_warned_at > 60:
+        if _styles_warned_at is None or now - _styles_warned_at > 60:
             _styles_warned_at = now
             logger.warning("[discogs] styles snapshot unreadable: %s", e)
         return []

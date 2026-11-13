@@ -28,7 +28,9 @@ from src.routers.auth import get_current_user
 from src.services.app_state import get_state, set_state
 
 logger = logging.getLogger(__name__)
-_lyrics_warned_at = 0.0
+# None until the first warning: time.monotonic() counts from boot, so a 0.0
+# start swallowed the first one on a host up for less than the window.
+_lyrics_warned_at: float | None = None
 router = APIRouter()
 
 
@@ -158,8 +160,9 @@ def pipeline_status(user: User = Depends(get_current_user)):
     except Exception as e:
         import time as _t
         # once a minute: this endpoint is polled every 4 s during a run
-        if _t.monotonic() - _lyrics_warned_at > 60:
-            _lyrics_warned_at = _t.monotonic()
+        now = _t.monotonic()
+        if _lyrics_warned_at is None or now - _lyrics_warned_at > 60:
+            _lyrics_warned_at = now
             logger.warning("[music] lyrics coverage unavailable: %s", e)
         lyrics = None
 
