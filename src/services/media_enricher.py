@@ -2698,7 +2698,7 @@ def _omdb_day() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
-_omdb_count_warned_at = 0.0
+_omdb_count_warned_at = None    # monotonic() is seconds since boot: 0.0 hid the first warning on a fresh host
 
 
 def omdb_calls_today() -> int:
@@ -2721,7 +2721,7 @@ def _omdb_count_unreadable(err: BaseException) -> int:
     """The day's count could not be read: report the budget as spent."""
     global _omdb_count_warned_at
     now = time.monotonic()
-    if now - _omdb_count_warned_at > 60:     # checked per title: once a minute
+    if _omdb_count_warned_at is None or now - _omdb_count_warned_at > 60:   # checked per title: once a minute
         _omdb_count_warned_at = now
         logger.warning("[omdb] calls-used-today unreadable - treating today's budget "
                        "as spent: %s", err)
