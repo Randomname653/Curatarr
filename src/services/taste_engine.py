@@ -878,6 +878,7 @@ async def compute_taste_vector_for_user(
     _tv_task = task_monitor.create(
         name=f"Taste vector: {category or 'all'}",
         category="taste",
+        tags=[category] if category else None,
         total=len(entries),
         task_id=f"taste-{category or 'all'}-{int(__import__('time').time())}",
     )
@@ -1732,19 +1733,50 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
     """
     if not categories:
         categories = ["music", "movie", "show", "anime"]
+    # One run, one Activity row: the per-category vectors are its sub-steps.
+    # They used to land as four separate rows ("Taste vector: anime / show /
+    # movie / music") for every recompute.
+    import time as _time
+    parent = task_monitor.create(
+        name="Taste vectors", category="taste", total=len(categories),
+        tags=categories, task_id=f"taste-run-{user_id}-{int(_time.time() * 1000)}")
+    task_monitor.start(parent)
+    try:
+        with task_monitor.group(parent):
+            updated = await _compute_all_taste_vectors(user_id, categories,
+                                                       skip_summaries, parent)
+    except asyncio.CancelledError:
+        task_monitor.skip(parent, "Cancelled")
+        raise
+    except Exception as e:
+        task_monitor.error(parent, f"{type(e).__name__}: {str(e)[:160]}")
+        raise
+    if parent.live:
+        if updated:
+            task_monitor.done(parent, f"{len(updated)} of {len(categories)} profiles "
+                                      f"updated ({', '.join(updated)})")
+        else:
+            task_monitor.done(parent, "No taste data yet", noop=True)
+
+
+async def _compute_all_taste_vectors(user_id: int, categories: list,
+                                     skip_summaries: bool, parent) -> list:
     all_results = {}
 
-    for cat in categories:
+    for i, cat in enumerate(categories):
         logger.info("Computing taste vector for %s...", cat)
+        task_monitor.update(parent, message=f"Taste vector: {cat}")
         result = await compute_taste_vector_for_user(user_id, category=cat)
         # Five plays, or five seen-it Swipe answers (a calibration deck: a
         # member's first profile before their first play here).
         if result.get("watch_count", 0) + result.get("swipe_count", 0) >= 5:
             all_results[cat] = result
+        task_monitor.update(parent, processed=i + 1)
 
     if not all_results:
         logger.warning("No taste data for user %d", user_id)
-        return
+        return []
+    task_monitor.update(parent, message="Writing the taste summaries")
 
     summary_parts = await _generate_summaries(user_id, all_results, skip_summaries)
     # Corpus calibration pulls up to 30k vectors per category and runs the
@@ -1762,3 +1794,4 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
     summary_text = await run_write(_update_plain_taste_stats, user_id, all_results, summary_parts)
     await run_write(_store_taste_blobs, user_id, all_results, summary_parts, summary_text,
                     calibrations=calibrations)
+    return list(all_results)

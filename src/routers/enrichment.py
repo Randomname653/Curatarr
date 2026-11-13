@@ -23,6 +23,7 @@ from src.services.app_state import get_state, set_state
 
 logger = logging.getLogger(__name__)
 from src.services.task_monitor import task_monitor
+from src.services.activity import fmt_list
 from src.services.ttl_memo import ttl_response
 from src.services import enrichment_state as _ES
 from src.services.http_client import tls_context
@@ -2892,8 +2893,9 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         }))
         await run_write(set_state, "enrichment_interrupted", "1")
         setup_task = task_monitor.create(
-            name=f"Enrichment setup: {', '.join(categories)}",
+            name="Enrichment setup",
             category="enrichment",
+            tags=categories,
         )
         task_monitor.start(setup_task)
 
@@ -3206,7 +3208,8 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         logger.info("Enrichment start: %d items across %s (source=%s)", total, categories, source)
 
         if total == 0:
-            task_monitor.done(setup_task, "Nothing to enrich -- all items already have profiles")
+            task_monitor.done(setup_task, "Nothing to enrich — all items already have profiles",
+                              noop=True)
             await run_write(set_state, "last_enrichment_at", datetime.utcnow().isoformat())
             # Audit #2: without this reset the interrupted flag stayed 1
             # forever on the nothing-to-do path -- every server boot saw
@@ -3221,14 +3224,15 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
         active_cats = [cat for cat in categories if by_cat.get(cat)]
         interleaved = _interleave_by_cat(by_cat)
 
-        task_monitor.done(setup_task,
-            f"Starting pipeline: {total} items across {active_cats} "
-            f"({_BATCH_SIZE}-item category rotation)")
+        # A hand-over, not a run of its own: the pipeline card below carries
+        # the work, so the History hides this one with the other no-ops.
+        task_monitor.done(setup_task, _pipeline_start_line(total, active_cats), noop=True)
 
         main_task = task_monitor.create(
-            name=f"Enrichment: {', '.join(active_cats)}",
+            name="Enrichment",
             category="enrichment",
             total=total,
+            tags=active_cats,
         )
         task_monitor.start(main_task)
 
@@ -3716,7 +3720,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             # done message so the user can tell at a glance how much of
             # the total was "couldn't find this in any API" vs actual
             # LLM-polished work.
-            msg = f"Complete: {processed_total}/{total} processed"
+            msg = f"{processed_total:,} of {total:,} items processed"
             if producer_not_found:
                 msg += f" ({producer_not_found} not_found by producer)"
             if game_skipped:
@@ -3755,10 +3759,21 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
 
     except asyncio.CancelledError:
         logger.info("Enrichment cancelled")
-        task_monitor.skip(setup_task, "Cancelled")
+        # The card that is still live ends as cancelled — the setup card
+        # finished long ago once the pipeline runs.
+        _live = [t for t in (locals().get("main_task"), setup_task)
+                 if t is not None and t.live]
+        task_monitor.skip(_live[0] if _live else setup_task, "Cancelled")
         await run_write(set_state, "enrichment_interrupted", "0")
     finally:
         await run_write(set_state, "enrichment_running", "0")
+
+
+def _pipeline_start_line(total: int, categories: list) -> str:
+    """The setup card's hand-over line. The categories read as words — it
+    printed the str() of the list ("across ['music', 'movie']", "across []")."""
+    return (f"Starting pipeline: {total:,} items across {fmt_list(categories)} "
+            f"({_BATCH_SIZE}-item category rotation)")
 
 
 async def _run_taste_computation(user_id: int, categories: list = None):

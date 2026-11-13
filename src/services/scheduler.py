@@ -95,6 +95,46 @@ def _tracked(job_id: str):
         return wrapped
     return decorator
 
+def _watched(job_id: str):
+    """Decorator for the scheduler's own jobs: the Activity view's Scheduled
+    tab shows whether one runs right now, and how its last run went. A
+    heartbeat (every 30 s) keeps that in memory; any other job also stores
+    it, so the tab still knows after a restart."""
+    from src.services import activity
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapped(*args, **kwargs):
+            import time as _time
+            activity.job_started(job_id)
+            t0 = _time.time()
+            result, summary = "error", ""
+            try:
+                out = await fn(*args, **kwargs)
+                result = "partial" if out is False else "done"
+                if isinstance(out, str):
+                    summary = out
+                elif isinstance(out, dict) and out.get("skipped"):
+                    result, summary = "skipped", f"skipped ({out['skipped']})"
+                elif isinstance(out, dict) and out.get("started") is not None:
+                    summary = ("started " + ", ".join(out["started"])) if out["started"] else ""
+                return out
+            except Exception as e:
+                summary = f"{type(e).__name__}: {str(e)[:160]}"
+                raise
+            finally:
+                rec = activity.job_finished(job_id, _time.time() - t0, result, summary)
+                if job_id not in activity.HEARTBEAT_JOBS:
+                    try:
+                        from src.database.runner import run_write
+                        from src.services.data_custodian import _store_result
+                        await run_write(_store_result, job_id, rec)
+                    except Exception as e:  # noqa: BLE001 - display only
+                        logger.debug("[scheduler] %s result not stored: %s", job_id, e)
+        return wrapped
+    return decorator
+
+
 # Module-level set of fire-and-forget background tasks. Without retaining a
 # reference, asyncio's GC may cancel a still-running task at any time. Tasks
 # add themselves on creation and remove themselves on completion via
@@ -244,7 +284,7 @@ def start_scheduler():
     # it would block its own next run — and with it the background queue.
     from src.services.data_custodian import CUSTODIAN_TICK_MINUTES, custodian_tick_background
     scheduler.add_job(
-        custodian_tick_background,
+        _watched("data_custodian")(custodian_tick_background),
         IntervalTrigger(minutes=CUSTODIAN_TICK_MINUTES),
         id="data_custodian",
         name="Data custodian tick (debt-based maintenance)",
@@ -255,7 +295,7 @@ def start_scheduler():
     # queues restart every two minutes instead of every thirty.
     from src.services.data_custodian import SPRINT_TICK_MINUTES, custodian_sprint_tick
     scheduler.add_job(
-        custodian_sprint_tick,
+        _watched("custodian_sprint")(custodian_sprint_tick),
         IntervalTrigger(minutes=SPRINT_TICK_MINUTES),
         id="custodian_sprint",
         name="Data custodian sprint (keep working)",
@@ -263,7 +303,7 @@ def start_scheduler():
         misfire_grace_time=60,
     )
     scheduler.add_job(
-        _tracked("proactive_messages")(job_proactive_messages),
+        _watched("proactive_messages")(_tracked("proactive_messages")(job_proactive_messages)),
         IntervalTrigger(minutes=30),
         id="proactive_messages",
         name="Proactive message cache fill",
@@ -278,7 +318,7 @@ def start_scheduler():
     # contention. Starts on the half-hour so it doesn't fight with the
     # 02:30 ARR pre-enrich or the 03:30 TTL refresh head-to-head.
     scheduler.add_job(
-        _tracked("source_upgrade")(job_source_upgrade),
+        _watched("source_upgrade")(_tracked("source_upgrade")(job_source_upgrade)),
         CronTrigger(minute=15),     # every hour at :15
         id="source_upgrade",
         name="Hourly source-upgrade pass (Phase 2 #41)",
@@ -290,7 +330,7 @@ def start_scheduler():
     # Pass 16o: keep Library Manager arr cache warm. Catches recovery
     # windows for a flaky Lidarr without the user having to click.
     scheduler.add_job(
-        _tracked("arr_cache_refresh")(job_arr_cache_refresh),
+        _watched("arr_cache_refresh")(_tracked("arr_cache_refresh")(job_arr_cache_refresh)),
         IntervalTrigger(minutes=30),
         id="arr_cache_refresh",
         name="Arr library cache refresh",
@@ -305,7 +345,7 @@ def start_scheduler():
     # model in use? Network only, a few manifest reads; the old-vs-new test
     # is the admin's click, never automatic.
     scheduler.add_job(
-        _tracked("model_update_check")(job_model_update_check),
+        _watched("model_update_check")(_tracked("model_update_check")(job_model_update_check)),
         IntervalTrigger(hours=24),
         id="model_update_check",
         name="Model update check (registry vs running weights)",
@@ -322,7 +362,7 @@ def start_scheduler():
     from apscheduler.triggers.date import DateTrigger
     from src.services.model_updates import recover_interrupted
     scheduler.add_job(
-        recover_interrupted,
+        _watched("model_update_recover")(recover_interrupted),
         DateTrigger(run_date=datetime.now() + timedelta(minutes=2)),
         id="model_update_recover",
         name="Model update test: roll back an interrupted run",
@@ -330,7 +370,7 @@ def start_scheduler():
         misfire_grace_time=600,
     )
     scheduler.add_job(
-        job_game_watcher,
+        _watched("game_watcher")(job_game_watcher),
         IntervalTrigger(seconds=30),
         id="game_watcher",
         name="Game-mode VRAM watcher",
@@ -338,7 +378,7 @@ def start_scheduler():
         misfire_grace_time=30,
     )
     scheduler.add_job(
-        job_ollama_watch,
+        _watched("ollama_watch")(job_ollama_watch),
         IntervalTrigger(seconds=30),
         id="ollama_watch",
         name="This server's Ollama answering?",
@@ -352,7 +392,7 @@ def start_scheduler():
         # The gaming PC's agent: seconds, not the watcher's 30, so a PC that
         # goes away stops getting work before a request would time out.
         scheduler.add_job(
-            pc_host.poll_once,
+            _watched("pc_agent_poll")(pc_host.poll_once),
             IntervalTrigger(seconds=pc_host.POLL_S),
             id="pc_agent_poll",
             name="PC agent poll",
@@ -656,7 +696,8 @@ async def job_arr_sync():
     if not judge_ready():
         logger.info("[scheduler] ARR sync waits: the gaming PC is off or busy")
         return False
-    task = task_monitor.create(name="ARR Sync", category="arr_sync")
+    task = task_monitor.create(name="Arr sync", category="arr_sync",
+                               tags=["movie", "show", "anime", "music"])
     task_monitor.start(task)
     _dr_locked = False   # guards release: never clear a lock we don't hold
     try:
@@ -703,7 +744,7 @@ async def job_arr_sync():
         # is enough to confirm "yes, it's working".
         task_monitor.update(task, total=len(arr_items),
                             message=f"Analysing {len(arr_items)} items "
-                                    f"(across movie/show/anime/music)")
+                                    f"(movie, show, anime, music)")
         all_proposals = []
         ran_cats: list = []
         processed = 0
@@ -712,8 +753,11 @@ async def job_arr_sync():
             if not cat_items:
                 continue
             ran_cats.append(cat)
-            task_monitor.update(
-                task,
+            # The category's items as one step: the judging loop inside
+            # reports its own progress (substep), so the bar moves through
+            # the minutes one category takes instead of sitting at 0%.
+            task_monitor.begin_step(
+                task, len(cat_items),
                 message=f"Analysing {cat}: {len(cat_items)} candidates "
                         f"({processed:,}/{len(arr_items):,} done so far)",
             )
@@ -997,7 +1041,7 @@ async def job_arr_pre_enrich():
         logger.info("[scheduler] ARR pre-enrichment waits: an enrichment pass is running")
         return False   # stays due: retry once the running pass is done
 
-    task = task_monitor.create(name="ARR Pre-Enrichment", category="enrichment")
+    task = task_monitor.create(name="Arr metadata prefetch", category="enrichment")
     task_monitor.start(task)
 
     # Audit #3: the old unconditional finally double-released the lock —

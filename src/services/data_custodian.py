@@ -820,11 +820,11 @@ def _registry() -> list[Task]:
              _run_plex_followup, needs_llm=True, reports_own=True, after=("plex_sync",)),
         # after=plex_sync: the recently-watched veto must see the plays the
         # sync is fetching right now, not the ones from before it.
-        Task("arr_sync",         "ARR sync + deletion candidates", 24.0,
+        Task("arr_sync",         "Arr sync + deletion candidates", 24.0,
              sched.job_arr_sync, needs_llm=True, reports_own=True, after=("plex_sync",)),
         # Runs the full enrichment pipeline (the summariser) on an ARR batch:
         # model work, although it was filed as a prefetch (2026-09-27).
-        Task("arr_pre_enrich",   "ARR metadata prefetch", 24.0, sched.job_arr_pre_enrich,
+        Task("arr_pre_enrich",   "Arr metadata prefetch", 24.0, sched.job_arr_pre_enrich,
              needs_llm=True, reports_own=True, llm_role="summarizer"),
         # 0.4h cadence — a wrapper card every 24 min would drown the Activity
         # view, so extract_memories_from_thread cards itself only when a
@@ -1148,98 +1148,185 @@ def _clear_failures(job_id: str) -> None:
         set_state(_fail_key(job_id), "")
 
 
-async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
-    """One queue's run: its overdue tasks in priority order, one at a time."""
+_RESULT_KEY = "job_last_result"
+
+
+def _store_result(job_id: str, rec: dict) -> None:
+    """The last run of one task — what the Activity view's Scheduled tab shows
+    as Last duration / Last result. Written only for runs that ran (done,
+    partial, error), not for the skips a tick decides on (those are judged
+    live), so an idle tick costs no write."""
+    from src.services.app_state import set_state
+    try:
+        set_state(f"{_RESULT_KEY}:{job_id}", json.dumps(rec))
+    except Exception as e:  # noqa: BLE001 - display only
+        logger.warning("[custodian] could not store the %s result: %s", job_id, e)
+
+
+def last_result(job_id: str) -> dict:
+    from src.services.app_state import get_state
+    try:
+        raw = get_state(f"{_RESULT_KEY}:{job_id}")
+        rec = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        rec = {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def _summary_of_run(mon, t0: float, returned) -> tuple:
+    """(summary, noop) of a finished run: the runner's own string, the
+    wrapper card's summary, or — for a self-carding runner — the card(s) it
+    finished meanwhile."""
+    from src.services.task_monitor import task_monitor
+    if isinstance(returned, str) and returned.strip():
+        return returned.strip(), None
+    if mon is not None:
+        return mon.summary or "", mon.is_noop
+    runs = task_monitor.runs_since(t0 - 0.5)
+    if not runs:
+        return "", None
+    last = runs[-1]
+    return last.get("summary") or "", (all(r.get("noop") for r in runs) if runs else None)
+
+
+# Run-now requests (the Activity view's Scheduled tab), per queue: run once
+# the queue is through with what it is on, cadence ignored.
+_run_requests: dict = {q: [] for q in _QUEUES}
+
+
+async def _run_one(queue: str, t: "Task", force: bool, deep: bool, actions: list) -> None:
+    """One task of a queue run — the body of _run_queue's loop."""
     from src.services.scheduler import _job_overdue, _record_job_run
     from src.services.task_monitor import task_monitor
     other = QUEUE_MODEL if queue == QUEUE_BACKGROUND else QUEUE_BACKGROUND
+    mon = None
+    t0 = None
+    # The task leaves the pending set only where it did when the reads
+    # below ran inline: while one waits on a worker thread, the other
+    # queue's after-check must still count the task as ahead.
+    try:
+        if (t.settle_only and not force
+                and await run_read(_settle_waits, t, queue)):
+            return
+        if not force and not await run_read(_job_overdue, t.job_id, t.cadence_h):
+            return
+        if not force and not await run_read(_backoff_due, t.job_id, t.cadence_h):
+            actions.append({"task": t.job_id,
+                            "result": "backing off (failed last run)"})
+            return
+        blocking = set(t.after) & _ahead_in(other)
+        if blocking and queue == QUEUE_BACKGROUND:
+            # Never wait on the GPU from here — that is the
+            # starvation the two queues exist to end. Stay due; a
+            # later tick runs it once the model work is through.
+            actions.append({"task": t.job_id,
+                            "result": f"deferred (after {', '.join(sorted(blocking))})"})
+            return
+        if blocking:
+            _queue_pending[queue].discard(t.job_id)
+            await _wait_for(other, t.after, t.job_id)
+        if t.needs_llm and await run_read(_gaming):
+            # Not a stop any more: summariser-class work moves to the
+            # CPU while another program holds the card, curator-class
+            # work waits (its model cannot even load there).
+            from src.services.llm_lane import CPU as _CPU, lane as _lane
+            _placement = _lane(t.llm_role)
+            if _placement != _CPU:
+                actions.append({"task": t.job_id, "result": "skipped (GPU busy)"})
+                return
+            logger.info("[custodian] %s runs on the CPU lane — the GPU is busy",
+                        t.job_id)
+        logger.info("[custodian] running %s …", t.job_id)
+        _queue_pending[queue].discard(t.job_id)
+        _queue_current[queue] = t.job_id
+        t0 = time.time()
+        # Activity card for every runner that doesn't card itself.
+        # Stable task_id: each run REPLACES the previous card instead
+        # of stacking (a still-backfilling task runs every tick — 48
+        # same-named cards a day would bury the rest of the view).
+        if not t.reports_own:
+            mon = task_monitor.create(name=t.label, category="custodian",
+                                      task_id=f"cust-{t.job_id}")
+            task_monitor.start(mon)
+        kwargs = {}
+        if t.takes_deep:
+            kwargs["deep"] = deep
+        if t.takes_task:
+            kwargs["task"] = mon
+        returned = await t.runner(**kwargs)
+        done = True if returned is None else bool(returned)
+        await run_write(_clear_failures, t.job_id)
+        if done:
+            await run_write(_record_job_run, t.job_id)
+        if mon is not None:
+            if isinstance(returned, str) and returned.strip():
+                task_monitor.update(mon, message=returned.strip())
+            task_monitor.done(mon, "Complete" if done else "Partial — continues next tick",
+                              partial=not done)
+        seconds = round(time.time() - t0, 1)
+        summary, noop = _summary_of_run(mon, t0, returned)
+        if not done and mon is None and not summary and seconds < 2:
+            result = "waiting"
+            summary = "Waiting — retries next tick"
+        else:
+            result = "done" if done else "partial"
+        actions.append({
+            "task": t.job_id,
+            "result": "done" if done else "partial (continues next tick)",
+            "seconds": seconds,
+        })
+        await run_write(_store_result, t.job_id, {
+            "at": datetime.utcnow().isoformat(timespec="seconds"),
+            "seconds": seconds, "result": result,
+            "summary": summary[:240], "noop": noop})
+    except Exception as e:
+        logger.warning("[custodian] task %s failed: %s", t.job_id, e,
+                       exc_info=not isinstance(e, TaskFailed))
+        if mon is not None:
+            task_monitor.error(mon, _short_error(e))
+        actions.append({"task": t.job_id, "result": f"error: {_short_error(e)}"})
+        try:
+            await run_write(_record_failure, t.job_id)
+            await run_write(_store_result, t.job_id, {
+                "at": datetime.utcnow().isoformat(timespec="seconds"),
+                "seconds": round(time.time() - t0, 1) if t0 else 0,
+                "result": "error", "summary": _short_error(e)})
+        except Exception as fe:  # noqa: BLE001 — the run's error is logged above
+            logger.warning("[custodian] could not record %s failure: %s",
+                           t.job_id, fe)
+    finally:
+        _queue_pending[queue].discard(t.job_id)
+        _queue_current[queue] = None
+
+
+async def _run_queue(queue: str, tasks: list, force: bool, deep: bool,
+                     regular: bool = True) -> dict:
+    """One queue's run: its overdue tasks in priority order, one at a time,
+    then whatever Run-now requests arrived meanwhile.
+
+    ``regular=False`` is a Run-now run of its own (request_run on an idle
+    queue): it does not count as the queue's first run, so a settle-only
+    task (the VACUUM) still waits for the first regular tick after a start."""
     actions = []
     started = time.time()
+    by_id = {t.job_id: t for t in _registry()}
     try:
         for t in tasks:
             if _cancel_requested():
                 raise asyncio.CancelledError
-            mon = None
-            # The task leaves the pending set only where it did when the reads
-            # below ran inline: while one waits on a worker thread, the other
-            # queue's after-check must still count the task as ahead.
-            try:
-                if (t.settle_only and not force
-                        and await run_read(_settle_waits, t, queue)):
-                    continue
-                if not force and not await run_read(_job_overdue, t.job_id, t.cadence_h):
-                    continue
-                if not force and not await run_read(_backoff_due, t.job_id, t.cadence_h):
-                    actions.append({"task": t.job_id,
-                                    "result": "backing off (failed last run)"})
-                    continue
-                blocking = set(t.after) & _ahead_in(other)
-                if blocking and queue == QUEUE_BACKGROUND:
-                    # Never wait on the GPU from here — that is the
-                    # starvation the two queues exist to end. Stay due; a
-                    # later tick runs it once the model work is through.
-                    actions.append({"task": t.job_id,
-                                    "result": f"deferred (after {', '.join(sorted(blocking))})"})
-                    continue
-                if blocking:
-                    _queue_pending[queue].discard(t.job_id)
-                    await _wait_for(other, t.after, t.job_id)
-                if t.needs_llm and await run_read(_gaming):
-                    # Not a stop any more: summariser-class work moves to the
-                    # CPU while another program holds the card, curator-class
-                    # work waits (its model cannot even load there).
-                    from src.services.llm_lane import CPU as _CPU, lane as _lane
-                    _placement = _lane(t.llm_role)
-                    if _placement != _CPU:
-                        actions.append({"task": t.job_id, "result": "skipped (GPU busy)"})
-                        continue
-                    logger.info("[custodian] %s runs on the CPU lane — the GPU is busy",
-                                t.job_id)
-                logger.info("[custodian] running %s …", t.job_id)
-                _queue_pending[queue].discard(t.job_id)
-                _queue_current[queue] = t.job_id
-                t0 = time.time()
-                # Activity card for every runner that doesn't card itself.
-                # Stable task_id: each run REPLACES the previous card instead
-                # of stacking (a still-backfilling task runs every tick — 48
-                # same-named cards a day would bury the rest of the view).
-                if not t.reports_own:
-                    mon = task_monitor.create(name=t.label, category="custodian",
-                                              task_id=f"cust-{t.job_id}")
-                    task_monitor.start(mon)
-                kwargs = {}
-                if t.takes_deep:
-                    kwargs["deep"] = deep
-                if t.takes_task:
-                    kwargs["task"] = mon
-                done = await t.runner(**kwargs)
-                done = True if done is None else bool(done)
-                await run_write(_clear_failures, t.job_id)
-                if done:
-                    await run_write(_record_job_run, t.job_id)
-                if mon is not None:
-                    task_monitor.done(mon, "Complete" if done
-                                      else "Partial — continues next tick")
-                actions.append({
-                    "task": t.job_id,
-                    "result": "done" if done else "partial (continues next tick)",
-                    "seconds": round(time.time() - t0, 1),
-                })
-            except Exception as e:
-                logger.warning("[custodian] task %s failed: %s", t.job_id, e,
-                               exc_info=not isinstance(e, TaskFailed))
-                if mon is not None:
-                    task_monitor.error(mon, _short_error(e))
-                actions.append({"task": t.job_id, "result": f"error: {_short_error(e)}"})
-                try:
-                    await run_write(_record_failure, t.job_id)
-                except Exception as fe:  # noqa: BLE001 — the run's error is logged above
-                    logger.warning("[custodian] could not record %s failure: %s",
-                                   t.job_id, fe)
-            finally:
-                _queue_pending[queue].discard(t.job_id)
-                _queue_current[queue] = None
-        _first_run_done[queue] = True
+            if t.job_id in _run_requests[queue]:
+                _run_requests[queue].remove(t.job_id)
+                await _run_one(queue, t, True, deep, actions)
+            else:
+                await _run_one(queue, t, force, deep, actions)
+        while _run_requests[queue]:
+            if _cancel_requested():
+                raise asyncio.CancelledError
+            t = by_id.get(_run_requests[queue].pop(0))
+            if t is not None:
+                await _run_one(queue, t, True, deep, actions)
+        if regular:
+            _first_run_done[queue] = True
     finally:
         _queue_pending[queue] = set()
         _queue_current[queue] = None
@@ -1256,6 +1343,44 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
         logger.info("[custodian] %s queue done in %.0fs: %s", queue, report["duration_s"],
                     ", ".join(f"{a['task']}={a['result']}" for a in actions))
     return report
+
+
+def job_state(job_id: str) -> str:
+    """running | queued | idle — for one custodian task."""
+    for q in _QUEUES:
+        if _queue_current[q] == job_id:
+            return "running"
+        if job_id in _run_requests[q] or (_queue_busy[q] and job_id in _queue_pending[q]):
+            return "queued"
+    return "idle"
+
+
+def request_run(job_id: str) -> str:
+    """Run one task now, cadence ignored: at once when its queue is idle,
+    otherwise right after what the queue is on. Returns "started",
+    "queued", "running" (already) or raises KeyError for an unknown id.
+    Must be called on the event loop (it starts the queue's run)."""
+    from src.services.scheduler import _track_task
+    t = next((x for x in _registry() if x.job_id == job_id), None)
+    if t is None:
+        raise KeyError(job_id)
+    state = job_state(job_id)
+    if state != "idle":
+        return state
+    q = queue_of(t)
+    if _queue_busy[q]:
+        _run_requests[q].append(job_id)
+        return "queued"
+    _queue_busy[q] = True
+    _queue_pending[q] = set()
+    _run_requests[q].append(job_id)
+    try:
+        _track_task(asyncio.create_task(_run_queue(q, [], False, False, regular=False)))
+    except Exception:
+        _queue_busy[q] = False
+        _run_requests[q].remove(job_id)
+        raise
+    return "started"
 
 
 async def custodian_tick(first_tick: bool = False, force: bool = False,

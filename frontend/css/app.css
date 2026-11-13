@@ -1918,3 +1918,56 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   .wu-snap { aspect-ratio: auto; min-height: 78vh; }
   .wu-snap-btn { margin-left: 0; }
 }
+
+/* ── ACTIVITY (2026-11): Queue / Scheduled / History, the Sonarr-Radarr
+   layout. Queue rows: status icon | name, category pills, step, bar, meta |
+   elapsed + Cancel. A finished row fades and moves to the History. ── */
+.act-list { display: flex; flex-direction: column; }
+.act-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 16px; border-top: 1px solid var(--border); }
+.act-row:first-child { border-top: none; }
+.act-row.act-running { background: linear-gradient(90deg, var(--amber-dim), transparent 40%); }
+.act-ico { padding-top: 2px; display: flex; justify-content: center; }
+.act-main { min-width: 0; }
+.act-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+.act-step { color: var(--text2); font-size: 12px; margin-top: 4px; }
+.act-meta { color: var(--text3); font-size: 12px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.act-side { display: flex; align-items: center; gap: 10px; }
+.act-elapsed { color: var(--text3); font-size: 12px; min-width: 52px; text-align: right; }
+.act-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 10px; font-size: 11px; color: var(--text2); background: var(--bg3); border: 1px solid var(--border); }
+.act-subs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.act-sub { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 10px; font-size: 11px; border: 1px solid var(--border); color: var(--text3); background: var(--bg3); }
+.act-sub.s-running { color: var(--amber); border-color: var(--amber-line); background: var(--amber-dim); }
+.act-sub.s-completed { color: var(--success); border-color: var(--success-line); }
+.act-sub.s-partial, .act-sub.s-warning { color: var(--amber); border-color: var(--amber-line); }
+.act-sub.s-failed { color: var(--danger-fg); border-color: var(--danger-line); }
+.act-spin { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--amber-line); border-top-color: var(--amber); animation: act-spin .9s linear infinite; flex-shrink: 0; }
+.act-spin.sm { width: 9px; height: 9px; border-width: 2px; }
+@keyframes act-spin { to { transform: rotate(360deg); } }
+.act-bar { height: 5px; margin-top: 8px; }
+.act-completed .act-bar .progress-fill, .act-warning .act-bar .progress-fill { background: var(--success); }
+/* No item count known: a pulse travels the bar instead of a "0%". */
+.progress-bar.indeterminate { position: relative; }
+.progress-bar.indeterminate .progress-fill { width: 35% !important; position: absolute; left: 0; animation: act-indeterminate 1.4s ease-in-out infinite; opacity: .85; }
+@keyframes act-indeterminate { 0% { left: -35%; } 100% { left: 100%; } }
+.act-fade { animation: act-fade 2.6s ease-in forwards; }
+@keyframes act-fade { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
+.act-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 14px; }
+.act-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.act-noop-toggle { cursor: pointer; }
+.act-sched td, .act-hist td { font-size: 13px; }
+.act-sum { display: inline-block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.act-hist .act-sum { display: block; max-width: 560px; }
+.act-hico { display: inline-flex; width: 16px; }
+.act-hist tr.act-noop td { color: var(--text3); }
+.act-log summary { cursor: pointer; }
+.act-log > div { margin-top: 4px; max-height: 160px; overflow: auto; }
+@media (max-width: 640px) {
+  .act-row { grid-template-columns: 18px minmax(0, 1fr); padding: 12px; }
+  .act-side { grid-column: 2; justify-content: space-between; }
+  .act-elapsed { text-align: left; }
+  .act-sum, .act-hist .act-sum { max-width: 100%; white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .act-spin, .progress-bar.indeterminate .progress-fill { animation: none; }
+  .act-fade { animation: none; opacity: .6; }
+}

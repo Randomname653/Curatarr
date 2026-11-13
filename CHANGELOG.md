@@ -6,6 +6,25 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Activity in three tabs: Queue, Scheduled, History.** The page mixed live work with finished
+runs: "Done" rows clogged "Live tasks", the table below repeated them for this session only, and
+status lines printed Python ("across ['music', 'movie']", "across []", "Enrichment setup: Done",
+"Done · 31 / 32 · ETA 8s"). Now, Sonarr/Radarr style:
+- **Queue** shows only running and queued work. A run that ends shows its outcome, fades out within
+  three seconds and moves to the History. Categories are pills, not text. A job without an item
+  count pulses instead of sitting at 0%, and the Arr sync's bar moves while a category is judged
+  (it stayed at "0%" for minutes). Elapsed time counts up live, and Cancel says "Cancelling…".
+  A finished run shows no ETA and its full count.
+- **Scheduled** (admin) lists every background job, grouped into media server & Arr apps,
+  enrichment, taste & curator, maintenance and system watchers. Each row has its interval, last
+  execution, last duration, last result with its summary ("439.2 MB · kept 7", or an amber "Partial —
+  continues next tick"), next execution ("in 22 min", "waiting for the PC agent", "due now") and
+  **Run now**. Run now on a busy custodian queue runs the job right after the current one. Last
+  results are stored, so the tab reads the same after a restart.
+- **History** is the persisted log of finished runs (the last 300, kept across restarts). Filters
+  for result (completed, partial / warnings, failed / cancelled) and area, and "Hide empty runs"
+  (on by default) hides no-op runs like "0 expired rows removed" and "0/4 processed". One taste
+  recompute is a single row with its four categories as sub-steps, where it used to be four rows.
 **Conversation starters reach every member again.** Since 1.1.0 the starters job ended in an
 error after the first member with a new batch: the milestone check read the new openers after
 their insert had committed and closed the session. The batch was saved, but the milestone it
