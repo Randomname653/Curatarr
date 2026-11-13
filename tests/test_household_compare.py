@@ -10,6 +10,7 @@ so turning it off takes a member out of every comparison at once.
     python tests/test_household_compare.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import json
 import re
@@ -128,7 +129,7 @@ check("the identity slide passes the household median", "radar(f, d.household?.r
 node = shutil.which("node")
 if node:
     body = re.sub(r"^import .*$", "", JS, flags=re.M).replace("export function", "function")
-    harness = r"""
+    harness = i18n_js() + r"""
 const window = {matchMedia: () => ({matches: true})}; const document = {};
 const esc = s => String(s ?? ''); const act = () => ''; const _posterImg = () => '';
 const countTo = () => {}; const haptic = () => {}; const loc = () => undefined;

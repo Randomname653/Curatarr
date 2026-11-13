@@ -180,14 +180,24 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
 
     from src.services.household_compare import compare
 
+    from src.services.user_language import ui_language, user_language
+
     facts, row = await current_facts(user, scope, period)
     story = row and row.get("story")
+    # The page's words in the user's language (UX design record 3.8): the
+    # insights' claims, the traits' evidence, the milestones' phrases. The
+    # stored facts stay English - the curator reads them.
+    lang = await run_read(ui_language, user.id)
     return {
-        "facts": facts,
+        "facts": _in_language(facts, lang),
         # what is worth saying, ranked (services/wrapup_insights)
-        "insights": mine(facts),
+        "insights": mine(facts, lang=lang),
         "story": story,
         "story_stale": bool(story) and row.get("story_hash") != facts.get("facts_hash"),
+        # the language the story was written in, and the user's now: a
+        # rewrite brings it into the new one
+        "story_lang": (story or {}).get("lang"),
+        "user_lang": await run_read(user_language, user.id),
         "story_at": row and row.get("story_at"),
         "story_source": row and row.get("story_source"),
         "generating": _running_task(user.id, scope, period),
@@ -195,7 +205,7 @@ async def get_wrapup(scope: str = "all", period: str = "30d",
         # opt-in, worked out on every open and never stored
         # (services/household_compare)
         "household": await run_read(compare, user.id, scope, period, facts),
-        "milestones": await run_read(_milestones, user.id, period),
+        "milestones": await run_read(_milestones, user.id, period, lang),
         "decades_prev": await run_read(_decades_prev, user.id, scope, period),
         **(await run_read(available, user.id)),
     }
@@ -213,7 +223,18 @@ def _decades_prev(user_id: int, scope: str, period: str):
     return (f.get("eras") or {}).get("decades") or None
 
 
-def _milestones(user_id: int, period: str) -> dict:
+def _in_language(facts: dict, lang: str) -> dict:
+    """The facts as the page shows them: the traits' evidence in ``lang``.
+    A copy; the stored facts are not touched."""
+    if lang == "en" or not facts.get("traits"):
+        return facts
+    from src.services.wrapup_facts import derive_traits
+    said = {x["key"]: x["evidence"] for x in derive_traits(facts, datetime.utcnow(), lang=lang)}
+    return {**facts, "traits": [{**x, "evidence": said.get(x["key"], x.get("evidence"))}
+                                for x in facts["traits"]]}
+
+
+def _milestones(user_id: int, period: str, lang: str = "en") -> dict:
     """The member's milestones (services/milestones): those reached in this
     period (the story's slide), the whole history (the page's timeline),
     with each one's phrase, and the kinds and the ones switched off."""
@@ -223,7 +244,7 @@ def _milestones(user_id: int, period: str) -> dict:
     p = resolve_period(period, zone=user_zone_by_id(user_id))
 
     def dress(m):
-        return {**m, "phrase": ms.phrase(m)}
+        return {**m, "phrase": ms.phrase(m, lang)}
     return {"period": [dress(m) for m in ms.in_period(user_id, p.start, p.end)],
             "history": [dress(m) for m in ms.history(user_id)],
             "kinds": list(ms.KINDS), "off": sorted(ms.kinds_off(user_id))}

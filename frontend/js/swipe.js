@@ -30,22 +30,29 @@ import { api } from './api.js';
 import { _errHtml, _errMsg, act, activeDialog, emptyHtml, esc, proxyImg, toast } from './ui.js';
 import { haptic } from './mobile.js';
 import { serverLabel } from './state.js';
+import { t, th } from './i18n.js';
 
 // Where a 'Want to watch' lands: the plex.tv watchlist, or on Jellyfin the
 // member's watchlist playlist, named in their language (playlist_names).
 function _watchlistName() {
-  return serverLabel() === 'Jellyfin' ? 'Jellyfin watchlist playlist' : 'Plex watchlist';
+  return t(serverLabel() === 'Jellyfin' ? 'swipe.watchlist_jellyfin' : 'swipe.watchlist_plex');
 }
 
-const CATS = [['movie', 'Movies'], ['show', 'TV Shows'], ['anime', 'Anime']];
-const REACT = {
-  notseen:  {label: 'Not seen',      stamp: 'Not seen', dir: 'left',  stars: null, keys: 'N ArrowLeft'},
-  want:     {label: 'Want to watch', stamp: 'Want it',  dir: 'right', stars: null, keys: 'W ArrowRight'},
-  disliked: {label: 'Disliked',      stamp: 'Nope',     dir: 'down',  stars: 2,    keys: 'D ArrowDown'},
-  meh:      {label: 'Meh',           stamp: 'Meh',      dir: null,    stars: 5,    keys: 'M'},
-  liked:    {label: 'Liked',         stamp: 'Liked',    dir: null,    stars: 7,    keys: 'L'},
-  loved:    {label: 'Loved',         stamp: 'Loved',    dir: 'up',    stars: 10,   keys: 'F ArrowUp'},
+// The categories and the reactions, their words read when drawn (UI language).
+const _CAT_KEY = {movie: 'nav.movies', show: 'nav.shows', anime: 'common.anime'};
+const _cats = () => Object.entries(_CAT_KEY).map(([c, key]) => [c, t(key)]);
+const _REACT = {
+  notseen:  {dir: 'left',  stars: null, keys: 'N ArrowLeft'},
+  want:     {dir: 'right', stars: null, keys: 'W ArrowRight'},
+  disliked: {dir: 'down',  stars: 2,    keys: 'D ArrowDown'},
+  meh:      {dir: null,    stars: 5,    keys: 'M'},
+  liked:    {dir: null,    stars: 7,    keys: 'L'},
+  loved:    {dir: 'up',    stars: 10,   keys: 'F ArrowUp'},
 };
+const REACT = Object.fromEntries(Object.entries(_REACT).map(([k, r]) => [k, Object.defineProperties({...r}, {
+  label: {get: () => t(`swipe.react.${k}`), enumerable: true},
+  stamp: {get: () => t(`swipe.stamp.${k}`), enumerable: true},
+})]));
 const ORDER = ['notseen', 'want', 'disliked', 'meh', 'liked', 'loved'];
 const UNSEEN = new Set(['notseen', 'want']);
 const DIR_REACT = {left: 'notseen', right: 'want', down: 'disliked', up: 'loved'};
@@ -115,12 +122,12 @@ export async function loadSwipe() {
   _renderRecent();
   _renderSession();
   _loadStats();
-  _deckMsg('<p class="loading" role="status">Finding titles near your taste…</p>');
+  _deckMsg(`<p class="loading" role="status">${th('swipe.finding')}</p>`);
   await _fill();
 }
 
 export function swipeCategory(cat) {
-  if (!CATS.some(([c]) => c === cat) || cat === _cat) return;
+  if (!_cats().some(([c]) => c === cat) || cat === _cat) return;
   _cat = cat;
   loadSwipe();
 }
@@ -129,7 +136,7 @@ export function swipeCategory(cat) {
 function _renderTabs() {
   const el = _el('swipe-tabs');
   if (!el) return;
-  el.innerHTML = CATS.map(([c, label]) =>
+  el.innerHTML = _cats().map(([c, label]) =>
     `<button class="cat-tab${c === _cat ? ' active' : ''}" ${act('swipeCategory', c)}
        aria-pressed="${c === _cat}">${esc(label)}</button>`).join('');
 }
@@ -140,7 +147,7 @@ function _renderReactions() {
   el.innerHTML = ORDER.map(k => {
     const r = REACT[k];
     const hint = r.keys.split(' ').map(x => x.replace('Arrow', '')).join(' / ');
-    const exact = UNSEEN.has(k) ? '' : ' · hold for exact stars';
+    const exact = UNSEEN.has(k) ? '' : ` · ${t('swipe.hold_exact')}`;
     return `<button class="swipe-react" data-kind="${k}" data-group="${UNSEEN.has(k) ? 'unseen' : 'seen'}"
               ${act('swipeReact', k)} aria-keyshortcuts="${r.keys}" title="${esc(r.label)} (${esc(hint)})${exact}">
               <span class="swipe-react-ic">${ICON[k]}</span><span class="swipe-react-l">${esc(r.label)}</span></button>`;
@@ -179,11 +186,11 @@ async function _loadStats() {
     _renderProgress();
     const total = (s.seen || 0) + (s.not_seen || 0);
     if (el) el.textContent = total
-      ? `All time here: ${total} answered · ${s.seen || 0} seen (${s.rated || 0} rated) · ${s.not_seen || 0} not seen`
-        + (s.want ? ` (${s.want} want to watch)` : '')
-      : 'Nothing answered here yet.';
+      ? t('swipe.all_time', {total, seen: s.seen || 0, rated: s.rated || 0, not_seen: s.not_seen || 0})
+        + (s.want ? ` ${t('swipe.all_time_want', {n: s.want})}` : '')
+      : t('swipe.nothing_here');
   } catch (e) {
-    if (el) el.textContent = `Couldn't load your counts - ${_errMsg(e)}`;
+    if (el) el.textContent = t('swipe.counts_failed', {error: _errMsg(e)});
   }
 }
 
@@ -197,17 +204,17 @@ function _renderProgress(refreshing) {
   const frac = refreshing ? 1 : n / DECK_SIZE;
   el.classList.toggle('is-refreshing', !!refreshing);
   const sub = _calibrating
-    ? `calibrating: ${Math.max(0, _calibrating - _progress.since)} seen-it answers to your first taste profile`
-    : 'in this deck';
+    ? t('swipe.calibrating', {n: Math.max(0, _calibrating - _progress.since)})
+    : t('swipe.in_this_deck');
   el.innerHTML = `
-    <div class="swipe-ring" role="img" aria-label="${refreshing ? 'Taste profile refreshing' : `${n} of ${DECK_SIZE} answered in this deck`}">
+    <div class="swipe-ring" role="img" aria-label="${refreshing ? th('swipe.ring_refreshing') : th('swipe.ring_answered', {n, total: DECK_SIZE})}">
       <svg viewBox="0 0 36 36" aria-hidden="true"><circle class="swipe-ring-bg" cx="18" cy="18" r="15.9"/>
         <circle class="swipe-ring-fg" cx="18" cy="18" r="15.9" pathLength="100"/></svg>
       <span>${refreshing ? '✓' : `${n}/${DECK_SIZE}`}</span>
     </div>
     <div class="swipe-progress-t">${refreshing
-      ? '<b>Refreshing your taste</b><span>Your answers are being folded in.</span>'
-      : `<b>${DECK_SIZE - n} to go</b><span>${esc(sub)}</span>`}</div>`;
+      ? `<b>${th('swipe.refreshing')}</b><span>${th('swipe.refreshing_sub')}</span>`
+      : `<b>${th('swipe.to_go', {n: DECK_SIZE - n})}</b><span>${esc(sub)}</span>`}</div>`;
   el.querySelector('.swipe-ring-fg')?.style.setProperty('stroke-dasharray', `${Math.round(frac * 100)} 100`);
 }
 
@@ -218,10 +225,10 @@ function _renderSession() {
   for (const h of _history) n[h.kind] += 1;
   const total = _history.length;
   el.innerHTML = total
-    ? `<div class="swipe-session-n"><b>${total}</b> answered</div>
+    ? `<div class="swipe-session-n"><b>${total}</b> ${th('swipe.answered')}</div>
        <div class="swipe-session-grid">${[...ORDER, 'seen'].filter(k => n[k]).map(k =>
-         `<span class="swipe-chip" data-kind="${k}" title="${esc(REACT[k]?.label || 'Seen, no stars')}">${ICON[k]}${n[k]}</span>`).join('')}</div>`
-    : '<span class="fs-12 t3">Your answers will add up here.</span>';
+         `<span class="swipe-chip" data-kind="${k}" title="${esc(REACT[k]?.label || t('swipe.seen_no_stars'))}">${ICON[k]}${n[k]}</span>`).join('')}</div>`
+    : `<span class="fs-12 t3">${th('swipe.session_empty')}</span>`;
 }
 
 function _renderRecent() {
@@ -232,12 +239,12 @@ function _renderRecent() {
     const thumb = h.card.poster_url
       ? `<img src="${esc(proxyImg(h.card.poster_url))}" alt="" loading="lazy">`
       : '<span class="swipe-recent-ph" aria-hidden="true"></span>';
-    const what = h.kind === 'seen' ? 'Seen' : REACT[h.kind].label;
+    const what = h.kind === 'seen' ? t('swipe.seen') : REACT[h.kind].label;
     const exact = h.seen && h.stars != null && h.stars !== REACT[h.kind]?.stars ? ` · ${h.stars}/10` : '';
     return `<li class="${i === 0 ? 'is-new' : ''}">${thumb}
       <span class="swipe-recent-t">${esc(h.card.title)}</span>
       <span class="swipe-chip" data-kind="${h.kind}" title="${esc(what + exact)}">${ICON[h.kind]}<span class="sr-only">${esc(what + exact)}</span></span></li>`;
-  }).join('') : '<li class="swipe-recent-empty">Nothing yet in this category.</li>';
+  }).join('') : `<li class="swipe-recent-empty">${th('swipe.recent_empty')}</li>`;
 }
 
 function _say(text) {
@@ -292,7 +299,7 @@ async function _fill() {
     _add(r.cards);
     if (!_queue.length) {
       _deckMsg(r.reason === 'no_taste'
-        ? emptyHtml(`No taste profile for this category yet. Watch a few titles in ${serverLabel()} first, then come back.`)
+        ? emptyHtml(th('swipe.no_taste', {server: serverLabel()}))
         : _doneHtml());
       return;
     }
@@ -305,15 +312,15 @@ async function _fill() {
 }
 
 function _doneHtml() {
-  const label = (CATS.find(([c]) => c === _cat) || [])[1] || 'this category';
-  const others = CATS.filter(([c]) => c !== _cat).map(([c, l]) =>
+  const label = (_cats().find(([c]) => c === _cat) || [])[1] || t('swipe.this_category');
+  const others = _cats().filter(([c]) => c !== _cat).map(([c, l]) =>
     `<button class="btn btn-secondary btn-sm" ${act('swipeCategory', c)}>${esc(l)}</button>`).join('');
   const here = _history.filter(h => h.cat === _cat);
   const loved = here.filter(h => h.kind === 'loved').map(h => h.card.title).slice(-3);
   return `<div class="swipe-done" role="status">
     <div class="swipe-done-ic">${ICON.star}</div>
-    <h2>You've been through everything near your taste in ${esc(label)}.</h2>
-    ${here.length ? `<p>${here.length} answered this session${loved.length ? ` · loved ${loved.map(t => `<b>${esc(t)}</b>`).join(', ')}` : ''}.</p>` : ''}
+    <h2>${th('swipe.through_all', {category: label})}</h2>
+    ${here.length ? `<p>${th('swipe.this_session', {n: here.length})}${loved.length ? ` · ${th('swipe.loved_list')} ${loved.map(x => `<b>${esc(x)}</b>`).join(', ')}` : ''}.</p>` : ''}
     <div class="row swipe-done-cta">${others}</div></div>`;
 }
 
@@ -328,16 +335,14 @@ function _deckEndHtml() {
   const loved = _deck.loved.slice(-2);
   return `<div class="swipe-done" role="status">
     <div class="swipe-done-ic">${ICON.star}</div>
-    <h2>Deck done - ${_deck.n} answered in ${_fmtTime(Date.now() - _deck.start)}</h2>
-    ${_deck.wantOk ? `<p><b>${_deck.wantOk}</b> now on your ${esc(_watchlistName())}.</p>` : ''}
-    ${loved.length ? `<p>You loved ${loved.map(t => `<b>${esc(t)}</b>`).join(' and ')}${_deck.chained ? ' - titles like it lead the next deck' : ''}.</p>` : ''}
-    ${_deck.lifted ? `<p><b>${_deck.lifted}</b> of your recommendations moved up for it.</p>` : ''}
-    <p class="fs-12 t3">${_calibrating
-      ? `${left} more seen-it answer${left === 1 ? '' : 's'} and your first taste profile is built.`
-      : `${left} more seen-it answer${left === 1 ? '' : 's'} until your taste profile refreshes.`}</p>
+    <h2>${th('swipe.deck_done', {n: _deck.n, time: _fmtTime(Date.now() - _deck.start)})}</h2>
+    ${_deck.wantOk ? `<p><b>${_deck.wantOk}</b> ${th('swipe.now_on_your', {list: _watchlistName()})}</p>` : ''}
+    ${loved.length ? `<p>${th('swipe.you_loved')} ${loved.map(x => `<b>${esc(x)}</b>`).join(` ${th('common.and')} `)}${_deck.chained ? ` ${th('swipe.lead_next')}` : ''}.</p>` : ''}
+    ${_deck.lifted ? `<p><b>${_deck.lifted}</b> ${th('swipe.moved_up', {n: _deck.lifted})}</p>` : ''}
+    <p class="fs-12 t3">${th(_calibrating ? 'swipe.left_first' : 'swipe.left_refresh', {n: left})}</p>
     <div class="row swipe-done-cta">
-      <button class="btn btn-primary btn-sm" ${act('swipeNextDeck')}>Another ${DECK_SIZE}</button>
-      <button class="btn btn-secondary btn-sm" ${act('goToView', 'chat')}>Done for tonight</button>
+      <button class="btn btn-primary btn-sm" ${act('swipeNextDeck')}>${th('swipe.another', {n: DECK_SIZE})}</button>
+      <button class="btn btn-secondary btn-sm" ${act('goToView', 'chat')}>${th('swipe.done_tonight')}</button>
     </div></div>`;
 }
 
@@ -345,7 +350,7 @@ export function swipeNextDeck() {
   _deck = _newDeck();
   _renderProgress();
   if (_queue.length) _layout();
-  else { _deckMsg('<p class="loading" role="status">Finding more titles…</p>'); _fill(); }
+  else { _deckMsg(`<p class="loading" role="status">${th('swipe.finding_more')}</p>`); _fill(); }
 }
 
 function _deckMsg(html) {
@@ -363,7 +368,7 @@ function _layout(returnFrom) {
   const deck = _el('swipe-deck');
   if (!deck) return;
   if (!_queue.length) {
-    _deckMsg('<p class="loading" role="status">Finding more titles…</p>');
+    _deckMsg(`<p class="loading" role="status">${th('swipe.finding_more')}</p>`);
     return;
   }
   deck.querySelector('.swipe-deck-msg')?.remove();
@@ -419,35 +424,35 @@ function _cardNode(c) {
   const id = `swipe-t-${++_uid}`;
   const d = c.details || {};
   const yours = new Set(c.yours || []);
-  const tag = (t, cls) => `<span class="badge ${cls} badge-sm${yours.has(t) ? ' is-yours' : ''}"${yours.has(t) ? ' title="Part of your taste"' : ''}>${esc(t)}</span>`;
-  const tags = [...(c.genres || []).map(g => tag(g, 'muted')), ...(c.themes || []).map(t => tag(t, 'theme'))].join('');
+  const tag = (x, cls) => `<span class="badge ${cls} badge-sm${yours.has(x) ? ' is-yours' : ''}"${yours.has(x) ? ` title="${th('swipe.part_of_taste')}"` : ''}>${esc(x)}</span>`;
+  const tags = [...(c.genres || []).map(g => tag(g, 'muted')), ...(c.themes || []).map(x => tag(x, 'theme'))].join('');
   const meta = [
     c.year ? esc(String(c.year)) : '',
     d.runtime_min && _cat === 'movie' ? _fmtRuntime(d.runtime_min) : '',
-    d.seasons ? `${d.seasons} season${d.seasons === 1 ? '' : 's'}` : '',
-    d.episodes ? `${d.episodes} eps` : '',
+    d.seasons ? esc(t('swipe.seasons', {n: d.seasons})) : '',
+    d.episodes ? esc(t('swipe.eps', {n: d.episodes})) : '',
     d.content_rating ? `<span class="swipe-cr">${esc(d.content_rating)}</span>` : '',
-    d.score ? `<span title="Audience score">★ ${esc(String(d.score))}</span>` : '',
+    d.score ? `<span title="${th('swipe.audience_score')}">★ ${esc(String(d.score))}</span>` : '',
     d.rt_score ? `<span title="Rotten Tomatoes">RT ${esc(String(d.rt_score))}%</span>` : '',
   ].filter(Boolean).join('<span class="swipe-dot" aria-hidden="true">·</span>');
   const people = [
-    d.director?.length ? `<dt>Director</dt><dd>${esc(d.director.join(', '))}</dd>` : '',
-    d.cast?.length ? `<dt>Starring</dt><dd>${esc(d.cast.join(', '))}</dd>` : '',
-    d.mood?.length ? `<dt>Mood</dt><dd>${esc(d.mood.join(', '))}</dd>` : '',
+    d.director?.length ? `<dt>${th('swipe.director')}</dt><dd>${esc(d.director.join(', '))}</dd>` : '',
+    d.cast?.length ? `<dt>${th('swipe.starring')}</dt><dd>${esc(d.cast.join(', '))}</dd>` : '',
+    d.mood?.length ? `<dt>${th('swipe.mood')}</dt><dd>${esc(d.mood.join(', '))}</dd>` : '',
   ].join('');
   // One reason, readable at a glance: the title just loved, else the one
   // loved or recently watched title nearest this card (services/swipe
   // attach_anchors), else the cluster's strongest titles.
   const why = c.chain_from
-    ? `<div class="swipe-ribbon">${ICON.loved}Because you loved <b>${esc(c.chain_from)}</b></div>`
+    ? `<div class="swipe-ribbon">${ICON.loved}${th('swipe.because_loved')} <b>${esc(c.chain_from)}</b>${th('swipe.because_loved_tail')}</div>`
     : c.anchor
-      ? `<div class="swipe-ribbon">${c.anchor.kind === 'loved' ? ICON.loved : ICON.seen}Because you ${c.anchor.kind === 'loved' ? 'loved' : 'watched'} <b>${esc(c.anchor.title)}</b></div>`
+      ? `<div class="swipe-ribbon">${c.anchor.kind === 'loved' ? ICON.loved : ICON.seen}${th(c.anchor.kind === 'loved' ? 'swipe.because_loved' : 'swipe.because_watched')} <b>${esc(c.anchor.title)}</b>${th(c.anchor.kind === 'loved' ? 'swipe.because_loved_tail' : 'swipe.because_watched_tail')}</div>`
       : c.calibration
-        ? '<div class="swipe-because">Getting to know you: seen it anywhere? Rate it. Not seen? Swipe left.</div>'
+        ? `<div class="swipe-because">${th('swipe.calibration_hint')}</div>`
         : c.because?.length
-          ? `<div class="swipe-because">Near your taste for ${c.because.map(t => `<b>${esc(t)}</b>`).join(', ')}</div>`
+          ? `<div class="swipe-because">${th('swipe.near_taste')} ${c.because.map(x => `<b>${esc(x)}</b>`).join(', ')}</div>`
           : '';
-  const full = c.synopsis || 'No synopsis on file.';
+  const full = c.synopsis || t('swipe.no_synopsis');
   const short = c.pitch && c.pitch !== full ? c.pitch : full;
   const pct = Math.round(((c.chain_from ? c.likeness : c.fit) || 0) * 100);
   const poster = c.poster_url
@@ -464,9 +469,9 @@ function _cardNode(c) {
       <h2 id="${id}" class="swipe-title">${esc(c.title)}</h2>
       ${meta ? `<div class="swipe-meta">${meta}</div>` : ''}
       ${tags ? `<div class="swipe-tags">${tags}</div>` : ''}
-      <p class="swipe-synopsis" title="Click to read it all">${esc(short)}</p>
+      <p class="swipe-synopsis" title="${th('swipe.read_all')}">${esc(short)}</p>
       ${people ? `<dl class="swipe-people">${people}</dl>` : ''}
-      ${c.calibration ? '' : `<div class="swipe-fit"><span>${c.chain_from ? `Like ${esc(c.chain_from)}` : 'Taste fit'}</span>`}
+      ${c.calibration ? '' : `<div class="swipe-fit"><span>${c.chain_from ? th('swipe.like', {title: c.chain_from}) : th('swipe.taste_fit')}</span>`}
         ${c.calibration ? '' : `<span class="swipe-meter"><i></i></span><b>${pct}%</b></div>`}
     </div>
     ${ORDER.map(k =>
@@ -504,14 +509,14 @@ export function swipeExact() {
   if (!el) return;
   _exactOpen = true;
   el.innerHTML = `
-    <div class="swipe-exact-h">Seen it - how good, out of 10?</div>
-    <div class="swipe-exact-row" role="group" aria-label="Stars out of 10">
+    <div class="swipe-exact-h">${th('swipe.exact_head')}</div>
+    <div class="swipe-exact-row" role="group" aria-label="${th('swipe.stars_aria')}">
       ${Array.from({length: 10}, (_, i) =>
         `<button class="swipe-star" data-kind="${reactionOf(true, i + 1)}" ${act('swipeStars', i + 1)}
-           aria-label="${i + 1} of 10" aria-keyshortcuts="${(i + 1) % 10}">${i + 1}</button>`).join('')}
+           aria-label="${th('swipe.n_of_10', {n: i + 1})}" aria-keyshortcuts="${(i + 1) % 10}">${i + 1}</button>`).join('')}
     </div>
-    <div class="row mt-8"><button class="btn btn-ghost btn-sm" ${act('swipeStars', null)}>Seen, no rating (Enter)</button>
-      <button class="btn btn-ghost btn-sm ml-auto" ${act('swipeExact')}>Close (Esc)</button></div>`;
+    <div class="row mt-8"><button class="btn btn-ghost btn-sm" ${act('swipeStars', null)}>${th('swipe.seen_no_rating')}</button>
+      <button class="btn btn-ghost btn-sm ml-auto" ${act('swipeExact')}>${th('swipe.close_esc')}</button></div>`;
   el.hidden = false;
   el.querySelector('.swipe-star')?.focus();
 }
@@ -548,7 +553,7 @@ async function _submit(seen, stars, kind, gesture) {
   _history.push(entry);
   _renderRecent();
   _renderSession();
-  _say(`${kind === 'seen' ? 'Seen' : REACT[kind].label}${seen && stars != null ? `, ${stars} of 10` : ''}: ${c.title}`);
+  _say(`${kind === 'seen' ? t('swipe.seen') : REACT[kind].label}${seen && stars != null ? `, ${t('swipe.n_of_10', {n: stars})}` : ''}: ${c.title}`);
   // refill two cards early: a stack of eight with posters takes a moment
   if (_queue.length <= DECK_DEPTH + 2) _fill();
   let r;
@@ -565,7 +570,7 @@ async function _submit(seen, stars, kind, gesture) {
       _renderRecent();
       _renderSession();
     }
-    toast(`Couldn't save that answer - ${_errMsg(e)}`, 'error');
+    toast(t('swipe.save_failed', {error: _errMsg(e)}), 'error');
     return;
   }
   if (gen !== _gen) return;
@@ -579,18 +584,19 @@ async function _submit(seen, stars, kind, gesture) {
   }
   if (r.taste_rebuild) {
     _renderProgress(true);
-    _say('Your answers are being folded into your taste profile.');
+    _say(t('swipe.folded'));
     setTimeout(() => { if (gen === _gen) _renderProgress(); }, 4000);
   } else {
     _renderProgress();
   }
   if (r.watchlist?.ok) {
-    _note(`${ICON.want}<span><b>${esc(c.title)}</b> is on your ${_watchlistName()}</span>`);
+    _note(`${ICON.want}<span><b>${esc(c.title)}</b> ${th('swipe.is_on_your', {list: _watchlistName()})}</span>`);
   } else if (r.watchlist && !_watchlistWarned) {
     _watchlistWarned = true;
-    toast(`Saved as Want to watch, but not added to your ${_watchlistName()} - ${r.watchlist.error || (serverLabel() === 'Jellyfin' ? 'no match in Jellyfin' : 'no match on plex.tv')}`, 'info');
+    toast(t('swipe.want_not_added', {list: _watchlistName(),
+      error: r.watchlist.error || t(serverLabel() === 'Jellyfin' ? 'swipe.no_match_jellyfin' : 'swipe.no_match_plex')}), 'info');
   } else if (r.watchlist) {
-    _say(`Saved as Want to watch; ${c.title} is not on your ${_watchlistName()}.`);
+    _say(t('swipe.want_not_on', {title: c.title, list: _watchlistName()}));
   }
   const lifted = (r.lifted || []).length;
   _deck.lifted += lifted;
@@ -601,7 +607,7 @@ async function _submit(seen, stars, kind, gesture) {
 // stack (after the card already showing, so nothing jumps under the pointer).
 // ``lifted``: how many of the member's stored picks this Loved moved up
 // (services/rec_lift) - said in the same note, only when some did.
-function _liftedText(n) { return n ? `${n} of your recommendations moved up` : ''; }
+function _liftedText(n) { return n ? `${n} ${t('swipe.moved_up_short', {n})}` : ''; }
 
 async function _chain(c, gen, lifted = 0) {
   try {
@@ -609,16 +615,16 @@ async function _chain(c, gen, lifted = 0) {
     if (gen !== _gen) return;
     const added = _add(r.cards, Math.min(1, _queue.length));
     if (!added.length) {
-      if (lifted) _note(`${ICON.loved}<span>${_liftedText(lifted)} for <b>${esc(c.title)}</b></span>`);
+      if (lifted) _note(`${ICON.loved}<span>${esc(_liftedText(lifted))} ${th('swipe.for')} <b>${esc(c.title)}</b></span>`);
       return;
     }
     _deck.chained = true;
     if (!_deckDone()) _layout();
-    _note(`${ICON.loved}<span>${added.length} more like <b>${esc(c.title)}</b> coming up${lifted ? ` · ${_liftedText(lifted)}` : ''}</span>`);
-    _say(`${added.length} more titles like ${c.title} added next.${lifted ? ` ${_liftedText(lifted)}.` : ''}`);
+    _note(`${ICON.loved}<span>${th('swipe.more_like_pre', {n: added.length})} <b>${esc(c.title)}</b> ${th('swipe.more_like_post')}${lifted ? ` · ${esc(_liftedText(lifted))}` : ''}</span>`);
+    _say(`${t('swipe.more_like_say', {n: added.length, title: c.title})}${lifted ? ` ${_liftedText(lifted)}.` : ''}`);
   } catch (e) {
     console.debug('[swipe] chain failed', e);
-    if (lifted) _note(`${ICON.loved}<span>${_liftedText(lifted)} for <b>${esc(c.title)}</b></span>`);
+    if (lifted) _note(`${ICON.loved}<span>${esc(_liftedText(lifted))} ${th('swipe.for')} <b>${esc(c.title)}</b></span>`);
   }
 }
 
@@ -645,17 +651,17 @@ export async function swipeUndo() {
       _layout(REACT[h.kind]?.dir ?? null);
     } else {
       _queue = [];
-      _deckMsg('<p class="loading" role="status">Bringing it back…</p>');
+      _deckMsg(`<p class="loading" role="status">${th('swipe.bringing_back')}</p>`);
       await _fill();
     }
     _renderRecent();
     _renderSession();
     // the plex.tv watchlist entry stays: it may have been there before
-    const kept = u.want ? ` - it stays on your ${_watchlistName()}` : '';
-    _say(`Took back your answer for ${u.title || 'that title'}${kept}.`);
-    _note(`<span>Took back <b>${esc(u.title || 'that title')}</b>${esc(kept)}</span>`);
+    const kept = u.want ? ` ${t('swipe.stays_on', {list: _watchlistName()})}` : '';
+    _say(`${t('swipe.took_back_answer', {title: u.title || t('swipe.that_title')})}${kept}.`);
+    _note(`<span>${th('swipe.took_back')} <b>${esc(u.title || t('swipe.that_title'))}</b>${esc(kept)}</span>`);
   } catch (e) {
-    toast(e.message && e.message.includes('Nothing to undo') ? 'Nothing to undo here.' : `Couldn't undo - ${_errMsg(e)}`,
+    toast(e.message && e.message.includes('Nothing to undo') ? t('swipe.nothing_to_undo') : t('swipe.undo_failed', {error: _errMsg(e)}),
           'info');
   } finally {
     _undoing = false;

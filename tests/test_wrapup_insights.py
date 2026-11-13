@@ -202,6 +202,6 @@ check("the collector builds the sections; the server's balance for the owner onl
       "_sections.court_record(" in src and "_sections.time_to_watch(" in src
       and "_sections.auteurs(" in src and "if is_admin:\n            # the server is the owner's" in src)
 r = (Path(__file__).resolve().parents[1] / "src/routers/wrapup.py").read_text(encoding="utf-8")
-check("the page gets the ranked cards", '"insights": mine(facts)' in r)
+check("the page gets the ranked cards, in the user's language", '"insights": mine(facts, lang=lang)' in r)
 
 check.done()

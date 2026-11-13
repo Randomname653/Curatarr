@@ -300,16 +300,16 @@
     <!-- HISTORY & TASTE -->
     <div class="view" id="history-view">
       <div class="view-header">
-        <h1 tabindex="-1">History & Taste</h1>
-        <p>Your watch history and computed taste profile</p>
+        <h1 tabindex="-1" data-i18n="nav.history">History & Taste</h1>
+        <p data-i18n="history.lead">Your watch history and computed taste profile</p>
       </div>
       <div class="view-body">
         <div class="toolbar">
-          <button class="btn btn-primary" data-action="syncHistory" data-args='[false]'>Sync now</button>
-          <button class="btn btn-secondary admin-action-row" hidden data-action="syncHistory" data-args='[true]' title="Sync even if the last sync was less than an hour ago">Force sync</button>
-          <button class="btn btn-secondary admin-action-row" hidden data-action="recomputeTaste">Recompute taste</button>
+          <button class="btn btn-primary" data-action="syncHistory" data-args='[false]' data-i18n="history.sync_now">Sync now</button>
+          <button class="btn btn-secondary admin-action-row" hidden data-action="syncHistory" data-args='[true]' title="Sync even if the last sync was less than an hour ago" data-i18n-title="history.force_title" data-i18n="history.force_sync">Force sync</button>
+          <button class="btn btn-secondary admin-action-row" hidden data-action="recomputeTaste" data-i18n="history.recompute">Recompute taste</button>
           <div class="toolbar-right">
-            <button class="btn btn-secondary" data-action="loadHistoryStatus">Refresh</button>
+            <button class="btn btn-secondary" data-action="loadHistoryStatus" data-i18n="history.refresh">Refresh</button>
             <button class="btn btn-secondary admin-action-row" hidden id="libraries-btn" data-action="showLibrariesForce">Plex libraries</button>
           </div>
         </div>
@@ -356,38 +356,38 @@
 
     <div class="view" id="swipe-view">
       <div class="view-header">
-        <h1 tabindex="-1">Swipe</h1>
-        <p>Titles near your taste that you haven't played on your media server. Seen one somewhere else? Rate it - every answer sharpens your taste profile.</p>
+        <h1 tabindex="-1" data-i18n="nav.swipe">Swipe</h1>
+        <p data-i18n="swipe.lead">Titles near your taste that you haven't played on your media server. Seen one somewhere else? Rate it - every answer sharpens your taste profile.</p>
       </div>
       <div class="view-body swipe-body-wrap">
         <div class="swipe-ambient" aria-hidden="true"><div class="swipe-ambient-layer"></div><div class="swipe-ambient-layer"></div></div>
         <div class="swipe-layout">
-          <aside class="swipe-rail swipe-rail-left" aria-label="Swipe progress">
+          <aside class="swipe-rail swipe-rail-left" aria-label="Swipe progress" data-i18n-aria-label="swipe.progress_aria">
             <div class="cat-tabs swipe-tabs" id="swipe-tabs"></div>
             <div class="swipe-panel" id="swipe-progress"></div>
             <div class="swipe-panel">
-              <div class="swipe-panel-h">This session</div>
+              <div class="swipe-panel-h" data-i18n="swipe.session">This session</div>
               <div class="swipe-session" id="swipe-session"></div>
             </div>
             <div class="fs-11 t3" id="swipe-stats" aria-live="polite"></div>
             <details class="swipe-keys-box">
-              <summary>Keyboard shortcuts</summary>
-              <dl class="swipe-keys" aria-label="Keyboard shortcuts">
-                <dt>←</dt><dd>Not seen</dd><dt>→</dt><dd>Want to watch</dd><dt>↓</dt><dd>Disliked</dd>
-                <dt>M</dt><dd>Meh</dd><dt>L</dt><dd>Liked</dd><dt>↑</dt><dd>Loved</dd>
-                <dt>1-0</dt><dd>Exact stars (or hold a seen button)</dd><dt>U</dt><dd>Undo</dd>
+              <summary data-i18n="swipe.keys">Keyboard shortcuts</summary>
+              <dl class="swipe-keys" aria-label="Keyboard shortcuts" data-i18n-aria-label="swipe.keys">
+                <dt>←</dt><dd data-i18n="swipe.react.notseen">Not seen</dd><dt>→</dt><dd data-i18n="swipe.react.want">Want to watch</dd><dt>↓</dt><dd data-i18n="swipe.react.disliked">Disliked</dd>
+                <dt>M</dt><dd data-i18n="swipe.react.meh">Meh</dd><dt>L</dt><dd data-i18n="swipe.react.liked">Liked</dd><dt>↑</dt><dd data-i18n="swipe.react.loved">Loved</dd>
+                <dt>1-0</dt><dd data-i18n="swipe.keys_exact">Exact stars (or hold a seen button)</dd><dt>U</dt><dd data-i18n="swipe.undo">Undo</dd>
               </dl>
             </details>
           </aside>
-          <section class="swipe-center" aria-label="Title to rate">
-            <div class="swipe-deck" id="swipe-deck"><div class="swipe-deck-msg"><p class="loading" role="status">Loading…</p></div></div>
-            <div class="swipe-reactions" id="swipe-reactions" role="group" aria-label="Your answer"></div>
+          <section class="swipe-center" aria-label="Title to rate" data-i18n-aria-label="swipe.title_aria">
+            <div class="swipe-deck" id="swipe-deck"><div class="swipe-deck-msg"><p class="loading" role="status" data-i18n="common.loading">Loading…</p></div></div>
+            <div class="swipe-reactions" id="swipe-reactions" role="group" aria-label="Your answer" data-i18n-aria-label="swipe.answer_aria"></div>
             <div class="swipe-exact" id="swipe-exact" hidden></div>
           </section>
-          <aside class="swipe-rail swipe-rail-right" aria-label="Just rated">
+          <aside class="swipe-rail swipe-rail-right" aria-label="Just rated" data-i18n-aria-label="swipe.just_rated">
             <div class="swipe-panel">
-              <div class="row swipe-panel-h">Just rated
-                <button class="btn btn-ghost btn-sm ml-auto" data-action="swipeUndo" aria-keyshortcuts="U">Undo</button></div>
+              <div class="row swipe-panel-h"><span data-i18n="swipe.just_rated">Just rated</span>
+                <button class="btn btn-ghost btn-sm ml-auto" data-action="swipeUndo" aria-keyshortcuts="U" data-i18n="swipe.undo">Undo</button></div>
               <ol class="swipe-recent" id="swipe-recent"></ol>
             </div>
           </aside>
@@ -493,11 +493,11 @@
          curation ledger (the old Report) folds in at the bottom. -->
     <div class="view" id="wrapup-view">
       <div class="view-header">
-        <h1 tabindex="-1">Wrap-Up</h1>
-        <p>Your period in review: what you watched and heard, when, what you defended and what you let go — told by the curator that argued with you about it.</p>
+        <h1 tabindex="-1" data-i18n="nav.wrapup">Wrap-Up</h1>
+        <p data-i18n="wrapup.lead">Your period in review: what you watched and heard, when, what you defended and what you let go — told by the curator that argued with you about it.</p>
       </div>
       <div class="view-body">
-        <div id="wrapup-content"><p class="loading" role="status" aria-live="polite">Loading…</p></div>
+        <div id="wrapup-content"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div>
       </div>
     </div>
 

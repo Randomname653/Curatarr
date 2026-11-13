@@ -124,10 +124,16 @@ def _ordinal(n: int) -> str:
     return f"{n:,}{suf}"
 
 
-def phrase(m: dict) -> str:
+def phrase(m: dict, lang: str = "en") -> str:
     """'100th film', '1,000 hours watched', 'first anime series finished'.
-    The facts the curator and the page read; English, like every fact."""
+    English for the facts the curator reads; the page asks for the user's
+    language (``lang``, frontend/i18n "milestone.*": "100. Film geschaut")."""
     k, v = m.get("kind"), int(m.get("value") or 0)
+    if lang != "en" and k in _PHRASE_KINDS:
+        from src.services.i18n import LANGUAGES, t
+        if lang in LANGUAGES:
+            num = f"{v:,}".replace(",", ".") if lang == "de" else f"{v:,}"
+            return t(f"milestone.{k}", lang, n=v, num=num, ord=f"{num}." if lang == "de" else _ordinal(v))
     return {"films": f"{_ordinal(v)} film watched",
             "series": f"{_ordinal(v)} series finished",
             "anime": f"{_ordinal(v)} anime series finished",
@@ -135,6 +141,9 @@ def phrase(m: dict) -> str:
             "hours": f"{v:,} hours played",
             "artists": f"{v:,} different artists heard",
             "years": f"{v} year{'s' if v != 1 else ''} since the first play"}.get(k, f"{k} {v}")
+
+
+_PHRASE_KINDS = ("films", "series", "anime", "episodes", "hours", "artists", "years")
 
 
 def _load(user_id: int) -> dict:

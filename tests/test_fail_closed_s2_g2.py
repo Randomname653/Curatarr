@@ -70,12 +70,17 @@ _real_limit = settings.OMDB_DAILY_LIMIT
 settings.OMDB_DAILY_LIMIT = 1000
 h = _grab("src.services.media_enricher")
 app_state.get_state = _broken
+# A host booted 30 s ago: monotonic() counts from boot, and a "last warned at
+# 0.0" swallowed the first warning there (a fresh CI runner, 2026-11-13).
+_real_mono = me.time.monotonic
+me.time.monotonic = lambda: 30.0
 try:
     left = me.omdb_quota_left()
 finally:
     app_state.get_state = _real_get
+    me.time.monotonic = _real_mono
 check("an unreadable call count leaves no budget (was: the full 1000)", left <= 0)
-check("...and says so at WARNING", h.warned("unreadable"))
+check("...and says so at WARNING, also right after the host booted", h.warned("unreadable"))
 
 from sqlalchemy.exc import OperationalError  # noqa: E402
 

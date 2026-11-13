@@ -9,6 +9,7 @@
     python tests/test_wrapup_art.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import json
 import re
@@ -28,8 +29,10 @@ node = shutil.which("node")
 start = JS.index("function _story(f, d) {")
 end = JS.index("\n}\n", start) + 3
 story_fn = JS[start:end]
+# the story's language note asks these two
+story_fn += "\n".join(line for line in JS.splitlines() if line.startswith(("const _langChanged", "const _langName"))) + "\n"
 if node:
-    harness = r"""
+    harness = i18n_js() + r"""
 const esc = s => String(s ?? '');
 const act = (name, ...a) => `data-action="${name}"`;
 const _poster = (f, t) => (f.posters || {})[t] || null;

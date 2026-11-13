@@ -9,6 +9,7 @@ is invented.
     python tests/test_wrapup_share_images.py
 """
 from _harness import check  # noqa: I001 - first: temp stores
+from _i18n_js import i18n_js  # noqa: E402
 
 import json
 import re
@@ -60,7 +61,7 @@ if node:
     js = (ROOT / "frontend/js/wrapup_story.js").read_text(encoding="utf-8")
     body = re.sub(r"^import .*$", "", js, flags=re.M).replace("export function", "function") \
         .replace("export async function", "async function")
-    harness = r"""
+    harness = i18n_js() + r"""
 const drawn = [];
 // a canvas that measures like a font: 0.55 of the size per letter
 const px = f => +String(f).match(/(\d+)px/)[1];

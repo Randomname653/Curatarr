@@ -24,6 +24,17 @@ Account and Recommendations; Swipe, Wrap-Up and History follow, then the admin v
 live in `frontend/i18n/en.json` and `de.json`, which the server reads too: the curator's map of
 the app names the buttons the user sees, in the user's language, so the two cannot drift apart.
 
+**Swipe, the Wrap-Up and History in German** (design record 3.8, second round). The Swipe deck
+(the card, its ribbon, the reactions, the deck's end, the toasts and the undo), History, and the
+whole Wrap-Up - the page, its tiles and share lines, the story's slides and the pictures a slide
+shares - follow the language setting. The story is written in it too: the setting beats the
+language detected from the chats, and a story written before a change offers a rewrite in the
+new language. Without a story yet, the page's own sentences come from the server in the user's
+language: the insights behind the quiet slides, the reason under an archetype, the milestones
+("100. Film geschaut"). Period names come from the period itself ("KW 45, 2026", "Oktober
+2026"), weekdays and months from the browser's locale. Titles, actions and the data the server
+stores do not change; the English pages read exactly as before.
+
 **Last played shows the pinned title's poster.** A play row without an id got its poster from a
 title search, and a short title found the wrong show (another series' artwork next to the right
 episode), although the owner had pinned the right one in the Knowledge Base. The recent-history

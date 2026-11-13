@@ -10,6 +10,7 @@
 // Charts are SVG with attributes and classes only (style-src is 'self').
 import { _posterImg, act, countTo, esc, haptic, loc } from './ui.js';
 import { brandMark } from './brand.js';
+import { t, th } from './i18n.js';
 
 // How long a slide stays: long enough to read it. A fixed 7 s cut the
 // curator's longer slides off mid-sentence (2026-10-25). About three words a
@@ -29,6 +30,29 @@ const _wasHold = () => Date.now() - st.downAt > HOLD_MS && st.downAt > 0;
 const _s = v => esc(String(v ?? ''));
 const _pct = v => Math.round(100 * (v || 0));
 const _fmt = n => (Math.round((n || 0) * 10) / 10).toLocaleString(loc());
+// "12.5 hours": the plural by the number, the number as the locale writes it
+const _hours = n => t('story.hours', {n: Math.round((n || 0) * 10) / 10, h: _fmt(n)});
+
+/** A period's name in the UI language, from its key (services/wrapup_facts
+ *  .resolve_period writes the English ``label`` the curator reads). */
+export function periodLabel(p) {
+  const k = String(p?.key || '');
+  let m;
+  if ((m = k.match(/^week:(\d{4})-W(\d{2})$/))) return t('wrapup.period.week', {w: +m[2], y: m[1]});
+  if ((m = k.match(/^month:(\d{4})-(\d{2})$/))) {
+    return new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleDateString(loc(), {month: 'long', year: 'numeric', timeZone: 'UTC'});
+  }
+  if ((m = k.match(/^season:(\d{4})-(winter|spring|summer|fall)$/))) return seasonLabel(k, true);
+  if ((m = k.match(/^year:(\d{4})$/))) return t('wrapup.period.year', {y: m[1]});
+  if (['30d', '6m', 'all'].includes(k)) return t(`wrapup.period.${k}`);
+  return p?.label || '';
+}
+/** "Fall 2026" (a chip), or "Fall 2026 season" (a heading). */
+export function seasonLabel(key, long = false) {
+  const [y, s] = String(key).replace('season:', '').split('-');
+  const name = ['winter', 'spring', 'summer', 'fall'].includes(s) ? t(`wrapup.season.${s}`) : (s || '');
+  return t(long ? 'wrapup.period.season' : 'wrapup.season_chip', {season: name, y});
+}
 
 // ── charts ──────────────────────────────────────────────────────────────────
 /** GitHub-style grid of the period (the last 365 days of a longer one): a
@@ -46,25 +70,25 @@ export function heatmap(byDay, startIso, endIso) {
   const span = Math.round((end - start) / 86400000);
   const cells = [];
   for (let i = 0; i <= span; i++) {
-    const t = new Date(start.getTime() + i * 86400000), iso = t.toISOString().slice(0, 10);
+    const iso = new Date(start.getTime() + i * 86400000).toISOString().slice(0, 10);
     const k = i + offset, col = Math.floor(k / 7), row = k % 7, h = byDay[iso] || 0;
     cells.push(`<rect x="${col * 13}" y="${row * 13}" width="11" height="11" rx="2" class="wus-hm l${lvl(h)}"><title>${_s(iso)}${h ? ` · ${_fmt(h)} h` : ''}</title></rect>`);
   }
   const cols = Math.floor((span + offset) / 7) + 1;
   // drawn at most 22px a column: a month is a small block, a year fills the width
-  return `<svg class="wus-chart wus-heat" width="${Math.min(560, cols * 22)}" viewBox="0 0 ${cols * 13} ${7 * 13}" role="img" aria-label="${days.length} active days">${cells.join('')}</svg>`;
+  return `<svg class="wus-chart wus-heat" width="${Math.min(560, cols * 22)}" viewBox="0 0 ${cols * 13} ${7 * 13}" role="img" aria-label="${th('story.heat_aria', {n: days.length})}">${cells.join('')}</svg>`;
 }
 
 /** Six axes of taste, 0..1 each; at least four must be known. */
 export function radarAxes(f) {
-  const t = f.tempo || {}, top = (f.top || [])[0];
+  const tp = f.tempo || {}, top = (f.top || [])[0];
   const ax = [
     ['Acclaim', f.highbrow_comfort?.highbrow],
     ['Novelty', f.discovery?.new_share],
     ['Commitment', f.completion?.completion_rate],
     ['Catalogue', f.eras?.split?.catalogue],
     ['Contrarian', f.contrarian ? Math.min(1, (f.contrarian.gap || 0) / 3) : (f.highbrow_comfort ? 0 : undefined)],
-    ['Focus', top && t.hours ? Math.min(1, top.hours / t.hours * 2) : undefined],
+    ['Focus', top && tp.hours ? Math.min(1, top.hours / tp.hours * 2) : undefined],
   ];
   return ax.filter(([, v]) => typeof v === 'number' && !Number.isNaN(v));
 }
@@ -82,13 +106,13 @@ export function radar(f, median = null) {
   // the household median (opt-in, services/household_compare): drawn only
   // when it has every axis the user's own shape has
   const med = median && ax.every(([name]) => typeof median[name] === 'number')
-    ? `<polygon points="${ax.map(([name], i) => pt(i, Math.max(0.04, median[name])).map(x => x.toFixed(1)).join(',')).join(' ')}" class="wus-rd-median"><title>Household median</title></polygon>`
+    ? `<polygon points="${ax.map(([name], i) => pt(i, Math.max(0.04, median[name])).map(x => x.toFixed(1)).join(',')).join(' ')}" class="wus-rd-median"><title>${th('story.household_median')}</title></polygon>`
     : '';
   const labels = ax.map(([name, v], i) => {
     const [x, y] = pt(i, 1.22);
-    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="wus-rd-lbl" text-anchor="middle">${_s(name)} ${_pct(v)}%</text>`;
+    return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" class="wus-rd-lbl" text-anchor="middle">${th(`story.axis.${name}`)} ${_pct(v)}%</text>`;
   }).join('');
-  return `<svg class="wus-chart wus-radar" width="300" viewBox="0 0 220 220" role="img" aria-label="Taste: ${ax.map(([n, v]) => `${n} ${_pct(v)}%`).join(', ')}">
+  return `<svg class="wus-chart wus-radar" width="300" viewBox="0 0 220 220" role="img" aria-label="${th('story.radar_aria', {list: ax.map(([n, v]) => `${t(`story.axis.${n}`)} ${_pct(v)}%`).join(', ')})}">
     <polygon points="${ring(1)}" class="wus-rd-grid"/><polygon points="${ring(0.5)}" class="wus-rd-grid"/>
     ${med}<polygon points="${shape}" class="wus-rd-shape"/>${labels}</svg>`;
 }
@@ -101,10 +125,10 @@ export function balance(v) {
   const w = 300 / months.length, mid = 60;
   const bars = months.map(([k, m], i) => {
     const hi = m.in / max * 55, ho = m.out / max * 55, x = (i * w + w * 0.15).toFixed(1), bw = (w * 0.7).toFixed(1);
-    return `<rect x="${x}" y="${(mid - hi).toFixed(1)}" width="${bw}" height="${hi.toFixed(1)}" class="wus-bal-in"><title>${_s(k)}: ${_fmt(m.in)} GB in</title></rect>
-      <rect x="${x}" y="${mid}" width="${bw}" height="${ho.toFixed(1)}" class="wus-bal-out"><title>${_s(k)}: ${_fmt(m.out)} GB out</title></rect>`;
+    return `<rect x="${x}" y="${(mid - hi).toFixed(1)}" width="${bw}" height="${hi.toFixed(1)}" class="wus-bal-in"><title>${th('story.gb_in', {k, gb: _fmt(m.in)})}</title></rect>
+      <rect x="${x}" y="${mid}" width="${bw}" height="${ho.toFixed(1)}" class="wus-bal-out"><title>${th('story.gb_out', {k, gb: _fmt(m.out)})}</title></rect>`;
   }).join('');
-  return `<svg class="wus-chart wus-bal" width="460" viewBox="0 0 300 120" role="img" aria-label="${_fmt(v.gb_in)} GB in, ${_fmt(v.gb_out)} GB out">
+  return `<svg class="wus-chart wus-bal" width="460" viewBox="0 0 300 120" role="img" aria-label="${th('story.balance_aria', {gb_in: _fmt(v.gb_in), gb_out: _fmt(v.gb_out)})}">
     <line x1="0" x2="300" y1="${mid}" y2="${mid}" class="wus-axis"/>${bars}</svg>`;
 }
 
@@ -120,7 +144,7 @@ export function decades(e) {
       <rect x="60" y="${y + 6}" width="${w}" height="14" rx="4" class="wus-dec-bar${v === max ? ' is-lead' : ''}"><title>${_s(k)} · ${Math.round(100 * v)}%</title></rect>
       <text x="${66 + w}" y="${y + 13}" class="wus-dec-v" dominant-baseline="middle">${Math.round(100 * v)}%</text>`;
   }).join('');
-  return `<svg class="wus-dec" viewBox="0 0 ${W} ${d.length * row}" role="img" aria-label="Hours by decade of release">${bars}</svg>`;
+  return `<svg class="wus-dec" viewBox="0 0 ${W} ${d.length * row}" role="img" aria-label="${th('story.decades_aria')}">${bars}</svg>`;
 }
 
 export function court(c) {
@@ -129,12 +153,13 @@ export function court(c) {
   const bar = (n, cls, label) => `<div class="wus-ct-row"><span>${_s(label)}</span>
     <svg viewBox="0 0 100 8" class="wus-ct-bar" aria-hidden="true"><rect width="100" height="8" rx="4" class="wus-ct-bg"/>
     <rect width="${(100 * n / tot).toFixed(1)}" height="8" rx="4" class="${cls}"/></svg><b>${_s(n)}</b></div>`;
-  return `<div class="wus-court">${bar(c.won || 0, 'wus-ct-you', 'You talked it out of')}${bar(c.lost || 0, 'wus-ct-cur', 'It talked you into')}
-    <div class="wus-ct-meta">${_s(c.decided)} decided · ${_s(c.kept)} kept · ${_s(c.deleted)} deleted · ${_s(c.overrides)} over its objection</div></div>`;
+  return `<div class="wus-court">${bar(c.won || 0, 'wus-ct-you', t('story.court_won'))}${bar(c.lost || 0, 'wus-ct-cur', t('story.court_lost'))}
+    <div class="wus-ct-meta">${th('story.court_meta', {decided: c.decided ?? '', kept: c.kept ?? '', deleted: c.deleted ?? '', overrides: c.overrides ?? ''})}</div></div>`;
 }
 
-const _DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const _DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+// Weekday names as the locale writes them, Monday = 0 (1 Jan 2024 was a Monday).
+const _weekday = (d, weekday) => new Date(Date.UTC(2024, 0, 1 + d))
+  .toLocaleDateString(loc(), {weekday, timeZone: 'UTC'});
 
 /** The rhythm clock: 24 hour sectors, a ring per weekday (Monday inside),
  *  four levels by the quartiles of the active cells. */
@@ -151,13 +176,13 @@ export function clock(rows) {
     const a0 = h * Math.PI / 12 + 0.012, a1 = (h + 1) * Math.PI / 12 - 0.012;
     const ri = r0 + d * ring + 1, ro = r0 + (d + 1) * ring - 1;
     const [x1, y1] = pt(ro, a0), [x2, y2] = pt(ro, a1), [x3, y3] = pt(ri, a1), [x4, y4] = pt(ri, a0);
-    arcs.push(`<path d="M${x1} ${y1}A${ro} ${ro} 0 0 1 ${x2} ${y2}L${x3} ${y3}A${ri} ${ri} 0 0 0 ${x4} ${y4}Z" class="wus-hm l${lvl(v)}"><title>${_DAYS[d]} ${h}:00${v ? ` · ${_fmt(v)} h` : ''}</title></path>`);
+    arcs.push(`<path d="M${x1} ${y1}A${ro} ${ro} 0 0 1 ${x2} ${y2}L${x3} ${y3}A${ri} ${ri} 0 0 0 ${x4} ${y4}Z" class="wus-hm l${lvl(v)}"><title>${_s(_weekday(d, 'short'))} ${h}:00${v ? ` · ${_fmt(v)} h` : ''}</title></path>`);
   }));
   const ticks = [0, 6, 12, 18].map(h => {
     const [x, y] = pt(r0 + 7 * ring + 10, h * Math.PI / 12);
     return `<text x="${x}" y="${y}" class="wus-rd-lbl" text-anchor="middle" dominant-baseline="middle">${h}</text>`;
   }).join('');
-  return `<svg class="wus-chart wus-clock" width="300" viewBox="0 0 240 240" role="img" aria-label="Hours by weekday and hour">${arcs.join('')}${ticks}</svg>`;
+  return `<svg class="wus-chart wus-clock" width="300" viewBox="0 0 240 240" role="img" aria-label="${th('story.clock_aria')}">${arcs.join('')}${ticks}</svg>`;
 }
 
 /** The taste river: the leading nanogenres' hours stacked month by month
@@ -192,7 +217,7 @@ export function river(byMonth) {
     bot.forEach((y, i) => { base[i] = y; });
   });
   const ends = `<text x="0" y="${H + 12}" class="wus-rd-lbl">${_s(months[0])}</text><text x="${W}" y="${H + 12}" class="wus-rd-lbl" text-anchor="end">${_s(months[months.length - 1])}</text>`;
-  return `<svg class="wus-chart wus-river" width="460" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="Your nanogenres month by month: ${order.map(_s).join(', ')}">${layers.join('')}${labels.join('')}${ends}</svg>`;
+  return `<svg class="wus-chart wus-river" width="460" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="${th('story.river_aria', {list: order.join(', ')})}">${layers.join('')}${labels.join('')}${ends}</svg>`;
 }
 
 /** You and the crowd: one title and its two places among the same titles -
@@ -207,12 +232,12 @@ export function duel(d, posters) {
   const side = (lead, label, rank, sub) => `<div class="wus-duel-side${lead ? ' lead' : ''}">
       <span class="wus-duel-lbl">${label}</span><span class="wus-duel-n">#${rank}</span><span class="wus-duel-sub">${sub}</span></div>`;
   return {
-    eyebrow: yours ? 'Yours alone' : "The crowd's, not yours",
-    share: yours ? `Mine, not theirs: ${d.title}` : `Theirs, not mine: ${d.title}`,
+    eyebrow: th(yours ? 'story.duel_yours' : 'story.duel_crowd'),
+    share: t(yours ? 'story.share_mine' : 'story.share_theirs', {title: d.title}),
     html: `${poster ? _posterImg(poster, 120, d.media_type === 'music' ? 120 : 180, d.media_type === 'music') : ''}
       <h2 class="wus-h">${_s(d.title)}</h2>
-      <div class="wus-duel">${side(yours, 'for you', d.your_rank, `${_fmt(d.hours)} hours`)}${side(!yours, 'the community', d.crowd_rank, `${_fmt(d.community)} of 10`)}</div>`,
-    note: `Both places among the ${d.of} titles of this period with a community score.`,
+      <div class="wus-duel">${side(yours, th('story.for_you'), d.your_rank, _s(_hours(d.hours)))}${side(!yours, th('story.community'), d.crowd_rank, th('story.of_ten', {x: _fmt(d.community)}))}</div>`,
+    note: t('story.duel_note', {n: d.of}),
   };
 }
 // ── the slides ──────────────────────────────────────────────────────────────
@@ -226,44 +251,45 @@ function _posters(f, refs, story) {
 }
 
 function build(d) {
-  const f = d.facts || {}, s = d.story || null, t = f.tempo || {}, out = [];
-  const period = _s(f.period?.label || '');
-  if (t.hours) {
-    const days = t.hours / 24;
-    out.push({cls: 'open', share: `${_fmt(t.hours)} hours — ${f.period?.label || ''}`,
-      html: `<div class="wus-eyebrow">${period}</div><div class="wus-big"><span class="wus-n" data-count="${Math.round(t.hours)}">${Math.round(t.hours).toLocaleString(loc())}</span><span class="wus-unit">hours</span></div>
-        <p class="wus-text">${days >= 1 ? `That is ${_fmt(days)} full days. ` : ''}${_s(t.plays)} plays on ${_s(t.active_days)} days.</p>`});
+  const f = d.facts || {}, s = d.story || null, tp = f.tempo || {}, out = [];
+  const label = periodLabel(f.period), period = _s(label);
+  if (tp.hours) {
+    const days = tp.hours / 24;
+    out.push({cls: 'open', share: `${_hours(tp.hours)} — ${label}`,
+      html: `<div class="wus-eyebrow">${period}</div><div class="wus-big"><span class="wus-n" data-count="${Math.round(tp.hours)}">${Math.round(tp.hours).toLocaleString(loc())}</span><span class="wus-unit">${th('story.hours_unit', {n: Math.round(tp.hours)})}</span></div>
+        <p class="wus-text">${days >= 1 ? `${th('story.full_days', {n: days, x: _fmt(days)})} ` : ''}${th('story.plays_on_days', {plays: tp.plays ?? '', days: tp.active_days ?? ''})}</p>`});
   }
   const top = f.top || [];
   if (top.length >= 3) {
     const opts = top.slice(0, 4).map((x, i) => ({x, i})).sort((a, b) => (a.x.title > b.x.title ? 1 : -1));
     out.push({cls: 'quiz', hold: true,
-      html: `<div class="wus-eyebrow">Before the reveal</div><h2 class="wus-h">Which one got the most of your time?</h2>
+      html: `<div class="wus-eyebrow">${th('story.quiz_eyebrow')}</div><h2 class="wus-h">${th('story.quiz_head')}</h2>
         <div class="wus-quiz">${opts.map(o => `<button type="button" class="wus-opt" ${act('answerWrapupStory', o.i)}>${_s(o.x.title)}</button>`).join('')}</div>
         <p class="wus-text wus-quiz-out" aria-live="polite"></p>`});
   }
   if (top.length) {
     const x = top[0];
-    out.push({cls: 'reveal', share: `${x.title}: ${_fmt(x.hours)} hours`,
-      html: `<div class="wus-eyebrow">Your number one</div>${(f.posters || {})[x.title] ? _posterImg((f.posters || {})[x.title], 140, x.media_type === 'music' ? 140 : 210, x.media_type === 'music') : ''}
-        <h2 class="wus-h">${_s(x.title)}</h2><div class="wus-big"><span class="wus-n" data-count="${Math.round(x.hours)}">${Math.round(x.hours)}</span><span class="wus-unit">hours</span></div>`});
+    out.push({cls: 'reveal', share: `${x.title}: ${_hours(x.hours)}`,
+      html: `<div class="wus-eyebrow">${th('story.number_one')}</div>${(f.posters || {})[x.title] ? _posterImg((f.posters || {})[x.title], 140, x.media_type === 'music' ? 140 : 210, x.media_type === 'music') : ''}
+        <h2 class="wus-h">${_s(x.title)}</h2><div class="wus-big"><span class="wus-n" data-count="${Math.round(x.hours)}">${Math.round(x.hours)}</span><span class="wus-unit">${th('story.hours_unit', {n: Math.round(x.hours)})}</span></div>`});
   }
-  if (t.by_day_h && Object.keys(t.by_day_h).length >= 5) {
-    const bd = t.biggest_day || {};
-    out.push({cls: 'rhythm', share: `${t.active_days} active days, longest run ${t.longest_streak_days}`,
-      html: `<div class="wus-eyebrow">The rhythm</div><h2 class="wus-h">${_s(t.active_days)} days with something on</h2>
-        ${heatmap(t.by_day_h, f.period.start, f.period.end)}
-        <p class="wus-text">Longest run: ${_s(t.longest_streak_days)} days in a row.${bd.date ? ` Biggest day: ${_s(bd.date)}, ${_fmt(bd.hours)} hours.` : ''}</p>`});
+  if (tp.by_day_h && Object.keys(tp.by_day_h).length >= 5) {
+    const bd = tp.biggest_day || {};
+    out.push({cls: 'rhythm', share: t('story.rhythm_share', {n: tp.active_days, run: tp.longest_streak_days}),
+      html: `<div class="wus-eyebrow">${th('story.rhythm')}</div><h2 class="wus-h">${th('story.days_on', {n: tp.active_days})}</h2>
+        ${heatmap(tp.by_day_h, f.period.start, f.period.end)}
+        <p class="wus-text">${th('story.longest_run', {n: tp.longest_streak_days})}${bd.date ? ` ${th('story.biggest_day', {date: bd.date, hours: _hours(bd.hours)})}` : ''}</p>`});
   }
-  const clockSvg = clock(t.clock_h);
+  const clockSvg = clock(tp.clock_h);
   if (clockSvg) {
     const moods = f.music?.moods?.by_daypart || {};
     const moodLine = ['morning', 'afternoon', 'evening', 'night'].filter(p => moods[p])
-      .map(p => `${p}: ${_s(moods[p].mood)}`).join(' · ');
-    const day = _DAY_NAMES[((t.peak_weekday ?? 1) + 6) % 7];
-    out.push({cls: 'clock', share: `Most at ${t.peak_hour}:00, busiest on ${day}s`,
-      html: `<div class="wus-eyebrow">Round the clock</div><h2 class="wus-h">Most at ${_s(t.peak_hour)}:00, busiest on ${day}s</h2>
-        ${clockSvg}${moodLine ? `<p class="wus-text">The music's mood — ${moodLine}.</p>` : ''}`});
+      .map(p => `${th(`story.daypart.${p}`)}: ${_s(moods[p].mood)}`).join(' · ');
+    const day = _weekday(((tp.peak_weekday ?? 1) + 6) % 7, 'long');
+    const head = t('story.clock_head', {h: tp.peak_hour ?? '', day});
+    out.push({cls: 'clock', share: head,
+      html: `<div class="wus-eyebrow">${th('story.clock')}</div><h2 class="wus-h">${_s(head)}</h2>
+        ${clockSvg}${moodLine ? `<p class="wus-text">${th('story.moods')} ${moodLine}.</p>` : ''}`});
   }
   // A slide's share line: the curator's headline, or - told from the cards
   // alone - the claim. Never one that names what the household named itself
@@ -285,45 +311,46 @@ function build(d) {
   const riverSvg = river(ng.by_month);
   if (riverSvg) {
     const lead = (ng.top || [])[0];
-    out.push({cls: 'river', share: lead ? `${lead.name}: ${_fmt(lead.hours)} hours` : 'How the taste moved',
-      html: `<div class="wus-eyebrow">How the taste moved</div>${lead ? `<h2 class="wus-h">${_s(lead.name)} led</h2>` : ''}
-        ${riverSvg}${(ng.new_to_you || []).length ? `<p class="wus-text">New to you: ${ng.new_to_you.map(_s).join(', ')}.</p>` : ''}`});
+    out.push({cls: 'river', share: lead ? `${lead.name}: ${_hours(lead.hours)}` : t('story.river'),
+      html: `<div class="wus-eyebrow">${th('story.river')}</div>${lead ? `<h2 class="wus-h">${th('story.led', {name: lead.name})}</h2>` : ''}
+        ${riverSvg}${(ng.new_to_you || []).length ? `<p class="wus-text">${th('story.new_to_you', {list: ng.new_to_you.join(', ')})}</p>` : ''}`});
   }
   const du = duel(f.consensus?.duel, f.posters);
   if (du) {
-    const more = (f.consensus.yours_alone || []).filter(t => t !== f.consensus.duel.title);
-    const also = f.consensus.duel.kind === 'yours' && more.length ? ` Also yours alone: ${more.map(_s).join(', ')}.` : '';
+    const more = (f.consensus.yours_alone || []).filter(x => x !== f.consensus.duel.title);
+    const also = f.consensus.duel.kind === 'yours' && more.length ? ` ${th('story.also_yours', {list: more.join(', ')})}` : '';
     out.push({cls: 'consensus', share: du.share,
       html: `<div class="wus-eyebrow">${du.eyebrow}</div>${du.html}<p class="wus-text wus-duel-note">${_s(du.note)}${also}</p>`});
   }
   const rt = s?.roast_and_toast;
   if (rt?.roast && rt?.toast) {
     out.push({cls: 'pair', share: rt.toast,
-      html: `<div class="wus-roast"><div class="wus-eyebrow">Roast</div><p class="wus-text">${_s(rt.roast)}</p></div>
-        <div class="wus-toast"><div class="wus-eyebrow">Toast</div><p class="wus-text">${_s(rt.toast)}</p></div>`});
+      html: `<div class="wus-roast"><div class="wus-eyebrow">${th('story.roast')}</div><p class="wus-text">${_s(rt.roast)}</p></div>
+        <div class="wus-toast"><div class="wus-eyebrow">${th('story.toast')}</div><p class="wus-text">${_s(rt.toast)}</p></div>`});
   }
   const title = s?.archetype_title;
   if (title) {
     out.push({cls: 'identity', share: `${title}${s.share_line && s.share_line !== title ? ` — ${s.share_line}` : ''}`,
-      html: `<div class="wus-eyebrow">${period} · who you were</div>${radar(f, d.household?.radar_median)}
+      html: `<div class="wus-eyebrow">${period} · ${th('story.who_you_were')}</div>${radar(f, d.household?.radar_median)}
         <h2 class="wus-arch">${_s(title)}</h2>${s.archetype_subhead ? `<p class="wus-text">${_s(s.archetype_subhead)}</p>` : ''}`});
   }
   // The anime season: started, finished, dropped (wrapup_facts._anime_season).
   const as = f.anime_season;
   if (as && (as.started?.length || as.finished?.length)) {
-    out.push({cls: 'anime-season', share: `${period}: ${as.started.length} started, ${as.finished.length} finished`,
+    const started = t('story.season_started', {n: as.started?.length || 0}), finished = t('story.season_finished', {n: as.finished?.length || 0});
+    out.push({cls: 'anime-season', share: `${label}: ${started}, ${finished}`,
       html: `<div class="wus-eyebrow">${period}</div>
-        <h2 class="wus-h">${_s(as.started.length)} started · ${_s(as.finished.length)} finished${as.dropped?.length ? ` · ${_s(as.dropped.length)} dropped` : ''}</h2>
-        ${as.finished?.length ? `<p class="wus-text">Finished: ${as.finished.slice(0, 4).map(x => _s(x.title)).join(', ')}.</p>` : ''}
-        ${as.dropped?.length ? `<p class="wus-text">Left behind: ${as.dropped.slice(0, 3).map(x => _s(x.title)).join(', ')}.</p>` : ''}`});
+        <h2 class="wus-h">${_s(started)} · ${_s(finished)}${as.dropped?.length ? ` · ${th('story.season_dropped', {n: as.dropped.length})}` : ''}</h2>
+        ${as.finished?.length ? `<p class="wus-text">${th('story.season_finished_list', {list: as.finished.slice(0, 4).map(x => x.title).join(', ')})}</p>` : ''}
+        ${as.dropped?.length ? `<p class="wus-text">${th('story.season_left_list', {list: as.dropped.slice(0, 3).map(x => x.title).join(', ')})}</p>` : ''}`});
   }
   // Milestones reached in this period (services/milestones), one slide.
   const ms = d.milestones?.period || [];
   if (ms.length) {
     const lead = ms[ms.length - 1];
-    const cap = t => String(t || '').replace(/^./, c => c.toUpperCase());
+    const cap = x => String(x || '').replace(/^./, c => c.toUpperCase());
     out.push({cls: 'milestone', share: `${cap(lead.phrase)}${lead.title ? `: ${lead.title}` : ''}`,
-      html: `<div class="wus-eyebrow">${ms.length > 1 ? `${ms.length} milestones` : 'A milestone'}</div>
+      html: `<div class="wus-eyebrow">${th('story.milestones', {n: ms.length})}</div>
         <h2 class="wus-h">${_s(cap(lead.phrase))}</h2>${lead.title ? `<p class="wus-text">${_s(lead.title)}</p>` : ''}
         ${ms.length > 1 ? `<ul class="wus-ms">${ms.slice(0, -1).reverse().slice(0, 4).map(x => `<li>${_s(x.phrase)}${x.title ? ` · ${_s(x.title)}` : ''}</li>`).join('')}</ul>` : ''}`});
   }
@@ -331,10 +358,10 @@ function build(d) {
   const pick = hook?.item_ref && s?.refs?.[hook.item_ref];
   out.push({cls: 'end', hold: true,
     html: `${pick && (pick.poster || (f.posters || {})[pick.title]) ? _posterImg(pick.poster || (f.posters || {})[pick.title], 96, 144, pick.media_type === 'music') : ''}
-      ${hook?.challenge ? `<div class="wus-eyebrow">Next up</div><p class="wus-text">${_s(hook.challenge)}</p>` : ''}
-      ${s?.share_line ? `<p class="wus-share">“${_s(s.share_line)}”</p>` : ''}
-      <div class="wus-actions"><button type="button" class="btn btn-primary" ${act('shareWrapup')}>Share</button>
-        <button type="button" class="btn btn-secondary" ${act('closeWrapupStory')}>Explore the details</button></div>`});
+      ${hook?.challenge ? `<div class="wus-eyebrow">${th('story.next_up')}</div><p class="wus-text">${_s(hook.challenge)}</p>` : ''}
+      ${s?.share_line ? `<p class="wus-share">${th('story.quoted', {text: s.share_line})}</p>` : ''}
+      <div class="wus-actions"><button type="button" class="btn btn-primary" ${act('shareWrapup')}>${th('story.share')}</button>
+        <button type="button" class="btn btn-secondary" ${act('closeWrapupStory')}>${th('story.explore')}</button></div>`});
   return out;
 }
 
@@ -457,7 +484,7 @@ function _slideImage(sl, label) {
 export async function shareWrapupSlide() {
   const sl = st.slides[st.i];
   if (!sl?.share) return;
-  const label = st.data?.facts?.period?.label || '';
+  const label = periodLabel(st.data?.facts?.period);
   _hold(true);
   try {
     const blob = await _slideImage(sl, label);
@@ -490,14 +517,14 @@ export function playStory(data) {
   el.className = 'wus';
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-modal', 'true');
-  el.setAttribute('aria-label', 'Your wrap-up');
+  el.setAttribute('aria-label', t('story.dialog'));
   el.tabIndex = -1;
   el.innerHTML = `<div class="wus-bars" aria-hidden="true"></div>
-    <button type="button" class="wus-close" aria-label="Close" ${act('closeWrapupStory')}>×</button>
-    <button type="button" class="wus-share-btn" aria-label="Share this slide as an image" title="Share this slide as an image" ${act('shareWrapupSlide')}>Share</button>
+    <button type="button" class="wus-close" aria-label="${th('common.close')}" ${act('closeWrapupStory')}>×</button>
+    <button type="button" class="wus-share-btn" aria-label="${th('story.share_slide')}" title="${th('story.share_slide')}" ${act('shareWrapupSlide')}>${th('story.share')}</button>
     <div class="wus-stage" aria-live="polite"></div>
-    <button type="button" class="wus-zone wus-prev" aria-label="Previous" ${act('prevWrapupSlide', 'tap')}></button>
-    <button type="button" class="wus-zone wus-next" aria-label="Next" ${act('nextWrapupSlide', 'tap')}></button>`;
+    <button type="button" class="wus-zone wus-prev" aria-label="${th('story.prev')}" ${act('prevWrapupSlide', 'tap')}></button>
+    <button type="button" class="wus-zone wus-next" aria-label="${th('common.next')}" ${act('nextWrapupSlide', 'tap')}></button>`;
   // Holding anywhere but a real button pauses; a tap on the sides moves on,
   // unless it was the end of a hold (reading, not skipping).
   el.addEventListener('pointerdown', ev => {
@@ -541,7 +568,7 @@ function _quizResult() {
   const out = st.el?.querySelector('.wus-quiz-out');
   if (!out || !top.length) return;
   const right = st.answered === 0;
-  out.textContent = right ? `Right — ${top[0].title}.` : `Not quite: it was ${top[0].title}.`;
+  out.textContent = t(right ? 'story.quiz_right' : 'story.quiz_wrong', {title: top[0].title});
   st.el.querySelectorAll('.wus-opt').forEach(b => b.disabled = true);
 }
 export function answerWrapupStory(i) {
