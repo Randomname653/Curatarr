@@ -29,7 +29,7 @@ export async function api(path, method='GET', body=null, _retried=false, headers
     }
   }
   // TokenRefreshMiddleware (src/middleware.py) silently reissues a JWT past
-  // 1/7th of its 7-day life on ANY response for a still-valid state.token -- ok or
+  // 1/7th of its 7-day life on ANY response for a still-valid token -- ok or
   // not, so this reads before the ok-check below, not after. A client that
   // ignores the header just keeps its fixed 7-day expiry; picking it up
   // makes a session under active use effectively immortal.

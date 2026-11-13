@@ -53,6 +53,10 @@ _MAY_BE_EMPTY = {"recs.add_question_pre", "pwa.ios_step1_post"}
 check("...no German text is empty where the English is not (a sentence's lead or tail may be)",
       [k for k in EN if _forms(EN[k]).get("") and not _forms(DE[k]).get("") and k not in _MAY_BE_EMPTY] == [])
 
+# An old find-and-replace turned "token" into "state.token" in three UI texts.
+code_words = [k for d in (EN, DE) for k, v in d.items() if any("state.token" in x for x in _forms(v).values())]
+check("no UI text says a variable's name ('state.token')", not code_words, code_words)
+
 # ── the markup and the modules ──────────────────────────────────────────────
 
 markup = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")

@@ -72,11 +72,11 @@ onPageLoad(async () => {
       const r = await api('/api/auth/status');
       if (r.authenticated) { setUser(r); showApp(); return; }
     } catch (e) {
-      // Only a genuine rejection (401/403) means the state.token itself is bad.
+      // Only a genuine rejection (401/403) means the token itself is bad.
       // Anything else here (500, server mid-reload, network hiccup) used to
       // wipe a perfectly valid session and force a full Plex re-login for a
-      // failure that had nothing to do with the state.token — now it just shows
-      // the login screen for this load; the stored state.token survives so the
+      // failure that had nothing to do with the token — now it just shows
+      // the login screen for this load; the stored token survives so the
       // next successful check logs the user back in without Plex again.
       if (e.status === 401 || e.status === 403) {
         state.token = ''; localStorage.removeItem('curatarr_token');

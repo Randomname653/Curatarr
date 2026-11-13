@@ -198,7 +198,7 @@ const SETUP_CONTENT = {
     </div>
     <div class="form-group">
       <label for="s-listenbrainz">${th('setup.listenbrainz')} <span class="fs-10 badge muted">${th('setup.badge_optional_music')}</span></label>
-      <input id="s-listenbrainz" type="password" placeholder="free account state.token" value="${state.setupData.listenbrainz_token||''}">
+      <input id="s-listenbrainz" type="password" placeholder="${th('setup.listenbrainz_ph')}" value="${state.setupData.listenbrainz_token||''}">
       <div class="hint">${th('setup.listenbrainz_hint')} <a class="t-amber" href="https://listenbrainz.org/settings/" target="_blank">listenbrainz.org/settings</a>${th('setup.listenbrainz_hint_post')}</div>
     </div>`,
 
@@ -783,7 +783,7 @@ export function renderMinibench(mb, err) {
 }
 
 export async function logout() {
-  // Server first: bumping the user's state.token version revokes THIS state.token on
+  // Server first: bumping the user's token version revokes THIS token on
   // every device, not just the copy in this tab's localStorage.
   try { await api('/api/auth/logout', 'POST'); } catch {}
   state.token=''; localStorage.removeItem('curatarr_token'); location.reload();

@@ -27,6 +27,9 @@ server writes for a run stay as they come; so do model, host and service names a
 an external app reports. With this every frontend module is on the English-literal ratchet; 23
 literals remain, each a server phrase used as a lookup key, a fallback the server replaces, or a
 unit.
+Three English labels said a variable's name: an old find-and-replace had turned "token" into
+"state.token" ("Auth state.token", "ListenBrainz user state.token", and the ListenBrainz hint and
+placeholder in setup). They say "token" again.
 
 **The admin views in German, part one** (design record 3.8, round three, C1). Deletions (the
 cards, Cut / Your call, Why?, the Keep dialog, the bulk bar, Back after deletion, Fix match), the

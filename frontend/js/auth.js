@@ -77,7 +77,7 @@ export async function startPlexLogin() {
         clearInterval(state.pollInterval);
         state.pollInterval = null;
         state.token=r.token; localStorage.setItem('curatarr_token',state.token);
-        // Restart stream with new state.token
+        // Restart stream with new token
         stopTaskStream();
         state.taskStreamRetries = 0;
         setUser(r.user); showApp();

@@ -3,7 +3,7 @@ import { state } from './state.js';
 import { t, th } from './i18n.js';
 
 export const API = '';
-// Moved state.token to state
+// Moved the token to state
 // Moved state.pendingDiscussContext to state
 // Moved state.currentUser to state
 // Moved state.pollInterval to state

@@ -2040,6 +2040,7 @@
  "setup.listenbrainz": "ListenBrainz-Nutzer-Token",
  "setup.listenbrainz_hint": "Weltweite Hörerzahlen als Löschbeleg für Musik. Kostenloses Konto unter",
  "setup.listenbrainz_hint_post": " – ListenBrainz verlangt den Token, seit es seine API hinter eine Anmeldung gelegt hat.",
+ "setup.listenbrainz_ph": "Token deines kostenlosen Kontos",
  "setup.mb_advice.slow": "Er läuft, aber langsamer, als für einen Löschlauf angenehm ist. Ein kleineres Paket fühlt sich deutlich schneller an.",
  "setup.mb_advice.spill": "Der Curator passt nicht auf diese GPU, Teile laufen aus dem Arbeitsspeicher. Nimm das Paket für eine kleinere Karte oder ein kleineres Curator-Modell (Setup neu durchlaufen oder BASE_CURATOR_MODEL in der .env ändern und neu bauen).",
  "setup.mb_advice.unreliable": "Der Curator hat keine gültigen Urteile geliefert. Wähl vor dem ersten Löschlauf ein anderes Curator-Modell.",
