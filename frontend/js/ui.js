@@ -451,9 +451,9 @@ export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
 // _fmtRel(iso) → "in 3 d" / "2 h ago"; pair it with _fmtAbs(iso) in title=.
 export function _fmtRel(iso) {
   if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return '';
-  const d = t - Date.now(), a = Math.abs(d);
+  const at = new Date(iso).getTime();     // not "t": that is the UI's words, t()
+  if (isNaN(at)) return '';
+  const d = at - Date.now(), a = Math.abs(d);
   if (a < 60e3) return t('time.now');
   const [n, u] = a < 3600e3 ? [Math.round(a / 60e3), 'min'] : a < 86400e3 ? [Math.round(a / 3600e3), 'h'] : [Math.round(a / 86400e3), 'd'];
   return t(d > 0 ? 'time.in' : 'time.ago', {n, unit: t(`time.unit.${u}`)});
