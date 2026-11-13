@@ -1941,7 +1941,6 @@
  "set.view.integr_2": "and reloads settings live; a model change also needs",
  "set.view.integr_3": "and a restart — the panel says so.",
  "set.view.integr_4": "Sonarr, Radarr and Lidarr live under",
- "set.view.integr_library": "Library",
  "set.view.integr_rebuild": "Rebuild models",
  "set.view.mapping": "Category mapping",
  "set.view.mapping_hint": "Assign each Plex library to a media category.",

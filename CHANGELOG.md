@@ -30,6 +30,8 @@ unit.
 Three English labels said a variable's name: an old find-and-replace had turned "token" into
 "state.token" ("Auth state.token", "ListenBrainz user state.token", and the ListenBrainz hint and
 placeholder in setup). They say "token" again.
+The Integrations hint sent the arr connections to "Library"; it names the "Arr apps" tab they
+live under.
 
 **The admin views in German, part one** (design record 3.8, round three, C1). Deletions (the
 cards, Cut / Your call, Why?, the Keep dialog, the bulk bar, Back after deletion, Fix match), the
