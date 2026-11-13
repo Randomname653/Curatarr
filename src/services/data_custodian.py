@@ -1299,9 +1299,14 @@ async def _run_one(queue: str, t: "Task", force: bool, deep: bool, actions: list
         _queue_current[queue] = None
 
 
-async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
+async def _run_queue(queue: str, tasks: list, force: bool, deep: bool,
+                     regular: bool = True) -> dict:
     """One queue's run: its overdue tasks in priority order, one at a time,
-    then whatever Run-now requests arrived meanwhile."""
+    then whatever Run-now requests arrived meanwhile.
+
+    ``regular=False`` is a Run-now run of its own (request_run on an idle
+    queue): it does not count as the queue's first run, so a settle-only
+    task (the VACUUM) still waits for the first regular tick after a start."""
     actions = []
     started = time.time()
     by_id = {t.job_id: t for t in _registry()}
@@ -1320,7 +1325,8 @@ async def _run_queue(queue: str, tasks: list, force: bool, deep: bool) -> dict:
             t = by_id.get(_run_requests[queue].pop(0))
             if t is not None:
                 await _run_one(queue, t, True, deep, actions)
-        _first_run_done[queue] = True
+        if regular:
+            _first_run_done[queue] = True
     finally:
         _queue_pending[queue] = set()
         _queue_current[queue] = None
@@ -1369,7 +1375,7 @@ def request_run(job_id: str) -> str:
     _queue_pending[q] = set()
     _run_requests[q].append(job_id)
     try:
-        _track_task(asyncio.create_task(_run_queue(q, [], False, False)))
+        _track_task(asyncio.create_task(_run_queue(q, [], False, False, regular=False)))
     except Exception:
         _queue_busy[q] = False
         _run_requests[q].remove(job_id)

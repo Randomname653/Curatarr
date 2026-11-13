@@ -62,6 +62,9 @@ tm = TaskMonitor()
 tm.persist = False
 a = tm.create("Enrichment", "enrichment", total=32, tags=["music", "movie"])
 tm.start(a)
+# Backdated, not timed: time.time() moves in ~15 ms steps on Windows, so a
+# start and an update in the same step measure 0 s — no rate, no ETA.
+a.started_at = time.time() - 10
 tm.update(a, processed=31)
 d = a.to_dict()
 check("a running task has an ETA, a rate and its pills",
@@ -165,6 +168,12 @@ check("a substep without an item count still gives a percentage",
 state = real_state()
 p1 = TaskMonitor()
 r = p1.create("Daily DB backup", "maintenance"); p1.start(r); p1.done(r, "439.2 MB · kept 7")
+# An hour earlier: two runs ending in the same clock step (~15 ms on Windows)
+# would tie on finished_at, and "newest first" would read the insertion order.
+r.started_at -= 3600
+r.finished_at -= 3600
+p1._history.clear()
+p1._archive(r)
 p1._persist_now()
 p2 = TaskMonitor()           # a fresh process
 check("the history survives a restart",
@@ -240,6 +249,25 @@ check("Run now on a running task says so (no double run)", again == "running")
 check("Run now behind a busy queue queues it, and it runs after",
       queued == "queued" and st_q == "queued" and ran == ["slow:start", "slow:end", "quick"])
 check("a runner's returned string is its summary", rec2.get("summary") == "7 rows retired")
+
+
+async def first_run_after_start():
+    """A restart: no regular run yet. Run now must not use up the first
+    tick that a settle-only task (the VACUUM) waits for."""
+    q_ = dc.QUEUE_BACKGROUND
+    dc._first_run_done[q_] = False
+    ran.clear()
+    dc.request_run("retention")
+    await wait_until(lambda: "quick" in ran and not dc._queue_busy[q_], what="run-now drain")
+    after_run_now = dc._first_run_done[q_]
+    await dc._run_queue(q_, [reg[2]], False, False)
+    return after_run_now, dc._first_run_done[q_]
+
+
+after_run_now, after_regular = asyncio.run(first_run_after_start())
+check("Run now before the first regular run leaves settle-only tasks waiting",
+      after_run_now is False)
+check("...the first regular run is what ends the wait", after_regular is True)
 try:
     dc.request_run("no_such_job")
     unknown = False
