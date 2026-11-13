@@ -1075,7 +1075,9 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
         await run_write(set_datetime, "last_sync_at", sync_started)
     if unattributed:
         _done_msg += f" ({unattributed} parked on admin — run Re-Attribution after the user logs in)"
-    task_monitor.done(_sync_task, _done_msg)
+    # No new play is an empty run for the History ("Done: 0 new entries,
+    # 240 skipped"); a section that failed keeps it visible.
+    task_monitor.done(_sync_task, _done_msg, noop=synced == 0 and not failed_sections)
 
     # Delegate taste vector recompute to taste_engine (canonical implementation)
     if synced > 0:

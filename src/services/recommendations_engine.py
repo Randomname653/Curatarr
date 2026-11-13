@@ -364,6 +364,10 @@ def _pool_plan(scored: list, pooled: dict, profile: str | None = None) -> tuple:
 # pool_kept); in-memory like the summary below, which counts them.
 _POOL_KEPT: dict[str, set] = {}
 
+# A category's share of the Arr sync bar (in thousandths) that scoring fills;
+# judging, the slow part (seconds per title), fills the rest.
+_SCORE_SHARE = 300
+
 # The last pillar-judging run per category, for the Deletions view's run
 # banner. A judge call that FAILED (timeout, malformed JSON) used to collapse
 # into the EVALUATE fallback and vanish exactly like a title the model
@@ -1635,14 +1639,19 @@ async def generate_deletion_proposals(
         except Exception:  # noqa: BLE001 - progress card only; the run is unaffected
             pass
 
-    def _step(done: int, total: int) -> None:
-        """Inner progress of this category within the caller's card: the
-        judging loop is most of a run, and the bar sat at 0% through it."""
+    def _step(done: int, total: int, phase: str = "judge") -> None:
+        """Inner progress of this category within the caller's card, in
+        thousandths: scoring fills the first _SCORE_SHARE of them, judging
+        the rest. The bar sat at 0% through both (2026-11: "0 / 14,447" for a
+        minute of "scoring 5,445 candidates")."""
         if monitor_task is None:
             return
+        frac = min(1.0, max(0, done) / max(1, total))
+        units = (int(_SCORE_SHARE * frac) if phase == "score"
+                 else _SCORE_SHARE + int((1000 - _SCORE_SHARE) * frac))
         try:
             from src.services.task_monitor import task_monitor as _tm
-            _tm.substep(monitor_task, done, max(1, total))
+            _tm.substep(monitor_task, units, 1000)
         except Exception:  # noqa: BLE001 - progress card only
             pass
 
@@ -2119,8 +2128,10 @@ async def generate_deletion_proposals(
         # Pure CPU from here (filters, one NumPy dot per item) — yield now and
         # then so a library of thousands never holds the loop in one stretch.
         # No transaction is open across this await.
-        if _idx and _idx % 250 == 0:
-            await asyncio.sleep(0)
+        if _idx % 250 == 0:
+            _step(_idx, len(arr_items), "score")
+            if _idx:
+                await asyncio.sleep(0)
         title = item.get("title")
         tmdb_id = str(item.get("tmdb_id")) if item.get("tmdb_id") is not None else ""
 

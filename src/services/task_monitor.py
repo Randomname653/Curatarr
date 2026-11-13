@@ -107,6 +107,9 @@ class Task:
     step_size: int = 0
     sub_done: int = 0
     sub_total: int = 0
+    # A step has begun but cannot be counted yet (the Arr sync's bulk vector
+    # read before scoring): the bar pulses instead of standing at its old %.
+    pulse: bool = False
     partial: bool = False
     cancelled: bool = False
     noop: Optional[bool] = None   # None = decide from the outcome
@@ -178,9 +181,12 @@ class Task:
         summary = (self.summary or "").strip()
         if _NOOP_RE.search(summary):
             return True
-        if self.total > 0:
-            return True          # "Complete: 0/4 processed"
-        return self.elapsed_s < 3 and not re.search(r"[1-9]", summary)
+        # A count in the summary is work done ("OMDb backfill: 7 candidates"
+        # whose last progress tick never came): not empty. Runners that know
+        # better say so with done(noop=...) or task.noop.
+        if re.search(r"[1-9]", summary):
+            return False
+        return self.total > 0 or self.elapsed_s < 3
 
     def current_message(self) -> str:
         return self.logs[-1].message if self.logs else ""
@@ -208,7 +214,7 @@ class Task:
             "total": total,
             "processed": processed,
             # Running with no item count and no measurable step: the UI pulses.
-            "indeterminate": running and total <= 0 and self.sub_total <= 0,
+            "indeterminate": running and ((total <= 0 and self.sub_total <= 0) or self.pulse),
             "elapsed_s": round(self.elapsed_s, 1),
             "eta_s": round(eta) if eta else None,
             "rate": round(self.rate, 1) if running else 0.0,
@@ -364,6 +370,7 @@ class TaskMonitor:
             task.processed = processed
             # A new item count ends the running step: its items are counted now.
             task.step_size = task.sub_done = task.sub_total = 0
+            task.pulse = False
         if processed is not None or total is not None:
             self._recalc(task)
 
@@ -379,6 +386,8 @@ class TaskMonitor:
         bar sat at 0% for minutes while one category ran)."""
         task.step_size = max(0, int(size or 0))
         task.sub_done = task.sub_total = 0
+        # Until the step reports its first substep there is nothing to count.
+        task.pulse = task.step_size > 0
         if message:
             task.logs.append(TaskLog(ts=time.time(), message=message))
         self._broadcast()
@@ -389,6 +398,7 @@ class TaskMonitor:
         has no item count of its own)."""
         task.sub_done = max(0, int(done or 0))
         task.sub_total = max(0, int(total or 0))
+        task.pulse = False
         self._recalc(task)
         if message:
             task.logs.append(TaskLog(ts=time.time(), message=message))

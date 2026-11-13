@@ -1745,6 +1745,10 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
     for i in range(0, total, CHUNK):
         await asyncio.gather(*[_one(*c) for c in cand_list[i:i + CHUNK]])
 
+    # The last tick: progress lands every 100 titles, so a short run ended
+    # with its card still at 0 of 7.
+    _tick(f"OMDb backfill: {state['done']}/{total} ({state['updated']} enriched)",
+          processed=state["done"])
     logger.info("[omdb-backfill] done — %d/%d titles enriched", state["updated"], total)
     return {"candidates": total, "enriched": state["updated"], "remaining": remaining}
 

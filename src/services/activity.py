@@ -281,8 +281,10 @@ def scheduled_overview() -> dict:
     for t in dc._registry():
         last = _last_job_run(t.job_id)
         rec = dc.last_result(t.job_id)
-        state = dc.job_state(t.job_id)
         due = _job_overdue(t.job_id, t.cadence_h)
+        # A task ahead in a busy queue but not due is skipped at its turn:
+        # it stays idle here, with its next run and a usable Run now.
+        state = dc.job_state(t.job_id, due=bool(due))
         blocked = _blocked_reason(t) if due and state == "idle" else ""
         if state == "running":
             next_at, next_note = None, "running now"

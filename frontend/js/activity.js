@@ -543,7 +543,8 @@ function _schedRowHtml(j) {
   const last = j.last_run
     ? `<span title="${escAttr(_fmtAbs(j.last_run))}">${esc(_fmtRel(j.last_run) || t('time.now'))}</span>`
     : `<span class="t3">${th('activity.never')}</span>`;
-  const dur = j.last_duration_s != null && j.last_duration_s > 0 ? fmtTime(j.last_duration_s) : (j.last_duration_s === 0 ? th('activity.under_1s') : '—');
+  // Under a second rounds to "" in fmtTime: a 0.3 s run showed no duration at all.
+  const dur = j.last_duration_s == null ? '—' : j.last_duration_s >= 1 ? fmtTime(j.last_duration_s) : th('activity.under_1s');
   const busy = j.state !== 'idle';
   return `<tr data-job="${escAttr(j.job_id)}">
       <td class="cell-primary"><span class="b">${esc(j.name)}</span>${j.uses_model ? ` <span class="badge theme badge-sm" title="${th('activity.model_title')}">${th('activity.model')}</span>` : ''}</td>

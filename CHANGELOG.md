@@ -6,6 +6,16 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Activity, after the first live check.** The Scheduled tab marked nearly every task of a busy
+custodian queue "Queued" and locked its Run now, also weekly jobs that were not due (a run reaches
+only the due ones). "Queued" now means the run will really reach the task; the others keep their
+next run and a working Run now. "Hide empty runs" stops guessing in both directions: the Plex sync,
+the Spotify pipeline, on-record facts, the Discogs dump and the Spotify re-read say themselves
+whether a run was empty ("0 new entries", "0 tracks", "+0" are; "OMDb: 7 candidates" is not). The
+Arr sync bar moves during scoring as well as judging and pulses while a category's vectors load,
+instead of standing at 0 %. The custodian's start tick is recorded (it read "never"), and runs
+under a second show "<1s" instead of no duration.
+
 **opentelemetry 1.45.2.** The lock moves the opentelemetry packages ChromaDB pulls in from 1.45.1
 to 1.45.2 for GHSA-mf5v-w3w3-f6cg (moderate); nothing else in the lock changes.
 
