@@ -7,7 +7,7 @@ import { buildOnboardingModels, detectGpu, hideOnboarding, onSetupCuratorChange,
 import { activityTabKey, cancelTask, loadScheduled, loadTaskHistory, reloadPage, runScheduledJob, setHistoryFilter, showActivityTab, showNoopRuns, toggleHideNoop } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, posterLoaded, toast, trapFocus } from './ui.js';
+import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, onPageLoad, posterLoaded, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { answerFollowup, askTonight, correctChatAnchor, explainFollowup, hideMoment, hideTonight, momentPlaylist, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -50,7 +50,7 @@ if (localStorage.getItem('curatarr_sidebar_collapsed') === '1') {
   document.getElementById('sidebar').classList.add('collapsed');
   document.getElementById('sb-collapse-toggle').title = t('nav.expand_title');
 }
-window.onload = async () => {
+onPageLoad(async () => {
   // Check if setup is needed. A failed check is NOT a first run: it used to
   // fall back to {first_run:true}, so a server mid-restart or a 500 showed a
   // configured install the Setup wizard, whose Finish rewrites the config.
@@ -89,7 +89,7 @@ window.onload = async () => {
   let ended = null;
   try { ended = sessionStorage.getItem(SESSION_ENDED_KEY); sessionStorage.removeItem(SESSION_ENDED_KEY); } catch {}
   if (ended) toast(t('boot.session_ended', {why: ended}), 'amber', {sticky: true});
-};
+});
 // Back/Forward and sidebar links: the hash names the view (nav.routeFromHash).
 window.addEventListener('hashchange', () => routeFromHash());
 // A Plex sign-in completes in the tab that started it, but plex.tv sends

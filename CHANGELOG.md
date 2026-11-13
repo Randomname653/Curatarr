@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**The app starts again instead of the Setup wizard.** Since the UI language the app's modules load
+the dictionaries before they run, and that could end after the page's load event: the start code
+was then hooked to an event that had already fired, never ran, and a configured install sat on the
+Setup screen (depending on timing, so not on every load). The start now runs at once when the page
+has already loaded.
+
 **Relative times work again.** Since the UI-language round 1, every relative time ("2 h ago",
 "in 3 d") threw "t is not a function": `_fmtRel` named a local `t` and so hid the UI's `t()`.
 Activity's Scheduled and History tabs, the Knowledge Base, Deletions, the arr browsers and the
