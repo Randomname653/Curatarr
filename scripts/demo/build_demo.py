@@ -26,10 +26,11 @@ Stages, in order (--stages picks some):
   seed      scripts/demo/seed.py in the copy: scrub every person's data, the
             accounts become Jane Doe and Sam, an invented 2026 for both
   serve     the copy's server on 127.0.0.1:<port> without its scheduler
-  generate  the app's own output, through its own API: nanogenre names,
-            taste profiles, recommendations, the household Wrap-Up 2026
-            with its story, one chat question, a deletion analysis
-            (the GPU works for a while; Ollama must answer)
+  generate  the app's own output, through its own API, as much as the frames
+            show: nanogenre names, Jane's taste profile and recommendations,
+            the household Wrap-Up 2026 with its story, one chat question, a
+            deletion analysis of the films (the GPU works for a while; Ollama
+            must answer, and a game on the same card makes it crawl)
   capture   scripts/capture_screenshots.py against the copy: the same frames
             as always, into this checkout's docs/screenshots
   (the server stops at the end unless --keep-running)
@@ -315,7 +316,9 @@ def _unnamed_nanogenres(base: Path) -> int:
 
 
 def stage_generate(base: Path, port: int, tok: dict) -> None:
-    jane, sam = Api(port, tok[1]), Api(port, tok[2])
+    # Only what the frames show: they are Jane's views. The household Wrap-Up
+    # needs Sam's plays (seeded), not his taste profile or recommendations.
+    jane = Api(port, tok[1])
     if _unnamed_nanogenres(base) == -1:
         say("generate: nanogenres")
         jane.post("/api/tasks/scheduled/nanogenres/run", ok=(200, 409))
@@ -326,14 +329,12 @@ def stage_generate(base: Path, port: int, tok: dict) -> None:
         say(f"generate: naming nanogenres ({_unnamed_nanogenres(base)} unnamed)")
         jane.post("/api/tasks/scheduled/nanogenre_names/run", ok=(200, 409))
         jane.idle("nanogenre names")
-    for name, api in (("Jane", jane), ("Sam", sam)):
-        say(f"generate: taste profile, {name}")
-        api.post("/api/history/recompute-taste", ok=(200, 409))
-        jane.idle(f"taste {name}")
-    for name, api in (("Jane", jane), ("Sam", sam)):
-        say(f"generate: recommendations, {name}")
-        api.post("/api/recommendations/refresh-cache", ok=(200, 409))
-        jane.idle(f"recommendations {name}")
+    say("generate: taste profile")
+    jane.post("/api/history/recompute-taste", ok=(200, 409))
+    jane.idle("taste")
+    say("generate: recommendations")
+    jane.post("/api/recommendations/refresh-cache", ok=(200, 409))
+    jane.idle("recommendations")
     say("generate: Wrap-Up 2026, household, with its story")
     tid = jane.post("/api/wrapup/generate", json={"scope": "all", "period": "year:2026"})["task_id"]
     t = time.time()
@@ -350,8 +351,11 @@ def stage_generate(base: Path, port: int, tok: dict) -> None:
         for _ in r.iter_bytes():
             pass
     jane.idle("chat")
-    say("generate: deletion analysis (the longest step)")
-    r = jane.c.get("/api/recommendations/deletions", params={"refresh": "true"}, timeout=7200)
+    # Films only: the frames show a few proposal cards, and every candidate
+    # costs the curator a verdict (the whole library would take hours).
+    say("generate: deletion analysis, films (the longest step)")
+    r = jane.c.get("/api/recommendations/deletions", params={"refresh": "true", "category": "movie"},
+                   timeout=7200)
     r.raise_for_status()
     n = len((r.json() or {}).get("proposals") or [])
     say(f"  {n} deletion proposals" + (f" - {r.json().get('message')}" if not n and r.json().get("message") else ""))

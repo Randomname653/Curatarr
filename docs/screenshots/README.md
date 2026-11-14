@@ -47,9 +47,10 @@ python scripts/demo/build_demo.py --source <the live install's data folder>
 6. **Served without its scheduler** on loopback, with tokens minted from
    the copy's own secret.
 7. **Real output on top,** through the app's own API with the production
-   models: nanogenre names, both taste profiles, recommendations, the
-   household Wrap-Up 2026 with its story, one chat question ("tell me
-   something about the big bang theory"), a deletion analysis.
+   models, as much as the frames show: nanogenre names, Jane's taste
+   profile and recommendations, the household Wrap-Up 2026 with its story,
+   one chat question ("tell me something about the big bang theory"), a
+   deletion analysis of the films. Close games first: they share the GPU.
 8. **The frames** below, written into this checkout's `docs/screenshots`.
 
 `--stages serve,capture` shoots again without rebuilding; `--stages serve
