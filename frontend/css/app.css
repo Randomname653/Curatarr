@@ -167,7 +167,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 #topbar-search::placeholder { color: var(--text3); }
 #msg-bell { position: relative; cursor: pointer; background: none; border: none; color: var(--text2); padding: 6px; border-radius: var(--radius); transition: color .15s; }
 #msg-bell:hover { color: var(--amber); }
-#msg-badge { position: absolute; top: 2px; right: 2px; background: var(--amber); color: var(--on-amber); font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: var(--radius); display: none; align-items: center; justify-content: center; padding: 0 3px; }
+#msg-badge { position: absolute; top: 2px; right: 2px; background: var(--amber); color: var(--on-amber); font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; border-radius: 999px; display: none; align-items: center; justify-content: center; padding: 0 3px; }
 #msg-badge.show { display: flex; }
 #user-pill { font-family: inherit; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px 4px 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); cursor: pointer; }
 #user-pill:hover { border-color: var(--border2); }
@@ -875,6 +875,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
    without any focus mark (wizard choice cards, "Select all", checkbox chips). */
 input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .wiz-choice:has(input:focus-visible), .chip:has(input:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; }
+.wiz-choice input:focus-visible, .chip input:focus-visible { outline: none; }
 /* div role=button (sidebar entries, the user pill) had no ring at all: keyboard focus was invisible */
 [role="button"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .form-group input:focus-visible, .form-group select:focus-visible { outline: none; border-color: var(--amber); }
@@ -893,6 +894,7 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 /* Overflow menu behind a row's visible actions ("More") */
 .menu { position: relative; display: inline-block; }
+#history-more .menu-list { left: 0; right: auto; }
 .menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 170px; background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,.45); padding: 4px; z-index: 40; }
 .menu.open .menu-list { display: block; }
 .menu-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text); font-size: 12px; padding: 7px 10px; border-radius: 6px; cursor: pointer; text-decoration: none; white-space: nowrap; }
@@ -962,7 +964,7 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
 .chip:hover { border-color: var(--amber); color: var(--amber); }
 .chip.active { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
 .chip input { margin: 0; }
-/* Card states: judge confidence and the stagnant flag colour the frame; done = acted on */
+/* Card states: the stagnant flag colours the frame; done = acted on */
 .card.is-stagnant { border-color: var(--amber-line); }
 .card.done { opacity: .45; }
 /* A heading between groups inside one list (recommendation lanes, report blocks) */
@@ -1007,7 +1009,7 @@ h1[tabindex="-1"]:focus { outline: none; }
    and onboarding were flat boxes next to the wizard (UI audit 2026-11-14). */
 #setup-overlay, #auth-overlay, #onboarding-overlay { background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
 #setup-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
-#setup-box, .dialog-shell, #auth-overlay .pin-box {
+#setup-box, .dialog-shell, #auth-overlay .pin-box, #pin-box {
   background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--hairline-strong); border-radius: var(--radius-xl); box-shadow: var(--shadow-3), var(--specular); }
 #setup-overlay.hidden { display: none; }
@@ -1075,7 +1077,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 #onboarding-overlay.hidden { display: none !important; }
 #auth-overlay .logo-big .brand-logo { width: min(300px, 72vw); height: auto; display: block; }
 #auth-overlay p { color: var(--text2); max-width: 360px; text-align: center; line-height: 1.6; font-size: 13px; }
-#pin-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; text-align: center; width: 340px; }
+#pin-box { padding: 24px 32px; text-align: center; width: 340px; }
 #pin-box .pin-code { font-size: 36px; font-weight: 800; letter-spacing: 10px; color: var(--amber); margin: 12px 0; font-family: monospace; }
 #pin-box small { font-size: 12px; color: var(--text2); }
 .webhook-template { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; font-size: 12px; overflow-x: auto; white-space: pre; }
@@ -1174,7 +1176,7 @@ select option { background: var(--bg2); }
 .btn-ghost-amber { background: transparent; border: 1px solid var(--amber-line); color: var(--amber); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
 .btn-ghost-danger { background: var(--danger-dim); border: 1px solid var(--danger-line-strong); color: var(--danger-fg); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
 .discuss-banner { display: flex; background: var(--amber-dim); border-bottom: 1px solid var(--amber-line); padding: 8px 16px; font-size: 12px; color: var(--text2); align-items: center; gap: 10px; }
-.sb-badge { margin-left: auto; background: var(--amber); color: var(--on-amber); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: var(--radius); }
+.sb-badge { margin-left: auto; background: var(--amber); color: var(--on-amber); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
 .grid-row-4 { display: grid; grid-template-columns: 64px 1fr 1fr 90px; gap: 10px; align-items: center; margin-bottom: 6px; }
 .grid-form-140 { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; align-items: center; }
@@ -1183,7 +1185,6 @@ select option { background: var(--bg2); }
 .side-col-200 { flex: 0 0 200px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); padding: 8px; }
 .stack-center-16 { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; color: var(--text); }
 .overlay-dim { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 90; display: flex; align-items: center; justify-content: center; }
-#onboarding-overlay.overlay-dim { background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
 .dialog-box-520 { width: 520px; max-height: 90vh; overflow-y: auto; }
 .box-head { padding: 24px 28px 16px; border-bottom: 1px solid var(--hairline); }
 .box-head .setup-heading { margin-bottom: 4px; }
@@ -1217,7 +1218,10 @@ select option { background: var(--bg2); }
   .btn-plain, .btn-ghost-amber, .btn-ghost-danger, .modal-close, .sp-chip,
   #msg-bell, #sb-hamburger, #new-chat-btn, #recheck-btn, #send-btn,
   #tb-search-btn, #user-pill, .sb-footer button, .wus-close, .wus-share-btn, .wu-tile-share,
-  .toast-close, .lib-refresh, .wu-chip, .link-num { min-height: 44px; }
+  .toast-close, .lib-refresh, .wu-chip { min-height: 44px; }
+  /* A count inside running text keeps the line's height; its hit area grows instead. */
+  .link-num { position: relative; }
+  .link-num::after { content: ''; position: absolute; inset: -12px -6px; }
   .btn-plain, .modal-close, #msg-bell, #sb-hamburger, #tb-search-btn, .wus-close,
   .toast-close, .wu-tile-share { min-width: 44px; }
   input, select, textarea, .input, #topbar-search, #chat-input { font-size: 16px; }
@@ -1538,7 +1542,7 @@ body {
 .meta-quiet b { color: var(--text2); font-weight: 600; }
 
 /* Switches: a checkbox that is a setting looks like one */
-input.switch { appearance: none; -webkit-appearance: none; flex-shrink: 0; width: 40px; height: 24px; margin: 0; border-radius: var(--radius-lg); background: var(--bg3); border: 1px solid var(--border2); position: relative; cursor: pointer; transition: background-color var(--dur-2), border-color var(--dur-2); }
+input.switch { appearance: none; -webkit-appearance: none; flex-shrink: 0; width: 40px; height: 24px; margin: 0; border-radius: 999px; background: var(--bg3); border: 1px solid var(--border2); position: relative; cursor: pointer; transition: background-color var(--dur-2), border-color var(--dur-2); }
 input.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text2); box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: transform var(--dur-2) var(--ease-spring), background-color var(--dur-2); }
 input.switch:checked { background: var(--amber); border-color: var(--amber); }
 input.switch:checked::after { transform: translateX(16px); background: #fff; }
@@ -1721,7 +1725,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .swipe-poster-ph { font-size: clamp(40px, 9cqh, 84px); color: color-mix(in srgb, var(--text3) 55%, transparent);
   background: radial-gradient(120% 80% at 30% 15%, color-mix(in srgb, var(--amber) 9%, var(--bg3)), var(--bg2) 72%); }
 .swipe-keys-box > summary { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); cursor: pointer; list-style: none; display: inline-flex; gap: 6px; align-items: center; }
-.swipe-keys-box > summary:hover { color: var(--text2); }
+details.swipe-keys-box > summary:hover { color: var(--text2); }
 .swipe-keys-box .swipe-keys { margin-top: 10px; }
 @media (max-width: 900px) { .swipe-keys-box { display: none; } }
 

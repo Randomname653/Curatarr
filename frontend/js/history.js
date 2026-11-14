@@ -125,11 +125,13 @@ export async function loadHistoryStatus() {
         renderRecent(h.entries, types[0]);
       } catch (e) { _tasteErr('recent-history', e, act('showTasteTab', types[0], null)); }
     } else {
-      // No history yet: a page with the stats tile and nothing under it was
-      // a dead end. It says so, with the action that fills it.
+      // A page with the stats tile and nothing under it was a dead end. No
+      // plays yet: Sync now fills it. Plays but no taste profile yet (a
+      // fresh install learns its library first): Recompute builds it.
       document.getElementById('taste-tabs').innerHTML = '';
-      document.getElementById('taste-content').innerHTML =
-        emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false));
+      document.getElementById('taste-content').innerHTML = (s.watch_history_entries || 0) === 0
+        ? emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false))
+        : emptyHtml(th('history.no_taste'), t('history.recompute'), act('recomputeTaste'));
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }

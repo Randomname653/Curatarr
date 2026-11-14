@@ -113,8 +113,6 @@ function _paintAuthTexts() {
   if (tagline) tagline.textContent = t('auth.tagline', {server: _login.server});
   const intro = document.getElementById('jf-pw-intro');
   if (intro) intro.textContent = t(_login.quickConnect ? 'auth.jf_pw_intro_or' : 'auth.jf_pw_intro');
-  const lib = document.getElementById('libraries-btn');
-  if (lib) lib.textContent = t('auth.libraries_btn', {server: _libsServer});
 }
 globalThis.addEventListener?.('i18n:changed', _paintAuthTexts);
 

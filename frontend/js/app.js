@@ -112,11 +112,19 @@ document.addEventListener('keydown', ev => {
   }
   if (state._modal) closeModal();
 });
-globalThis.addEventListener?.('hashchange', () => setTimeout(() => syncTabRoles(), 400));
+// Tab rows render when their view loads, often after an API call: the roles
+// follow every change of the page's tab rows (new rows, a moved .active),
+// batched to one sync per burst. A click hook and hashchange missed rows
+// drawn by code (review of the UI audit, 2026-11-14).
+let _tabSync = null;
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver(muts => {
+    if (_tabSync || !muts.some(m => m.target.closest?.('.cat-tabs, .arr-tabs')
+        || [...(m.addedNodes || [])].some(n => n.querySelector?.('.cat-tabs, .arr-tabs')))) return;
+    _tabSync = setTimeout(() => { _tabSync = null; syncTabRoles(); }, 50);
+  }).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ['class']});
+}
 document.addEventListener('click', ev => {
-  // The tab's own handler sets .active first; the roles follow on the next
-  // turn. A view's tab rows render on its load: a view change syncs too.
-  if (ev.target.closest('.cat-tab, .arr-tab')) setTimeout(() => syncTabRoles(), 0);
   const inMenu = ev.target.closest('.menu');
   if (ev.target.closest('.menu-item')) { if (inMenu) closeMenus(inMenu); return; }
   if (!inMenu) closeMenus();

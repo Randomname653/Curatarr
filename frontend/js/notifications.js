@@ -169,26 +169,30 @@ export function toggleMsgPanel() {
   // principles land in the background long after the page loaded.
   if (opening) {
     loadUnreadMessages(true);
-    _armPanelClose(p);
+    _armPanelClose();
   }
 }
 
 // The panel closes like a menu: Escape, or a click outside it and the bell
-// (it only had its own x; UI audit 2026-11-14). Focus goes back to the bell.
-function _armPanelClose(p) {
-  const close = () => {
-    p.classList.remove('open');
-    const bell = document.getElementById('msg-bell');
-    bell?.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('keydown', onKey, true);
-    document.removeEventListener('pointerdown', onDown, true);
-    return bell;
-  };
-  const onKey = e => { if (e.key === 'Escape' && p.classList.contains('open')) { e.stopPropagation(); close()?.focus(); } };
-  const onDown = e => {
-    if (!p.classList.contains('open')) { close(); return; }
-    if (!p.contains(e.target) && !e.target.closest('#msg-bell')) close();
-  };
-  document.addEventListener('keydown', onKey, true);
-  document.addEventListener('pointerdown', onDown, true);
+// (it only had its own x; UI audit 2026-11-14). One listener pair, armed
+// once; every close (here, Settings' "Model updates" link) goes through
+// closeMsgPanel, so aria-expanded never says open over a closed panel.
+export function closeMsgPanel() {
+  document.getElementById('msg-panel')?.classList.remove('open');
+  const bell = document.getElementById('msg-bell');
+  bell?.setAttribute('aria-expanded', 'false');
+  return bell;
+}
+let _panelArmed = false;
+function _armPanelClose() {
+  if (_panelArmed) return;
+  _panelArmed = true;
+  document.addEventListener('keydown', e => {
+    const p = document.getElementById('msg-panel');
+    if (e.key === 'Escape' && p?.classList.contains('open')) { e.stopPropagation(); closeMsgPanel()?.focus(); }
+  }, true);
+  document.addEventListener('pointerdown', e => {
+    const p = document.getElementById('msg-panel');
+    if (p?.classList.contains('open') && !p.contains(e.target) && !e.target.closest('#msg-bell')) closeMsgPanel();
+  }, true);
 }

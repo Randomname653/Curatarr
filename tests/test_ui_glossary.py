@@ -18,7 +18,11 @@ _ALLOWED_NAMES = {"OLLAMA_HOST", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_FLASH_ATTENTION
 _PLACEHOLDER = re.compile(r"\{[^}]*\}")  # {judge} names a value, not a word
 _ENV_NAME = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 _EN_BAD = re.compile(  # "Arr apps" is right; only the lower-case and ALL-CAPS forms are not
-    r"(?i:\bjudge\b|\bcustodians?\b|\bbak(?:e|es|ed|ing)\b)|\b[Tt]he arr\b|\bARR\b|\*arr\b"
+    # "tick" as the scheduler's beat, not "tick the box"
+    r"(?i:\bjudge\b|\bcustodians?\b|\bbak(?:e|es|ed|ing)\b|\b(?:next|each|every|this|the) tick\b)"
+    # "an arr", "your arr", "in arr": a lower-case arr anywhere (placeholders
+    # are stripped first; "Arr apps" keeps its capital), and no config file.
+    r"|\barrs?\b|\bARR\b|\*arr\b|\.env\b"
 )
 _DE_BAD = re.compile(r"\bRichter\w*|\bCustodian\w*|\bBake\w*|\bgebacken\b|\bbacken\b")
 
@@ -42,7 +46,7 @@ def _offenders(d, rx):
 EN, DE = dictionary("en"), dictionary("de")
 
 bad = _offenders(EN, _EN_BAD)
-check("English UI text: no judge, 'the arr', ARR, *arr, custodian, bake, env-var names",
+check("English UI text: no judge, arr, ARR, *arr, custodian, bake, tick, .env, env-var names",
       not bad, str(bad[:8]))
 bad = _offenders(DE, _DE_BAD)
 check("German UI text: no Richter, Custodian, Bake, env-var names", not bad, str(bad[:8]))

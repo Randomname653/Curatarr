@@ -15,6 +15,7 @@ import { loadNodes } from './nodes.js';
 import { loadMediaServer } from './media_switch.js';
 import { loadHostAdvice } from './host_advice.js';
 import { loadShokoUnmatched } from './shoko.js';
+import { closeMsgPanel } from './notifications.js';
 export async function reattributeHistory(btn) {
   const status = document.getElementById('admin-action-status');
   btnBusy(btn, t('set.maint.reattributing'));
@@ -753,7 +754,7 @@ export async function evaluateModelUpdate(role, btn) {
 }
 
 export function openModelUpdates() {
-  document.getElementById('msg-panel')?.classList.remove('open');   // reached from the bell
+  closeMsgPanel();   // reached from the bell
   showView('settings', null, {pane: 'maintenance', focus: true});
   setTimeout(() => document.getElementById('maint-models')?.scrollIntoView({block: 'start'}), 50);
 }

@@ -137,8 +137,7 @@ function _renderTabs() {
   const el = _el('swipe-tabs');
   if (!el) return;
   el.innerHTML = _cats().map(([c, label]) =>
-    `<button class="cat-tab${c === _cat ? ' active' : ''}" ${act('swipeCategory', c)}
-       aria-pressed="${c === _cat}">${esc(label)}</button>`).join('');
+    `<button class="cat-tab${c === _cat ? ' active' : ''}" role="tab" aria-selected="${c === _cat}" ${act('swipeCategory', c)}>${esc(label)}</button>`).join('');
 }
 
 function _renderReactions() {
