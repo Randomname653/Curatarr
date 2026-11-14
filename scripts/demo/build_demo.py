@@ -398,6 +398,16 @@ def main() -> None:
             proc.wait()
     except KeyboardInterrupt:
         pass
+    except Exception as e:  # noqa: BLE001 - say where it stopped and how to go on, then fail
+        import httpx
+        if isinstance(e, httpx.TransportError) and proc.poll() is not None:
+            tail = (base / "server.log").read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
+            say(f"the demo server stopped (exit code {proc.returncode}); its last lines:")
+            for line in tail:
+                print("    " + line[:220])
+        say(f"stopped: {type(e).__name__}: {e}")
+        say("the copy and its seed are kept; go on with: --stages serve,generate,capture")
+        raise SystemExit(1)
     finally:
         if proc.poll() is None:
             proc.terminate()
