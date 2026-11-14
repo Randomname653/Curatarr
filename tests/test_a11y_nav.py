@@ -354,6 +354,34 @@ def test_thinking_status_log_contrast():
     check("the status trail (a text-ladder token) clears 4.5:1 on the reply bubble", ratio >= 4.5)
 
 
+# ── 4. the setup wizard keeps focus on a radio it redraws ────────────────────
+
+def test_setup_radio_keeps_focus():
+    """Changing the media-server (or Plex server) radio redraws the whole
+    step; focus fell to <body> and the arrow keys could not walk the group
+    (WCAG 2.4.3 / 2.1.1). It returns to the group's checked radio."""
+    setup = _read("setup.js")
+    fn = _fn(setup, "rerenderKeepingRadio")
+    out = _node("""
+const state = {setupStep: 1};
+const radio = {focused: false, focus() { this.focused = true; }};
+const asked = [];
+globalThis.document = {querySelector: sel => { asked.push(sel); return radio; }};
+let drawn = 0;
+const renderSetupStep = () => { drawn++; };
+%s
+rerenderKeepingRadio('s-media-server');
+console.log(JSON.stringify({drawn, focused: radio.focused, asked}));
+""" % fn) if fn else {}
+    if out is not None:
+        check("the redraw is followed by focus on the group's checked radio",
+              out.get("drawn") == 1 and out.get("focused") is True
+              and out.get("asked") == ['input[name="s-media-server"]:checked'])
+    check("both radio handlers use it",
+          "rerenderKeepingRadio('s-media-server')" in _fn(setup, "setupServerKind")
+          and "rerenderKeepingRadio('s-plex-server')" in _fn(setup, "pickPlexServer"))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
