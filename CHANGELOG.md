@@ -10,6 +10,13 @@ Condensed release history, newest first.
 a fixed gradient over the first 40 % of the row, whatever the progress. It now fills the row to
 the task's percentage and glides with it, and sweeps along with the bar while the count is unknown.
 
+**The curator knows who is in a band.** Asked about a band's song, the curator had no line-up: when
+the owner praised the singer by name, it "corrected" him from a same-named artist elsewhere in the
+library. The MusicBrainz artist lookup now reads the band's members too (roles and years, current
+and former, in the same call), and the curator's music block names them, or says the band lists
+none. Artists cached before this get one lookup of their own when a chat needs them. Replaying the
+real conversation: 5 of 9 answers contradicted the owner without the line-up, 0 of 9 with it.
+
 **Last played: Plex's own ids before a title search.** A show in Plex but in no arr app has no
 match pin, and its plays carry no series id, so its poster still came from a search by name and
 a short title found another series. The recent-history posters now take the ids Plex itself files
