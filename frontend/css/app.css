@@ -338,8 +338,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, -apple
 .swipe-people dd { margin: 0; color: var(--text2); }
 .swipe-fit { margin-top: 6px; display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); color: var(--text3); }
 .swipe-fit b { color: var(--text); font-size: var(--fs-base); }
-.swipe-meter { flex: 0 1 160px; height: 6px; border-radius: 3px; background: var(--bg3); overflow: hidden; }
-.swipe-meter i { display: block; height: 100%; width: 0; border-radius: 3px; background: linear-gradient(90deg, var(--amber), var(--amber2)); }
+.swipe-meter { flex: 0 1 160px; }
+.swipe-meter i { display: block; height: 100%; width: 0; }
 .swipe-stamp { position: absolute; z-index: 4; padding: 6px 16px; border: 4px solid var(--c); border-radius: 10px; color: var(--c); background: color-mix(in srgb, var(--bg) 55%, transparent); font-size: clamp(22px, 2.6vw, 38px); font-weight: 800; letter-spacing: .08em; text-transform: uppercase; opacity: 0; pointer-events: none; transition: opacity var(--dur-1) linear; }
 .swipe-stamp[data-pos="right"] { top: 28px; left: 28px; transform: rotate(-14deg); }
 .swipe-stamp[data-pos="left"] { top: 28px; right: 28px; transform: rotate(14deg); }
@@ -1000,8 +1000,11 @@ h1[tabindex="-1"]:focus { outline: none; }
 .mt-4 { margin-top: 4px; } .mt-8 { margin-top: 8px; } .mt-12 { margin-top: 12px; } .mb-8 { margin-bottom: 8px; } .mb-12 { margin-bottom: 12px; }
 
 /* ── PROGRESS ── */
-.progress-bar { background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; margin-top: 8px; }
-.progress-fill { height: 100%; width: 0; background: var(--amber); border-radius: 4px; transition: width var(--dur-3); }
+/* the shared bar: track + fill (progress-bar, swipe-meter, kb-meter, wu-cl-bar) */
+.progress-bar, .swipe-meter, .kb-meter, .wu-cl-bar { height: var(--track-h); border-radius: var(--track-r); background: var(--track); overflow: hidden; }
+.progress-fill, .swipe-meter i, .wu-cl-fill { border-radius: var(--track-r); background: var(--track-fill); }
+.progress-bar { margin-top: 8px; }
+.progress-fill { height: 100%; width: 0; transition: width var(--dur-3); }
 .progress-label { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--text2); margin-top: 4px; }
 
 /* ── SETUP WIZARD ── */
@@ -1443,6 +1446,9 @@ body.standalone .sb-footer { padding-bottom: max(12px, env(safe-area-inset-botto
   --dur-1: .12s; --dur-2: .22s; --dur-3: .38s;
   --fs-2xs: 10px; --fs-xs: 11px; --fs-sm: 12px; --fs-base: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
   --measure: 65ch;
+  /* Bars: one track + one fill for every progress / meter / split bar */
+  --track: var(--bg3); --track-h-sm: 5px; --track-h: 6px; --track-h-lg: 8px; --track-r: 999px;
+  --track-fill: linear-gradient(90deg, var(--amber), var(--amber2));
   --radius-poster: 10px;
 }
 /* The canvas: a faint amber light from the top left, a darker far corner */
@@ -1659,10 +1665,11 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .kb-lib-pct { display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-sm); color: var(--text3); }
 .kb-lib-pct b { font-size: 30px; font-weight: 650; color: var(--amber); letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
 .kb-lib.is-done .kb-lib-pct b { color: var(--success); }
-.kb-meter { appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 6px; border: none; border-radius: 3px; background: var(--bg2); overflow: hidden; }
-.kb-meter::-webkit-progress-bar { background: var(--bg2); border-radius: 3px; }
-.kb-meter::-webkit-progress-value { background: linear-gradient(90deg, var(--amber), var(--amber2)); border-radius: 3px; }
-.kb-meter::-moz-progress-bar { background: linear-gradient(90deg, var(--amber), var(--amber2)); border-radius: 3px; }
+.kb-lib { --track: var(--bg2); }   /* the card is bg3, the track sits one step down */
+.kb-meter { appearance: none; -webkit-appearance: none; display: block; width: 100%; border: none; }
+.kb-meter::-webkit-progress-bar { background: var(--track); border-radius: var(--track-r); }
+.kb-meter::-webkit-progress-value { background: var(--track-fill); border-radius: var(--track-r); }
+.kb-meter::-moz-progress-bar { background: var(--track-fill); border-radius: var(--track-r); }
 .kb-lib.is-done .kb-meter::-webkit-progress-value { background: var(--success); }
 .kb-lib.is-done .kb-meter::-moz-progress-bar { background: var(--success); }
 .kb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1700,7 +1707,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .rep-key:first-child { margin-left: 0; }
 .rep-key.is-del { background: var(--amber); }
 .rep-key.is-kept { background: var(--border2); }
-.rep-split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--amber); }
+.rep-split { display: flex; height: 10px; border-radius: var(--track-r); overflow: hidden; background: var(--amber); }
 .rep-split > i { display: block; }
 .rep-split-consensus { width: var(--v); background: var(--border2); }
 .rep-split-override { flex: 1; }
@@ -1798,7 +1805,7 @@ details.swipe-keys-box > summary:hover { color: var(--text2); }
 .wu-hr.is-peak .wu-hr-fill { background: var(--amber); }
 .wu-clock-axis { display: flex; justify-content: space-between; font-size: var(--fs-2xs); color: var(--text3); }
 
-.wu-split { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: var(--bg3); margin: 10px 0; }
+.wu-split { display: flex; height: 14px; border-radius: var(--track-r); overflow: hidden; background: var(--track); margin: 10px 0; }
 .wu-split-hb, .wu-split-cf { display: block; width: var(--v); }
 .wu-split-hb { background: var(--amber); }
 .wu-split-cf { background: color-mix(in srgb, var(--amber) 40%, var(--bg3)); }
@@ -1838,8 +1845,8 @@ details.swipe-keys-box > summary:hover { color: var(--text2); }
 
 .wu-cluster { display: grid; grid-template-columns: minmax(0, 1.4fr) 2fr auto; gap: 10px; align-items: center; margin: 6px 0; }
 .wu-cl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wu-cl-bar { height: 8px; background: var(--bg3); border-radius: 999px; overflow: hidden; }
-.wu-cl-fill { display: block; height: 100%; width: var(--v); background: var(--amber); }
+.wu-cl-bar { height: var(--track-h-lg); }
+.wu-cl-fill { display: block; height: 100%; width: var(--v); }
 .wu-cl-trend { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--text2); }
 .wu-cl-trend.is-rising { color: var(--amber); }
 
@@ -2062,7 +2069,7 @@ details.swipe-keys-box > summary:hover { color: var(--text2); }
 .act-spin { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--amber-line); border-top-color: var(--amber); animation: act-spin .9s linear infinite; flex-shrink: 0; }
 .act-spin.sm { width: 9px; height: 9px; border-width: 2px; }
 @keyframes act-spin { to { transform: rotate(360deg); } }
-.act-bar { height: 5px; margin-top: 8px; }
+.act-bar { height: var(--track-h-sm); margin-top: 8px; }
 .act-completed .act-bar .progress-fill, .act-warning .act-bar .progress-fill { background: var(--success); }
 /* No item count known: a pulse travels the bar instead of a "0%". */
 .progress-bar.indeterminate { position: relative; }
