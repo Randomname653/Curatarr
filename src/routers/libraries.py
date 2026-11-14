@@ -235,7 +235,10 @@ def configure_libraries(
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Save library category mappings (admin only)."""
+    """Save library category mappings (admin only). A library that starts
+    being followed (new, or no longer "ignore") gets its whole history on the
+    next sync (plex_sync.follow_libraries), not only what was played since."""
+    newly_followed: list = []
     for item in req.libraries:
         if item.category not in VALID_CATEGORIES:
             raise HTTPException(
@@ -245,6 +248,8 @@ def configure_libraries(
         existing = db.query(LibraryConfig).filter(
             LibraryConfig.plex_section_key == item.key
         ).first()
+        if item.category != "ignore" and (existing is None or existing.media_category == "ignore"):
+            newly_followed.append(item.key)
         if existing:
             existing.media_category = item.category
             existing.plex_section_title = item.title
@@ -259,7 +264,12 @@ def configure_libraries(
                 configured_by=user.id,
             ))
     db.commit()
-    return {"status": "ok", "configured": len(req.libraries)}
+    # A first setup has no sync yet: its first sync reads everything anyway.
+    from src.services.app_state import get_state
+    if newly_followed and get_state("last_sync_at"):
+        from src.services.plex_sync import follow_libraries
+        follow_libraries(newly_followed)
+    return {"status": "ok", "configured": len(req.libraries), "read_whole": newly_followed}
 
 
 @router.get("/config")

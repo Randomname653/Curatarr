@@ -394,6 +394,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     failed_sections: list = []
 
     _sections = [k for k, v in lib_configs.items() if v[0] != "ignore"]
+    read_whole = await run_read(_new_sections)
+    read_whole_done: list = []
     async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for sec_key, (category, plex_sec_type, sec_title) in lib_configs.items():
             if category == "ignore":
@@ -404,7 +406,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 continue
 
             params = {"type": type_num, "viewCount>>": "0", "includeGuids": "1"}
-            if last_sync_ts:
+            whole = str(sec_key) in read_whole
+            if whole:
+                logger.info("Library %r was mapped since the last sync: reading its whole history",
+                            sec_title)
+            elif last_sync_ts:
                 # Only items whose lastViewedAt is >= our last sync timestamp
                 params["lastViewedAt>>"] = str(last_sync_ts - 60)  # 60s overlap for safety
 
@@ -480,6 +486,8 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                             "shared by several), not viewings", sec_title, marked)
 
             all_entries.extend(items)
+            if whole:
+                read_whole_done.append(str(sec_key))
 
     logger.info("Total %s items: %d",
                 "new/updated" if last_sync_ts else "watched",
@@ -1073,6 +1081,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
         synced, skipped, resumed, unattributed,
     )
 
+    if read_whole_done:
+        import json as _json
+        left = sorted(set(read_whole) - set(read_whole_done))
+        await run_write(set_state, NEW_SECTIONS_KEY, _json.dumps(left))
+
     # Pass 82b: music-rating sweep. Runs after the play-history commit so the
     # rating sync is decoupled — a Plex hiccup during the rating fetch
     # doesn't lose any of the play data already persisted above. Best-effort:
@@ -1285,6 +1298,37 @@ MEMBER_BACKFILL_KEY = "member_history_backfilled"
 # plays; it now also keeps the owner's events the listing does not carry. The
 # first sync after this change walks the whole history once.
 OWNER_BACKFILL_KEY = "owner_history_backfilled"
+# Libraries mapped after the first sync (Settings -> Plex libraries): the
+# incremental sync asked them only for plays since its last run, so a
+# library followed later never got its past (2026-11-14: Music was never
+# mapped on the owner's install, and mapping it now would have brought only
+# tonight's plays). Their keys wait here until one sync has read them whole;
+# the history walks start from the beginning again with them (follow_libraries).
+NEW_SECTIONS_KEY = "plex_sections_to_read_whole"
+
+
+def _new_sections() -> set:
+    import json
+    try:
+        return set(json.loads(get_state(NEW_SECTIONS_KEY) or "[]"))
+    except (TypeError, ValueError):
+        return set()
+
+
+def follow_libraries(section_keys: list) -> None:
+    """Libraries just mapped to a category: the next sync reads their whole
+    listing, and the owner's and members' history walks start from the
+    beginning once more, so their past plays arrive. The plays already
+    stored are matched and skipped, nothing is stored twice."""
+    import json
+    if not section_keys:
+        return
+    pending = _new_sections() | {str(k) for k in section_keys}
+    set_state(NEW_SECTIONS_KEY, json.dumps(sorted(pending)))
+    set_state(OWNER_BACKFILL_KEY, "0")
+    set_state(MEMBER_BACKFILL_KEY, "0")
+    logger.info("[sync] newly followed libraries %s: the next sync reads their whole history",
+                sorted(section_keys))
 # "Mark as played" in Plex sets lastViewedAt (and viewCount) for every item it
 # touches to the same second and writes no history event. Nobody finishes
 # three episodes in one second: on the real server whole seasons sat on one
