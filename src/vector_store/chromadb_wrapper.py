@@ -684,10 +684,27 @@ class ChromaDBWrapper:
                 out[pid] = np.asarray(e, dtype=np.float32)
         return out
 
+    _theme_mean_cache: dict = {}
+
     def theme_mean(self, domain: str, page: int = 2000) -> Optional[np.ndarray]:
         """The mean of the domain's unit phrase vectors - the centre a theme
         score is taken against (the space is anisotropic: uncentred, every
-        phrase sits near every other). Paged, so it never holds the corpus."""
+        phrase sits near every other). Paged, so it never holds the corpus.
+
+        Kept until the domain's facet rows change in number: reading ~100k
+        phrase vectors held the one Chroma thread for 14 s on the NAS, and a
+        chat search waiting behind it took 52 s (2026-11-14)."""
+        (count,) = self._map_rows(
+            "SELECT count(*) FROM facet_map WHERE domain = ? AND facet = 'theme'", (domain,))[0]
+        hit = self._theme_mean_cache.get(domain)
+        if hit is not None and hit[0] == count:
+            return hit[1]
+        mean = self._theme_mean_uncached(domain, page)
+        if mean is not None:
+            self._theme_mean_cache[domain] = (count, mean)
+        return mean
+
+    def _theme_mean_uncached(self, domain: str, page: int) -> Optional[np.ndarray]:
         pids = [p for (p,) in self._map_rows(
             "SELECT DISTINCT phrase_id FROM facet_map WHERE domain = ? AND facet = 'theme'", (domain,))]
         total, n = None, 0

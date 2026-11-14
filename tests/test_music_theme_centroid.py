@@ -64,6 +64,20 @@ mean = db.theme_mean("music")
 check("the phrase mean is over the domain's distinct phrases only",
       mean is not None and abs(float(mean.sum()) - 1.0) < 1e-5 and mean[AXES.index("night drive")] > 0, mean)
 
+reads = []
+_real_pv = db._phrase_vectors
+db._phrase_vectors = lambda pids, page=2000: (reads.append(len(pids)), _real_pv(pids, page))[1]
+db._theme_mean_cache.clear()
+m1 = db.theme_mean("music")
+m2 = db.theme_mean("music")
+check("the phrase mean is read once and kept: the second call reads no phrase vectors "
+      "(14 s on the NAS's one Chroma thread, a chat search waited 52 s behind it)",
+      len(reads) == 1 and (m1 == m2).all(), reads)
+write("spotify:new", "New Act", ["lullaby", "road trip"])
+db.theme_mean("music")
+check("...and read again once the domain's facets change", len(reads) == 2, reads)
+db._phrase_vectors = _real_pv
+
 # ── the centre ───────────────────────────────────────────────────────────────
 te.THEME_CENTROID_MIN = 2
 theme = te._theme_centroid("music", [(3.0, "Neon Parish"), (1.0, "Glass Choir")])

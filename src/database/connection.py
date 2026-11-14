@@ -413,6 +413,13 @@ def _migrate_columns() -> None:
         # Range scans by user + family + recency (the 90-day windows, the
         # taste rebuild's per-category history read).
         ("ix_wh_user_type_viewed",       "watch_history", "user_id, media_type, viewed_at"),
+        # The enrichment page's "watched titles enriched" counts (distinct
+        # series of one user and family, not orphaned). Covering, so no row
+        # is read: without it SQLite walked ix_wh_series_title over every
+        # titled play - 1.1 s per show/anime count on the owner's copy
+        # (4 such counts per poll, 20-48 s on the NAS); with it 1 ms, and
+        # music 0.11 s instead of 0.14 s.
+        ("ix_wh_user_type_series",       "watch_history", "user_id, media_type, series_title, orphaned_at"),
         # Per-title enrichment lookups (plex_sync, the KB breakdown).
         ("ix_es_title_cat",              "enrichment_status", "title, media_category"),
         ("ix_curator_resolution_log_proposal_id", "curator_resolution_log", "proposal_id"),

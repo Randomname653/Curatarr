@@ -343,10 +343,22 @@ def _arr_enriched_ids(service: str) -> set:
 _vec_count_warned_at: Optional[float] = None
 
 
+_vec_counts_cache: dict = {}
+
+
 def _vector_counts_by_service() -> dict:
     """Chroma doc count per arr service ({svc: n}) from ONE id scan; {} when
-    Chroma is unavailable (the panel shows 0, as before). Chroma thread."""
+    Chroma is unavailable (the panel shows 0, as before). Chroma thread.
+
+    Scanned again only after a write to the store: every write bumps the
+    wrapper's write generation. The enrichment page polls every ~45 s, and
+    each scan read all ~32k ids (~3 s here) and kept the collection loaded,
+    so the idle release never came while the page was open."""
     global _vec_count_warned_at
+    from src.vector_store import chromadb_wrapper as _cw
+    gen = _cw._domain_write_gen[0]
+    if _vec_counts_cache.get("gen") == gen and _vec_counts_cache.get("counts") is not None:
+        return dict(_vec_counts_cache["counts"])
     try:
         from src.vector_store.chromadb_wrapper import get_chroma_db
         ids = get_chroma_db().all_ids()
@@ -363,6 +375,7 @@ def _vector_counts_by_service() -> dict:
         svc, sep, _ = str(i).partition(":")
         if sep and svc in out:
             out[svc] += 1
+    _vec_counts_cache.update(gen=gen, counts=dict(out))
     return out
 
 
