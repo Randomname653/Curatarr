@@ -328,8 +328,11 @@ def test_danger_fill_is_used():
     body = css[css.index("}", css.index(":root {")):]     # outside the token block
     rule = re.search(r"([^\n{}]*)\{[^}]*background:\s*var\(--danger-fill\)[^}]*\}", body)
     hard = re.findall(r"background:\s*(?:#(?:c93a3a|e55353)|rgba?\(2[0-9]{2},\s*[0-9]{1,2},)", body)
+    # White text through --on-fill (the token for text on a strong fill)
+    white = re.search(r"--on-fill:\s*#fff\b", css) is not None
     check("--danger-fill paints the solid danger fill (white text, no hard-coded red beside it)",
-          rule is not None and "color: #fff" in rule.group(0) and "--danger-fg" not in rule.group(0) and not hard)
+          rule is not None and white and "color: var(--on-fill)" in rule.group(0)
+          and "--danger-fg" not in rule.group(0) and not hard)
 
 
 def test_thinking_status_log_contrast():

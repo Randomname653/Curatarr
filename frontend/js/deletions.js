@@ -5,7 +5,7 @@
 // Invalidated whenever a targeted single-category analysis runs (because that
 // category's slice would then be out of sync with the stored full list).
 // Moved state._delProposalsAll to state
-import { skeletonHtml, EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, haptic, _errHtml, _errMsg, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast } from './ui.js';
+import { skeletonHtml, EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, haptic, _errHtml, _errMsg, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast, loadingHtml } from './ui.js';
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
@@ -310,7 +310,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
   // of opening a parallel DB read that returns the pre-commit snapshot.
   if (!refresh && _delAnalysePromise) {
     const elapsed = Math.round((Date.now() - _delAnalyseStartedAt) / 1000);
-    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('del.still_running', {s: elapsed})}</p>`;
+    el.innerHTML = loadingHtml(t('del.still_running', {s: elapsed}));
     try {
       const r = await _delAnalysePromise;
       if (seq !== _delLoadSeq) return;
@@ -364,7 +364,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
     // The arr history couldn't be read: the message (empty list) or this
     // banner (partial list) says so — never "nothing imported recently".
     _renderActivityBanner(r.message && !r.proposals?.length ? null : r.activity_note);
-    if (r.message && !r.proposals?.length) { el.innerHTML = `<p class="loading" role="status" aria-live="polite">${esc(r.message)}</p>`; return; }
+    if (r.message && !r.proposals?.length) { el.innerHTML = loadingHtml(r.message); return; }
 
     // Show enrichment coverage banner when data quality is low
     _renderEnrichmentCoverageBanner(r.enrichment_coverage);

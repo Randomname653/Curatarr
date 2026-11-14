@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { skeletonHtml, EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast } from './ui.js';
+import { skeletonHtml, EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast, loadingHtml } from './ui.js';
 import { serverLabel, state } from './state.js';
 import { showView, tabToHash } from './nav.js';
 import { t, th } from './i18n.js';
@@ -479,7 +479,7 @@ export function goToLibrarySettings(svc) {
 
 export async function renderSpotifyBacklog(svc) {
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('arr.loading_backlog')}</p>`;
+  contentEl.innerHTML = loadingHtml(t('arr.loading_backlog'));
 
   // Pass 30: not_added_only is the second independent filter — works
   // in combination with only_resolved.

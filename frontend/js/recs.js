@@ -3,7 +3,7 @@
 // Moved state._recsPollTimer to state
 // Moved state._recsPollKillswitch to state
 import { serverLabel, state } from './state.js';
-import { skeletonHtml, EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
+import { skeletonHtml, EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast, loadingHtml } from './ui.js';
 import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
 import { _whyButton } from './deletions.js';
@@ -196,7 +196,7 @@ export async function searchLibrary() {
   if (q.length < 2) return;
   _stopRecsPoll();
   const el = document.getElementById('recs-content');
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('recs.searching_library')}</p>`;
+  el.innerHTML = loadingHtml(t('recs.searching_library'));
   try {
     const cat = state.currentRecsCategory ? `&category=${ state.currentRecsCategory }` : '';
     const r = await api(`/api/library/semantic-search?q=${encodeURIComponent(q)}${cat}&limit=12`);

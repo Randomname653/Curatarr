@@ -2,7 +2,7 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, menuHtml, setStatus, skeletonHtml, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, menuHtml, setStatus, skeletonHtml, toast, loadingHtml } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 import { serverLabel, state } from './state.js';
@@ -32,9 +32,9 @@ export async function recomputeTaste(statusId = null) {
 export async function syncHistory(force = false, statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
-  const label = th('history.syncing', {server: serverLabel()});
+  const label = t('history.syncing', {server: serverLabel()});
   if (status) setStatus(status, label, 'busy');
-  else if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${label}</p>`;
+  else if (el) el.innerHTML = loadingHtml(label);
   try {
     const r = await api('/api/history/sync?force=' + (force ? 'true' : 'false'), 'POST');
     if (status) setStatus(status, r.message, 'ok');
@@ -161,7 +161,7 @@ function _tasteErr(id, e, retry) {
 
 export function showTasteTabData(byType, summary, type) {
   const d=byType[type];
-  if(!d){document.getElementById('taste-content').innerHTML=`<p class="loading" role="status" aria-live="polite">${th('history.no_data')}</p>`;return;}
+  if(!d){document.getElementById('taste-content').innerHTML=emptyHtml(th('history.no_data'));return;}
   const typeUpper=type.toUpperCase();
   const match=summary.match(new RegExp(`\\[${typeUpper}\\]([^\\[]*)`));
   const typeSummary=match?match[1].trim():'';
@@ -184,7 +184,7 @@ export function showTasteTabData(byType, summary, type) {
 }
 
 export function renderRecent(entries, category) {
-  if(!entries?.length){document.getElementById('recent-history').innerHTML=`<p class="loading" role="status" aria-live="polite">${th('history.none_yet', {category: CAT_LABELS[category]||category})}</p>`;return;}
+  if(!entries?.length){document.getElementById('recent-history').innerHTML=emptyHtml(th('history.none_yet', {category: CAT_LABELS[category]||category}));return;}
   const label = CAT_LABELS[category]||category;
   document.getElementById('recent-history').innerHTML=`
     <div class="eyebrow mb-8">${th('history.recent', {category: label})}</div>

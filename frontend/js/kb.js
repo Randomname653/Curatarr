@@ -1,6 +1,6 @@
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
 // Two questions, two result areas — the second answer no longer overwrites the first.
-import { skeletonHtml, CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
+import { skeletonHtml, CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast, loadingHtml } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
@@ -27,7 +27,7 @@ export async function loadMappingStats(btn) {
 export async function checkMappingCoverage(btn) {
   const el = document.getElementById('mapping-coverage');
   btnBusy(btn, t('kb.checking'));
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('kb.checking_coverage')}</p>`;
+  el.innerHTML = loadingHtml(t('kb.checking_coverage'));
   try {
     const c = await api('/api/enrichment/mapping-coverage');
     if (c.error) el.innerHTML = `<p class="load-err">${esc(c.error)}</p>`;
@@ -53,7 +53,7 @@ export async function loadProfiles(offset = 0) {
   const src    = document.getElementById('profile-source')?.value || 'all';
   const search = document.getElementById('profile-search')?.value || '';
   const el = document.getElementById('profile-browser');
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('kb.loading_profiles')}</p>`;
+  el.innerHTML = skeletonHtml(t('kb.loading_profiles'), {kind: 'rows'});
   try {
     const r = await api(`/api/enrichment/profiles?category=${cat}&source=${src}&limit=${PROFILE_PAGE}&offset=${offset}&search=${encodeURIComponent(search)}`);
     if (!r.profiles?.length) {
@@ -432,7 +432,7 @@ export async function loadKbItems(cat, states, offset = 0) {
   if (!el) return;
   const fresh = !_kbDrill || _kbDrill.cat !== cat || _kbDrill.states !== states;
   _kbDrill = {cat, states, offset};
-  if (fresh) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  if (fresh) el.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   try {
     const r = await api(`/api/enrichment/items?category=${encodeURIComponent(cat)}&state=${encodeURIComponent(states)}&offset=${offset}&limit=${KB_PAGE}`);
     const defs = Object.values(r.definitions || {});
@@ -462,7 +462,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
   const el = document.getElementById('kb-attention');
   if (!el) return;
   _kbAtt = {offset, reason: reason || null};
-  if (!el.dataset.loaded) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  if (!el.dataset.loaded) el.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   try {
     const q = new URLSearchParams({offset: String(offset), limit: String(KB_ATT_PAGE)});
     if (reason) q.set('reason', reason);

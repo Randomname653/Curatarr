@@ -479,6 +479,12 @@ export function syncTabRoles(root = document) {
 // 'rows' (lists), 'tiles' (Wrap-Up). The label stays for screen readers and
 // as a line under it. A bare italic "Loading…" made every first open look
 // unfinished (UI audit 2026-11-14).
+// One line about work in progress (scanning, searching, still running):
+// the plain-text label is escaped here. A list or cards about to appear
+// take skeletonHtml instead, the shape of what comes.
+export function loadingHtml(label) {
+  return `<p class="loading" role="status" aria-live="polite">${esc(label || '')}</p>`;
+}
 export function skeletonHtml(label, o = {}) {
   const kind = o.kind || 'cards';
   const n = o.n || (kind === 'rows' ? 6 : kind === 'tiles' ? 4 : 3);

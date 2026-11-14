@@ -27,7 +27,7 @@
 // 1-9, 0 exact stars · S exact-star row · Enter seen without stars (row
 // open) · U / Backspace undo · Esc closes the star row.
 import { api } from './api.js';
-import { _errHtml, _errMsg, act, activeDialog, emptyHtml, esc, proxyImg, toast } from './ui.js';
+import { _errHtml, _errMsg, act, activeDialog, emptyHtml, esc, proxyImg, toast, loadingHtml } from './ui.js';
 import { haptic } from './mobile.js';
 import { serverLabel } from './state.js';
 import { t, th } from './i18n.js';
@@ -122,7 +122,7 @@ export async function loadSwipe() {
   _renderRecent();
   _renderSession();
   _loadStats();
-  _deckMsg(`<p class="loading" role="status">${th('swipe.finding')}</p>`);
+  _deckMsg(loadingHtml(t('swipe.finding')));
   await _fill();
 }
 
@@ -349,7 +349,7 @@ export function swipeNextDeck() {
   _deck = _newDeck();
   _renderProgress();
   if (_queue.length) _layout();
-  else { _deckMsg(`<p class="loading" role="status">${th('swipe.finding_more')}</p>`); _fill(); }
+  else { _deckMsg(loadingHtml(t('swipe.finding_more'))); _fill(); }
 }
 
 function _deckMsg(html) {
@@ -367,7 +367,7 @@ function _layout(returnFrom) {
   const deck = _el('swipe-deck');
   if (!deck) return;
   if (!_queue.length) {
-    _deckMsg(`<p class="loading" role="status">${th('swipe.finding_more')}</p>`);
+    _deckMsg(loadingHtml(t('swipe.finding_more')));
     return;
   }
   deck.querySelector('.swipe-deck-msg')?.remove();
@@ -650,7 +650,7 @@ export async function swipeUndo() {
       _layout(REACT[h.kind]?.dir ?? null);
     } else {
       _queue = [];
-      _deckMsg(`<p class="loading" role="status">${th('swipe.bringing_back')}</p>`);
+      _deckMsg(loadingHtml(t('swipe.bringing_back')));
       await _fill();
     }
     _renderRecent();

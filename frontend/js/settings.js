@@ -1,5 +1,5 @@
 // ── ADMIN MAINTENANCE ACTIONS ─────────────────────────────────────────────────
-import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, openModal, setLocale, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, haptic, loc, openModal, setLocale, setStatus, toast, trackDirty, loadingHtml } from './ui.js';
 import { setLanguage, t, th } from './i18n.js';
 // _muEval and _muHistory name a vote tally `t` (tests read it): they say their words through these.
 const _t = t, _th = th;
@@ -252,7 +252,7 @@ let _integrationsCfg = null;
 export async function loadIntegrations() {
   const shell = document.getElementById('integrations-shell');
   if (!shell) return;
-  shell.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  shell.innerHTML = loadingHtml(t('common.loading'));
   try {
     const r = await api('/api/setup/integrations');
     _integrationsCfg = r.config || {};
@@ -454,7 +454,7 @@ export async function rebuildModels(cardKey, host, btn) {
 export async function loadNotificationPreferences() {
   const host = document.getElementById('notif-prefs');
   if (!host) return;
-  host.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  host.innerHTML = loadingHtml(t('common.loading'));
   try {
     const r = await api('/api/users/me/notification-preferences');
     renderNotificationPreferences(r.triggers || []);
