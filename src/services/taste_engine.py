@@ -516,6 +516,8 @@ def _domain_corpus_mean(category: str):
 
 
 THEME_CENTROID_MIN = 20   # titles with theme facets needed for a centre
+RECALL_MIN_SHARE = 0.15   # a taste cluster carries at least this share of the mass
+RECALL_MIN_CLUSTERS = 3   # ...and there are this many, or the one centroid serves
 
 
 def _theme_centroid(domain: str, weighted_titles: list) -> Optional[dict]:
@@ -569,7 +571,8 @@ def theme_score(blocks, theme: dict) -> Optional[float]:
 
 
 def _cluster_centroids(pos_titled: list, max_k: int = 5,
-                       corpus_mean=None) -> Optional[list]:
+                       corpus_mean=None, min_share: float = 0.08,
+                       min_clusters: int = 2) -> Optional[list]:
     """Spherical k-means over the positive watch embeddings — the
     multi-centroid upgrade for MULTIMODAL (user, category) pairs only
     (eval 2.2 / PinnerSage: a single mean of conflicting interests lands
@@ -578,7 +581,8 @@ def _cluster_centroids(pos_titled: list, max_k: int = 5,
     Deterministic on purpose (no random init): farthest-point seeding
     from the weight-strongest item, k ≤ 5 via a log2 ramp (MIND-style).
     Returns [{embedding, weight, share, top_titles}] sorted by weight,
-    clusters under 8% mass dropped — or None when clustering degenerates.
+    clusters under ``min_share`` of the mass dropped — or None when fewer
+    than ``min_clusters`` remain or clustering degenerates.
 
     ``corpus_mean`` (external eval catch): the near-parallel gate used to
     compare RAW centroid cosines — but text embeddings share a common
@@ -626,7 +630,7 @@ def _cluster_centroids(pos_titled: list, max_k: int = 5,
         for c in range(k):
             mask = assign == c
             cw = float(w[mask].sum())
-            if cw < total_w * 0.08 or int(mask.sum()) < 3:
+            if cw < total_w * min_share or int(mask.sum()) < 3:
                 continue   # noise cluster — not a real interest
             idx = np.argsort(-(w * mask))[:12]
             # dedupe: several rows of one series share a title
@@ -639,7 +643,7 @@ def _cluster_centroids(pos_titled: list, max_k: int = 5,
                 "top_titles": uniq[:3],
             })
         out.sort(key=lambda c: -c["weight"])
-        if len(out) < 2:
+        if len(out) < max(2, min_clusters):
             return None
         # k-means happily splits ONE tight cloud into k halves — reject the
         # artificial split when any two centroids are near-parallel (that
@@ -762,7 +766,7 @@ def build_item_text(entry: WatchHistoryEntry, enriched: Optional[dict]) -> str:
     return " | ".join(p for p in parts if p)
 
 
-def _corpus_calibration(embedding, drop_embedding, category: str):
+def _corpus_calibration(embedding, drop_embedding, category: str, single=None):
     """Eval 1.6 + 2.4: one pass over the category corpus produces
     everything the scoring side needs to compare cosines across runs:
 
@@ -773,6 +777,10 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
         the CENTERED corpus (global, so stored del_scores stay stationary
         across batches).
       drop_cal — same anchors for the drop centroid (scoring penalty).
+      single_cal — when ``embedding`` is a cluster list: the anchors of the
+        ONE centroid ``single`` too. Deletion scores against it (owner's
+        deletion log, 2026-11-14: kept vs deleted AUC 0.672 one centroid
+        vs 0.620 four for films, 0.665 vs 0.616 for series).
 
     Mean and anchors are written together in one rebuild: a reader that
     finds corpus_mean in the blob knows the anchors are centered ones.
@@ -836,10 +844,13 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
         if not _usable(cal):
             return None
         drop_cal = _anchors(drop_embedding) if drop_embedding else None
+        single_cal = (_anchors(single) if single is not None and isinstance(embedding, list)
+                      and embedding and isinstance(embedding[0], dict) else None)
         return {
             "corpus_mean": [round(float(x), 6) for x in mean],
             "cal": cal,
             "drop_cal": drop_cal if _usable(drop_cal) else None,
+            "single_cal": single_cal if _usable(single_cal) else None,
         }
     except Exception as e:
         logger.warning("corpus calibration failed for %s: %s", category, e)
@@ -1460,9 +1471,13 @@ async def compute_taste_vector_for_user(
     # The corpus pull (up to 30k vectors) and the k-means are seconds of
     # disk and NumPy: on the Chroma thread, never on the loop.
     from src.vector_store.chromadb_wrapper import run_chroma
+    # Only three or more interests of at least 15 % each (recall research,
+    # 2026-11-14): two clusters, or a 9 % one (the owner's anime, 11-08),
+    # split a taste the single centroid serves better.
     cluster_centroids = (
         await run_chroma(lambda: _cluster_centroids(
-            _pos_titled, corpus_mean=_domain_corpus_mean(category)))
+            _pos_titled, corpus_mean=_domain_corpus_mean(category),
+            min_share=RECALL_MIN_SHARE, min_clusters=RECALL_MIN_CLUSTERS))
         if multimodal and len(_pos) >= 40 else None)
     theme_centroid = None
     if category == "music" and _pos_titled:
@@ -1696,7 +1711,7 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                 else:
                     calib = _corpus_calibration(
                         res.get("cluster_centroids") or res.get("embedding"),
-                        res.get("drop_embedding"), cat)
+                        res.get("drop_embedding"), cat, single=res.get("embedding"))
 
                 # Embedding and vector stats go into one plain-JSON blob
                 # (version 0). Nothing is encrypted: the PIN that was to key
@@ -1718,6 +1733,9 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                     "cal_p90": (calib or {}).get("cal", (None, None))[1],
                     "drop_cal_p10": ((calib or {}).get("drop_cal") or (None, None))[0],
                     "drop_cal_p90": ((calib or {}).get("drop_cal") or (None, None))[1],
+                    # the one centroid's anchors where clusters carry cal_*
+                    "single_cal_p10": ((calib or {}).get("single_cal") or (None, None))[0],
+                    "single_cal_p90": ((calib or {}).get("single_cal") or (None, None))[1],
                     "version": 0,  # 0 = unencrypted, 1 = AES-256
                 }
                 # --- ENDE NEU ---
@@ -1888,7 +1906,7 @@ async def _compute_all_taste_vectors(user_id: int, categories: list,
             calibrations[cat] = await run_chroma(
                 _corpus_calibration,
                 res.get("cluster_centroids") or res.get("embedding"),
-                res.get("drop_embedding"), cat)
+                res.get("drop_embedding"), cat, single=res.get("embedding"))
     from src.database.runner import run_write
     summary_text = await run_write(_update_plain_taste_stats, user_id, all_results, summary_parts)
     await run_write(_store_taste_blobs, user_id, all_results, summary_parts, summary_text,

@@ -54,6 +54,24 @@ check("a <8%-mass noise cloud never becomes a cluster -> falls back to None",
 check("unimodal input (one cloud) -> None (single centroid stays)",
       _cluster_centroids(_cloud(A, 50, "x")) is None)
 
+# ── the taste build's gate: three interests of at least 15 % each ────────────
+from src.services.taste_engine import RECALL_MIN_CLUSTERS, RECALL_MIN_SHARE  # noqa: E402
+
+C = [0, 0, 1, 0, 0, 0, 0, 0]
+gate = {"min_share": RECALL_MIN_SHARE, "min_clusters": RECALL_MIN_CLUSTERS}
+check("the build's gate: two clear interests are not enough, the one centroid serves",
+      _cluster_centroids(pos, **gate) is None)
+three = _cloud(A, 40, "a") + _cloud(B, 35, "b") + _cloud(C, 25, "c")
+cl3 = _cluster_centroids(three, **gate)
+check("...three of at least 15 % each are clusters",
+      cl3 is not None and len(cl3) == 3 and min(c["share"] for c in cl3) >= 0.15, cl3)
+small = _cloud(A, 60, "a") + _cloud(B, 30, "b") + _cloud(C, 10, "c")
+check("...a 10 % third interest is no cluster, and two left are not enough "
+      "(the owner's anime split 89 % / 9 % on 11-08)",
+      _cluster_centroids(small, **gate) is None)
+check("...the wrapup's two-cluster story keeps the old floor",
+      _cluster_centroids(small) is not None)
+
 # ── calibration accepts a cluster list (max-over-clusters statistic) ─────────
 
 fake_corpus = [list(rng.normal(0.4, 0.15, size=8)) for _ in range(200)]
@@ -68,6 +86,25 @@ check("calibration over a cluster list works (max-over-clusters anchors)",
 single = _corpus_calibration(_unit(A), None, "anime")
 check("max-over-clusters anchors differ from single-centroid anchors",
       calib["cal"] != single["cal"])
+both = _corpus_calibration(clusters, None, "anime", single=_unit(A))
+check("a cluster blob also carries the one centroid's anchors (deletion reads them)",
+      both["cal"] == calib["cal"] and both["single_cal"] == single["cal"], both)
+check("...a single-centroid blob needs none: its cal_* are those",
+      _corpus_calibration(_unit(A), None, "anime", single=_unit(A))["single_cal"] is None)
+
+# ── deletion reads the one centroid ──────────────────────────────────────────
+from src.services.recommendations_engine import _deletion_taste_basis  # noqa: E402
+
+blob = {"embedding": _unit(A), "cluster_centroids": clusters, "cal_p10": 0.2, "cal_p90": 0.6,
+        "single_cal_p10": 0.1, "single_cal_p90": 0.5}
+check("deletion scores a cluster blob against the one centroid, with its own anchors "
+      "(kept vs deleted AUC 0.672 vs 0.620 films, 0.665 vs 0.616 series)",
+      _deletion_taste_basis(blob, (0.2, 0.6)) == (None, (0.1, 0.5)))
+old = {k: v for k, v in blob.items() if not k.startswith("single_")}
+check("...a blob from before the single anchors keeps scoring as it was calibrated",
+      _deletion_taste_basis(old, (0.2, 0.6)) == (clusters, (0.2, 0.6)))
+check("...a single-centroid blob is untouched",
+      _deletion_taste_basis({"embedding": _unit(A)}, (0.2, 0.6)) == (None, (0.2, 0.6)))
 
 # ── wiring asserts ───────────────────────────────────────────────────────────
 
@@ -81,7 +118,7 @@ check("calibration uses clusters when present",
       'res.get("cluster_centroids") or res.get("embedding")' in te)
 
 re_src = (root / "src/services/recommendations_engine.py").read_text(encoding="utf-8")
-check("deletion scoring is max over centroids",
+check("deletion scoring can still read max over centroids (a blob from before single_cal_*)",
       "cosine = max(float(np.dot(u, iv_c)) for u in user_cmps)" in re_src)
 check("library-lane ranking is max over centroids",
       "return max(float(np.dot(u, emb_n)) for u in user_vecs_n)" in re_src)

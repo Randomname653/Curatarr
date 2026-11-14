@@ -389,6 +389,23 @@ HOUSEHOLD_TASTE_FULL_ITEMS = 20
 HOUSEHOLD_TASTE_STRONG_FIT = 0.9
 
 
+def _deletion_taste_basis(blob: dict, cal_anchors):
+    """(cluster centroids or None, anchors) the deletion score reads.
+
+    The ONE centroid, also where recall uses clusters: on the owner's
+    deletion log it separated kept from deleted better (AUC 0.672 vs 0.620
+    for films, 0.665 vs 0.616 for series, 2026-11-14). A cluster blob's
+    cal_* anchors are max-over-clusters ones, so it takes single_cal_*; a
+    blob from before those (until the next hourly rebuild) still scores the
+    way it was calibrated: max over its clusters."""
+    clusters = blob.get("cluster_centroids")
+    if clusters:
+        lo, hi = blob.get("single_cal_p10"), blob.get("single_cal_p90")
+        if lo is not None and hi is not None and (hi - lo) > 1e-3:
+            return None, (float(lo), float(hi))
+    return clusters, cal_anchors
+
+
 def _taste_comparators(blob: dict):
     """(unit taste vectors, item -> comparable unit vector) in ONE user's own
     space: centered by that blob's corpus mean, like the owner's cosine."""
@@ -1755,10 +1772,7 @@ async def generate_deletion_proposals(
                     # drop centroid + its anchors for the scoring-side penalty.
                     corpus_mean = _blob.get("corpus_mean")
                     drop_vector = _blob.get("drop_embedding")
-                    # Multimodal pairs: score as MAX over cluster centroids
-                    # (ComiRec serving) — the blob's anchors were calibrated
-                    # against exactly that statistic.
-                    taste_clusters = _blob.get("cluster_centroids")
+                    taste_clusters, cal_anchors = _deletion_taste_basis(_blob, cal_anchors)
                     _d10, _d90 = _blob.get("drop_cal_p10"), _blob.get("drop_cal_p90")
                     drop_anchors = ((float(_d10), float(_d90))
                                     if _d10 is not None and _d90 is not None

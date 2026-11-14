@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Deletion scores against one taste centre; recommendations split only for real interests.**
+Measured on the owner's deletion log (titles kept at a proposal or protected by hand vs titles
+deleted, the watched ones left out): the one centre over his history separated them better than
+four interest clusters, AUC 0.672 vs 0.620 for films and 0.665 vs 0.616 for series. Deletion now
+reads that centre with its own calibration, also where recommendations use clusters (a profile
+from before the change keeps scoring as it was calibrated until the next hourly rebuild). And a
+profile splits into clusters only with three interests of at least 15 % each: the owner's music
+(49/30/18 %) still does, an 89/9 % anime split no longer would.
+
 **Shoko, phase 2: a weak episode is weighed by its votes, and a weak start counts too.** An
 episode's AniDB rating is now pulled toward its season's median by how few votes it has (Bayesian
 shrinkage: the median counts as five votes), instead of a hard five-vote cut that weighed five
