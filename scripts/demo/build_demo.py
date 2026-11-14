@@ -14,9 +14,10 @@ Stages, in order (--stages picks some):
 
   code      this checkout's HEAD (git archive) into <dir>/app - the code the
             screenshots show is the code you have, not the live install's
-  fetch     the newest backup, the caches (enrichment, music index, posters
-            ...) and the vector store into <dir>/app/data; the live install
-            is only read, every database is opened as a COPY
+  fetch     the newest backup, the nightly cache snapshot (enrichment,
+            music index, lyrics, anime maps, the vector store; backups/caches)
+            and the poster cache into <dir>/app/data; the live install is only
+            read, and only what is closed: its live databases never
   env       <dir>/app/.env: a fresh JWT secret; from --env-from (default this
             checkout's .env) only the model names, Ollama, the metadata keys
             and Radarr/Sonarr (read: the deletion analysis needs them); the
@@ -181,10 +182,20 @@ def stage_fetch(base: Path, source: str) -> None:
     shutil.copy2(backups[-1], data / "curatarr.db")
     if not _quick_check(data / "curatarr.db"):
         sys.exit(f"{backups[-1].name} does not pass quick_check")
+    # The caches and the vector store from the nightly cache snapshot
+    # (services/cache_snapshot): a running install's own files are open and
+    # cannot be copied safely (a share refuses them outright).
+    snap = src / "backups" / "caches"
+    if not (snap / "cache").is_dir():
+        sys.exit(f"no cache snapshot in {snap} - it is written with the nightly DB backup; run it now "
+                 "as the admin: Activity -> Scheduled -> DB backup -> Run now")
     for sub in ("cache", "chromadb"):
-        if (src / sub).is_dir():
-            say(f"fetch: {sub}/ ...")
-            say(f"  {_copy_tree(src / sub, data / sub)} files")
+        if (snap / sub).is_dir():
+            say(f"fetch: {sub}/ from the cache snapshot ...")
+            say(f"  {_copy_tree(snap / sub, data / sub)} files")
+    if (src / "cache" / "images").is_dir():
+        say("fetch: poster cache ...")
+        say(f"  {_copy_tree(src / 'cache' / 'images', data / 'cache' / 'images')} files")
     say(f"fetch: done in {time.time() - t:.0f} s")
 
 

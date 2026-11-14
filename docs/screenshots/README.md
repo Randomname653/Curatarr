@@ -22,10 +22,12 @@ python scripts/demo/build_demo.py --source <the live install's data folder>
 1. **This checkout's code** (`git archive HEAD`) in a demo folder
    (`%TEMP%/curatarr-demo` by default; it carries a `.curatarr-demo` marker
    and nothing else is ever deleted).
-2. **The live install's newest nightly backup** (`backups/curatarr_*.db`,
-   made with SQLite's backup API) as the database, with its caches and
-   vector store, so the demo has today's library and today's schema. The
-   live install is only read; each copied database is checked.
+2. **The live install's newest nightly backup** (`backups/curatarr_*.db`)
+   as the database, and the nightly cache snapshot (`backups/caches`: the
+   enrichment cache, music index, lyrics, anime maps and the vector store),
+   both made with SQLite's backup API, so the demo has today's library and
+   today's schema. A running install's own files are never copied: they
+   are open, and a share refuses them. Each copied database is checked.
 3. **Its own `.env`:** a fresh JWT secret; from your `.env` only the model
    names, Ollama, the metadata keys, and Radarr/Sonarr (read only, for the
    deletion analysis). The media server, SoulSync and the node are blank,

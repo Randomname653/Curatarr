@@ -22,6 +22,12 @@ merge as before, change your image to `:main`.
 - words: no internal names in the UI (judge, arr, custodian, bake, env names), one German word per
   concept (Kurator, Wartung, Anreicherung, Benchmark), the Knowledge Base's tab is Enrichment.
 
+**The nightly backup keeps the caches too.** Beside the database snapshot, one consistent snapshot of
+the enrichment cache, the music index, the lyrics, the anime maps and the vector store
+(`backups/caches`, the newest only, skipped when the disk is short): weeks of enrichment work now
+have a restore point. `scripts/demo/build_demo.py` builds the README's demo household from these
+snapshots and the current code, and captures the screenshots.
+
 **The setup's logo fetch checks every address, and keeps what it fetched.** Icon links in a page
 and redirects were followed unchecked; now each address is checked first (a website's stays on
 public https hosts, a LAN app's on its own host), and the logo response is sandboxed. Logos are kept
