@@ -2953,6 +2953,12 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             await run_read(_hydrate)
             logger.info("[upgrade] Targeted re-enrichment: hydrated %d items from %d keys",
                         len(items), len(specific_plex_rating_keys))
+            # The pipeline lanes are built per category: the caller's empty
+            # list made it start 0 lanes and process none of these items, every
+            # hour (NAS log 2026-11-14: "4 items across []", "0 processed").
+            # Derived here, after the force-clear above: that one wipes whole
+            # categories' caches and must stay a no-op for a targeted run.
+            categories = sorted({i["media_type"] for i in items if i.get("media_type")})
         else:
             # Step 1: collect from watch history (skip when arr-only)
             items = []
@@ -3748,7 +3754,13 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
             from src.services.app_state import set_datetime as _set_dt
             await run_write(_set_dt, "recs_invalidate_at", datetime.utcnow())
 
-        await _run_taste_computation(user_id, categories)
+        if processed:
+            await _run_taste_computation(user_id, categories)
+        else:
+            # Nothing new went in, so every taste input is what it was; the
+            # hourly upgrade pass rebuilt all four profiles (380k plays, the
+            # curator's summaries) for nothing.
+            logger.info("Taste vectors unchanged: no item enriched this run")
 
         try:
             from src.services.verification_session import start_verification_session
@@ -3781,6 +3793,11 @@ def _pipeline_start_line(total: int, categories: list) -> str:
 async def _run_taste_computation(user_id: int, categories: list = None):
     """Background: compute taste vectors for the enriched categories only."""
     from src.services.taste_engine import compute_all_taste_vectors
+    if categories is not None and not categories:
+        # [] is "no category", not "all of them" (None): compute_all_taste_vectors
+        # reads an empty list as everything.
+        logger.info("Taste vectors unchanged: no category to recompute")
+        return
     logger.info("Computing taste vectors for user %d categories=%s...", user_id, categories)
     await compute_all_taste_vectors(user_id, categories=categories)
     logger.info("Taste vectors updated for user %d", user_id)

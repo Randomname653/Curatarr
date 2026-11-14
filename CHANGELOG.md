@@ -6,6 +6,13 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Source upgrade does its job, and stops rebuilding taste every hour.** The hourly pass that
+promotes fast-tier profiles handed the pipeline an empty category list, so it laid out no lanes
+and enriched none of its items - then the empty list reached the taste rebuild, which read it as
+"all categories": every hour a full rebuild of all four profiles (the owner's 380k music plays,
+the curator's summaries, ~0.6 GB of RAM for nothing). The pass now takes its items' own
+categories, and a run that enriched nothing leaves the taste profiles alone.
+
 **Shoko, phase 2: what AniDB knows per episode.** A daily read-only job copies, for the anime the
 household watches, what Shoko keeps locally: every episode's AniDB type, number and rating with its
 votes, and the series' tags with weight and spoiler flags. A series is reached through the watched

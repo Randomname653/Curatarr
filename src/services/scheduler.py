@@ -1208,7 +1208,7 @@ async def job_source_upgrade():
             handed_off = True
             await _run_enrichment(
                 user_id=user_id,
-                categories=[],          # ignored when specific keys given
+                categories=[],          # derived from the keys' own rows
                 source="upgrade",       # ignored, just for the log
                 limit=None,
                 force=True,             # bypass the LLM-done pre-filter
