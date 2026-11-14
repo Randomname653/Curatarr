@@ -44,13 +44,36 @@ def trigger_sync(
 
 
 async def _run_sync(force: bool = False):
+    """The Sync button and the onboarding's first sync. The taste half (the
+    curator writes a summary per category) goes to the custodian's model
+    queue, as for the scheduled sync: run inline it held the onboarding's
+    progress bar for 14 minutes on a fresh install, and the follow-up then
+    wrote the same four summaries a second time (fresh-install test
+    2026-11-14)."""
     from src.services.media_server import active_kind
     if active_kind() == "jellyfin":
         from src.services.media_server.jellyfin_history import sync_history
-        result = await sync_history()
+        result = await sync_history()   # leaves the follow-up flag itself
     else:
-        result = await sync_plex_history(force=force)
+        result = await sync_plex_history(force=force, recompute_taste=False)
+        if (result or {}).get("synced", 0) > 0:
+            from datetime import datetime
+            from src.database.runner import run_write
+            from src.services.app_state import set_state
+            await run_write(set_state, "plex_followup_pending", datetime.utcnow().isoformat())
     logger.info("Sync result: %s", result)
+    await _first_maintenance_now()
+
+
+async def _first_maintenance_now() -> None:
+    """A fresh install has no users at startup, so the custodian's first
+    tick never ran; its interval came 30 minutes later, and until then
+    nothing was enriched (fresh-install test 2026-11-14). Once the first
+    sync has brought plays, start the queues now."""
+    from src.services import data_custodian as dc
+    if any(dc._first_run_done.values()):
+        return
+    await dc.custodian_tick(wait=False)
 
 
 @router.get("/status")

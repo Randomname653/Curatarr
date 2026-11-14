@@ -2347,6 +2347,97 @@ async def _collect_arr_items(categories: list) -> list:
     return items
 
 
+def _library_categories_without_arr(categories: list) -> list:
+    """The video categories no *arr lists: Radarr for films, Sonarr for
+    series and anime. For those the media server's own library is the
+    inventory; music has its own index (music_service) and stays out."""
+    out = []
+    if "movie" in categories and not (settings.RADARR_URL and settings.RADARR_API_KEY):
+        out.append("movie")
+    if not (settings.SONARR_URL and settings.SONARR_API_KEY):
+        out += [c for c in ("show", "anime") if c in categories]
+    return out
+
+
+def _library_sections(cats: list) -> list:
+    """(section key, category) of every mapped library in ``cats``."""
+    from src.database.models import LibraryConfig
+    with get_db_session() as db:
+        return [(c.plex_section_key, c.media_category)
+                for c in db.query(LibraryConfig).filter(LibraryConfig.media_category.in_(cats)).all()]
+
+
+async def _collect_library_items(categories: list) -> list:
+    """Films and series of the media server's libraries, for the categories
+    no *arr covers. Without this an install on Plex or Jellyfin alone only
+    ever enriched what someone had watched: its unwatched library never got
+    a profile, so recommendations from the collection had nothing to pick
+    from (fresh-install test 2026-11-14). One item per film / series; the
+    run puts these behind the watched titles."""
+    cats = _library_categories_without_arr(categories)
+    if not cats:
+        return []
+    sections = await run_read(_library_sections, cats)
+    if not sections:
+        return []
+    from src.services.media_server import get_adapter
+    from src.services.media_server.base import Library
+    items: list = []
+    try:
+        ad = get_adapter()
+        for key, cat in sections:
+            kind = "movie" if cat == "movie" else "show"
+            lib = Library(key=str(key), title="", kind=kind)
+            async for it in ad.items(lib, kinds=("movie",) if kind == "movie" else ("series",)):
+                ids = it.external_ids
+                is_series = kind == "show"
+                items.append({
+                    "plex_rating_key": it.key,
+                    "title": it.title,
+                    "series_title": it.title if is_series else None,
+                    "media_type": cat,
+                    "tmdb_id": ids.tmdb_id,
+                    "tvdb_id": ids.tvdb_id,
+                    "imdb_id": ids.imdb_id,
+                    "year": it.year,
+                    "source": "library",
+                })
+    except Exception as e:  # noqa: BLE001 - the watched titles still run
+        logger.warning("Library collect failed: %s", e)
+    logger.info("Library collect (%s): %d items", ", ".join(cats), len(items))
+    return items
+
+
+def _enrichment_order(items: list, enriched_at: dict) -> list:
+    """The order a run takes its items in, before its budget cuts the list:
+
+    1. never enriched before a refresh of an old profile;
+    2. watched titles before the rest of the library - the taste vectors
+       are built from what was watched, so those profiles come first;
+    3. the categories in turn: the k-th film next to the k-th artist. The
+       cut used to come before the turn-taking, and a library with 3,400
+       listened artists filled all 2,000 places with music; not one film
+       was in the first run (fresh-install test 2026-11-14).
+
+    Refreshes keep oldest-first. ``enriched_at`` maps (title, category) to
+    the last enrichment time."""
+    rank: dict = {}
+    keyed = []
+    for it in items:
+        key = ((it.get("series_title") or it["title"]), it["media_type"])
+        ts = enriched_at.get(key)
+        watched = 0 if it.get("source") == "watch_history" else 1
+        if ts is None:
+            slot = (0, watched)
+            n = rank.get((slot, it["media_type"]), 0)
+            rank[(slot, it["media_type"])] = n + 1
+            keyed.append(((0, watched, n, 0.0), it))
+        else:
+            keyed.append(((1, 0, 0, ts.timestamp()), it))
+    keyed.sort(key=lambda kv: kv[0])
+    return [it for _, it in keyed]
+
+
 _BATCH_SIZE = 10       # items per category per rotation slice
 # Pass 99-fu3: queue depth raised from 30 → 500 so the parallel producer
 # can stay well ahead of the LLM consumer. The consumer at ~5 s/item runs
@@ -2990,6 +3081,13 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                         items.append(ai)
                         watch_keys.add(key)
                 logger.info("After ARR merge: %d total items", len(items))
+                # The library itself where no *arr lists it (Plex or
+                # Jellyfin alone), behind the watched titles.
+                for li in await _collect_library_items(categories):
+                    key = (li.get("series_title") or li["title"]).lower().strip()
+                    if key and key not in watch_keys:
+                        items.append(li)
+                        watch_keys.add(key)
 
             # Step 3: deduplicate
             deduped: list = []
@@ -3199,19 +3297,7 @@ async def _run_enrichment(user_id: int, categories: list, source: str,
                     }
 
             ts_map = await run_read(_load_ts_map)
-
-            def _priority_key(it):
-                key = ((it.get("series_title") or it["title"]), it["media_type"])
-                ts = ts_map.get(key)
-                # First component: 0 = never enriched (top priority),
-                # 1 = has a previous enriched_at (TTL-refresh path).
-                # Second component: timestamp for ascending sort within
-                # group 1; ignored for group 0 (all equal).
-                if ts is None:
-                    return (0, 0.0)
-                return (1, ts.timestamp())
-
-            items.sort(key=_priority_key)
+            items = _enrichment_order(items, ts_map)
             fresh_count = sum(1 for it in items
                               if ts_map.get(((it.get("series_title") or it["title"]),
                                              it["media_type"])) is None)

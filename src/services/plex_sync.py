@@ -598,9 +598,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 local_id = str(acc.get("id", ""))
                 name = (acc.get("name") or acc.get("title") or "").strip()
                 local_account_map[local_id] = name  # store name for now, resolve to User below
-            logger.info("Plex /accounts returned %d entries: %s",
-                        len(local_account_map),
-                        {k: v for k, v in local_account_map.items()})
+            # The names stay out of INFO: a server with shared libraries lists
+            # every account it ever saw (249 on the owner's), and the log is
+            # what people attach to a bug report.
+            logger.info("Plex /accounts returned %d entries", len(local_account_map))
+            logger.debug("Plex /accounts: %s", local_account_map)
     except Exception as e:
         logger.warning("Could not fetch /accounts: %s", e)
 
@@ -717,10 +719,12 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 # High numeric IDs (like 216511115) are plex.tv managed users
                 # — they'll be caught by plex_id_to_user instead
 
-            logger.info("Resolved account map: %s",
-                        {k: v.plex_username for k, v in resolved_account_map.items()})
-            logger.info("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
-            logger.info("local_account_map (raw names): %s", local_account_map)
+            logger.info("Resolved account map: %d of %d server accounts are members here",
+                        len(resolved_account_map), len(local_account_map))
+            logger.debug("Resolved account map: %s",
+                         {k: v.plex_username for k, v in resolved_account_map.items()})
+            logger.debug("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
+            logger.debug("local_account_map (raw names): %s", local_account_map)
 
             # Get existing entries to deduplicate. ``near`` holds their unix
             # times per (user, item): a history event whose seconds differ from

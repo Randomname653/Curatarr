@@ -152,6 +152,7 @@ NOT_OWNED = {
     "auth GET /plex/poll/{pin_id}": "PIN nonce checked in the handler, pre-login",
     "auth GET /jellyfin/quickconnect/{login_id}": "login nonce checked (pinned below), pre-login",
     "setup GET /jellyfin/connect/{login_id}": "login nonce checked (pinned below), admin or first run",
+    "setup GET /plex/connect/{login_id}": "login nonce checked (pinned below), admin or first run",
     "library GET /items/{service}": "an arr service name",
     "library GET /search/{service}": "an arr service name",
 }
@@ -189,6 +190,12 @@ check("Jellyfin setup connect: another browser's nonce is refused",
       jc.check_pending(sid, "a-guess") is None and jc.check_pending(sid, "") is None)
 check("Jellyfin setup connect: the starting browser gets its code",
       jc.check_pending(sid, snonce) == ("secret", "device", "http://jf.local"))
+from src.services.media_server import plex_connect as pc  # noqa: E402
+pid, pnonce = pc.bind_pending(4711, "curatarr-test")
+check("Plex setup connect: another browser's nonce is refused",
+      pc.check_pending(pid, "a-guess") is None and pc.check_pending(pid, "") is None)
+check("Plex setup connect: the starting browser gets its PIN",
+      pc.check_pending(pid, pnonce) == (4711, "curatarr-test"))
 
 main_src = (ROOT / "src/main.py").read_text(encoding="utf-8")
 admin_routers = set(re.findall(r"include_router\((\w+)\.router[^)]*?dependencies=_ADMIN_ONLY",

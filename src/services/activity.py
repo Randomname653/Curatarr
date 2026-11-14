@@ -278,7 +278,7 @@ def scheduled_overview() -> dict:
                   else f"every {tick_minutes} min")
 
     jobs: list = []
-    for t in dc._registry():
+    for t in dc.active_registry():
         last = _last_job_run(t.job_id)
         rec = dc.last_result(t.job_id)
         due = _job_overdue(t.job_id, t.cadence_h)

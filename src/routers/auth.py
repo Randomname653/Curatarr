@@ -495,7 +495,18 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
     auth_token = data.get("authToken")
     if not auth_token:
         return {"status": "pending"}
+    out = await login_with_plex_token(auth_token, client_id, background_tasks)
+    _pin_bindings.pop(int(pin_id), None)   # one PIN, one session
+    return out
 
+
+async def login_with_plex_token(auth_token: str, client_id: Optional[str],
+                                background_tasks: BackgroundTasks) -> dict:
+    """A plex.tv account token -> a Curatarr session: the account looked up,
+    membership checked (the first account must own the configured server),
+    the user found or created. The PIN poll above and the setup wizard's
+    finish (one plex.tv sign-in configures the server and signs the owner in)
+    both end here."""
     # Fetch Plex account details
     async with httpx.AsyncClient(verify=tls_context()) as client:
         user_resp = await client.get(
@@ -566,7 +577,6 @@ async def poll_plex_pin(pin_id: int, request: Request, background_tasks: Backgro
     user_id, is_admin, token_version, username = info
 
     token = _create_jwt(user_id, is_admin, token_version)
-    _pin_bindings.pop(int(pin_id), None)   # one PIN, one session
     from src.database.runner import run_read
     from src.services.user_language import ui_language, user_locale
     return {

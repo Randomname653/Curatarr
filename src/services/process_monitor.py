@@ -77,6 +77,15 @@ SYSTEM_PROCESSES: frozenset[str] = frozenset({
     "mpv.exe", "wmplayer.exe",
     "obs64.exe", "obs32.exe", "streamlabs obs.exe",
     "code.exe", "cursor.exe", "windsurf.exe",
+    # Asked on a fresh install's first page (2026-11-14): a browser, an AI
+    # desktop app, a mod manager and local model servers - all big, none a
+    # game. A model server holds the card, but the GPU-pressure gate sees
+    # that by itself.
+    "zen.exe", "librewolf.exe", "waterfox.exe", "floorp.exe", "arc.exe",
+    "claude.exe", "chatgpt.exe", "lm studio.exe", "lmstudio.exe",
+    "ollama.exe", "ollama app.exe", "llama-server.exe", "koboldcpp.exe",
+    "vortex.exe", "modorganizer.exe", "playnite.desktopapp.exe",
+    "plex.exe", "plex media server.exe", "jellyfin.exe", "jellyfinmediaplayer.exe",
     "idea64.exe", "webstorm64.exe", "pycharm64.exe", "rider64.exe",
     "devenv.exe", "notepad++.exe", "notepad.exe", "wordpad.exe",
     "python.exe", "pythonw.exe", "python3.exe",
