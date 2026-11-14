@@ -53,6 +53,30 @@
    No env-var names, column names or internal ids in user-facing text.
    COLOUR CONTRAST — the text ladder and --danger-fg clear 4.5:1 on every
    surface; a solid danger fill is --danger-fill with white text only.
+
+   SURFACES (2026-10/11, the newer layer — new UI uses these):
+     --glass + --glass-blur   floating chrome and dialogs (topbar, dock,
+                              menus, the bell panel, .dialog-shell)
+     --hairline(-strong)      card and panel borders; --border stays for
+                              controls (inputs, chips' inner edge)
+     --shadow-1/2/3 + --specular   resting card / raised popover / dialog
+     --radius / --radius-lg / --radius-xl / --radius-poster
+                              control / card / dialog / poster
+     --fs-xs … --fs-2xl       the type scale; 12-13px body text in dense
+                              views, --fs-md (14px) in the first-run screens
+     --dur-1/2/3 + --ease-spring   every transition and spring
+     --on-amber               text and icons on an amber fill
+   COLOUR ROLES, completed: success green marks confirmations AND finished
+   states (enrichment done, a sync that finished); --info is for neutral
+   information badges; --loved is the Swipe/heart colour only.
+   SHARED PIECES beyond the grammar: .chip (one selected look:
+   amber outline on --amber-dim), .banner, .segmented, input.switch,
+   .pref-row, .status / setStatus(), skeletonHtml() for loading,
+   emptyHtml() for empty, .dialog-shell for first-run dialogs, the .wiz-*
+   cards of the setup (choice card, status row, plan, checklist).
+   Full-screen experiences that are NOT dialogs and may own their overlay:
+   the Wrap-Up story (.wus), the shutdown screen (.sd-overlay), Swipe's
+   exact view.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   --bg: #1a1d23;
@@ -1216,7 +1240,7 @@ select option { background: var(--bg2); }
 
 /* ══ MOBILE APP SHELL ════════════════════════════════════════════════════════
    Phones (≤768px) get an app, not a shrunken desktop: a bottom tab bar in
-   thumb reach (Chat · For you · Swipe · Library · More), dialogs as bottom
+   thumb reach (For you · Swipe · Chat · Deletions or History · More), dialogs as bottom
    sheets, horizontally scrolling tabs, pull-to-refresh, and every edge padded
    for the notch and home indicator. Same tokens, same amber — only the
    arrangement changes. Behaviour lives in js/mobile.js. */

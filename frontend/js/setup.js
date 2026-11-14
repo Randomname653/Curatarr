@@ -1099,6 +1099,15 @@ export async function logout() {
   state.token=''; localStorage.removeItem('curatarr_token'); location.reload();
 }
 
+// The sidebar's Sign out: this device only. It called logout() too, so it
+// signed every phone and tablet out as well, the same as Settings' "Sign
+// out everywhere" next to it (UI audit 2026-11-14).
+export function logoutHere() {
+  state.token = '';
+  try { localStorage.removeItem('curatarr_token'); } catch (_) { /* private mode: the tab forgets it */ }
+  location.reload();
+}
+
 // The Pitcher checkbox shows or hides the model picker beneath it.
 export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').hidden = !el.checked; renderAiPlan(); }
 
