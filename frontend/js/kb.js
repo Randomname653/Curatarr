@@ -1,6 +1,6 @@
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
 // Two questions, two result areas — the second answer no longer overwrites the first.
-import { CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
+import { skeletonHtml, CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
@@ -278,7 +278,8 @@ let _kbPollTimer = null;
 export async function loadEnrichStatus() {
   if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
   const el = document.getElementById('enrich-overview');
-  if (el && !el.innerHTML) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  // The first open reads the whole library (seconds on a fresh install): its shape, not a bare line.
+  if (el && !el.innerHTML) el.innerHTML = skeletonHtml(t('common.loading'), {kind: 'tiles'});
   try {
     // A failed status or custodian read used to fall back to {} / null:
     // "not running" in the middle of a run, and the 8 s refresh stopped. It

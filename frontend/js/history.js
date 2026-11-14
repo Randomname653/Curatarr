@@ -2,7 +2,7 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, menuHtml, setStatus, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, menuHtml, setStatus, skeletonHtml, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 import { serverLabel, state } from './state.js';
@@ -105,6 +105,8 @@ function _renderHistoryMore() {
 
 export async function loadHistoryStatus() {
   _renderHistoryMore();
+  const stats = document.getElementById('history-stats');
+  if (stats && !stats.innerHTML) stats.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows', n: 3});
   loadHistorySources();
   try {
     const s = await _swrRun('history-stats', () => api('/api/history/status'), _renderHistoryStats);
