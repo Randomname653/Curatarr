@@ -152,10 +152,16 @@ def _copy_tree(src: Path, dst: Path) -> int:
             if f.endswith(("-shm", "-wal", "-journal")):
                 continue
             s, d = Path(root) / f, dst / rel / f
-            if f.endswith((".db", ".sqlite3")):
-                _copy_sqlite(s, d)
-            else:
-                shutil.copy2(s, d)
+            try:
+                if f.endswith((".db", ".sqlite3")):
+                    _copy_sqlite(s, d)
+                else:
+                    shutil.copy2(s, d)
+            except PermissionError:
+                # a file the share does not let this account read (another
+                # owner on the NAS): a cache the app rebuilds, so named, not fatal
+                say(f"  skipped {rel / f}: not readable here")
+                continue
             n += 1
     return n
 
