@@ -15,6 +15,7 @@ ChromaDB rather than at import time.
 """
 
 import asyncio
+import collections
 import logging
 import threading
 import time as _time
@@ -627,6 +628,79 @@ class ChromaDBWrapper:
                             (str(new), str(old)))
             con.commit()
         return moved
+
+    # ── theme vectors for taste (taste engine stage 3, music) ──────────────
+    # Measured 2026-11-14 on the owner's history (which newly heard artists
+    # does he come back to, 5+ plays): a centre over the THEME phrases of
+    # what he plays ranks them at AUC 0.57 at three cut points, where the
+    # whole-profile embedding sat at 0.50 and the genre overlap at 0.41.
+
+    def theme_vectors_by_title(self, domain: str, titles) -> dict:
+        """{title: unit phrase vectors (n x d)} for the titles of ``domain``
+        that carry theme facets, matched by name (letters and digits, any
+        case): a Plex artist shares its profile with the same-named entry
+        from the play history. Titles without facets are left out."""
+        import re as _re
+        def key(t):
+            return _re.sub(r"[^a-z0-9]", "", str(t or "").lower())
+        want: dict = {}
+        for t in titles:
+            if key(t):
+                want.setdefault(key(t), []).append(t)
+        if not want:
+            return {}
+        parent_of: dict = {}
+        phrases: dict = collections.defaultdict(list)
+        for parent, title, pid in self._map_rows(
+                "SELECT parent, title, phrase_id FROM facet_map WHERE domain = ? AND facet = 'theme'",
+                (domain,)):
+            k = key(title)
+            if k not in want:
+                continue
+            if k not in parent_of or parent < parent_of[k]:   # one profile per name
+                parent_of[k] = parent
+            phrases[(k, parent)].append(pid)
+        pids = list(dict.fromkeys(p for k, par in parent_of.items() for p in phrases[(k, par)]))
+        vec = self._phrase_vectors(pids)
+        out = {}
+        for k, par in parent_of.items():
+            rows = [vec[p] for p in phrases[(k, par)] if p in vec]
+            if rows:
+                block = np.asarray(rows, dtype=np.float32)
+                block /= np.maximum(np.linalg.norm(block, axis=1, keepdims=True), 1e-9)
+                for t in want[k]:
+                    out[t] = block
+        return out
+
+    def _phrase_vectors(self, pids: list, page: int = 2000) -> dict:
+        coll = self._phrases_collection()
+        out = {}
+        for i in range(0, len(pids), page):
+            got = coll.get(ids=pids[i:i + page], include=["embeddings"])
+            emb = got.get("embeddings")
+            if emb is None:
+                continue
+            for pid, e in zip(got.get("ids") or [], emb):
+                out[pid] = np.asarray(e, dtype=np.float32)
+        return out
+
+    def theme_mean(self, domain: str, page: int = 2000) -> Optional[np.ndarray]:
+        """The mean of the domain's unit phrase vectors - the centre a theme
+        score is taken against (the space is anisotropic: uncentred, every
+        phrase sits near every other). Paged, so it never holds the corpus."""
+        pids = [p for (p,) in self._map_rows(
+            "SELECT DISTINCT phrase_id FROM facet_map WHERE domain = ? AND facet = 'theme'", (domain,))]
+        total, n = None, 0
+        for i in range(0, len(pids), page):
+            block = np.asarray(list(self._phrase_vectors(pids[i:i + page], page).values()),
+                               dtype=np.float32)
+            if not len(block):
+                continue
+            block /= np.maximum(np.linalg.norm(block, axis=1, keepdims=True), 1e-9)
+            s = block.sum(0)
+            total = s if total is None else total + s
+            n += len(block)
+        return (total / n).astype(np.float32) if n else None
 
     def facets_count(self) -> int:
         """Facet rows (title x phrase), as the per-title index counted points."""

@@ -6,6 +6,16 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Music recommendations rank by the themes you listen to.** Taste engine stage 3, measured
+before it was built: on the owner's ten-year history, which newly heard artists did he come back
+to (5+ plays)? A centre over the theme phrases of what he plays found them at AUC 0.57 at three
+time cuts; the whole-profile embedding sat at chance (0.50) and the genre overlap the music
+ranking mostly fell back to below it (0.41). Music candidates now rank by that centre (artists
+are matched to their theme phrases by name, so Plex artists find their profile too); one without
+themes keeps the old order behind. Video measured no such gain and is unchanged. Reading the
+phrase vectors loads the phrase index (~380 MB) for the taste rebuild and a music ranking; the
+idle release frees it again.
+
 **Activity: the running row's tint follows its bar.** The amber tint behind a running task was
 a fixed gradient over the first 40 % of the row, whatever the progress. It now fills the row to
 the task's percentage and glides with it, and sweeps along with the bar while the count is unknown.

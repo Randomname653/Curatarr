@@ -515,6 +515,59 @@ def _domain_corpus_mean(category: str):
         return None
 
 
+THEME_CENTROID_MIN = 20   # titles with theme facets needed for a centre
+
+
+def _theme_centroid(domain: str, weighted_titles: list) -> Optional[dict]:
+    """Taste engine stage 3 (music): the user's centre over the THEME
+    phrases of what they play, against the domain's phrase mean.
+
+    Measured 2026-11-14 on the owner's history, three time cuts (does a
+    newly heard artist get 5+ plays?): AUC 0.57/0.57/0.58 for this centre,
+    0.50/0.48/0.52 for the whole-profile embedding, 0.45/0.41/0.40 for the
+    genre overlap the music ranking fell back to. Video showed no such
+    gain, so only music builds one. Blocking: Chroma thread.
+
+    ``weighted_titles``: [(weight, title)] with weight > 0. Returns
+    {"centroid", "mean", "titles"} or None when too few carry themes."""
+    import numpy as np
+    from src.vector_store.chromadb_wrapper import get_chroma_db
+    db = get_chroma_db()
+    vecs = db.theme_vectors_by_title(domain, [t for _w, t in weighted_titles])
+    if len(vecs) < THEME_CENTROID_MIN:
+        return None
+    mean = db.theme_mean(domain)
+    if mean is None:
+        return None
+    acc = np.zeros_like(mean)
+    used = 0
+    for w, t in weighted_titles:
+        block = vecs.get(t)
+        if block is None:
+            continue
+        tv = (block - mean).mean(0)
+        n = float(np.linalg.norm(tv))
+        if n > 0:
+            acc += w * tv / n
+            used += 1
+    n = float(np.linalg.norm(acc))
+    if not used or n == 0:
+        return None
+    return {"centroid": [float(x) for x in acc / n], "mean": [float(x) for x in mean], "titles": used}
+
+
+def theme_score(blocks, theme: dict) -> Optional[float]:
+    """Cosine of one title's centred theme vector (rows: its unit phrase
+    vectors) to the user's centre."""
+    import numpy as np
+    mean = np.asarray(theme["mean"], dtype=np.float32)
+    tv = (blocks - mean).mean(0)
+    n = float(np.linalg.norm(tv))
+    if n == 0:
+        return None
+    return float(np.dot(tv / n, np.asarray(theme["centroid"], dtype=np.float32)))
+
+
 def _cluster_centroids(pos_titled: list, max_k: int = 5,
                        corpus_mean=None) -> Optional[list]:
     """Spherical k-means over the positive watch embeddings — the
@@ -1398,6 +1451,16 @@ async def compute_taste_vector_for_user(
         await run_chroma(lambda: _cluster_centroids(
             _pos_titled, corpus_mean=_domain_corpus_mean(category)))
         if multimodal and len(_pos) >= 40 else None)
+    theme_centroid = None
+    if category == "music" and _pos_titled:
+        try:
+            theme_centroid = await run_chroma(
+                _theme_centroid, "music", [(w, t) for _e, w, t in _pos_titled if t])
+        except Exception as e:  # noqa: BLE001 - the music ranking keeps its fallback
+            logger.warning("[taste] %s/music: theme centre not built: %s", user_id, e)
+        if theme_centroid:
+            logger.info("[taste] %s/music: theme centre over %d artists",
+                        user_id, theme_centroid["titles"])
     if cluster_centroids:
         logger.info("[taste] %s/%s: %d taste clusters: %s",
                     user_id, category or "all", len(cluster_centroids),
@@ -1458,6 +1521,7 @@ async def compute_taste_vector_for_user(
         "embedding": taste_embedding,
         "drop_embedding": drop_embedding,   # eval 2.3: scoring-side repulsion
         "cluster_centroids": cluster_centroids,   # multimodal pairs only
+        "theme_centroid": theme_centroid,   # music only (stage 3)
         "pre_norm": round(pre_norm, 4),     # multimodality diagnostic
         "embedding_items": len(embeddings_weights),
         "total_entries": len(entries),
@@ -1628,6 +1692,7 @@ def _store_taste_blobs(user_id: int, all_results: dict, summary_parts: list, sum
                     "embedding": res["embedding"] if res.get("embedding") else None,
                     "drop_embedding": res.get("drop_embedding"),
                     "cluster_centroids": res.get("cluster_centroids"),
+                    "theme_centroid": res.get("theme_centroid"),
                     "pre_norm": res.get("pre_norm"),
                     "embedding_items": res.get("embedding_items", 0),
                     "binges": res.get("binges", []),

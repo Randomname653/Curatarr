@@ -1102,8 +1102,9 @@ def recommendation_score_factors(*, lane: str, confidence=None, fit: dict | None
     fit = fit or {}
     if fit.get("rank"):
         rank, pool = fit["rank"], fit.get("pool") or fit["rank"]
-        basis = ("closeness to your watch history" if fit.get("basis") == "embedding"
-                 else "overlap with the genres you watch")
+        basis = {"embedding": "closeness to your watch history",
+                 "themes": "closeness to the themes of what you listen to"}.get(
+                     fit.get("basis"), "overlap with the genres you watch")
         f = {"key": "taste", "rank": rank, "of": pool,
              "label": f"#{rank} of {pool} unwatched titles in your library by {basis}"}
         if fit.get("cosine") is not None:
@@ -3568,6 +3569,7 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
             # Assigned only inside the blob branch below — a category with genre
             # stats but no blob yet (nothing embedded) raised UnboundLocalError.
             user_clusters = None
+            theme = None
             disliked_lc: set = set()
             encrypted = db.query(EncryptedTasteVector).filter(
                 EncryptedTasteVector.user_id == user_id,
@@ -3589,6 +3591,7 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
                     _blob = {}
                 user_vector = _blob.get("embedding")
                 user_clusters = _blob.get("cluster_centroids")
+                theme = _blob.get("theme_centroid") if category == "music" else None
                 # its own step: one odd dislike entry used to throw away the
                 # taste vector parsed just above
                 try:
@@ -3597,17 +3600,32 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
                 except TypeError as e:
                     logger.warning("[recs] %s disliked_titles unreadable — ranking "
                                    "without recorded dislikes: %r", category, e)
-        return type_data, user_vector, user_clusters, disliked_lc
+        return type_data, user_vector, user_clusters, disliked_lc, theme
 
-    type_data, user_vector, user_clusters, disliked_lc = await run_read(_taste)
+    type_data, user_vector, user_clusters, disliked_lc, theme = await run_read(_taste)
 
     ts = type_data.get(category, {}) if isinstance(type_data, dict) else {}
     genre_affinity = {g.lower(): s for g, s in (ts.get("genre_affinity") or {}).items()}
 
     # No taste signal at all → nothing to rank by; preserve the old
     # "just take the first top_n" behavior.
-    if not user_vector and not genre_affinity:
+    if not user_vector and not genre_affinity and not theme:
         return items[:top_n]
+
+    # Music ranks by the THEME centre first (taste engine stage 3): on the
+    # owner's history it found the artists he comes back to (AUC 0.57) where
+    # the whole-profile cosine (0.50) and the genre overlap (0.41) did not.
+    # Artists are matched to their facets by name; one without themes keeps
+    # the old order below.
+    theme_blocks: dict = {}
+    if theme:
+        from src.vector_store.chromadb_wrapper import get_chroma_db, run_chroma
+        try:
+            theme_blocks = await run_chroma(lambda: get_chroma_db().theme_vectors_by_title(
+                "music", [it.get("title") for it in items if it.get("title")]))
+        except Exception as e:  # noqa: BLE001 - the old order stands
+            logger.warning("[recs] music theme vectors unreadable - old ranking: %s", e)
+            theme_blocks = {}
 
     # Rank-based flags instead of flat score bonuses (eval finding 1.2):
     # the observed cosine band is only ~0.14 wide (anisotropic space), so
@@ -3689,25 +3707,35 @@ async def score_arr_items(user_id: int, category: str, items: list, top_n: int =
     # Pure CPU (normalize + dot per item, ~100 ms per 5k items) in one worker
     # thread; everything it reads was fetched above — no DB/Chroma in here.
     def _rank_all() -> list:
+        from src.services.taste_engine import theme_score
+        themed: list = []
         vectored: list = []
         genre_only: list = []
         for item in items:
+            blocks = theme_blocks.get(item.get("title")) if theme_blocks else None
+            ts = theme_score(blocks, theme) if blocks is not None else None
+            if ts is not None:
+                themed.append(((_dislike_rank(item), ts, _monitored_rank(item)), item))
+                continue
             vs = _vector_score(item)
             if vs is not None:
                 vectored.append(((_dislike_rank(item), vs, _monitored_rank(item)), item))
             else:
                 genre_only.append(((_dislike_rank(item), _genre_score(item),
                                     _monitored_rank(item)), item))
+        themed.sort(key=lambda t: t[0], reverse=True)
         vectored.sort(key=lambda t: t[0], reverse=True)
         genre_only.sort(key=lambda t: t[0], reverse=True)
-        # Enriched items first (real semantic taste-fit), genre-only fallback after.
-        ranked = ([("embedding", k, it) for k, it in vectored]
+        # Enriched items first (real semantic taste-fit), genre-only fallback after;
+        # for music the theme-ranked artists lead.
+        ranked = ([("themes", k, it) for k, it in themed]
+                  + [("embedding", k, it) for k, it in vectored]
                   + [("genres", k, it) for k, it in genre_only])
         # Copies, not the arr dicts: those are the shared library cache, and
         # the fit is this user's. "_rec_fit" feeds the rec card's "Why?".
         return [{**it, "_rec_fit": {
                     "basis": basis, "rank": n, "pool": len(ranked),
-                    "cosine": round(k[1], 4) if basis == "embedding" else None,
+                    "cosine": round(k[1], 4) if basis in ("embedding", "themes") else None,
                     "genres": _genres_matched(it), "disliked": k[0] == 0}}
                 for n, (basis, k, it) in enumerate(ranked, 1)]
 
