@@ -851,10 +851,21 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
 def _load_watch_entries(user_id: int, category: Optional[str]) -> list:
     """The user's watch history as plain dicts, newest first. Blocking — run
     it with ``asyncio.to_thread``. Selects the nine columns the rebuild reads
-    rather than whole ORM rows (≈350k for the owner's music)."""
+    rather than whole ORM rows (≈350k for the owner's music).
+
+    Anime plays Shoko placed on no regular episode (a recap special, credits,
+    a trailer) are left out: neither a finished episode nor a drop
+    (services/shoko_meta.non_regular_play_ids)."""
     W = WatchHistoryEntry
+    skip: set = set()
+    if category in (None, "anime", "show"):
+        try:
+            from src.services.shoko_meta import non_regular_play_ids
+            skip = non_regular_play_ids(user_id)
+        except Exception as e:  # noqa: BLE001 - the history stands as it is
+            logger.warning("[taste] Shoko episode types unreadable: %s", e)
     cols = (W.plex_item_id, W.title, W.series_title, W.media_type, W.genres,
-            W.duration_ms, W.view_offset_ms, W.completed, W.viewed_at)
+            W.duration_ms, W.view_offset_ms, W.completed, W.viewed_at, W.id)
     names = ("plex_item_id", "title", "series_title", "media_type", "genres",
              "duration_ms", "view_offset_ms", "completed", "viewed_at")
     # 350k plays are ~18k distinct tracks: sqlite hands back a NEW str per
@@ -870,6 +881,8 @@ def _load_watch_entries(user_id: int, category: Optional[str]) -> list:
             q = q.filter(W.media_type == category)
         q = q.order_by(W.viewed_at.desc()).execution_options(yield_per=5000)
         for row in q:
+            if skip and row[-1] in skip:
+                continue
             out.append({n: (share(v, v) if n in text_cols and isinstance(v, str) else v)
                         for n, v in zip(names, row)})
     return out

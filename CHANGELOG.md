@@ -6,6 +6,14 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Shoko, phase 2: recaps don't count, and the curator reads AniDB's tags.** A play Shoko placed on
+no regular episode (AniDB files recaps as specials; Plex often numbers them S01E13) is now neither
+a finished episode nor a drop: the taste profile and the openers skip it, and "where you stopped"
+is the last regular episode before it. The curator's anime block gains the series' AniDB tags,
+strongest first: spoilers left out, and what says nothing about the series too (countries and
+cities under AniDB's "Earth", "present", source material, audience, origin, the tag tree's own
+root names), read through the tag tree once per refresh.
+
 **Source upgrade does its job, and stops rebuilding taste every hour.** The hourly pass that
 promotes fast-tier profiles handed the pipeline an empty category list, so it laid out no lanes
 and enriched none of its items - then the empty list reached the taste rebuild, which read it as

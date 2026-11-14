@@ -238,9 +238,21 @@ class ShokoSession:
         got = await self._get(f"/Series/{int(series_id)}/Tags", {"excludeDescriptions": "true"})
         if not isinstance(got, list):
             return None
-        return [{"name": t.get("Name") or "", "weight": int(t.get("Weight") or 0),
+        return [{"id": t.get("ID"), "name": t.get("Name") or "", "weight": int(t.get("Weight") or 0),
                  "spoiler": bool(t.get("IsSpoiler") or t.get("IsLocalSpoiler"))}
                 for t in got if isinstance(t, dict) and t.get("Name")]
+
+    async def tag_tree(self) -> Optional[dict]:
+        """{tag id: parent id or None} of every AniDB tag, in one call (1,563
+        on 2026-11-14). A series' tags name only their direct parent; the
+        branch a tag hangs in is read by walking this up."""
+        got = await self._get("/Tag/AniDB", {"pageSize": 0, "excludeDescriptions": "true",
+                                             "onlyVerified": "false"})
+        rows = got.get("List") if isinstance(got, dict) else got
+        if not isinstance(rows, list):
+            return None
+        return {t["ID"]: t.get("ParentID") for t in rows
+                if isinstance(t, dict) and isinstance(t.get("ID"), int)}
 
     async def episode_user_data(self, episode_id: int) -> Optional[dict]:
         d = await self._get(f"/Episode/{int(episode_id)}/UserData")

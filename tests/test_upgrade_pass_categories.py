@@ -43,9 +43,9 @@ finally:
 # ── 2. the upgrade pass gets lanes for its own items ───────────────────────
 with conn.get_db_session() as db:
     db.add(User(id=1, plex_user_id="1", plex_username="owner", is_admin=True, is_active=True))
-    db.add(EnrichmentStatus(plex_rating_key="m1", title="Heat", media_category="movie",
+    db.add(EnrichmentStatus(plex_rating_key="m1", title="Glass Meridian", media_category="movie",
                             enriched=True, fetch_tier="fast", provisional=True))
-    db.add(EnrichmentStatus(plex_rating_key="a1", title="Frieren", media_category="anime",
+    db.add(EnrichmentStatus(plex_rating_key="a1", title="Lantern Row", media_category="anime",
                             enriched=True, fetch_tier="fast", provisional=True))
 
 
