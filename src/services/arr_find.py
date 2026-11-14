@@ -64,6 +64,40 @@ async def _probe(client: httpx.AsyncClient, url: str) -> Optional[str]:
     return which_app(r.text[:4000])
 
 
+# Ollama's own default, then the TrueNAS SCALE app's.
+OLLAMA_PORTS = (11434, 30068)
+
+
+async def _ollama_models(client: httpx.AsyncClient, url: str) -> Optional[int]:
+    from src.services.media_server.jellyfin_connect import _allowed
+    if not await _allowed(url):
+        return None
+    try:
+        r = await client.get(f"{url}/api/tags")
+        if r.status_code != 200:
+            return None
+        return len((r.json() or {}).get("models") or [])
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+async def find_ollama(hosts: list[str], *, transport=None) -> list[dict]:
+    """Every Ollama that answers ``/api/tags``: ``[{url, models}]``, the
+    hosts in the order given, then the Docker host and this machine."""
+    from src.services.media_server.jellyfin_connect import _gateway
+    order: list[str] = []
+    for h in [*hosts, _gateway(), "host.docker.internal", "localhost"]:
+        h = clean_host(h)
+        if h and h not in order:
+            order.append(h)
+    cands = [f"http://{f'[{h}]' if ':' in h else h}:{p}" for h in order for p in OLLAMA_PORTS]
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, transport=transport) as c:
+        counts = await asyncio.gather(*(_ollama_models(c, u) for u in cands))
+    found = [{"url": u, "models": n} for u, n in zip(cands, counts) if n is not None]
+    logger.info("[setup] looked for Ollama at %d addresses: %d found", len(cands), len(found))
+    return found
+
+
 async def find_arrs(hosts: list[str], *, transport=None) -> dict:
     """``{app: url}`` for each arr app found, the first host that answered.
     ``hosts`` in the order to prefer."""

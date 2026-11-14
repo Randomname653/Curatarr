@@ -301,4 +301,36 @@ check("...ready once enough films and series have a profile",
       dc._collections_ready()[2] >= 20)
 _cd.design_collections, _pc.push_collections = _real
 
+# ── Docker: the code first, said where it is; Ollama looked for ─────────────
+import src.routers.auth as auth_mod  # noqa: E402
+_real_in = auth_mod.in_container
+auth_mod.in_container = lambda: True
+check("in a container the setup code is pointed to in the container's log",
+      "docker logs curatarr" in auth_mod.setup_code_hint() and "start.bat" not in auth_mod.setup_code_hint())
+auth_mod.in_container = lambda: False
+check("...on Windows in the console window", "start.bat" in auth_mod.setup_code_hint())
+auth_mod.in_container = _real_in
+
+req = SimpleNamespace(client=SimpleNamespace(host="192.168.0.207"), headers={"host": "192.168.0.189:30899"})
+with get_db_session() as db:
+    db.query(__import__("src.database.models", fromlist=["User"]).User).delete()
+    db.commit()
+    check("a browser on another device is asked for the code before anything else",
+          auth_mod.setup_code_needed(req, db) is True)
+    local = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={"host": "localhost:8000"})
+    check("...the browser on the Curatarr machine is not", auth_mod.setup_code_needed(local, db) is False)
+
+
+def _ollama(req):
+    if req.url.host == "192.168.0.207" and req.url.port == 11434 and req.url.path == "/api/tags":
+        return httpx.Response(200, json={"models": [{"name": "a"}, {"name": "b"}]})
+    return httpx.Response(404)
+
+
+jc._allowed = _all_allowed
+got = asyncio.run(arr_find.find_ollama(["192.168.0.207"], transport=httpx.MockTransport(_ollama)))
+jc._allowed = _real_allowed
+check("Ollama is found where it answers /api/tags, with its model count",
+      got == [{"url": "http://192.168.0.207:11434", "models": 2}], got)
+
 check.done()

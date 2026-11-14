@@ -1,7 +1,7 @@
 // ── SPOTIFY HISTORY IMPORT (shared by the setup step and the admin card) ──
 import { state } from './state.js';
 import { EL, EVENT, _errMsg, act, actOn, esc, toast } from './ui.js';
-import { api } from './api.js';
+import { api, authHeaders } from './api.js';
 import { collectStep } from './setup.js';
 import { t, th } from './i18n.js';
 // compact: the setup wizard's card, one short line (the how-to is in
@@ -45,8 +45,7 @@ export async function refreshSpotifyPending(p) {
     el.classList.toggle('t-danger', err);
   };
   try {
-    const headers = state.token ? {Authorization: 'Bearer ' + state.token} : {};
-    const r = await fetch('/api/import/spotify/status', {headers});
+    const r = await fetch('/api/import/spotify/status', {headers: authHeaders('/api/import/')});
     let d = null;
     try { d = await r.json(); } catch { /* a non-JSON error page */ }
     show(_spotifyPendingText(r.ok, d, r.status));
@@ -63,9 +62,8 @@ export async function uploadSpotify(files, p) {
   if (el) el.innerHTML = `<div class="test-status">${th('spotify.uploading')}</div>`;
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
-  const headers = state.token ? {Authorization: 'Bearer ' + state.token} : {};
   try {
-    const r = await fetch('/api/import/spotify/files', {method: 'POST', body: fd, headers});
+    const r = await fetch('/api/import/spotify/files', {method: 'POST', body: fd, headers: authHeaders('/api/import/')});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || t('spotify.upload_failed'));
     if (el) el.innerHTML = [

@@ -215,18 +215,28 @@ async def lifespan(app: FastAPI):
             from src.services.model_autobuild import ensure_main_models
             track_task(ensure_main_models(), name="model_autobuild")
 
+    from src.routers.auth import in_container
     if not settings.is_configured:
-        logger.warning("Curatarr is not configured yet. Open http://localhost:%d to run setup.", settings.PORT)
+        if in_container():
+            logger.warning("Curatarr is not configured yet. Open it in a browser at this host's "
+                           "address and the port mapped to %d, to run setup.", settings.PORT)
+        else:
+            logger.warning("Curatarr is not configured yet. Open http://localhost:%d to run setup.",
+                           settings.PORT)
     try:
         from src.database.connection import get_db_session as _gds
         from src.routers.auth import _no_admin_exists, SETUP_CODE
         with _gds() as _db:
             if _no_admin_exists(_db):
-                logger.warning(
-                    "No admin account yet. Setting up from ANOTHER device on the "
-                    "LAN (or through a reverse proxy) needs this one-time code: %s  "
-                    "(a browser on this machine at http://localhost:%d does not).",
-                    SETUP_CODE, settings.PORT)
+                # A box, so the code stands out in a container's busy log: in
+                # a plain line it went past unnoticed (2026-11-14).
+                where = ("" if in_container() else
+                         f"  A browser on this machine at http://localhost:{settings.PORT} needs none.")
+                for line in ("=" * 64, f"  SETUP CODE:  {SETUP_CODE}",
+                             "  The setup page asks for it once: until the first admin",
+                             "  exists, every other device (LAN, reverse proxy) needs it.",
+                             *([where] if where else []), "=" * 64):
+                    logger.warning(line)
     except Exception as _e:  # noqa: BLE001 - reported, the server still starts
         # Without this line a first run cannot be finished from another device.
         logger.warning("setup-code notice skipped: %s", _e)
