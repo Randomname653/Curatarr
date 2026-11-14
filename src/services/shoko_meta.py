@@ -356,12 +356,21 @@ def _main() -> int:
     init_db()
     res = asyncio.run(refresh())
     print(res.get("summary") or res)
-    for title in _watched_series(1):
+    watched = _watched_series(1)
+    for title in watched:
         low = stop_point(1, title)
         if low:
             print(f"{title}: stopped at episode {low['episode']} "
                   f"(AniDB {low['anidb_rating']} on {low['votes']} votes, season median "
                   f"{low['season_median']}, #{low['rank_from_bottom']} from the bottom of {low['of']})")
+    print(f"plays on no regular episode (recap specials, credits...), not counted: "
+          f"{len(non_regular_play_ids(1))}")
+    from src.database.models import ShokoSeriesMeta
+    with get_db_session() as db:
+        named = [(t, a) for t, a in db.query(ShokoSeriesMeta.title, ShokoSeriesMeta.anidb_id)
+                 .order_by(ShokoSeriesMeta.title).limit(8)]
+    for t, a in named:
+        print(f"tags {t}: {', '.join(series_tags_for(anidb_id=a, title=t) or [])}")
     return 0
 
 
