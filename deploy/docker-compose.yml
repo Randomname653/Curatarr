@@ -24,6 +24,9 @@ services:
       - /mnt/POOL/apps/curatarr:/app/data
     environment:
       TZ: Europe/Berlin
+      # The machine that runs Ollama: inside the container, localhost is the
+      # container itself. Left out, the setup wizard looks for one on the LAN.
+      # OLLAMA_ENDPOINT: http://192.168.1.50:11434
     # The image runs as 568:568 (TrueNAS "apps"); set user: to another uid if
     # the dataset belongs to someone else.
     stop_grace_period: 30s

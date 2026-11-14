@@ -378,8 +378,14 @@ restart.
 mkdir -p /srv/curatarr && sudo chown 568:568 /srv/curatarr
 docker run -d --name curatarr --restart unless-stopped \
   -p 8000:8000 -v /srv/curatarr:/app/data -e TZ=Europe/Berlin \
+  -e OLLAMA_ENDPOINT=http://192.168.1.50:11434 \
   ghcr.io/randomname653/curatarr:latest
+docker logs curatarr        # the one-time SETUP CODE, in a box
 ```
+
+Put the machine that runs Ollama in `OLLAMA_ENDPOINT`: inside the
+container, `localhost` is the container itself. If you leave it out, the
+setup wizard looks for Ollama on your network and offers what it finds.
 
 Everything the app writes lives in that one volume: the database, the
 vector store, logs, backups and the `.env` the setup wizard writes, with
@@ -388,8 +394,10 @@ user), so that user must own the directory. After the first start it
 builds the missing Ollama models in the background. For compose or a
 TrueNAS custom app, use
 [`deploy/docker-compose.yml`](deploy/docker-compose.yml). To your browser
-a container is never "the machine itself", so the setup wizard asks for
-the one-time setup code: `docker logs curatarr` shows it. Details, including
+a container is never "the machine itself", so the setup wizard first asks
+for the one-time setup code: `docker logs curatarr` (or the app's logs on
+TrueNAS) shows it in a box headed SETUP CODE. It changes at every start
+until the first admin exists. Details, including
 lending a gaming PC's GPU to the NAS, are in
 [Running in a container](docs/USAGE.md#running-in-a-container-nas-server)
 and [the NAS move](docs/NAS_MOVE.md).

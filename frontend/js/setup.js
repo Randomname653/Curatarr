@@ -8,9 +8,7 @@ import { serverLabel, state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
 import { netflixDropZone, refreshNetflixPending } from './netflix_import.js';
 import { EL, SETUP_STEPS, SVG_CHECK, SVG_WARN, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, loc, toast } from './ui.js';
-import { api } from './api.js';
-import { loadLibraryConfig } from './libraries.js';
-import { loadHistoryStatus } from './history.js';
+import { api, authHeaders, setupCode } from './api.js';
 import { findJellyfinServers, jellyfinConnectHtml, stopJellyfinConnect } from './jellyfin_connect.js';
 import { t, th } from './i18n.js';
 
@@ -29,11 +27,8 @@ function logoImg(key, lan = '') {
 async function _picUrl(path) {
   if (_pics.has(path)) return _pics.get(path);
   const p = (async () => {
-    const h = {};
-    if (state.token) h.Authorization = 'Bearer ' + state.token;
-    try { const c = sessionStorage.getItem('curatarr_setup_code'); if (c) h['X-Setup-Code'] = c; } catch (_) { /* no storage: a local setup needs none */ }
     try {
-      const r = await fetch(path, {headers: h});
+      const r = await fetch(path, {headers: authHeaders(path)});
       if (r.ok) return URL.createObjectURL(await r.blob());
     } catch (_) { /* below: forgotten, so the next render asks again */ }
     _pics.delete(path);
@@ -243,6 +238,7 @@ function aiStepHtml() {
         <input class="grow" id="s-ollama" type="url" aria-label="${th('setup.ollama_endpoint')}" placeholder="http://localhost:11434" value="${esc(d.ollama_endpoint || 'http://localhost:11434')}">
         <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>${th('setup.v2.check')}</button>
       </div>
+      <div class="row" id="wiz-ollama-found"></div>
       <div class="wiz-status-row"><span class="wiz-status-name">${th('setup.v2.gpu')}</span>
         <span class="grow" id="gpu-result"><span class="test-status">${th('setup.probing_gpu')}</span></span>
         <select class="field-sm w-auto" id="s-vram" aria-label="${th('setup.v2.vram')}" ${actOn('change', 'refreshModelRecs')}>
@@ -292,6 +288,34 @@ function aiStepHtml() {
           <input class="field-sm" id="s-num-gpu" type="number" min="-1" max="999" value="${d.curator_num_gpu ?? 99}"></label>
       </div>
     </div>`;
+}
+
+// The address set does not answer (in a container localhost is the
+// container itself): Ollama is looked for next to the media server, at the
+// page's host and on the Docker host, and each one found is one click.
+async function findOllama() {
+  const el = document.getElementById('wiz-ollama-found');
+  if (!el) return;
+  el.innerHTML = `<span class="fs-12 t3">${th('setup.v2.ollama_looking')}</span>`;
+  const d = state.setupData;
+  const server = isJellyfin() ? d.jellyfin_url : ((d.plex_servers || []).find(x => x.server_id === d.plex_server_id)?.url || d.plex_url);
+  let near = '';
+  try { near = server ? new URL(server).hostname : ''; } catch (_) { /* not a URL: ask without it */ }
+  let found = [];
+  try { found = (await api(`/api/setup/ollama/find?near=${encodeURIComponent(near)}`)).found || []; }
+  catch (_) { found = []; }
+  el.innerHTML = found.length
+    ? `<span class="fs-12 t2">${th('setup.v2.ollama_found_here')}</span> ` + found.map(f =>
+        `<button class="btn btn-secondary btn-sm" ${act('useOllama', f.url)}>${esc(f.url)} · ${th('setup.v2.n_models', {n: f.models})}</button>`).join(' ')
+    : `<span class="fs-12 t3">${th('setup.v2.ollama_none')}</span>`;
+}
+
+export function useOllama(url) {
+  const input = document.getElementById('s-ollama');
+  if (input) input.value = url;
+  state.setupData.ollama_endpoint = url;
+  document.getElementById('wiz-ollama-found').innerHTML = '';
+  testConn('ollama');
 }
 
 export function toggleOllamaEdit() {
@@ -457,8 +481,52 @@ function summaryHtml() {
     <div class="mt-12 t2 fs-13" id="setup-saving" role="status" aria-live="polite"></div>`;
 }
 
+// The setup code, asked first when this browser is not on the Curatarr
+// machine (a container always): the first click used to run into a 401
+// before anything asked for it (2026-11-14, Docker walkthrough).
+function codeNeeded() {
+  return !!state.setupStatus?.setup_code_needed && !state.setupData._code_ok;
+}
+
+function codeStepHtml() {
+  return `<h2 class="setup-heading">${th('setup.v2.code_heading')}</h2>
+    <p class="fs-13 t2 mb-12">${th('setup.v2.code_lead')}</p>
+    <div class="wiz-card">
+      <p class="fs-12 t2">${esc(state.setupStatus?.setup_code_hint || '')}</p>
+      <div class="row mt-8">
+        <input class="grow wiz-code" id="s-setup-code" autocomplete="off" spellcheck="false" maxlength="9"
+               aria-label="${th('api.setup_code')}" placeholder="ABCD-1234" value="${esc(setupCode())}"
+               ${actOn('keydown', 'setupCodeKey', '$event')}>
+        <button class="btn btn-primary" id="s-setup-code-btn" ${act('submitSetupCode', EL)}>${th('setup.v2.code_go')}</button>
+      </div>
+      <div id="s-setup-code-result" role="status" aria-live="polite"></div>
+    </div>`;
+}
+
+export async function submitSetupCode(btn) {
+  const input = document.getElementById('s-setup-code');
+  const code = (input?.value || '').trim().toUpperCase();
+  const out = document.getElementById('s-setup-code-result');
+  if (!code) { input?.focus(); return; }
+  try { sessionStorage.setItem('curatarr_setup_code', code); } catch (_) { /* this tab only */ }
+  btnBusy(btn, t('setup.testing'));
+  try {
+    await api('/api/setup/code', 'GET', null, true);
+    state.setupData._code_ok = true;
+    renderSetupStep(state.setupStep);
+  } catch (e) {
+    btnDone(btn);
+    if (out) out.innerHTML = `<div class="test-status err">${e.status === 401 ? th('setup.v2.code_wrong') : esc(_errMsg(e))}</div>`;
+    input?.select();
+  }
+}
+
+export function setupCodeKey(ev) {
+  if (ev.key === 'Enter') submitSetupCode(document.getElementById('s-setup-code-btn'));
+}
+
 const SETUP_CONTENT = {
-  plex: () => `<h2 class="setup-heading">${th('setup.v2.server_heading')}</h2>${serverChoice()}<div class="mt-16">${isJellyfin()
+  plex: () => codeNeeded() ? codeStepHtml() : `<h2 class="setup-heading">${th('setup.v2.server_heading')}</h2>${serverChoice()}<div class="mt-16">${isJellyfin()
     ? `${jellyfinConnectHtml(state.setupData.jellyfin_url, state.setupData.jellyfin_ticket ? state.setupData.jellyfin_connected : null, setupJellyfinConnected)}
       ${state.setupData.jellyfin_ticket ? '' : `<details class="mt-12">
         <summary class="fs-12 t2 pointer">${th('setup.paste_key')}</summary>
@@ -566,6 +634,7 @@ function serverMissing() {
 }
 
 export function setupNav(dir) {
+  if (codeNeeded()) { submitSetupCode(document.getElementById('s-setup-code-btn')); return; }
   collectStep();
   if (dir > 0 && SETUP_STEPS[state.setupStep] === 'plex') {
     const why = serverMissing();
@@ -612,7 +681,10 @@ export async function testConn(service) {
       // The catalog-driven renderer merges the bench's picks with what is installed.
       state.setupData._detected_models = r.ok ? (r.models || []) : [];
       refreshModelRecs();
-      if (!r.ok) document.getElementById('s-ollama-edit')?.removeAttribute('hidden');
+      if (!r.ok) {
+        document.getElementById('s-ollama-edit')?.removeAttribute('hidden');
+        findOllama();
+      }
     }
   } catch (e) {
     if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
@@ -789,10 +861,15 @@ export async function showOnboarding(step) {
   });
 }
 
-export function hideOnboarding() {
+// Out of the onboarding into the app: the whole of showApp(), which the
+// onboarding had returned early from. Only the libraries and the history
+// were loaded here, so the task stream never opened (Activity stuck on
+// "Connecting…"), nor the chat history, the starters or the process
+// monitor, until the next page load (Docker walkthrough, 2026-11-14).
+export async function hideOnboarding() {
   document.getElementById('onboarding-overlay').classList.add('hidden');
-  loadLibraryConfig();
-  loadHistoryStatus();
+  const { showApp } = await import('./auth.js');
+  await showApp();
 }
 
 export async function renderOnboardingStep(step) {

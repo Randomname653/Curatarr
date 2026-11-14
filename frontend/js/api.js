@@ -2,18 +2,29 @@
 import { state } from './state.js';
 import { t, th } from './i18n.js';
 import { API, confirmDialog } from './ui.js';
+// First-run wizard from ANOTHER device: the server prints a one-time setup
+// code to its log and wants it on every setup call until the first admin
+// exists (a browser on the server itself, at localhost, is exempt). The
+// wizard's imports and its own fetches (uploads, logos) are setup calls too:
+// /api/import/ went without the code and answered 401 (2026-11-14, Docker).
+const _SETUP_PATHS = ['/api/setup/', '/api/import/'];
+export function setupCode() {
+  try { return sessionStorage.getItem('curatarr_setup_code') || ''; } catch (_) { return ''; }
+}
+export function authHeaders(path = '') {
+  const h = {};
+  if (state.token) h.Authorization = 'Bearer ' + state.token;
+  const code = setupCode();
+  if (code && _SETUP_PATHS.some(p => path.startsWith(p))) h['X-Setup-Code'] = code;
+  return h;
+}
+
 export async function api(path, method='GET', body=null, _retried=false, headers=null) {
-  const opts = {method, headers:{'Content-Type':'application/json'}};
-  if (state.token) opts.headers['Authorization']='Bearer '+state.token;
+  const opts = {method, headers:{'Content-Type':'application/json', ...authHeaders(path)}};
   if (headers) Object.assign(opts.headers, headers);   // per-call extras (the PIN nonce)
-  // First-run wizard from ANOTHER device: the server prints a one-time
-  // setup code to its console and requires it on every setup call until
-  // the first admin exists (a browser on the server itself, at localhost, is exempt).
-  const setupCode = sessionStorage.getItem('curatarr_setup_code');
-  if (setupCode && path.startsWith('/api/setup/')) opts.headers['X-Setup-Code'] = setupCode;
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API+path, opts);
-  if (r.status === 401 && path.startsWith('/api/setup/') && !_retried) {
+  if (r.status === 401 && _SETUP_PATHS.some(p => path.startsWith(p)) && !_retried) {
     const msg = await r.clone().text();
     if (/setup code/i.test(msg)) {
       const ask = await confirmDialog({

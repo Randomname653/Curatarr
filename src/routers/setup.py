@@ -63,10 +63,18 @@ def _write_env_or_400(cfg: dict) -> None:
 
 
 @router.get("/status")
-def setup_status():
-    """Return whether setup is complete and what's configured."""
+def setup_status(request: Request):
+    """Return whether setup is complete and what's configured. While no
+    admin exists, also whether this browser needs the setup code and where
+    it is: the wizard asks for it first, before a click runs into a 401."""
+    from src.database.connection import get_db_session
+    from src.routers.auth import setup_code_hint, setup_code_needed
+    with get_db_session() as db:
+        needs_code = setup_code_needed(request, db)
     return {
         "first_run": settings.FIRST_RUN,
+        "setup_code_needed": needs_code,
+        "setup_code_hint": setup_code_hint() if needs_code else "",
         "configured": settings.is_configured,
         "has_plex": bool(settings.effective_plex_url and settings.effective_plex_token),
         "media_server_type": settings.MEDIA_SERVER_TYPE or "plex",
@@ -795,6 +803,23 @@ async def setup_program_icon(name: str, _gate=Depends(require_admin_or_first_run
         raise HTTPException(status_code=404, detail="No icon")
     return Response(content=png, media_type="image/png",
                     headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/code")
+def setup_code_check(_gate=Depends(require_admin_or_first_run)):
+    """200 when the X-Setup-Code the browser sends is right (the gate
+    checks it): the wizard's code step tries it once before it goes on."""
+    return {"ok": True}
+
+
+@router.get("/ollama/find")
+async def ollama_find(request: Request, near: str = "", _gate=Depends(require_admin_or_first_run)):
+    """Ollama on the LAN when the address set does not answer: in a
+    container localhost is the container itself (2026-11-14). The media
+    server's host and the page's host first, then the Docker host."""
+    from src.services.arr_find import clean_host, find_ollama
+    hosts = [h for h in (clean_host(near), clean_host(request.url.hostname)) if h]
+    return {"found": await find_ollama(hosts)}
 
 
 @router.get("/processes")

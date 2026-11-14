@@ -4,7 +4,7 @@
 // household member to attach it to; Import writes the plays as watch history
 // (services/netflix_import). Profiles left on "skip" are not imported.
 import { EL, EVENT, _errMsg, act, actOn, esc } from './ui.js';
-import { api } from './api.js';
+import { api, authHeaders } from './api.js';
 import { state } from './state.js';
 import { dropzoneLeave } from './spotify_import.js';
 import { t, th } from './i18n.js';
@@ -80,9 +80,8 @@ export async function uploadNetflix(files) {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   // a multipart upload: api() sends JSON
-  const headers = state.token ? {Authorization: 'Bearer ' + state.token} : {};
   try {
-    const r = await fetch('/api/import/netflix/files', {method: 'POST', body: fd, headers});
+    const r = await fetch('/api/import/netflix/files', {method: 'POST', body: fd, headers: authHeaders('/api/import/')});
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || t('spotify.upload_failed'));
     if (el) el.innerHTML = [

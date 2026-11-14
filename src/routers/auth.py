@@ -194,6 +194,30 @@ _SETUP_LOCKED_DETAIL = ("Too many wrong setup codes - wait 15 minutes, or finish
                         "setup from a browser on the Curatarr machine itself")
 
 
+def in_container() -> bool:
+    """Docker / TrueNAS: the setup code is in the container's log, and a
+    browser on "this machine" does not exist."""
+    import os
+    return os.path.exists("/.dockerenv") or os.environ.get("CURATARR_ENV_FILE", "").startswith("/app/")
+
+
+def setup_code_hint() -> str:
+    """Where the one-time setup code is, for the wizard and the 401. It used
+    to name start.bat's console only, also inside a container (2026-11-14)."""
+    if in_container():
+        return ("Setup code required: it is in the container's log at startup "
+                "(docker logs curatarr, or the app's Logs on TrueNAS), in a box "
+                "headed SETUP CODE")
+    return ("Setup code required: it is in the Curatarr console window (start.bat) "
+            "or its log file at startup, in a box headed SETUP CODE")
+
+
+def setup_code_needed(request: Request, db) -> bool:
+    """True while no admin exists and this browser is not on the Curatarr
+    machine itself: the wizard asks for the code before anything else."""
+    return _no_admin_exists(db) and not _is_local_browser(request)
+
+
 def _require_setup_code(request: Request) -> None:
     from src.services import rate_limit
     if _is_local_browser(request):
@@ -214,10 +238,7 @@ def _require_setup_code(request: Request) -> None:
                                SETUP_CODE_FAIL_WINDOW_S, detail=_SETUP_LOCKED_DETAIL)
             rate_limit.enforce("setup-code-fail", "*", SETUP_CODE_FAILS_GLOBAL,
                                SETUP_CODE_FAIL_WINDOW_S, detail=_SETUP_LOCKED_DETAIL)
-        raise HTTPException(
-            status_code=401,
-            detail="Setup code required: it is printed in the Curatarr console "
-                   "window (start.bat) or log file at startup")
+        raise HTTPException(status_code=401, detail=setup_code_hint())
 
 
 def require_admin_or_first_run(
