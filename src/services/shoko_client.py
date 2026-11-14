@@ -180,6 +180,68 @@ class ShokoSession:
                 out.setdefault(num, sid)
         return out
 
+    # ── phase 2: what Shoko knows per episode (services/shoko_meta) ─────────
+    # Read 2026-11-14 on the live server (6.0.0-dev.596): every one of these
+    # answers from Shoko's own database in 7-100 ms and never asks AniDB.
+    # Never call the /Refresh routes, /AniDB/MyList/Sync/* or GET /Action/*
+    # from here: those queue AniDB work (the last are GETs with side effects).
+
+    async def series_info(self, series_id: int) -> Optional[dict]:
+        """{shoko_id, anidb_id, title} of a Shoko series."""
+        s = await self._get(f"/Series/{int(series_id)}")
+        if not isinstance(s, dict):
+            return None
+        ids = s.get("IDs") or {}
+        anidb = ids.get("AniDB")
+        return {"shoko_id": ids.get("ID"), "title": s.get("Name") or "",
+                "anidb_id": anidb if isinstance(anidb, int) else None}
+
+    async def episode_series(self, episode_id: int) -> Optional[int]:
+        """The Shoko series a Shoko episode belongs to. The way to a series
+        from a play: a title search found the wrong anime ("Link Click")."""
+        e = await self._get(f"/Episode/{int(episode_id)}")
+        sid = ((e or {}).get("IDs") or {}).get("ParentSeries") if isinstance(e, dict) else None
+        return sid if isinstance(sid, int) else None
+
+    async def series_episode_meta(self, series_id: int) -> Optional[list[dict]]:
+        """Every episode of a series with its AniDB type, number, title, air
+        date and rating, the ones without a file and the hidden ones too (a
+        rank within the season needs them all). None when Shoko did not
+        answer. Without pageSize=0 the list stops at 20; without
+        includeDataFrom=AniDB the AniDB part is null. An unrated episode
+        comes as Value 0 with 0 votes: rating None then."""
+        got = await self._get(f"/Series/{int(series_id)}/Episode", {
+            "pageSize": 0, "includeMissing": "true", "includeHidden": "true",
+            "includeDataFrom": "AniDB"})
+        if not isinstance(got, dict):
+            return None
+        out = []
+        for e in got.get("List") or []:
+            if not isinstance(e, dict):
+                continue
+            a = e.get("AniDB") or {}
+            r = a.get("Rating") or {}
+            votes = int(r.get("Votes") or 0)
+            scale = float(r.get("MaxValue") or 10) / 10.0 or 1.0
+            out.append({"id": (e.get("IDs") or {}).get("ID"), "type": a.get("Type") or "",
+                        "number": a.get("EpisodeNumber"), "title": a.get("Title") or "",
+                        "air_date": a.get("AirDate"),
+                        "rating": round(float(r.get("Value") or 0) / scale, 2) if votes else None,
+                        "votes": votes})
+        return out
+
+    async def series_tags(self, series_id: int) -> Optional[list[dict]]:
+        """The series' verified tags (Shoko's default) with their weight
+        (0-600, 0 = none given) and one spoiler flag for either of Shoko's
+        two (verified tags are spoilers too: "everybody dies"). None when
+        Shoko did not answer."""
+        got = await self._get(f"/Series/{int(series_id)}/Tags", {"excludeDescriptions": "true"})
+        if not isinstance(got, list):
+            return None
+        return [{"name": t.get("Name") or "", "weight": int(t.get("Weight") or 0),
+                 "spoiler": bool(t.get("IsSpoiler") or t.get("IsLocalSpoiler"))}
+                for t in got if isinstance(t, dict) and t.get("Name")]
+
     async def episode_user_data(self, episode_id: int) -> Optional[dict]:
         d = await self._get(f"/Episode/{int(episode_id)}/UserData")
         return d if isinstance(d, dict) else None

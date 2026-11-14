@@ -51,7 +51,7 @@ JOB_AREA = {
     "anime_crossref": "enrichment", "custodian_audit": "enrichment",
     "music_tags": "enrichment", "lyrics_profile": "enrichment",
     "facet_backfill": "enrichment", "facet_phrases": "enrichment",
-    "vector_reconcile": "enrichment",
+    "vector_reconcile": "enrichment", "shoko_metadata": "enrichment",
     # taste, recommendations & curator
     "plex_followup": "taste", "custodian_taste": "taste", "custodian_recs": "taste",
     "taste_snapshots": "taste", "nanogenres": "taste", "nanogenre_names": "taste",
