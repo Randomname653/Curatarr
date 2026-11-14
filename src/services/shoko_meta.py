@@ -113,6 +113,8 @@ async def refresh(task=None, *, transport=None, now: Optional[datetime] = None) 
 
         async def fetch(sid: int) -> None:
             nonlocal fetched, done
+            # Marked handled before the cap on purpose: a series over the cap
+            # is left for this run, and done=False sends the next one to it.
             handled.add(sid)
             if fetched >= MAX_SERIES_PER_RUN:
                 done = False
