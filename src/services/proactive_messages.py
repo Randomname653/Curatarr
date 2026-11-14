@@ -523,7 +523,12 @@ def detect_track_obsession(user_id: int,
 
 def detect_genre_absence(entries: list[dict], now: datetime,
                          asked_subjects: dict | None = None) -> Optional[dict]:
-    """Loved genre (top-3 historically) not seen in 30+ days."""
+    """Loved genre (top-5 historically) not seen in 30+ days - while its
+    own kind of media WAS played. A genre only counts as gone when its
+    music, films or shows went on without it: when no music arrived at all
+    (a Spotify import not repeated, a player Plex does not see), its genres
+    are not absent, the source is quiet (Electronic "silent for thirty
+    days" after six weeks without one music play, 2026-11-14)."""
     if not entries:
         return None
 
@@ -532,17 +537,23 @@ def detect_genre_absence(entries: list[dict], now: datetime,
     # instead of twice over a multi-year history.
     genre_counter: Counter = Counter()
     recent_genres: set = set()
+    genre_kinds: dict = {}            # genre -> the media types that carry it
+    recent_kinds: set = set()         # media types with any play in the window
     cutoff_30d = now - timedelta(days=30)
     for e in entries:
+        viewed_at = e.get("viewed_at")
+        is_recent = viewed_at and viewed_at >= cutoff_30d
+        kind = e.get("media_type") or ""
+        if is_recent:
+            recent_kinds.add(kind)
         genres = e.get("genres")
         if not genres:
             continue
-        viewed_at = e.get("viewed_at")
-        is_recent = viewed_at and viewed_at >= cutoff_30d
         for g in genres.split(","):
             g = g.strip()
             if g:
                 genre_counter[g] += 1
+                genre_kinds.setdefault(g, set()).add(kind)
                 if is_recent:
                     recent_genres.add(g)
 
@@ -550,7 +561,7 @@ def detect_genre_absence(entries: list[dict], now: datetime,
         return None
 
     for genre, total in genre_counter.most_common(5):
-        if genre not in recent_genres:
+        if genre not in recent_genres and genre_kinds.get(genre, set()) & recent_kinds:
             if _subject_asked(asked_subjects, "genre_absence", genre, days=30, now=now):
                 continue
             return {

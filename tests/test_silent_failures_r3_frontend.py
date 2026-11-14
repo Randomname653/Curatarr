@@ -199,6 +199,39 @@ console.log(JSON.stringify({html: _plexDownHtml({libraries: [{key: '1', title: '
     check("...the saved mapping is listed, with a Retry", "Films" in html and 'data-action="loadLibraryConfig"' in html)
 
 
+def test_library_without_saved_mapping_says_so():
+    """A library with no saved mapping showed its suggested category like a
+    saved one and Save stayed grey: the owner's Music library looked mapped
+    while the sync never read it (2026-11-14)."""
+    lib = _read("libraries.js")
+    js = _UI_STUBS + r"""
+const state = {};
+const serverLabel = () => 'Plex';
+const loc = () => 'en';
+const _fmtRel = () => 'now';
+const els = {'lib-config-content': {innerHTML: ''}, 'lib-save-btn': {disabled: null}};
+globalThis.document = {getElementById: id => els[id]};
+""" + _fn(lib, "_renderLibraryConfig") + """
+const sec = (key, title, type, cat) => ({key, title, type, suggested_category: cat, plex_item_count: 10,
+  db_entry_count: 0, enriched_count: 0, locations: []});
+_renderLibraryConfig([{libraries: [{key: '1', category: 'movie'}]},
+                      {sections: [sec('1', 'Movies', 'movie', 'movie'), sec('9', 'Music', 'artist', 'music')]}]);
+const one = {html: els['lib-config-content'].innerHTML, save: els['lib-save-btn'].disabled};
+_renderLibraryConfig([{libraries: [{key: '1', category: 'movie'}, {key: '9', category: 'music'}]},
+                      {sections: [sec('1', 'Movies', 'movie', 'movie'), sec('9', 'Music', 'artist', 'music')]}]);
+console.log(JSON.stringify({one, two: {html: els['lib-config-content'].innerHTML, save: els['lib-save-btn'].disabled}}));
+"""
+    out = _node(js)
+    if out is None:
+        return
+    one, two = out["one"], out["two"]
+    music = one["html"][one["html"].index("Music"):]
+    check("a library with no saved mapping is marked Not saved", "Not saved" in music[:400], music[:400])
+    check("...the saved one is not", "Not saved" not in one["html"][:one["html"].index("Music")])
+    check("...and Save is ready for it from the start", one["save"] is False)
+    check("all saved: no mark, Save waits for a change", "Not saved" not in two["html"] and two["save"] is True)
+
+
 # ── 4. onboarding ───────────────────────────────────────────────────────────
 
 def test_onboarding_sync_and_saves_report_failures():

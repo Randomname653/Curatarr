@@ -1240,6 +1240,8 @@
  "lib.plex_down_hint": "Die Kategorien lassen sich ändern, sobald Plex wieder antwortet.",
  "lib.saving": "Speichert…",
  "lib.scanning": "Sucht…",
+ "lib.unsaved": "Nicht gespeichert",
+ "lib.unsaved_title": "Curatarr folgt dieser Bibliothek noch nicht: Ihre Wiedergaben werden nicht abgeglichen. Speichern, um ihr zu folgen.",
  "libset.api_key": "API-Schlüssel",
  "libset.arr_lidarr": "Lidarr (Musik)",
  "libset.arr_radarr": "Radarr (Filme)",

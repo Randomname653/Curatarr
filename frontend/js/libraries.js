@@ -46,7 +46,14 @@ export function _renderLibraryConfig([cfg, disc]) {
     return d.toLocaleDateString(loc(), {day:'2-digit',month:'short',year:'numeric'})
            + ' ' + d.toLocaleTimeString(loc(), {hour:'2-digit',minute:'2-digit'});
   }
+  // A library with no saved mapping showed its SUGGESTED category exactly
+  // like a saved one, and Save stayed grey until something changed: the
+  // owner's Music library looked mapped for half a year while the sync
+  // never read it (2026-11-14). It says so, and Save is ready for it.
+  let unsaved = 0;
   el.innerHTML = state.discoverSections.map(s => {
+      const saved = Object.prototype.hasOwnProperty.call(cfgMap, s.key);
+      if (!saved) unsaved++;
       const cat = cfgMap[s.key] || s.suggested_category;
       const enrichPct = s.plex_item_count > 0
         ? Math.min(100, Math.round(100 * s.enriched_count / Math.max(s.plex_item_count, 1))) : 0;
@@ -54,7 +61,7 @@ export function _renderLibraryConfig([cfg, disc]) {
       return `
       <div class="panel-item">
         <div class="panel-item-head">
-          <div class="panel-item-title">${esc(s.title)}<span class="badge muted badge-sm">${esc(s.type)}</span></div>
+          <div class="panel-item-title">${esc(s.title)}<span class="badge muted badge-sm">${esc(s.type)}</span>${saved ? '' : `<span class="badge amber badge-sm" title="${th('lib.unsaved_title')}">${th('lib.unsaved')}</span>`}</div>
           <div class="panel-actions">
             <label for="libcat-${s.key}" class="fs-11 t3">${th('lib.category')}</label>
             <select id="libcat-${s.key}" class="input" aria-label="${th('lib.category_aria')}">
@@ -76,9 +83,10 @@ export function _renderLibraryConfig([cfg, disc]) {
         </div>` : ''}
       </div>`;
     }).join('') || emptyHtml(th('lib.none_found'));
-  // Save enables on the first changed category and disables again after a save.
+  // Save enables on the first changed category and disables again after a
+  // save - and is ready from the start while a library has no saved mapping.
   const save = document.getElementById('lib-save-btn');
-  if (save) { save.disabled = true; el.onchange = () => { save.disabled = false; }; }
+  if (save) { save.disabled = !unsaved; el.onchange = () => { save.disabled = false; }; }
 }
 
 export async function loadLibraryConfig() {

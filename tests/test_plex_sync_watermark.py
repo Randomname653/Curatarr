@@ -85,6 +85,7 @@ plays: list = []
 plex_down = {"on": False}
 failing_sections: set = set()        # section keys whose watched-items fetch answers 503
 section_params: list = []
+other_sections: dict = {}             # section key -> [(ratingKey, lastViewedAt)]
 # Called after the watched-items fetch: models time passing (and new plays
 # landing) while the rest of the sync runs.
 after_section_fetch = {"fn": None}
@@ -124,12 +125,13 @@ class FakeClient:
             sec = m.group(1)
             if sec in failing_sections:
                 return FakeResp(503)
-            section_params.append(dict(params))
+            section_params.append(dict(params, _sec=sec))
             since = int(params.get("lastViewedAt>>", 0))
-            # the plays live in section 1; any other section is empty
+            # the plays live in section 1 (and in other_sections); any other is empty
             rows = [{"ratingKey": rk, "lastViewedAt": at, "title": f"Film {rk}",
                      "type": "movie", "duration": 1000, "Genre": [{"tag": "Drama"}]}
-                    for rk, at in plays if at >= since] if sec == "1" else []
+                    for rk, at in (plays if sec == "1" else other_sections.get(sec, []))
+                    if at >= since]
             if after_section_fetch["fn"]:
                 after_section_fetch["fn"]()
             return FakeResp(200, {"MediaContainer": {"Metadata": rows}})
@@ -260,6 +262,38 @@ failing_sections.clear()
 check("an empty sync with failures says so too and leaves the watermark alone",
       r7.get("skipped_sections") == ["Movies", "Anime"]
       and state.get("last_sync_at") == T0 + timedelta(hours=10))
+
+# ── a library mapped after the first syncs reads its whole history once ─────
+# (2026-11-14: Music was never mapped; mapping it would have brought only the
+# plays since the last sync, not six weeks of Plexamp.)
+from src.routers.libraries import LibraryConfigItem, LibraryConfigRequest, configure_libraries  # noqa: E402
+from src.services.app_state import get_state as _real_get, set_state as _real_set  # noqa: E402
+
+other_sections["3"] = [("700", _ts(T0 - timedelta(days=60))), ("701", _ts(T0 + timedelta(hours=13)))]
+_real_set("last_sync_at", "2026-09-01T22:00:00")       # an install that has synced before
+with fake_db_session() as db:
+    owner = db.query(User).first()
+    res = configure_libraries(LibraryConfigRequest(libraries=[
+        LibraryConfigItem(key="1", title="Movies", plex_type="movie", category="movie"),
+        LibraryConfigItem(key="3", title="Music", plex_type="artist", category="music")]), owner, db)
+check("saving the mapping names the newly followed library, not the one already followed",
+      res.get("read_whole") == ["3"], res)
+check("... and the history walks start from the beginning again",
+      _real_get(ps.OWNER_BACKFILL_KEY) == "0" and _real_get(ps.MEMBER_BACKFILL_KEY) == "0")
+section_params.clear()
+clock["now"] = T0 + timedelta(hours=14)
+run(force=True)
+music_ask = [p for p in section_params if p["_sec"] == "3"]
+check("the new library is asked without a time filter", music_ask and "lastViewedAt>>" not in music_ask[0])
+check("its old plays arrive too, not only the ones since the last sync", {"700", "701"} <= set(rows()), rows())
+check("the other libraries keep their incremental window",
+      all("lastViewedAt>>" in p for p in section_params if p["_sec"] == "1"))
+check("read whole once: nothing left pending", ps._new_sections() == set())
+section_params.clear()
+clock["now"] = T0 + timedelta(hours=16)
+run(force=True)
+check("the next sync asks it incrementally like the rest",
+      all("lastViewedAt>>" in p for p in section_params if p["_sec"] == "3"))
 
 src = (Path(__file__).resolve().parents[1] / "src/services/plex_sync.py").read_text(encoding="utf-8")
 check("busy skip is marked so the scheduler can tell it from the cooldown",

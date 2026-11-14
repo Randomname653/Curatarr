@@ -1240,6 +1240,8 @@
  "lib.plex_down_hint": "Categories can be changed once Plex answers again.",
  "lib.saving": "Saving…",
  "lib.scanning": "Scanning…",
+ "lib.unsaved": "Not saved",
+ "lib.unsaved_title": "Curatarr does not follow this library yet: its plays are not synced. Save to follow it.",
  "libset.api_key": "API key",
  "libset.arr_lidarr": "Lidarr (Music)",
  "libset.arr_radarr": "Radarr (Movies)",
