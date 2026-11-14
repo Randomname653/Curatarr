@@ -103,7 +103,7 @@ check("the router is registered", '"/api/import"' in _m)
 
 _f = _frontend_everything()
 check("the setup wizard has an Import step",
-      "'import','done'" in _f and "spotifyDropZone('su-sp')" in _f)
+      "'import','done'" in _f and "spotifyDropZone('su-sp'" in _f)
 check("the admin view has the same drop zone with a user picker",
       "adm-sp-zone" in _f and 'id="adm-sp-user"' in _f)
 check("the CLI wrapper survives for headless boxes",

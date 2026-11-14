@@ -6,6 +6,30 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**A fresh install, walked through as a stranger, and rebuilt where it stuck.** A clone of main,
+a new venv, the owner's real Plex: the wizard reloaded into itself until a manual restart, the
+onboarding sat 14 minutes on a taste profile, nothing was enriched for half an hour and then only
+music, and without Radarr/Sonarr the unwatched library was never enriched at all. Now:
+- the setup is taken over in the running server, no restart;
+- one plex.tv sign-in finds the owner's servers and signs the owner in (no hand-copied token, no
+  second sign-in);
+- the AI step detects Ollama and the card and shows per role what runs and what still
+  downloads;
+- the arr apps and SoulSync are found on the network;
+- the programs open during setup are remembered as no game, instead of four "is this a game?"
+  questions on the first page;
+- the onboarding's sync starts by itself and shows real progress (Plex's own play total), then
+  ends;
+- maintenance starts right after the first sync;
+- without an arr app, the media server's own film and series libraries are enriched, watched
+  titles first;
+- a run takes the categories in turn before its budget cuts the list;
+- tasks for services that are not set up neither run nor show;
+- the Plex account names left the INFO log.
+
+The wizard shows the services' logos, fetched live from their own sites, and none ships with the
+repository.
+
 **Deletion scores against one taste centre; recommendations split only for real interests.**
 Measured on the owner's deletion log (titles kept at a proposal or protected by hand vs titles
 deleted, the watched ones left out): the one centre over his history separated them better than

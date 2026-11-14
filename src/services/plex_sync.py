@@ -264,6 +264,18 @@ async def _section_confirmed_gone(client, plex_url: str, headers: dict, sec_key)
     return await run_write(_bump_section_miss, sec_key) >= SECTION_MISS_LIMIT
 
 
+# Where the running sync is, for the onboarding's bar (GET /api/history/
+# sync-state). The plays land in the database in one go at the end, so a
+# row count jumped 0 -> 2,000 -> 8,000 and said nothing in between
+# (fresh-install test 2026-11-14). Plex names its total on the first page.
+SYNC_PROGRESS: dict = {}
+
+
+def _progress(phase: str, done: int = 0, total: int = 0, label: str = "") -> None:
+    SYNC_PROGRESS.clear()
+    SYNC_PROGRESS.update(phase=phase, done=done, total=total, label=label)
+
+
 async def sync_plex_history(job_id: Optional[int] = None, force: bool = False,
                             recompute_taste: bool = True) -> dict:
     """Single-flight wrapper: one Plex sync at a time, server-wide.
@@ -278,8 +290,10 @@ async def sync_plex_history(job_id: Optional[int] = None, force: bool = False,
         # cooldown skip below, which means history is already fresh.
         return {"skipped": True, "busy": True, "reason": "A sync is already running"}
     try:
+        _progress("start")
         return await _sync_plex_history_impl(job_id, force, recompute_taste)
     finally:
+        SYNC_PROGRESS.clear()
         await run_write(release_state_lock, "plex_sync_running")
 
 
@@ -379,10 +393,12 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
     # asks for them again from the old point.
     failed_sections: list = []
 
+    _sections = [k for k, v in lib_configs.items() if v[0] != "ignore"]
     async with httpx.AsyncClient(verify=tls_context(), timeout=60) as client:
         for sec_key, (category, plex_sec_type, sec_title) in lib_configs.items():
             if category == "ignore":
                 continue
+            _progress("library", _sections.index(sec_key), len(_sections), sec_title)
             type_num = PLEX_TYPE_NUM.get(category)
             if not type_num:
                 continue
@@ -598,9 +614,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 local_id = str(acc.get("id", ""))
                 name = (acc.get("name") or acc.get("title") or "").strip()
                 local_account_map[local_id] = name  # store name for now, resolve to User below
-            logger.info("Plex /accounts returned %d entries: %s",
-                        len(local_account_map),
-                        {k: v for k, v in local_account_map.items()})
+            # The names stay out of INFO: a server with shared libraries lists
+            # every account it ever saw (249 on the owner's), and the log is
+            # what people attach to a bug report.
+            logger.info("Plex /accounts returned %d entries", len(local_account_map))
+            logger.debug("Plex /accounts: %s", local_account_map)
     except Exception as e:
         logger.warning("Could not fetch /accounts: %s", e)
 
@@ -620,6 +638,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
             plex_url, headers, since_ts=None if owner_backfill else last_sync_ts,
             capture=capture,
         )
+        _progress("saving")
     except Exception as e:
         logger.warning(
             "Plex history fetch failed: %s — falling back to admin attribution", e,
@@ -717,10 +736,12 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                 # High numeric IDs (like 216511115) are plex.tv managed users
                 # — they'll be caught by plex_id_to_user instead
 
-            logger.info("Resolved account map: %s",
-                        {k: v.plex_username for k, v in resolved_account_map.items()})
-            logger.info("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
-            logger.info("local_account_map (raw names): %s", local_account_map)
+            logger.info("Resolved account map: %d of %d server accounts are members here",
+                        len(resolved_account_map), len(local_account_map))
+            logger.debug("Resolved account map: %s",
+                         {k: v.plex_username for k, v in resolved_account_map.items()})
+            logger.debug("DB users: %s", [(u.id, u.plex_user_id, u.plex_username) for u in users])
+            logger.debug("local_account_map (raw names): %s", local_account_map)
 
             # Get existing entries to deduplicate. ``near`` holds their unix
             # times per (user, item): a history event whose seconds differ from
@@ -1574,6 +1595,8 @@ async def _fetch_plex_history_lookup(
                 break
             mc = r.json().get("MediaContainer", {}) or {}
             items = mc.get("Metadata", []) or []
+            if capture is not None:   # the sync's own walk: the onboarding shows it
+                _progress("history", total_seen + len(items), int(mc.get("totalSize") or 0))
             if not items:
                 if capture is not None:
                     capture["complete"] = True

@@ -14,12 +14,15 @@ Auth model:
 
 import asyncio
 import logging
+
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 
 from src.config import settings
 from src.routers.auth import require_admin_or_first_run, require_admin
+from src.services.http_client import tls_context
 from src.services.endpoint_policy import (
     NEW_ADDRESS_NEEDS_KEY, resolved_refusal, secret_for_target, validate_service_url)
 from src.services.setup_wizard import (
@@ -246,12 +249,18 @@ async def minibench(req: MinibenchRequest,
     pkg = hardware_package(req.vram_gb, req.gpu_name) if req.vram_gb else None
     rec = (pkg or {}).get("recommended") or {}
     same = rec.get("model") == settings.BASE_CURATOR_MODEL
-    result = await run_minibench(endpoint, settings.CURATOR_MODEL,
-                                 num_ctx=rec.get("num_ctx") if same else None,
-                                 num_gpu=rec.get("num_gpu") if same else None,
-                                 expected_gen_tok_s=((pkg.get("estimate") or {}).get("gen_tok_s")
-                                                     or (rec.get("expected") or {}).get("gen_tok_s"))
-                                 if same else None)
+    # Through the curator gate, at a watching user's priority: it waits for
+    # a running curator call and pauses background ones, instead of racing
+    # the enrichment for the card and measuring that (2026-11-14: a check
+    # started beside the first enrichment timed out after 300 s).
+    from src.services.llm_priority import INTERACTIVE, curator_priority
+    async with curator_priority("speed check", priority=INTERACTIVE, url=endpoint):
+        result = await run_minibench(endpoint, settings.CURATOR_MODEL,
+                                     num_ctx=rec.get("num_ctx") if same else None,
+                                     num_gpu=rec.get("num_gpu") if same else None,
+                                     expected_gen_tok_s=((pkg.get("estimate") or {}).get("gen_tok_s")
+                                                         or (rec.get("expected") or {}).get("gen_tok_s"))
+                                     if same else None)
     if same:
         result["package"] = {"tier_gb": pkg.get("tier_gb"), "model": rec.get("model"),
                              "expected": rec.get("expected"), "estimate": pkg.get("estimate"),
@@ -295,6 +304,16 @@ class SetupCompleteRequest(BaseModel):
     # A finished Jellyfin connect (POST /jellyfin/connect...): the address
     # and the key Curatarr made stay on the server under this ticket.
     jellyfin_ticket: str = Field(default="", max_length=128)
+    # A finished plex.tv sign-in (POST /plex/connect...): the owner's token
+    # and their servers stay on the server under this ticket; the wizard
+    # names the server picked. /complete then signs the owner in as well.
+    plex_ticket: str = Field(default="", max_length=128)
+    plex_server_id: str = Field(default="", max_length=128)
+    # The programs that were open while the owner set up (the AI step asks
+    # to close games first): remembered as no game / game, so the bell
+    # does not ask about each of them on the first page.
+    not_games: list[str] = Field(default_factory=list, max_length=200)
+    games: list[str] = Field(default_factory=list, max_length=200)
     ollama_endpoint: str = "http://localhost:11434"
     base_curator_model: str = "gemma4:31b"
     base_summarizer_model: str = "granite4.1:8b"
@@ -413,8 +432,11 @@ async def complete_setup(
     _gate=Depends(require_admin_or_first_run),
 ):
     """
-    Finalize setup: write .env and kick off model building.
-    The app needs a restart after this to reload settings.
+    Finalize setup: write .env, reload the settings in this process and
+    kick off model building. No restart: the wizard used to reload the page
+    into a server still on FIRST_RUN=true, so a new user landed in the
+    wizard again until they restarted by hand (fresh-install test
+    2026-11-14).
     """
     # Blank Plex fields used to flip FIRST_RUN=false anyway, leaving an
     # install the UI could never route back into the wizard.
@@ -426,6 +448,23 @@ async def complete_setup(
             raise HTTPException(status_code=422,
                                 detail="That Jellyfin connection expired - connect again")
         req.jellyfin_url, req.jellyfin_api_key = got
+    plex_login = None   # (owner's plex.tv token, client id) to sign in with
+    if req.media_server_type == "plex" and req.plex_ticket:
+        from src.services.media_server.plex_connect import held as plex_held
+        got = plex_held(req.plex_ticket)
+        if got is None:
+            raise HTTPException(status_code=422,
+                                detail="That plex.tv sign-in expired - sign in with Plex again")
+        user_token, client_id, servers = got
+        server = next((s for s in servers if s.server_id == req.plex_server_id), None)
+        if server is None:
+            raise HTTPException(status_code=422, detail="Pick one of your Plex servers")
+        url = (req.plex_url or "").strip() or server.url
+        if not url:
+            raise HTTPException(status_code=422, detail=(
+                f"Curatarr could not reach {server.name} from here - enter its address"))
+        req.plex_url, req.plex_token = url, server.access_token
+        plex_login = (user_token, client_id)
     if req.media_server_type == "jellyfin":
         if not req.jellyfin_url.strip() or not req.jellyfin_api_key.strip():
             raise HTTPException(status_code=422,
@@ -435,7 +474,11 @@ async def complete_setup(
                             detail="Plex URL and token are required to complete setup")
     # Write .env - enable_pitcher becomes the baked name the runtime keys on
     cfg = req.dict()
-    cfg.pop("jellyfin_ticket", None)
+    for k in ("jellyfin_ticket", "plex_ticket", "plex_server_id", "not_games", "games"):
+        cfg.pop(k, None)
+    if plex_login:
+        # The owner's token was issued to the id the sign-in used.
+        cfg["plex_client_id"] = plex_login[1]
     # Blank = plex in .env, the same as every install before Jellyfin support.
     cfg["media_server_type"] = "" if req.media_server_type == "plex" else req.media_server_type
     await _refuse_resolved(cfg)
@@ -443,6 +486,9 @@ async def complete_setup(
     # On a worker: write_env does file I/O and, on Windows, two icacls
     # subprocesses (up to 10 s each). The 400 mapping travels with it.
     await asyncio.to_thread(_write_env_or_400, cfg)
+    _reload_after_setup()
+    if req.not_games or req.games:
+        await asyncio.to_thread(_remember_programs, req.not_games, req.games)
     if ticket:
         from src.services.media_server.jellyfin_connect import release
         release(ticket)
@@ -460,11 +506,57 @@ async def complete_setup(
         num_ctx=max(4096, window),
     )
 
-    return {
+    out = {
         "status": "ok",
-        "message": "Configuration saved. Building Ollama models in background. Please restart Curatarr.",
-        "restart_required": True,
+        "message": "Configuration saved. Building the Ollama models in the background.",
+        "restart_required": False,
     }
+    if plex_login:
+        # The same plex.tv sign-in makes the owner's account: no second
+        # "Sign in with Plex" after the wizard.
+        from src.routers.auth import login_with_plex_token
+        from src.services.media_server.plex_connect import release as plex_release
+        try:
+            out["login"] = await login_with_plex_token(plex_login[0], plex_login[1],
+                                                       background_tasks)
+        except HTTPException as e:
+            logger.warning("[setup] sign-in after setup refused: %s", e.detail)
+            out["login_error"] = e.detail
+        plex_release(req.plex_ticket)
+    return out
+
+
+def _remember_programs(not_games: list, games: list) -> None:
+    """The setup's snapshot of open programs, as answers to "is this a
+    game?" - what the bell would otherwise ask one toast at a time."""
+    from datetime import datetime
+    from src.database.connection import get_db_session
+    from src.database.models import GameProcess
+    from src.services.process_monitor import invalidate_process_cache
+    pairs = [(n, False) for n in not_games] + [(n, True) for n in games]
+    with get_db_session() as db:
+        for name, is_game in pairs:
+            key = (name or "").strip().lower()[:200]
+            if not key.endswith(".exe"):
+                continue
+            row = db.get(GameProcess, key)
+            if row:
+                row.is_game, row.added_at = is_game, datetime.utcnow()
+            else:
+                db.add(GameProcess(process_name=key, is_game=is_game))
+        db.commit()
+    invalidate_process_cache()
+    logger.info("[setup] %d program(s) remembered as no game, %d as game",
+                len(not_games), len(games))
+
+
+def _reload_after_setup() -> None:
+    """The settings the wizard just wrote, live in this process: the
+    settings object itself, and the curator window llm_utils resolved
+    from the defaults at import (the wizard may have set a smaller card's)."""
+    settings.__init__()
+    from src.services import llm_utils
+    llm_utils.CURATOR_NUM_CTX = llm_utils._resolve_num_ctx()
 
 
 @router.post("/build-models")
@@ -586,6 +678,131 @@ SETUP_PW_WINDOW_S = 15 * 60
 
 def _ip(request: Request) -> str:
     return (request.client.host if request.client else "") or "?"
+
+
+@router.post("/plex/connect")
+async def plex_connect_start(request: Request, _gate=Depends(require_admin_or_first_run)):
+    """Step 1 - a plex.tv PIN for the server's owner to approve, in a new
+    tab or at plex.tv/link."""
+    from src.routers.auth import _enforce_pin_create_rate_limit
+    from src.services.media_server.plex_connect import (PENDING_TTL_S, bind_pending, headers,
+                                                       setup_client_id)
+    _enforce_pin_create_rate_limit(_ip(request))
+    client_id = setup_client_id()
+    try:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
+            r = await client.post("https://plex.tv/api/v2/pins", headers=headers(client_id),
+                                  params={"strong": "true"})
+    except httpx.HTTPError as e:
+        logger.warning("[setup] plex.tv PIN request failed: %s", e)
+        raise HTTPException(status_code=502, detail="plex.tv did not answer - check the internet connection")
+    if r.status_code != 201:
+        logger.warning("[setup] plex.tv PIN request: HTTP %s", r.status_code)
+        raise HTTPException(status_code=502, detail=f"plex.tv refused the sign-in (HTTP {r.status_code})")
+    pin = r.json()
+    login_id, nonce = bind_pending(pin["id"], client_id)
+    # No forwardUrl: plex.tv sent the approving tab back to Curatarr, a
+    # second wizard on its first step; the first tab carries on by itself.
+    auth_url = f"https://app.plex.tv/auth#?clientID={client_id}&code={pin['code']}"
+    return {"login_id": login_id, "nonce": nonce, "code": pin["code"], "auth_url": auth_url,
+            "expires_in": PENDING_TTL_S}
+
+
+@router.get("/plex/connect/{login_id}")
+async def plex_connect_poll(login_id: str, request: Request,
+                            _gate=Depends(require_admin_or_first_run)):
+    """Step 2 - poll until the PIN is approved; then the servers the
+    account owns, each with the address Curatarr reaches it at. The token
+    stays here under a ticket."""
+    from src.services import rate_limit
+    from src.services.media_server.plex_connect import (check_pending, drop_pending, headers,
+                                                       hold, public, servers_for)
+    rate_limit.enforce("plex-setup-poll-ip", _ip(request), SETUP_POLLS_PER_IP_PER_MINUTE, 60,
+                       detail="Too many requests")
+    pending = check_pending(login_id, request.headers.get("X-Plex-Login-Nonce", ""))
+    if pending is None:
+        raise HTTPException(status_code=403, detail="Unknown or expired sign-in - start again")
+    pin_id, client_id = pending
+    try:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
+            r = await client.get(f"https://plex.tv/api/v2/pins/{pin_id}", headers=headers(client_id))
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="plex.tv did not answer")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail="plex.tv did not answer")
+    token = r.json().get("authToken")
+    if not token:
+        return {"status": "pending"}
+    drop_pending(login_id)
+    try:
+        servers = await servers_for(token, client_id)
+    except Exception as e:  # noqa: BLE001 - one message for every plex.tv failure
+        logger.warning("[setup] plex.tv server list failed: %s", e)
+        raise HTTPException(status_code=502, detail="plex.tv did not list your servers - try again")
+    try:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=10) as client:
+            u = await client.get("https://plex.tv/api/v2/user", headers=headers(client_id, token))
+        account = (u.json() or {}).get("username") if u.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        account = None
+    return {"status": "ok", "ticket": hold(token, client_id, servers), "account": account,
+            "servers": public(servers)}
+
+
+@router.get("/arr/find")
+async def arr_find(request: Request, near: str = "", _gate=Depends(require_admin_or_first_run)):
+    """Radarr, Sonarr and Lidarr on the LAN: ``near`` (the media server's
+    host, where a NAS keeps them) first, then the host this page came from.
+    Addresses only: the API key is the user's to paste."""
+    from src.services.arr_find import clean_host, find_arrs
+    hosts = [h for h in (clean_host(near), clean_host(request.url.hostname)) if h]
+    return {"found": await find_arrs(hosts)}
+
+
+@router.get("/logo/{key}")
+async def setup_logo(key: str, lan: str = "", _gate=Depends(require_admin_or_first_run)):
+    """A service's logo for the wizard, fetched live from its own website
+    (or from its instance on the LAN, ``lan``): none ships with Curatarr."""
+    from fastapi import Response
+    from src.services.setup_icons import SITES, service_logo
+    if key not in SITES:
+        raise HTTPException(status_code=404, detail="Unknown service")
+    lan_url = None
+    if lan:
+        try:
+            lan_url = validate_service_url(lan)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Not a service address")
+    got = await service_logo(key, lan_url)
+    if not got:
+        raise HTTPException(status_code=404, detail="No logo")
+    return Response(content=got[0], media_type=got[1],
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/program-icon")
+async def setup_program_icon(name: str, _gate=Depends(require_admin_or_first_run)):
+    """The icon of a program in the AI step's list (one the setup's own
+    process list holds, nothing else)."""
+    from fastapi import Response
+    from src.services.process_monitor import get_unknown_processes
+    from src.services.setup_icons import program_icon
+    names = {p["name"].lower() for p in await asyncio.to_thread(get_unknown_processes)}
+    if name.lower() not in names:
+        raise HTTPException(status_code=404, detail="Not in the list")
+    png = await asyncio.to_thread(program_icon, name)
+    if not png:
+        raise HTTPException(status_code=404, detail="No icon")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/processes")
+def setup_processes(_gate=Depends(require_admin_or_first_run)):
+    """The big programs open now: the AI step lists them while it asks to
+    close games, and the setup remembers the rest as no game."""
+    from src.services.process_monitor import get_unknown_processes
+    return {"processes": [p["name"] for p in get_unknown_processes()]}
 
 
 @router.get("/jellyfin/servers")

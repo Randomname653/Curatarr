@@ -7,8 +7,9 @@
 // that fills the bench's values in, and the model fields as lists of the
 // catalog's choices marked installed / too big for that card.
 import { api } from './api.js';
-import { _errMsg, act, actOn, esc, escAttr, setStatus } from './ui.js';
+import { EL, _errMsg, act, actOn, btnBusy, btnDone, esc, escAttr, setStatus } from './ui.js';
 import { t, th } from './i18n.js';
+import { renderMinibench } from './setup.js';
 
 // Which form field holds which value, per host card.
 export const ADVICE_FIELDS = {
@@ -144,7 +145,26 @@ export function _adviceHtml(host, part, form) {
   return `${head}<div class="mt-8">${rows}</div>
     <div class="fs-12 t3 mt-4">${esc(which)} ${esc(ran)}</div>${server}
     <div class="row mt-8"><button type="button" class="btn btn-secondary btn-sm" ${act('applyBenchValues', host)}>${th('hostadv.use_bench')}</button>
-      <span id="int-advice-note-${host}" class="status"></span></div>`;
+      ${host === 'server' ? `<button type="button" class="btn btn-secondary btn-sm" ${act('runSpeedCheck', EL, host)}>${th('hostadv.speed_check')}</button>` : ''}
+      <span id="int-advice-note-${host}" class="status"></span></div>
+    <div id="int-speed-${host}" class="mt-8"></div>`;
+}
+
+// About a minute of production calls on the card (a warm-up, two deletion
+// verdicts, one card note) against what the bench measured for it. The
+// server runs it through the curator gate: it waits for a running chat and
+// pauses background work rather than racing it. It left the onboarding
+// (2026-11-14), where it ran beside the first enrichment.
+export async function runSpeedCheck(btn, host) {
+  const el = document.getElementById(`int-speed-${host}`);
+  const card = (_advice[host] || {}).card || {};
+  btnBusy(btn, t('setup.mb_running'));
+  let mb = null, mbErr = null;
+  try {
+    mb = await api('/api/setup/minibench', 'POST', {vram_gb: card.vram_gb ?? null, gpu_name: card.name ?? null});
+  } catch (e) { mbErr = _errMsg(e); }
+  if (el) el.innerHTML = renderMinibench(mb, mbErr);
+  btnDone(btn);
 }
 
 function _form(host) {

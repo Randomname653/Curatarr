@@ -303,6 +303,13 @@ async def test_shoko(url: str, api_key: str) -> dict:
 
 
 async def test_tmdb(api_key: str) -> dict:
+    api_key = (api_key or "").strip()
+    # TMDB's settings page shows two credentials. Curatarr sends the short
+    # "API Key" (v3); the long "API Read Access Token" (a JWT) answers 401
+    # as a key, which read as a wrong key (fresh-install test 2026-11-14).
+    if api_key.startswith("eyJ") and api_key.count(".") == 2:
+        return {"ok": False, "error": "That is the long API Read Access Token - "
+                "Curatarr needs the short API Key from the same page"}
     try:
         async with httpx.AsyncClient(verify=tls_context(), timeout=8) as client:
             r = await client.get(
@@ -311,6 +318,8 @@ async def test_tmdb(api_key: str) -> dict:
             )
         if r.status_code == 200:
             return {"ok": True}
+        if r.status_code == 401:
+            return {"ok": False, "error": "TMDB refused this key - copy the API Key (v3) again"}
         return {"ok": False, "error": f"HTTP {r.status_code}"}
     except Exception as e:
         return _test_failed(_HOSTED, e)

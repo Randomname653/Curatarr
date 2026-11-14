@@ -9,8 +9,8 @@
 
 Curatarr learns what you actually watch, recommends what's worth adding,
 and makes a reasoned case for what to delete — with every prompt running
-on your own hardware down to 4gb VRAM if it really needs to more on that 
-in the documents.
+on your own hardware, on cards from 4 GB up (see
+[the benchmarks](docs/BENCHMARKS.md)).
 
 [![License][badge-license]][link-license]
 [![Tests][badge-tests]][link-tests]
@@ -145,7 +145,7 @@ drag down to close.*
   from verified evidence, then writes the case. Every proposal has its
   own discussion thread; titles without enrichment data are skipped
   rather than judged blind. Each category keeps a pool of proposals, ten
-  on screen out of a pool of 50 that its backfilling all the time,
+  on screen out of a pool of 50 that it keeps filling,
   and a run judges only what the pool lacks. A title
   with a major honour (an Emmy, a Grammy, an Oscar …) is never a cut,
   only your call.
@@ -163,8 +163,8 @@ drag down to close.*
 - **It can hear the film and the music** — deletion candidates carry
   measured dialogue signals from the actual subtitle track (words
   per minute, share of the runtime without dialogue, lexical variety),
-  so the judge has evidence about *execution*, not just metadata and
-  a law that sparse dialogue is never thin writing.
+  so the judge has evidence about *execution*, not just metadata; sparse
+  dialogue alone never counts as thin writing.
 
 ### The household
 
@@ -292,7 +292,7 @@ container image does not include it.
 | **[Ollama][link-ollama]** | installed and running before the first start |
 | **GPU** | 24 GB VRAM for the default curator model. Smaller cards work too: the setup reads the card and fills in the model the bench measured for its size (16 GB: `gemma4:26b-a4b-it-qat`). NVIDIA, or AMD where Ollama runs on ROCm (not benchmarked yet) |
 | **Disk** | room for the models: the default curator alone is about 19 GB |
-| **Radarr / Sonarr / Lidarr** | optional — each one unlocks deletion proposals and adds for its category |
+| **Radarr / Sonarr / Lidarr** | optional — each one unlocks adds and deletions for its category; without them Curatarr learns the library from Plex or Jellyfin, watched titles first |
 | **Music index** | nothing to set up — without Lidarr, music runs on your Plex or Jellyfin library |
 | **TMDB API key** | recommended — the primary movie/show metadata source |
 | **OMDb / Last.fm / Spotify keys** | optional — extra ratings, awards and music genres |
@@ -331,10 +331,11 @@ what is set. See also [Changing the models](docs/USAGE.md#changing-the-models).
    py -3.12 -m venv venv
    ```
 
-3. Start it:
+3. Start it (in PowerShell, the default of Windows Terminal, the
+   command is `.\start.bat`; in the classic command prompt `start.bat`):
 
    ```bat
-   start.bat
+   .\start.bat
    ```
 
 The first start takes a while. `start.bat` installs the tested
@@ -397,14 +398,15 @@ and [the NAS move](docs/NAS_MOVE.md).
 
 1. Open `http://localhost:8000` on the machine running Curatarr. The
    setup wizard opens.
-2. Work through the wizard: Plex sign-in (Curatarr opens plex.tv in a
-   new tab for you to approve, or you enter the code it shows at
-   plex.tv/link; no password), the Ollama models, the \*arr connections, API keys,
-   which Plex library holds which category, and the admin account. Sign
-   in with the Plex account that **owns** the server, because the first
-   account becomes the admin.
-3. When the wizard finishes, the first Plex sync starts. Enrichment
-   queues itself after it; follow it in **Activity** in the sidebar.
+2. Work through the wizard: sign in with Plex (Curatarr opens plex.tv in
+   a new tab for you to approve and finds your servers itself; no
+   password, no token to copy), check the AI it picked for your graphics
+   card, add a TMDB key, and optionally the \*arr apps (found on your
+   network) and a Spotify or Netflix export. Sign in with the Plex account
+   that **owns** the server: it becomes Curatarr's admin.
+3. Pick which library holds what. The first sync then reads your watch
+   history, and Curatarr starts learning your library right away,
+   watched titles first; follow it in **Activity** in the sidebar.
 
 On **Jellyfin**, pick it in the wizard's media-server step and enter the server
 URL and an API key (Dashboard → API Keys). Members sign in with Quick
@@ -525,6 +527,10 @@ These are the options most people change:
   OpenSubtitles and ListenBrainz are queried purely by id. What is never
   sent: what you watched, when, how often, your ratings, your taste
   profile, or anything you typed.
+- **The setup wizard shows the services' logos** by fetching them from
+  each service's own website (or from your arr apps on the LAN) while it
+  runs; nothing about you goes with the request, and none ships with
+  Curatarr.
 - **Bulk downloads and the update check carry nothing of yours.** The
   anime id mappings (from GitHub) and the Discogs data dump are fetched
   whole. The update check asks GitHub's API anonymously, at most hourly,

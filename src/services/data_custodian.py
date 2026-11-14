@@ -640,10 +640,37 @@ async def _run_facet_phrases(task=None) -> bool:
     return await migrate_facets(task=task)
 
 
+# The shelves wait until Curatarr knows enough of the library: a push
+# DELETES the old shelves before it creates new ones, and on a fresh install
+# the queue reached it with next to nothing enriched (fresh-install test
+# 2026-11-14) - shelves designed from bare titles, replacing the owner's.
+COLLECTIONS_MIN_ENRICHED = 200
+
+
+def _collections_ready() -> tuple[bool, int, int]:
+    """(ready, enriched video titles, needed): enough films and series have
+    a profile - COLLECTIONS_MIN_ENRICHED, or half of a smaller library."""
+    from src.database.models import EnrichmentStatus, MediaTechProfile
+    from src.database.connection import get_db_session
+    video = ("movie", "show", "anime")
+    with get_db_session() as db:
+        enriched = db.query(EnrichmentStatus).filter(
+            EnrichmentStatus.media_category.in_(video), EnrichmentStatus.enriched == True,  # noqa: E712
+            EnrichmentStatus.error.is_(None)).count()
+        library = db.query(MediaTechProfile).filter(MediaTechProfile.media_type.in_(video)).count()
+    need = min(COLLECTIONS_MIN_ENRICHED, max(20, library // 2))
+    return enriched >= need, enriched, need
+
+
 async def _run_collections(deep: bool = False, task=None) -> bool:
     """Design + push the household's "Curatarr · " collection shelves."""
     from src.services.collection_designer import design_collections
     from src.services.plex_collections import push_collections
+    ready, have, need = await run_read(_collections_ready)
+    if not ready:
+        _report(task, f"Waits until {need} films and series are known ({have} so far)", noop=True)
+        logger.info("[custodian] collections wait: %d of %d video titles enriched", have, need)
+        return False
     _prog(task, message="Curator is designing collection shelves… (LLM)")
     designs = await design_collections()
     if not designs:
@@ -812,6 +839,41 @@ class Task:
     # job_ids in the OTHER queue this task must not overtake within a run —
     # see the two-queue notes above. Empty for almost everything.
     after: tuple = ()
+    # Services the task only makes sense with (_NEEDS). Without one of them
+    # the task is not in the registry at all: it neither runs nor shows in
+    # the Scheduled tab. A fresh install listed Shoko, SoulSync and arr
+    # work as "due now" and queued an "arr prefetch" ahead of its first
+    # enrichment (fresh-install test 2026-11-14).
+    needs: tuple = ()
+
+
+def _arr_any() -> bool:
+    from src.config import settings
+    return any(getattr(settings, f"{s}_URL", None) and getattr(settings, f"{s}_API_KEY", None)
+               for s in ("RADARR", "SONARR", "LIDARR"))
+
+
+def _need_met(need: str) -> bool:
+    from src.config import settings
+    if need == "arr":
+        return bool(_arr_any())
+    if need in ("radarr", "sonarr", "lidarr"):
+        s = need.upper()
+        return bool(getattr(settings, f"{s}_URL", None) and getattr(settings, f"{s}_API_KEY", None))
+    if need == "shoko":
+        from src.services.shoko_client import _configured
+        return _configured()
+    if need == "soulsync":
+        from src.services.soulsync_client import _configured
+        return _configured()
+    return True
+
+
+def _available(t: "Task") -> bool:
+    try:
+        return all(_need_met(n) for n in t.needs)
+    except Exception:  # noqa: BLE001 - unsure: keep the task, as before
+        return True
 
 
 # A settle-only task (the weekly VACUUM: minutes holding the write lock)
@@ -846,7 +908,7 @@ def _registry() -> list[Task]:
     from src.services import scheduler as sched
     from src.services.media_server import active_kind
     srv = "Jellyfin" if active_kind() == "jellyfin" else "Plex"   # labels only; job ids stay
-    return [
+    tasks = [
         Task("db_backup",        "DB backup",            24.0,  sched.job_db_backup,
              reports_own=True),
         Task("plex_sync",        f"{srv} sync",            24.0,  _run_plex_sync,
@@ -864,7 +926,7 @@ def _registry() -> list[Task]:
         # Runs the full enrichment pipeline (the summariser) on an ARR batch:
         # model work, although it was filed as a prefetch (2026-09-27).
         Task("arr_pre_enrich",   "Arr metadata prefetch", 24.0, sched.job_arr_pre_enrich,
-             needs_llm=True, reports_own=True, llm_role="summarizer"),
+             needs_llm=True, reports_own=True, llm_role="summarizer", needs=("arr",)),
         # 0.4h cadence — a wrapper card every 24 min would drown the Activity
         # view, so extract_memories_from_thread cards itself only when a
         # thread actually gets extracted.
@@ -952,19 +1014,19 @@ def _registry() -> list[Task]:
         # GB in for the wrap-up's balance: Plex's addedAt moves with every
         # replaced file and re-added library, the arrs' history does not.
         Task("arr_ledger", "Library arrivals from the arr history", 6.0, _run_arr_ledger,
-             takes_task=True),
+             takes_task=True, needs=("arr",)),
         # Catalog mode: nightly SoulSync→Lidarr index completion (disarmed
         # adds + folder-drift report). No-op without SoulSync configured.
         Task("music_catalog_sync", "SoulSync→Lidarr catalog sync", 24.0,
-             _run_music_catalog_sync, takes_task=True),
+             _run_music_catalog_sync, takes_task=True, needs=("soulsync", "lidarr")),
         # Anime watched here goes to Shoko as watched, with its own date.
         # No-op without Shoko configured; no model.
         Task("shoko_watched", "Anime watched, reported to Shoko", 6.0,
-             _run_shoko_watched, takes_task=True),
+             _run_shoko_watched, takes_task=True, needs=("shoko",)),
         # What Shoko knows per episode of the anime watched here: type,
         # rating with votes, tags (phase 2). Reads only, no model.
         Task("shoko_metadata", "Anime episode data from Shoko", 24.0,
-             _run_shoko_metadata, takes_task=True),
+             _run_shoko_metadata, takes_task=True, needs=("shoko",)),
         # Deleted items that came back (an arr list, a request, SoulSync's
         # playlist sync), shown in the Deletions view; first the SoulSync
         # bans a music delete could not set.
@@ -997,7 +1059,7 @@ def _registry() -> list[Task]:
         # or a classification corrected in between waited a week (2026-09-15:
         # the disc-source correction sat behind the stamp until 09-22).
         Task("editions_sync",    "Series editions",      24.0,  _run_editions_sync,
-             takes_task=True),
+             takes_task=True, needs=("sonarr",)),
         Task("facet_backfill",   "Facet index backfill", 24.0,
              _run_facet_backfill, takes_task=True),
         # One point per phrase: moves the old per-title facet collection
@@ -1028,6 +1090,14 @@ def _registry() -> list[Task]:
         Task("db_vacuum",        "DB vacuum",            168.0, sched.job_db_vacuum,
              settle_only=True, reports_own=True),
     ]
+    return tasks
+
+
+def active_registry() -> list[Task]:
+    """The tasks this install runs and shows: _registry() without those whose
+    service is not set up (Task.needs). _registry() itself stays complete -
+    a job id must keep resolving for its stamps and stored reports."""
+    return [t for t in _registry() if _available(t)]
 
 
 def custodian_status() -> dict:
@@ -1042,7 +1112,7 @@ def custodian_status() -> dict:
     except Exception as e:
         logger.warning("[custodian] stored report unreadable: %s", e)
     tasks = []
-    for t in _registry():
+    for t in active_registry():
         last = _last_job_run(t.job_id)
         tasks.append({
             "job_id": t.job_id,
@@ -1420,7 +1490,7 @@ def request_run(job_id: str) -> str:
     "queued", "running" (already) or raises KeyError for an unknown id.
     Must be called on the event loop (it starts the queue's run)."""
     from src.services.scheduler import _track_task
-    t = next((x for x in _registry() if x.job_id == job_id), None)
+    t = next((x for x in active_registry() if x.job_id == job_id), None)
     if t is None:
         raise KeyError(job_id)
     q = queue_of(t)
@@ -1470,7 +1540,7 @@ async def custodian_tick(first_tick: bool = False, force: bool = False,
         return await _watched("data_custodian")(custodian_tick)(
             force=force, deep=deep, wait=wait, quiet=quiet, queues=queues)
     from src.services.scheduler import _job_overdue, _track_task
-    registry = _registry()
+    registry = active_registry()
 
     def _overdue_by_job() -> dict:
         # A job whose stamp cannot be read is left out: the lookup below
@@ -1655,7 +1725,7 @@ def _launch_sprint_enrichment() -> None:
 def _model_work_due() -> bool:
     from src.services.scheduler import _job_overdue
     try:
-        return any(_job_overdue(t.job_id, t.cadence_h) for t in _registry()
+        return any(_job_overdue(t.job_id, t.cadence_h) for t in active_registry()
                    if queue_of(t) == QUEUE_MODEL
                    and not _settle_waits(t, QUEUE_MODEL))
     except Exception:  # noqa: BLE001 — unknown due state: keep going

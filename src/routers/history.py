@@ -43,14 +43,65 @@ def trigger_sync(
     return {"status": "sync_started", "message": "Fetching Plex history and computing taste vectors…"}
 
 
+_sync_in_flight = False   # a Sync-button / onboarding sync is running (GET /sync-state)
+
+
 async def _run_sync(force: bool = False):
+    global _sync_in_flight
+    _sync_in_flight = True
+    try:
+        await _run_sync_inner(force)
+    finally:
+        _sync_in_flight = False
+
+
+async def _run_sync_inner(force: bool = False):
+    """The Sync button and the onboarding's first sync. The taste half (the
+    curator writes a summary per category) goes to the custodian's model
+    queue, as for the scheduled sync: run inline it held the onboarding's
+    progress bar for 14 minutes on a fresh install, and the follow-up then
+    wrote the same four summaries a second time (fresh-install test
+    2026-11-14)."""
     from src.services.media_server import active_kind
     if active_kind() == "jellyfin":
         from src.services.media_server.jellyfin_history import sync_history
-        result = await sync_history()
+        result = await sync_history()   # leaves the follow-up flag itself
     else:
-        result = await sync_plex_history(force=force)
+        result = await sync_plex_history(force=force, recompute_taste=False)
+        if (result or {}).get("synced", 0) > 0:
+            from datetime import datetime
+            from src.database.runner import run_write
+            from src.services.app_state import set_state
+            await run_write(set_state, "plex_followup_pending", datetime.utcnow().isoformat())
     logger.info("Sync result: %s", result)
+    await _first_maintenance_now()
+
+
+async def _first_maintenance_now() -> None:
+    """A fresh install has no users at startup, so the custodian's first
+    tick never ran; its interval came 30 minutes later, and until then
+    nothing was enriched (fresh-install test 2026-11-14). Once the first
+    sync has brought plays, start the queues now."""
+    from src.services import data_custodian as dc
+    if any(dc._first_run_done.values()):
+        return
+    await dc.custodian_tick(wait=False)
+
+
+@router.get("/sync-state")
+def sync_state(user: User = Depends(get_current_user)):
+    """Whether the sync the Sync button (or the onboarding) started is still
+    running, and how many plays the member has now: the onboarding's bar
+    ends with the sync, not with a taste profile that needs hours of
+    enrichment first. Not cached: polled every few seconds while it runs."""
+    from src.services.app_state import get_state
+    with get_db_session() as db:
+        count = db.query(func.count(WatchHistoryEntry.id)).filter(
+            WatchHistoryEntry.user_id == user.id).scalar() or 0
+    locked = get_state("plex_sync_running") not in (None, "", "0")
+    from src.services.plex_sync import SYNC_PROGRESS
+    return {"running": bool(_sync_in_flight or locked), "entries": int(count),
+            "progress": dict(SYNC_PROGRESS)}
 
 
 @router.get("/status")

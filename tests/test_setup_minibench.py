@@ -78,7 +78,8 @@ check("an unreachable Ollama returns ok False with the warm-up's error",
 # ── wiring ─────────────────────────────────────────────────────────────────
 root = Path(__file__).resolve().parents[1]
 router = (root / "src/routers/setup.py").read_text(encoding="utf-8")
-js = (root / "frontend/js/setup.js").read_text(encoding="utf-8")
+js = ((root / "frontend/js/setup.js").read_text(encoding="utf-8")
+      + (root / "frontend/js/host_advice.js").read_text(encoding="utf-8"))
 check("the setup router serves POST /minibench behind the admin/first-run gate",
       '@router.post("/minibench")' in router and "run_minibench" in router
       and "require_admin_or_first_run" in router.split('@router.post("/minibench")')[1][:400])

@@ -5,6 +5,7 @@ the [README](../README.md); for how it works internally see
 [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 **Contents:** [The first few days](#the-first-few-days) ·
+[Bringing your history](#bringing-your-history) ·
 [Where things live in the UI](#where-things-live-in-the-ui) ·
 [Changing the models](#changing-the-models) ·
 [Command-line helpers](#command-line-helpers) · [Tuning](#tuning) ·
@@ -39,6 +40,35 @@ Wikipedia significance, reception, lyrics profiles, taste,
 recommendations) without its usual 30-minute pauses, and keeps Windows
 from going to sleep (no power settings are changed). It stops by itself
 once nothing is left, or when you press **Stop**.
+
+## Bringing your history
+
+Years of streaming tell the curator more than a fresh library. Both
+services send their export by email, so ask for it a few days before you
+set Curatarr up. Drop the files in the setup's **History** step, or later
+under **Settings → Users**; after the first sync you attach them to a
+household member there.
+
+**Spotify** - the *extended* streaming history, which goes back to the
+account's first day (the plain "account data" covers one year only):
+
+1. Open [spotify.com/account/privacy](https://www.spotify.com/account/privacy/).
+2. Tick **Extended streaming history** and request it. It arrives within
+   about 30 days, usually sooner.
+3. Drop the whole `my_spotify_data.zip`, or the
+   `Streaming_History_Audio_*.json` files inside it.
+
+**Netflix** - the viewing activity of every profile:
+
+1. Open [netflix.com/account/getmyinfo](https://www.netflix.com/account/getmyinfo)
+   and request your data. It arrives within about a week.
+2. Drop the whole zip (Curatarr reads its `ViewingActivity.csv`), or one
+   profile's `NetflixViewingHistory.csv` from **Profile → Viewing activity
+   → Download all**.
+
+Every profile in the file is listed with a household member to attach it
+to; a profile left on *skip* is not imported. Plays count like plays on
+your media server, matched onto the library's titles.
 
 ## Where things live in the UI
 

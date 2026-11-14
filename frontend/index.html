@@ -38,18 +38,13 @@
 
 <!-- SETUP OVERLAY -->
 <div id="setup-overlay">
-  <div id="setup-box">
+  <div id="setup-box" role="dialog" aria-modal="true" aria-labelledby="setup-title">
     <div class="setup-header">
-      <h1 data-i18n="setup.view.title">Curatarr Setup</h1>
-      <p data-i18n="setup.view.lead">Let's connect your services. You only need to fill in what you actually use.</p>
+      <div id="setup-logo" class="setup-logo"></div>
+      <h1 class="sr-only" id="setup-title" data-i18n="setup.view.title">Curatarr setup</h1>
+      <p data-i18n="setup.view.lead">A few minutes, and Curatarr knows your library.</p>
     </div>
-    <div class="setup-steps">
-      <div class="setup-step-dot active" id="step-dot-0">Plex</div>
-      <div class="setup-step-dot" id="step-dot-1">Ollama</div>
-      <div class="setup-step-dot" id="step-dot-2" data-i18n="setup.view.step_metadata">Metadata</div>
-      <div class="setup-step-dot" id="step-dot-3" data-i18n="settings.arr_apps">Arr apps</div>
-      <div class="setup-step-dot" id="step-dot-4" data-i18n="setup.view.step_import">Import</div>
-    </div>
+    <div class="setup-steps" id="setup-steps"></div>
     <div class="setup-body" id="setup-body"></div>
     <div class="setup-nav">
       <button class="invisible btn btn-secondary" id="setup-back" data-action="setupNav" data-args='[-1]' data-i18n="setup.view.back">← Back</button>
@@ -113,6 +108,7 @@
 <div id="onboarding-overlay" class="overlay-dim hidden">
   <div class="dialog-box-520" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
     <div class="box-head">
+      <div class="setup-logo ob-logo" id="ob-logo"></div>
       <h1 class="fs-18 fw-700 t-amber" id="onboarding-title"></h1>
       <p class="fs-13 t2 mt-6 lh-15" id="onboarding-sub"></p>
     </div>
