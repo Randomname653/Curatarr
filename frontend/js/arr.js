@@ -134,15 +134,7 @@ export function renderArrTab(svc, tabId) {
   } else if (tabId === 'backlog' && svc === 'lidarr') {
     renderSpotifyBacklog(svc);
   } else {
-    const tabKey = (ARR_TABS[svc].find(tb => tb.id === tabId) || {}).key;
-    const tabLabel = tabKey ? t(tabKey) : tabId;
-    const contentEl = document.getElementById(`arr-content-${svc}`);
-    contentEl.innerHTML = `
-      <div class="empty-note">
-        <p class="m-0 mb-6"><strong>${esc(tabLabel)}</strong></p>
-        <p class="m-0 fs-12">${th('arr.skeleton')}</p>
-      </div>
-    `;
+    renderSynopsisBrowser(svc, 'all');
   }
 }
 

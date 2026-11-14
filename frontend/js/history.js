@@ -6,7 +6,7 @@ import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, m
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 import { serverLabel, state } from './state.js';
-import { t, th } from './i18n.js';
+import { t, th, uiLang } from './i18n.js';
 export async function recomputeTaste(statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
@@ -95,12 +95,17 @@ export async function loadHistorySources() {
 function _renderHistoryMore() {
   const el = document.getElementById('history-more');
   if (!el || !state.currentUser?.is_admin) return;
+  // Re-rendered only when its words change: the sync poll calls this every
+  // 5 s and a rewrite closed an open menu.
+  const sig = uiLang() + '|' + serverLabel();
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
   el.innerHTML = menuHtml([
     {label: t('history.force_sync'), action: act('syncHistory', true), title: t('history.force_title')},
     {label: t('history.recompute'), action: act('recomputeTaste')},
     {sep: true},
     {label: t('auth.libraries_btn', {server: serverLabel()}), action: act('showLibrariesForce')},
-  ], t('common.more'), {size: 'md'});
+  ], t('common.more'), {size: 'md', align: 'start'});
 }
 
 export async function loadHistoryStatus() {
@@ -132,7 +137,7 @@ export async function loadHistoryStatus() {
       // fresh install learns its library first): Recompute builds it.
       document.getElementById('taste-tabs').innerHTML = '';
       document.getElementById('taste-content').innerHTML = (s.watch_history_entries || 0) === 0
-        ? emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false), {mark: true, primary: true})
+        ? emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false), {mark: true})
         : emptyHtml(th('history.no_taste'), t('history.recompute'), act('recomputeTaste'));
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }

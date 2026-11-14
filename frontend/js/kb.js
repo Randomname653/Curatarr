@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
 import { openMatchPicker } from './picker.js';
 import { tabToHash } from './nav.js';
-import { t, th } from './i18n.js';
+import { t, th, uiLang } from './i18n.js';
 export async function loadMappingStats(btn) {
   const el = document.getElementById('mapping-stats');
   btnBusy(btn, t('common.loading'));
@@ -280,11 +280,14 @@ let _kbPollTimer = null;
 // before it queues anything; Backfill OMDb reports in Activity.
 function _renderKbMore() {
   const el = document.getElementById('kb-maint-more');
-  if (!el || el.innerHTML) return;
+  // Rendered once per language: the status poll calls this, and a rewrite
+  // closed an open menu; a language switch reloads no page.
+  if (!el || el.dataset.lang === uiLang()) return;
+  el.dataset.lang = uiLang();
   el.innerHTML = menuHtml([
     {label: t('kb.view.audit'), action: act('auditRequeueEnrichments', EL), title: t('kb.view.audit_title')},
     {label: t('kb.view.omdb'), action: act('omdbBackfill', EL), title: t('kb.view.omdb_title')},
-  ], t('common.more'), {size: 'md'});
+  ], t('common.more'), {size: 'md', align: 'start'});
 }
 
 export async function loadEnrichStatus() {

@@ -124,6 +124,7 @@ if (typeof MutationObserver !== 'undefined') {
     _tabSync = setTimeout(() => { _tabSync = null; syncTabRoles(); }, 50);
   }).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ['class']});
 }
+syncTabRoles();   // the static rows (Knowledge Base, Settings) before any change
 document.addEventListener('click', ev => {
   const inMenu = ev.target.closest('.menu');
   if (ev.target.closest('.menu-item')) { if (inMenu) closeMenus(inMenu); return; }

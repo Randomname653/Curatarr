@@ -197,7 +197,7 @@ function _delCardHtml(p) {
       <div class="card mb-12${p.stagnant ? ' is-stagnant' : ''}" data-del-id="${p.id}" data-title="${escAttr(p.title)}" data-service="${escAttr(p.service || '')}">
         <div class="poster-card">
           <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" ${actOn('change', 'onDelCheckbox', EL)} hidden title="${th('del.select_bulk')}"/>
-          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" title="${th('del.select_bulk')}" aria-label="${th('del.select_title_bulk', {title: p.title})}" ${act('toggleDelSelect', p.id)} ${actOn('keydown', 'keyActivate', EVENT, EL)} title="${th('del.click_select')}">
+          <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" title="${th('del.select_bulk')}" aria-label="${th('del.select_title_bulk', {title: p.title})}" ${act('toggleDelSelect', p.id)} ${actOn('keydown', 'keyActivate', EVENT, EL)}>
             ${_posterImg(p.poster_url, 174, p.category==='music'?174:261, p.category==='music')}
             <div class="del-poster-check">${SVG_CHECK.replace('width="13" height="13"', 'width="34" height="34"')}</div>
           </div>

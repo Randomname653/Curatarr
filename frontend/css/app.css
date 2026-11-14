@@ -934,7 +934,7 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 /* Overflow menu behind a row's visible actions ("More") */
 .menu { position: relative; display: inline-block; }
-#history-more .menu-list { left: 0; right: auto; }
+.menu-start .menu-list { left: 0; right: auto; }
 .menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 170px; background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid var(--hairline-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-2), var(--specular); padding: 4px; z-index: 40; }
 .menu.open .menu-list { display: block; }
 .menu-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text); font-size: var(--fs-sm); padding: 7px 10px; border-radius: 6px; cursor: pointer; text-decoration: none; white-space: nowrap; }
@@ -1213,7 +1213,6 @@ select option { background: var(--bg2); }
 .quote-text { font-size: 13.5px; line-height: 1.65; } .note-text { font-size: 12.5px; line-height: 1.55; }
 .rule-top { border-top: 1px solid var(--border); padding-top: 10px; }
 .footnote { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); font-size: var(--fs-sm); color: var(--text2); line-height: 1.7; }
-.empty-note { padding: 24px; text-align: center; color: var(--text3); font-size: var(--fs-base); }
 .error-box { font-size: var(--fs-sm); color: var(--danger-fg); margin-bottom: 12px; padding: 8px 12px; background: var(--danger-dim); border-radius: var(--radius); }
 .boxed { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
 .dropzone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 26px; text-align: center; cursor: pointer; }
@@ -1264,7 +1263,7 @@ select option { background: var(--bg2); }
   .btn-plain, .btn-ghost-amber, .btn-ghost-danger, .modal-close, .sp-chip,
   #msg-bell, #sb-hamburger, #new-chat-btn, #recheck-btn, #send-btn,
   #tb-search-btn, #user-pill, .sb-footer button, .wus-close, .wus-share-btn, .wu-tile-share,
-  .toast-close, .lib-refresh, .wu-chip { min-height: 44px; }
+  .toast-close, .lib-refresh, .wu-chip, .wu-tab { min-height: 44px; }
   /* A count inside running text keeps the line's height; its hit area grows instead. */
   .link-num { position: relative; }
   .link-num::after { content: ''; position: absolute; inset: -12px -6px; }
