@@ -121,6 +121,9 @@ def current_daypart(local: datetime) -> str:
 
 # Days a stalled series stays out of the facts once an opener was about it.
 STALLED_REST_DAYS = 14
+# A series left after a weak first episode is a fact from two weeks on (no
+# longer just started) to a year (still worth a second look).
+WEAK_OPENER_DAYS = (14, 365)
 
 def _pause(video: list[dict], title: str, now: datetime) -> str:
     """How the gap since ``title``'s last play compares with the user's own
@@ -298,6 +301,32 @@ def collect_facts(user_id: int, now: Optional[datetime] = None,
         if low:
             fact["stopped_at_weakest_episode"] = low
         facts.append(fact)
+
+    # Shoko phase 2: a series left after episode 1 or 2 whose first episode
+    # is among the season's weakest - the season gets better past where they
+    # turned back. Not while they might still be starting (WEAK_OPENER_DAYS),
+    # and it rests like a stalled series once an opener was about it.
+    weak = [(k, v) for k, v in series.items()
+            if v["last"] and WEAK_OPENER_DAYS[0] <= (now - v["last"]).days <= WEAK_OPENER_DAYS[1]
+            and v["plays"] <= 3 and k not in asked
+            and not any(f["kind"] == "stalled_series" and f["title"] == k for f in facts)]
+    for k, v in sorted(weak, key=lambda kv: kv[1]["last"], reverse=True)[:15]:
+        try:
+            from src.services.shoko_meta import weak_opener
+            low = weak_opener(user_id, k)
+        except Exception as e:  # noqa: BLE001 - no fact then
+            logger.warning("[starters] Shoko opener for %r unreadable: %s", k, e)
+            break
+        if low:
+            facts.append({"kind": "weak_opener", "title": k, "media_type": v["media_type"],
+                          "days_since": (now - v["last"]).days,
+                          "left_after_episode": low["left_after_episode"],
+                          "episode_1_is": ("the season's weakest" if low["rank_from_bottom"] == 1
+                                           else "the season's second weakest") + " by AniDB rating",
+                          "episode_1_rating": low["anidb_rating"],
+                          "season_median": low["season_median"],
+                          "rating_after_it": low["after_median"]})
+            break
 
     if music:
         artists: dict[str, int] = {}

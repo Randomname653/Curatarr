@@ -16,10 +16,17 @@ How a play finds its series: the watched sync's ledger (shoko_watch_sync)
 holds the Shoko episode ids of every reported play, and an episode names
 its parent series. Not by title: a title search found the wrong anime.
 
+- ``weak_opener``: a member left after episode 1 or 2, and episode 1 is
+  among the season's weakest ("it gets better from here").
+- ``season_note``: either of them as one line for the chat.
+
 Measured on the live server, 2026-11-14 (15 watched series): 98 % of the
 regular episodes carry a rating, but on few votes (median 16, 10th
-percentile 7), so an episode is only named with MIN_VOTES votes and a
-clear distance to its season's median.
+percentile 7). So a rating is pulled toward its season's median by its
+vote count (Bayesian shrinkage, PRIOR_VOTES): 4.0 on 6 votes counts for
+less than 4.0 on 40. A hard vote cut instead named five series on the
+owner's data and dropped two clear cases that sat just under it; this
+names those seven (compared 2026-11-14, owner's choice).
 """
 from __future__ import annotations
 
@@ -37,9 +44,10 @@ logger = logging.getLogger(__name__)
 REFRESH_DAYS = 7
 MAX_SERIES_PER_RUN = 200
 MAX_EPISODE_LOOKUPS = 500
-MIN_VOTES = 5            # fewer votes on an episode: noise, not a verdict
+MIN_VOTES = 3            # fewer votes on an episode: no rating at all
+PRIOR_VOTES = 5          # the season median counts as this many votes
 MIN_RATED = 5            # a season ranks only with this many rated episodes
-LOW_GAP = 1.0            # the stop's rating sits this far under the median
+LOW_GAP = 0.8            # the shrunk rating sits this far under the median
 LOW_RANK = 2             # ...and among the season's weakest two
 
 
@@ -290,11 +298,20 @@ def _regular_rated(episodes: list) -> list:
             and (e.get("votes") or 0) >= MIN_VOTES]
 
 
+def _shrunk(ep: dict, median: float) -> float:
+    """The rating pulled toward the season median by its vote count:
+    (votes * rating + PRIOR_VOTES * median) / (votes + PRIOR_VOTES)."""
+    v = ep.get("votes") or 0
+    return (v * ep["rating"] + PRIOR_VOTES * median) / (v + PRIOR_VOTES)
+
+
 def low_point(episodes: list, episode_id: int) -> Optional[dict]:
     """The episode ``episode_id`` when it is among its season's weakest:
-    a regular episode, rated on MIN_VOTES votes, in the bottom LOW_RANK and
-    LOW_GAP under the season's median. None otherwise (also for a recap or
-    special: AniDB files those as Special, never as a ranked episode)."""
+    a regular episode, rated on MIN_VOTES votes, in the bottom LOW_RANK by
+    its shrunk rating and that rating LOW_GAP under the season's median.
+    None otherwise (also for a recap or special: AniDB files those as
+    Special, never as a ranked episode). ``after_median``: the median of
+    the rated episodes after it, None when none is."""
     rated = _regular_rated(episodes)
     if len(rated) < MIN_RATED:
         return None
@@ -302,20 +319,24 @@ def low_point(episodes: list, episode_id: int) -> Optional[dict]:
     if ep is None:
         return None
     median = statistics.median(e["rating"] for e in rated)
-    rank = 1 + sum(1 for e in rated if e["rating"] < ep["rating"])
-    if rank > LOW_RANK or ep["rating"] > median - LOW_GAP:
+    adj = _shrunk(ep, median)
+    rank = 1 + sum(1 for e in rated if _shrunk(e, median) < adj)
+    if rank > LOW_RANK or adj > median - LOW_GAP:
         return None
+    after = [e["rating"] for e in rated
+             if isinstance(e.get("number"), int) and isinstance(ep.get("number"), int)
+             and e["number"] > ep["number"]]
     return {"episode": ep.get("number"), "title": ep.get("title") or None,
             "anidb_rating": ep["rating"], "votes": ep["votes"],
-            "season_median": round(median, 2), "rank_from_bottom": rank, "of": len(rated)}
+            "season_median": round(median, 2), "rank_from_bottom": rank, "of": len(rated),
+            "after_median": round(statistics.median(after), 2) if after else None}
 
 
-def stop_point(user_id: int, series_title: str) -> Optional[dict]:
-    """Where ``user_id`` left ``series_title``, when that is one of its
-    season's weakest episodes ({episode, title, anidb_rating, votes,
-    season_median, rank_from_bottom, of, finished}); None when it is not,
-    or nothing is known. The last play of the series that the watched sync
-    placed on a Shoko episode. Blocking."""
+def _last_regular(user_id: int, series_title: str) -> Optional[tuple]:
+    """(completed, episode dict, the series' episodes) of ``user_id``'s last
+    play of ``series_title`` that the watched sync placed on a REGULAR
+    Shoko episode: a recap special watched after it is no place in the
+    season (Shoko phase 2, recaps). None when nothing is known. Blocking."""
     from src.database.models import ShokoSeriesMeta, ShokoWatchSync, WatchHistoryEntry as W
     with get_db_session() as db:
         plays = (db.query(W.completed, ShokoWatchSync.shoko_episode_ids)
@@ -334,26 +355,82 @@ def stop_point(user_id: int, series_title: str) -> Optional[dict]:
             for e in episodes:
                 if isinstance(e.get("id"), int):
                     series_of[e["id"]] = (e, episodes)
-    # The last play on a REGULAR episode: a recap special watched after it
-    # is no place in the season (Shoko phase 2, recaps).
     for completed, ids in plays:
         for ep_id in reversed([int(x) for x in str(ids).split(",") if x.strip().isdigit()]):
             hit = series_of.get(ep_id)
-            if hit is None or hit[0].get("type") != "Episode":
-                continue
-            episodes = hit[1]
-            if not _left_midway(episodes, ep_id):
-                return None
-            low = low_point(episodes, ep_id)
-            return {**low, "finished": bool(completed)} if low else None
+            if hit is not None and hit[0].get("type") == "Episode":
+                return bool(completed), hit[0], hit[1]
+    return None
+
+
+def stop_point(user_id: int, series_title: str) -> Optional[dict]:
+    """Where ``user_id`` left ``series_title``, when that is one of its
+    season's weakest episodes (low_point's dict plus ``finished``); None
+    when it is not, or nothing is known. Blocking."""
+    last = _last_regular(user_id, series_title)
+    if last is None:
+        return None
+    completed, ep, episodes = last
+    if not _left_midway(episodes, ep["id"]):
+        return None
+    low = low_point(episodes, ep["id"])
+    return {**low, "finished": completed} if low else None
+
+
+def weak_opener(user_id: int, series_title: str) -> Optional[dict]:
+    """``user_id`` left ``series_title`` after episode 1 or 2, and episode 1
+    is among the season's weakest: the season gets better past where they
+    turned back. low_point's dict for episode 1 plus ``left_after_episode``;
+    None otherwise. Blocking."""
+    last = _last_regular(user_id, series_title)
+    if last is None:
+        return None
+    _completed, ep, episodes = last
+    regular = [e for e in episodes if e.get("type") == "Episode" and isinstance(e.get("number"), int)]
+    n = ep.get("number")
+    if not isinstance(n, int) or n > 2 or not regular or n >= max(e["number"] for e in regular):
+        return None
+    first = next((e for e in regular if e["number"] == 1), None)
+    low = low_point(episodes, first["id"]) if first else None
+    # ...and the rest of the season holds up: past the opening it rates at
+    # least at the season's median.
+    if not low or low["after_median"] is None or low["after_median"] < low["season_median"]:
+        return None
+    return {**low, "left_after_episode": n}
+
+
+def _weakest(rank: int, of: int) -> str:
+    return f"{'the weakest' if rank == 1 else 'the second weakest'} of {of} rated episodes"
+
+
+def season_note(user_id: int, series_title: str) -> Optional[str]:
+    """One line for the chat when ``user_id`` left ``series_title`` at one of
+    its season's weakest episodes, or after a weak first episode. None
+    otherwise. Blocking."""
+    def nums(low: dict) -> str:
+        after = (f", episodes after it {low['after_median']}"
+                 if low.get("after_median") is not None else "")
+        return (f"AniDB {low['anidb_rating']} on {low['votes']} votes; "
+                f"season median {low['season_median']}{after}")
+    low = stop_point(user_id, series_title)
+    if low:
+        name = f" '{low['title']}'" if low.get("title") else ""
+        return (f"left at episode {low['episode']}{name}, "
+                f"{_weakest(low['rank_from_bottom'], low['of'])} ({nums(low)})")
+    low = weak_opener(user_id, series_title)
+    if low:
+        return (f"left after episode {low['left_after_episode']}; episode 1 is "
+                f"{_weakest(low['rank_from_bottom'], low['of'])} ({nums(low)}): "
+                f"the season rates better past its opening")
     return None
 
 
 def _left_midway(episodes: list, episode_id: int) -> bool:
     """A stop is somewhere inside the season. Not the first episode: one
     episode is trying a series, not leaving it (the opener rule since
-    #312). Not the last regular one: that season is finished (the first
-    live run named a finale "where you stopped")."""
+    #312; a weak first episode is weak_opener's case). Not the last
+    regular one: that season is finished (the first live run named a
+    finale "where you stopped")."""
     regular = [e for e in episodes if e.get("type") == "Episode" and isinstance(e.get("number"), int)]
     ep = next((e for e in regular if e.get("id") == episode_id), None)
     if ep is None or not regular:
@@ -381,11 +458,9 @@ def _main() -> int:
     print(res.get("summary") or res)
     watched = _watched_series(1)
     for title in watched:
-        low = stop_point(1, title)
-        if low:
-            print(f"{title}: stopped at episode {low['episode']} "
-                  f"(AniDB {low['anidb_rating']} on {low['votes']} votes, season median "
-                  f"{low['season_median']}, #{low['rank_from_bottom']} from the bottom of {low['of']})")
+        note = season_note(1, title)
+        if note:
+            print(f"{title}: {note}")
     print(f"plays on no regular episode (recap specials, credits...), not counted: "
           f"{len(non_regular_play_ids(1))}")
     from src.database.models import ShokoSeriesMeta

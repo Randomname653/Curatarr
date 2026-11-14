@@ -10,9 +10,12 @@ title search; the Refresh, MyList-sync and Action routes queue AniDB work.
 A fake Shoko speaking those routes, the real app database:
 - the refresh places the ledger's episodes on their series and copies
   episodes and tags, only reading, and refreshes a series weekly;
-- an episode is "the weakest" only when it is a regular one, on enough
-  votes, among the season's two lowest and a point under the median;
-- the stalled-series opener fact carries it.
+- an episode is "the weakest" only when it is a regular one, among the
+  season's two lowest and 0.8 under the median once its rating is pulled
+  toward the median by its vote count (few votes, little pull away);
+- the stalled-series opener fact carries it; a series left after a weak
+  first episode becomes its own opener fact; the chat gets either as one
+  line.
 
     python tests/test_shoko_meta.py
 """
@@ -33,7 +36,7 @@ SERIES = {
     77: {"name": "Night Harbor", "anidb": 9001, "episodes": [
         # (id, type, number, rating, votes)
         (701, "Episode", 1, 7.4, 20), (702, "Episode", 2, 7.1, 18), (703, "Episode", 3, 4.6, 16),
-        (704, "Episode", 4, 7.3, 15), (705, "Episode", 5, 7.0, 3), (706, "Episode", 6, 7.6, 14),
+        (704, "Episode", 4, 7.3, 15), (705, "Episode", 5, 7.0, 2), (706, "Episode", 6, 7.6, 14),
         (707, "Episode", 7, 0.0, 0), (708, "Special", 1, 3.0, 12),   # a recap special
         (709, "Credits", 1, 0.0, 0)],
         # (name, weight, IsSpoiler, IsLocalSpoiler, tag id)
@@ -186,10 +189,25 @@ check("an episode among the season's weakest, a point under the median, is named
       low and low["episode"] == 3 and low["rank_from_bottom"] == 1 and low["anidb_rating"] == 4.6
       and low["of"] == 5, low)
 check("...an ordinary episode is not", sm.low_point(eps, 702) is None)
-check("...one rated on too few votes counts nowhere (episode 5, 3 votes)", sm.low_point(eps, 705) is None)
+check("...one rated on too few votes counts nowhere (episode 5, 2 votes)", sm.low_point(eps, 705) is None)
 check("...a recap special is never ranked as an episode", sm.low_point(eps, 708) is None)
 check("...a season with too few rated episodes ranks nothing",
       sm.low_point([e for e in eps if e["id"] in (701, 703)], 703) is None)
+
+
+def _season(low_rating, low_votes):
+    return ([{"id": 900 + n, "type": "Episode", "number": n, "rating": 7.0 + n / 100, "votes": 20}
+             for n in range(1, 11) if n != 4]
+            + [{"id": 904, "type": "Episode", "number": 4, "rating": low_rating, "votes": low_votes}])
+
+
+check("the same 5.5 under a 7.0 season: on 3 votes it is pulled to 6.4, too close to the median "
+      "to name (a hard 5-vote cut would have weighed 5 votes like 500)",
+      sm.low_point(_season(5.5, 3), 904) is None)
+check("...on 40 votes it stays at 5.7 and is named",
+      (sm.low_point(_season(5.5, 40), 904) or {}).get("rank_from_bottom") == 1)
+check("...and the named one carries the median of the episodes after it",
+      abs(sm.low_point(_season(5.5, 40), 904)["after_median"] - 7.075) < 0.01)
 
 stop = sm.stop_point(1, "Night Harbor")
 check("where they left the series: the weakest episode, unfinished",
@@ -237,6 +255,54 @@ check("...nor do the openers: the stall stays at the episode they left, 58 days 
       and st.get("stopped_at_weakest_episode", {}).get("episode") == 3, st)
 check("a play on an episode Shoko has not described yet still counts (nothing is guessed)",
       sm.non_regular_play_ids(2) == set())
+
+# ── a weak first episode: the season gets better ────────────────────────────
+bloom = [{"id": 800 + n, "type": "Episode", "number": n, "title": f"Bloom {n}",
+          "rating": 4.0 if n == 1 else 7.0 + n / 10, "votes": 30 if n == 1 else 20} for n in range(1, 9)]
+with conn.get_db_session() as db:
+    db.add(ShokoSeriesMeta(shoko_series_id=78, anidb_id=9002, title="Slow Bloom",
+                           episodes=json.dumps(bloom), tags="[]", fetched_at=now))
+    w = W(user_id=1, plex_user_id="p1", plex_item_id="b1", title="Bloom 1", series_title="Slow Bloom",
+          media_type="anime", season=1, episode=1, viewed_at=now - timedelta(days=30), completed=True)
+    db.add(w)
+    db.flush()
+    db.add(ShokoWatchSync(watch_history_id=w.id, user_id=1, status="sent", shoko_episode_ids="801"))
+    db.commit()
+wo = sm.weak_opener(1, "Slow Bloom")
+check("left after a first episode that is the season's weakest: a weak opener",
+      wo and wo["left_after_episode"] == 1 and wo["episode"] == 1 and wo["after_median"] > wo["season_median"], wo)
+check("...not a stop point (one episode is trying a series, not leaving it)",
+      sm.stop_point(1, "Slow Bloom") is None)
+check("...and no weak opener where episode 1 is fine (Night Harbor was left at episode 3)",
+      sm.weak_opener(1, "Night Harbor") is None)
+note = sm.season_note(1, "Slow Bloom")
+check("the chat's line says it with the numbers",
+      note and "left after episode 1" in note and "the weakest of 8" in note and "4.0 on 30 votes" in note
+      and "rates better past its opening" in note, note)
+note = sm.season_note(1, "Night Harbor")
+check("...and for a stop at a weak episode, which episode",
+      note and note.startswith("left at episode 3 'Ep 3', the weakest of 5") and "episodes after it" in note, note)
+from src.routers import chat as chat_router  # noqa: E402
+line = asyncio.run(chat_router._season_shape_line(1, "Slow Bloom"))
+check("the chat context carries it as one labelled line",
+      line.startswith("SEASON SHAPE (AniDB episode ratings via Shoko): left after episode 1") and line.endswith("\n"), line)
+check("...and nothing for a series without it", asyncio.run(chat_router._season_shape_line(1, "Elsewhere")) == "")
+facts = cs.collect_facts(1, now=now, zone=ZoneInfo("Europe/Berlin"))
+wf = next((f for f in facts if f["kind"] == "weak_opener"), None)
+check("an opener fact: left after episode 1, episode 1 the season's weakest, the rating after it",
+      wf and wf["title"] == "Slow Bloom" and wf["left_after_episode"] == 1
+      and wf["episode_1_is"].startswith("the season's weakest") and wf["rating_after_it"] > wf["season_median"], wf)
+facts = cs.collect_facts(1, now=now - timedelta(days=25), zone=ZoneInfo("Europe/Berlin"))
+check("...not while they may still be starting (five days after the first episode)",
+      not any(f["kind"] == "weak_opener" for f in facts), facts)
+with conn.get_db_session() as db:
+    from src.database.models import ChatStarter  # noqa: E402
+    db.add(ChatStarter(user_id=1, text="Slow Bloom gets better", form="observation",
+                       anchor_title="Slow Bloom", created_at=now - timedelta(days=2)))
+    db.commit()
+facts = cs.collect_facts(1, now=now, zone=ZoneInfo("Europe/Berlin"))
+check("...and it rests once an opener was about it",
+      not any(f["kind"] == "weak_opener" for f in facts), facts)
 
 settings.SHOKO_URL, settings.SHOKO_API_KEY = None, None
 check("without Shoko the refresh does nothing", asyncio.run(sm.refresh())["skipped"] == "no_shoko")

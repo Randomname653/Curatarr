@@ -6,6 +6,16 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Shoko, phase 2: a weak episode is weighed by its votes, and a weak start counts too.** An
+episode's AniDB rating is now pulled toward its season's median by how few votes it has (Bayesian
+shrinkage: the median counts as five votes), instead of a hard five-vote cut that weighed five
+votes like five hundred. Named: among the season's two lowest and 0.8 under the median after that
+pull. On the owner's data that names seven stop points instead of five. New: a series left after
+episode 1 or 2 whose first episode is among the season's weakest, while the rest rates at least at
+the median. Both reach the chat as one line when the series is the topic, and the weak start is
+an opener of its own (two weeks to a year after that episode, resting like a stalled series once
+an opener was about it).
+
 **The enrichment page loads in a blink again.** Its status poll took 20-48 s on the NAS (3 s in
 October). Measured on a copy of the owner's data: the four "watched titles enriched" counts for
 shows and anime ran 1.1 s each, because SQLite walked every titled play (380k, nearly all music)
