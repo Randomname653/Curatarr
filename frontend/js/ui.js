@@ -453,6 +453,21 @@ export function pulseHeldBy(id, source) {
 // emptyHtml(html, ctaLabel, ctaAction, {good}) — one sentence (HTML, the caller
 // escapes), at most one action; ctaAction is the attribute text from act().
 // good: the empty state is the happy case.
+// Tab rows (.cat-tabs / .arr-tabs of .cat-tab / .arr-tab buttons) tell a
+// screen reader which tab is chosen: role="tablist", role="tab" and
+// aria-selected from the .active class every view already sets. Only
+// Activity said so (UI audit 2026-11-14). Cheap: called after a tab click
+// and on view changes.
+export function syncTabRoles(root = document) {
+  for (const list of root.querySelectorAll('.cat-tabs, .arr-tabs')) {
+    list.setAttribute('role', 'tablist');
+    for (const tab of list.querySelectorAll(':scope > .cat-tab, :scope > .arr-tab')) {
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-selected', String(tab.classList.contains('active')));
+    }
+  }
+}
+
 // skeletonHtml(label, {kind, n}) — the shape of what is loading, shimmering
 // like a poster that has not arrived: 'cards' (recommendations, deletions),
 // 'rows' (lists), 'tiles' (Wrap-Up). The label stays for screen readers and
