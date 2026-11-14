@@ -1327,6 +1327,10 @@ async def _run_one(queue: str, t: "Task", force: bool, deep: bool, actions: list
     finally:
         _queue_pending[queue].discard(t.job_id)
         _queue_current[queue] = None
+        if t0 is not None:
+            # the task's working set is garbage now: hand the pages back
+            from src.services.memory_reclaim import reclaim_after_job
+            await reclaim_after_job()
 
 
 async def _run_queue(queue: str, tasks: list, force: bool, deep: bool,

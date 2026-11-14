@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Less RAM.** One semantic search used to keep the facet index (~1.2 GB) in memory for good;
+Chroma now lets go of its loaded indexes after 10 idle minutes and reloads on the next query. The
+taste rebuild reads its calibration corpus in pages and stays float32 (peak +855 MB to +379 MB),
+and expired corpus caches are dropped right away. The Plex history sync only loads the plays of the
+items it lists (+180 MB to +58 MB), the significance pass reads the raw API cache by key (+258 MB to
++6 MB), and the tech sync, the music matcher and the lyrics walk work page by page instead of
+holding whole library listings. After big jobs the freed memory goes back to the OS (glibc
+`malloc_trim`). A new test caps the startup import and these operations.
+
 **Activity, after the first live check.** The Scheduled tab marked nearly every task of a busy
 custodian queue "Queued" and locked its Run now, also weekly jobs that were not due (a run reaches
 only the due ones). "Queued" now means the run will really reach the task; the others keep their

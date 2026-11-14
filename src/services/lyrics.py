@@ -173,6 +173,24 @@ def parse_lyrics(raw, fmt: Optional[str] = None) -> list:
     return out
 
 
+_TRACK_FIELDS = ("ratingKey", "grandparentRatingKey", "parentRatingKey", "grandparentTitle",
+                 "parentTitle", "title", "duration", "addedAt", "parentYear")
+
+
+def _slim_track(item: dict) -> dict:
+    """The part of a Plex track listing _upsert_section reads: the scalar
+    fields, each part's size and only the lyric streams. The whole section
+    is held until its upsert, and a full item with includeElements=Stream
+    (audio stream, Genre, Guid, Image ...) is ~10x this."""
+    out = {k: item[k] for k in _TRACK_FIELDS if k in item}
+    out["Media"] = [{"Part": [{"size": p.get("size") or 0,
+                               "Stream": [s for s in (p.get("Stream") or [])
+                                          if s.get("streamType") == 4]}
+                              for p in (m.get("Part") or [])]}
+                    for m in (item.get("Media") or [])]
+    return out
+
+
 def _lyric_stream(item: dict) -> tuple:
     """(stream key, format) of the track's lyric stream, lrc preferred over
     txt when both exist; (None, None) without one."""
@@ -1131,7 +1149,7 @@ async def run_lyrics_sync(task=None) -> bool:
                     logger.warning("[lyrics] listing %s at %d: HTTP %s", sec_key, start, r.status_code)
                     return None
                 items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
-                out.extend(items)
+                out.extend(_slim_track(it) for it in items)
                 if len(items) < _PAGE:
                     return out
                 start += _PAGE

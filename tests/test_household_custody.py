@@ -415,7 +415,27 @@ async def _topup(title, cat, **kw):
     return True
 
 _saved_me = (me._with_handle, me.topup_omdb)
-me._with_handle = lambda h, fn: ROWS
+
+
+class _Cursor:   # the scan reads the raw cache row by row off a cursor
+    def execute(self, *a):
+        return self
+
+    def __iter__(self):
+        return iter(ROWS)
+
+    def close(self):
+        pass
+
+
+class _Handle:
+    class conn:
+        @staticmethod
+        def cursor():
+            return _Cursor()
+
+
+me._with_handle = lambda h, fn: fn(_Handle())
 me.topup_omdb = _topup
 try:
     r = asyncio.run(me.run_omdb_backfill(limit=2))
@@ -891,7 +911,9 @@ class _Coll:
         return {"ids": [["a", "b", "c"]], "distances": [[1, 2, 3]],
                 "metadatas": [[{}, {cw.MERGED_INTO: "x"}, {}]]}
 
-    def get(self, where=None, include=None, limit=None):
+    def get(self, where=None, include=None, limit=None, offset=0):   # paged reads
+        if offset:
+            return {"embeddings": [], "metadatas": []}
         return {"embeddings": [[1.0], [2.0]], "metadatas": [{}, {cw.MERGED_INTO: "x"}]}
 
 

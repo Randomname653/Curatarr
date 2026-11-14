@@ -23,7 +23,7 @@ from __future__ import annotations
 import posixpath
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import AsyncIterator, Literal, Optional, Protocol, Sequence, runtime_checkable
 
@@ -100,7 +100,7 @@ def key_namespace(value) -> KeyNamespace:
 
 # ── DTOs ─────────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ExternalIds:
     """Every id a title is known by outside the media server. Plex reads
     them from Guid tags, Jellyfin from ProviderIds."""
@@ -117,10 +117,10 @@ class ExternalIds:
     mb_recording_id: Optional[str] = None
 
     def any(self) -> bool:
-        return any(v is not None for v in self.__dict__.values())
+        return any(getattr(self, f.name) is not None for f in fields(self))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FileRef:
     """One media file as the server sees it. Plex and Jellyfin usually see
     the same files under different mount points, so matching compares the
@@ -159,7 +159,7 @@ class Library:
     roots: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MediaItem:
     key: str
     kind: ItemKind

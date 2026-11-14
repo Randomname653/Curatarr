@@ -337,26 +337,37 @@ async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
                 or (raw.get("title") or "").strip().lower() in pinned_titles)
 
     def _walk(cache):
-        def _rows():
-            return cache.conn.execute(
+        # Keys first, responses 500 at a time: the walk writes into the
+        # table it reads (so no open cursor across it), and holding every
+        # live raw response at once was the whole raw cache in RAM, twice
+        # after a revert.
+        def _keys():
+            return [r[0] for r in cache.conn.execute(
                 """
-                SELECT cache_key, response FROM api_cache
+                SELECT cache_key FROM api_cache
                 WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
                   AND expires_at > datetime('now')
                 """
-            ).fetchall()
+            )]
 
-        rows = _rows()
-        reverted = _recheck(cache, index, rows)
+        def _rows(keys):
+            for i in range(0, len(keys), 500):
+                part = keys[i:i + 500]
+                yield from cache.conn.execute(
+                    "SELECT cache_key, response FROM api_cache WHERE cache_key IN (%s)"
+                    % ",".join("?" * len(part)), part).fetchall()
+
+        keys = _keys()
+        reverted = _recheck(cache, index, _rows(keys))
         if reverted:
             # A reverted entry is a gap again, and the fill pass below reads the
             # rows it was handed — re-read so this run can offer it a better
             # match instead of leaving it empty until the next one.
-            rows = _rows()
+            keys = _keys()
 
         visited = added = 0
         by_how: dict = {}
-        for key, resp in rows:
+        for key, resp in _rows(keys):
             if should_stop and should_stop():
                 break
             try:
@@ -394,10 +405,10 @@ async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
             if visited % 50 == 0:
                 if task is not None:
                     from src.services.task_monitor import task_monitor
-                    task_monitor.update(task, processed=visited, total=len(rows),
+                    task_monitor.update(task, processed=visited, total=len(keys),
                                         message=f"{added} matched so far")
                 if on_progress is not None:
-                    on_progress(visited, len(rows), added)
+                    on_progress(visited, len(keys), added)
         return {"source": "external_ids", "visited": visited, "added": added,
                 "reverted": reverted, "by": by_how}
 

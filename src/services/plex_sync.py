@@ -725,17 +725,26 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
             # Get existing entries to deduplicate. ``near`` holds their unix
             # times per (user, item): a history event whose seconds differ from
             # the listing's lastViewedAt is still the same play.
+            # Only the items this listing carries: every lookup below is keyed
+            # by one of its rating keys. Loading the whole table held ~384k
+            # rows (mostly Spotify plays no Plex key can match) as a set plus
+            # lists, +180 MB per sync (measured 2026-11-14).
             existing = set()
             near: dict = {}
-            for row in db.query(
-                WatchHistoryEntry.user_id,
-                WatchHistoryEntry.plex_item_id,
-                WatchHistoryEntry.viewed_at,
-            ).all():
-                existing.add((row.user_id, row.plex_item_id, row.viewed_at))
-                if row.viewed_at is not None:
-                    near.setdefault((row.user_id, row.plex_item_id), []).append(
-                        calendar.timegm(row.viewed_at.utctimetuple()))
+            listed = sorted({str(e.get("ratingKey", "")) for e in all_entries} - {""})
+            for i in range(0, len(listed), 500):
+                for row in db.query(
+                    WatchHistoryEntry.user_id,
+                    WatchHistoryEntry.plex_item_id,
+                    WatchHistoryEntry.viewed_at,
+                ).filter(   # user_id first: idx_wh_user_item leads with it
+                    WatchHistoryEntry.user_id.in_([u.id for u in users]),
+                    WatchHistoryEntry.plex_item_id.in_(listed[i:i + 500]),
+                ):
+                    existing.add((row.user_id, row.plex_item_id, row.viewed_at))
+                    if row.viewed_at is not None:
+                        near.setdefault((row.user_id, row.plex_item_id), []).append(
+                            calendar.timegm(row.viewed_at.utctimetuple()))
             templates: dict = {}
 
             def _template(rk: str):
@@ -2714,33 +2723,46 @@ def _prune_stale_tech_profiles(live_keys: set, categories: set) -> int:
     return len(stale_ids)
 
 
-async def _fetch_section_all(client, plex_url, headers, sec_key, type_num) -> list:
-    """Paginated fetch of every item of a Plex type in a section (no view filter)."""
+async def _iter_section_pages(client, plex_url, headers, sec_key, type_num):
+    """Paginated walk of every item of a Plex type in a section (no view
+    filter), one page (400 raw items) at a time. The tech sync folds each
+    page into its accumulator and drops it: collecting the whole section
+    first held every episode's raw Media/Part/Guid tree at once (hundreds
+    of MB on a big show library). Completeness lands in _LAST_FETCH_COMPLETE
+    once the walk ends."""
     PAGE = 400
-    out, start = [], 0
+    start = 0
     complete = True
-    while True:
-        try:
-            r = await client.get(
-                f"{plex_url}/library/sections/{sec_key}/all",
-                headers={**headers, "X-Plex-Container-Start": str(start),
-                         "X-Plex-Container-Size": str(PAGE)},
-                params={"type": type_num, "includeGuids": "1"},
-            )
-        except Exception as e:
-            logger.warning("[tech] fetch %s/%s failed: %s", sec_key, type_num, e)
-            complete = False
-            break
-        if r.status_code != 200:
-            complete = False
-            break
-        items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
-        out.extend(items)
-        if len(items) < PAGE:
-            break
-        start += len(items)
-    _LAST_FETCH_COMPLETE[(str(sec_key), str(type_num))] = complete
-    return out
+    try:
+        while True:
+            try:
+                r = await client.get(
+                    f"{plex_url}/library/sections/{sec_key}/all",
+                    headers={**headers, "X-Plex-Container-Start": str(start),
+                             "X-Plex-Container-Size": str(PAGE)},
+                    params={"type": type_num, "includeGuids": "1"},
+                )
+            except Exception as e:
+                logger.warning("[tech] fetch %s/%s failed: %s", sec_key, type_num, e)
+                complete = False
+                break
+            if r.status_code != 200:
+                complete = False
+                break
+            items = r.json().get("MediaContainer", {}).get("Metadata", []) or []
+            if items:
+                yield items
+            if len(items) < PAGE:
+                break
+            start += len(items)
+    finally:
+        _LAST_FETCH_COMPLETE[(str(sec_key), str(type_num))] = complete
+
+
+async def _fetch_section_all(client, plex_url, headers, sec_key, type_num) -> list:
+    """The whole walk as one list (small sections and tests)."""
+    return [it async for page in _iter_section_pages(client, plex_url, headers, sec_key, type_num)
+            for it in page]
 
 
 def _persist_tech_profiles(agg: dict) -> int:
@@ -2829,52 +2851,54 @@ async def sync_tech_profiles(force: bool = False, include_music: bool = False) -
                 continue
             if category == "music" and not include_music:
                 continue
-            items = await _fetch_section_all(client, plex_url, headers, sec_key, type_num)
-            if items and _LAST_FETCH_COMPLETE.get((str(sec_key), str(type_num)), False):
+            n_items = 0
+            async for page in _iter_section_pages(client, plex_url, headers, sec_key, type_num):
+                n_items += len(page)
+                for it in page:
+                    mi = to_media_item(it, str(sec_key))
+                    if mi is not None:
+                        id_items.append(mi)
+                    if category == "movie":
+                        ck = str(it.get("ratingKey"))
+                        title = it.get("title")
+                        ids = _parse_guids(it)
+                    else:
+                        ck = str(it.get("grandparentRatingKey")
+                                 or it.get("parentRatingKey") or it.get("ratingKey"))
+                        title = it.get("grandparentTitle") or it.get("title")
+                        ids = {"tmdb_id": None, "tvdb_id": None}
+                    if not ck or ck == "None":
+                        continue
+                    a = agg.setdefault(ck, {
+                        "rating_key": ck, "media_type": category, "title": title,
+                        "tmdb_id": ids["tmdb_id"], "tvdb_id": ids["tvdb_id"],
+                        "size_bytes": 0, "primary_bytes": 0, "redundant_bytes": 0,
+                        "duration_ms": 0, "res": Counter(), "codec": Counter(),
+                        "hdr": False, "audio": set(), "subs": set(),
+                        "count": 0, "versions": 1, "remux_files": 0})
+                    m = _parse_media(it)
+                    note_arrival(a.setdefault("arrivals", {}), it.get("addedAt"), m["size_bytes"])
+                    a["size_bytes"] += m["size_bytes"] or 0           # total footprint
+                    a["primary_bytes"] += m["primary_bytes"] or 0     # bitrate basis
+                    a["redundant_bytes"] += (m["size_bytes"] or 0) - (m["primary_bytes"] or 0)
+                    a["versions"] = max(a["versions"], m["versions"])
+                    a["duration_ms"] += m["duration_ms"] or 0
+                    if m["resolution"]:
+                        a["res"][m["resolution"]] += 1
+                    if m["codec"]:
+                        a["codec"][m["codec"]] += 1
+                    a["hdr"] = a["hdr"] or m["hdr"]
+                    a["audio"] |= m["audio"]
+                    a["subs"] |= m["subs"]
+                    a["count"] += 1
+                    if m.get("remux"):
+                        a["remux_files"] += 1
+
+            if n_items and _LAST_FETCH_COMPLETE.get((str(sec_key), str(type_num)), False):
                 scanned.add(category)
             else:
                 incomplete.add(category)   # partial or empty: this category is not pruned
-            task_monitor.log(_task, f"{sec_title}: {len(items)} parts")
-            for it in items:
-                mi = to_media_item(it, str(sec_key))
-                if mi is not None:
-                    id_items.append(mi)
-                if category == "movie":
-                    ck = str(it.get("ratingKey"))
-                    title = it.get("title")
-                    ids = _parse_guids(it)
-                else:
-                    ck = str(it.get("grandparentRatingKey")
-                             or it.get("parentRatingKey") or it.get("ratingKey"))
-                    title = it.get("grandparentTitle") or it.get("title")
-                    ids = {"tmdb_id": None, "tvdb_id": None}
-                if not ck or ck == "None":
-                    continue
-                a = agg.setdefault(ck, {
-                    "rating_key": ck, "media_type": category, "title": title,
-                    "tmdb_id": ids["tmdb_id"], "tvdb_id": ids["tvdb_id"],
-                    "size_bytes": 0, "primary_bytes": 0, "redundant_bytes": 0,
-                    "duration_ms": 0, "res": Counter(), "codec": Counter(),
-                    "hdr": False, "audio": set(), "subs": set(),
-                    "count": 0, "versions": 1, "remux_files": 0})
-                m = _parse_media(it)
-                note_arrival(a.setdefault("arrivals", {}), it.get("addedAt"), m["size_bytes"])
-                a["size_bytes"] += m["size_bytes"] or 0           # total footprint
-                a["primary_bytes"] += m["primary_bytes"] or 0     # bitrate basis
-                a["redundant_bytes"] += (m["size_bytes"] or 0) - (m["primary_bytes"] or 0)
-                a["versions"] = max(a["versions"], m["versions"])
-                a["duration_ms"] += m["duration_ms"] or 0
-                if m["resolution"]:
-                    a["res"][m["resolution"]] += 1
-                if m["codec"]:
-                    a["codec"][m["codec"]] += 1
-                a["hdr"] = a["hdr"] or m["hdr"]
-                a["audio"] |= m["audio"]
-                a["subs"] |= m["subs"]
-                a["count"] += 1
-                if m.get("remux"):
-                    a["remux_files"] += 1
-
+            task_monitor.log(_task, f"{sec_title}: {n_items} parts")
             # Shows: merge series ids/title from the show items (type 2).
             if category in ("show", "anime"):
                 for sh in await _fetch_section_all(client, plex_url, headers, sec_key, "2"):

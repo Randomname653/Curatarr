@@ -117,7 +117,7 @@ def _live_raw_entries(cache) -> list[dict]:
         """
     )
     seen, out = set(), []
-    for cache_key, resp in cur.fetchall():
+    for cache_key, resp in cur:
         try:
             raw = json.loads(resp)
         except (ValueError, TypeError):

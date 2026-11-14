@@ -145,7 +145,7 @@ import src.vector_store.chromadb_wrapper as cw  # noqa: E402
 class _Coll:
     gets = 0
 
-    def get(self, where=None, include=None, limit=None):
+    def get(self, where=None, include=None, limit=None, offset=0):   # paged reads
         _Coll.gets += 1
         return {"embeddings": [[1.0, 0.0], [0.0, 1.0]], "metadatas": [{}, {}]}
 
