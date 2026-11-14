@@ -6,6 +6,10 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Activity: the running row's tint follows its bar.** The amber tint behind a running task was
+a fixed gradient over the first 40 % of the row, whatever the progress. It now fills the row to
+the task's percentage and glides with it, and sweeps along with the bar while the count is unknown.
+
 **The curator knows who is in a band.** Asked about a band's song, the curator had no line-up: when
 the owner praised the singer by name, it "corrected" him from a same-named artist elsewhere in the
 library. The MusicBrainz artist lookup now reads the band's members too (roles and years, current
