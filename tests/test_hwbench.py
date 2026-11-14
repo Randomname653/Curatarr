@@ -488,9 +488,11 @@ check("probe: language detection tells German from English",
       _probe.language_of("Das ist ein stiller Film, und er wirkt lange nach.") == "de"
       and _probe.language_of("It is a quiet film and it lingers.") == "en"
       and _status({"language": {"detected": "en"}}, "language") == "WARN")
-check("probe: a template without .System warns (the constitution would be dropped)",
-      _status({"show": {"capabilities": ["completion"], "template_has_system": False}}, "template") == "WARN"
-      and _status({"show": {"capabilities": [], "template_has_system": True}}, "template") == "PASS")
+check("probe: an ignored system message fails (the constitution would never arrive)",
+      _status({"system": {"obeyed": False}}, "system") == "FAIL"
+      and _status({"system": {"obeyed": True}}, "system") == "PASS")
+check("probe: /api/show facts are information, never a verdict (gemma4's template is a renderer stub)",
+      _status({"show": {"capabilities": ["completion"], "renderer": "gemma4-large"}}, "info") == "PASS")
 check("probe: the fixtures stay the fictional owner's (setup mini-bench)",
       "Jane Doe" in __import__("src.services.setup_minibench", fromlist=["x"]).JANE_DOE_TASTE)
 import os as _os  # noqa: E402

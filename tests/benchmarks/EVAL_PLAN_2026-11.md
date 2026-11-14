@@ -538,7 +538,8 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
    - **judge:** der Produktions-Judge auf den beiden Jane-Doe-Fixtures, mit Verfassung des Profils, `VERDICT_SCHEMA` und dem Budget des ersten Versuchs, geprüft mit `pillars._parse_verdict`. Bare labels, Abbruch und Enum-Fehler werden benannt.
    - **speed:** `/api/chat` gegen `/api/generate`.
    - **language:** der echte Chat-Prompt (`chat_prompt.build_system_prompt`) mit einer deutschen Frage.
-   - **template:** Fähigkeiten, Kontextlänge und ob das Template überhaupt eine System-Nachricht trägt.
+   - **system:** Eine System-Nachricht verlangt ein Codewort. Wird sie befolgt? (Ohne System-Rolle käme die Verfassung nie beim Judge an.)
+   - **info:** Fähigkeiten, Kontextlänge, Renderer.
 
    Ergebnis als PASS/WARN/FAIL, gespeichert unter `hwbench_data/probes/`. Verweigert, solange ein Bench auf :11435 läuft oder die GPU belegt ist. Erst bei PASS (oder einer verstandenen WARN) folgt Schritt 5.
 5. **Bench.**
@@ -575,7 +576,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 | L4 | Chat-Decider-Fälle: die vier Katalog-Curator sind gescort (2026-11-02, n = 9, ein Lauf je Modell); alle anderen Läufe nicht. Chat fließt nicht in die Matrix ein. | Bei n = 9 und Temperatur 0,7 ist das Ranking nicht belastbar | Zweiter Chat-Lauf je Finalist (Streuung messen); entscheiden, ob Chat in die Matrix-Wertung soll |
 | L5 | Keine 103-Titel-Läufe im Ledger | Die sub40-Streuung ist unbekannt (BEST_TIE 0,25) | P1 |
 | ~~L6~~ | **Gebaut am 2026-11-14:** `score-sheets --kind judge` und `--runs`, blinde Labels für alle Arten, `record-scores` mit Rubrik aus den Spalten, Standard-Scorer pro Art und Schutz gegen Rubrik-Mischung (`hwbench/scoring.py`, Regeln in `tests/test_hwbench.py`) | Probelauf auf den drei Matrix-Läufen: 40 Titel in 4 Chunks, der Schutz meldet die alte Rubrik vom 20.10. | Entscheiden, ob alle Matrix-Modelle unter `claude-judge` blind neu bewertet werden (siehe Schritt 6) |
-| ~~L7~~ | **Gebaut am 2026-11-14:** `run probe --model ⟨tag⟩` (hwbench/probe.py, Regeln in `tests/test_hwbench.py`) | Der Ablehn-Pfad ist live geprüft (verweigert neben einem laufenden Bench); ein Lauf gegen ein Modell steht noch aus | Am ersten freien GPU-Fenster gegen gemma4:26b-a4b-it-qat (Erwartung: PASS) und qwen3.6:35b-a3b |
+| ~~L7~~ | **Gebaut am 2026-11-14:** `run probe --model ⟨tag⟩` (hwbench/probe.py, Regeln in `tests/test_hwbench.py`) | Live geprüft am 2026-11-14: gemma4:26b-a4b-it-qat besteht alle 6 Checks (157 tok/s chat und generate). Die Gegenprobe granite4.1:8b als Judge fällt am Schema durch (nackte Labels „NONE“), wie erwartet. Der erste Template-Check war falsch: gemma4 und qwen3.8 rendern über eingebaute Renderer, ihr Template ist nur ein Platzhalter. Ersetzt durch einen Verhaltenstest der System-Nachricht. | – |
 | L8 | Gate-Erwartungen stammen noch aus der 3-Pillar-Zeit; Treffer 20–100 % werden nur berichtet | Das Gate prüft nur das Schema, keine Urteilstreue | Einmal an der 31b-qat neu kalibrieren |
 | L9 | Overrun-Toleranz 256 MiB noch nicht entschieden; viele MoE-Zellen liegen bei 260–330 MiB | 16-GB- und 6-GB-Grenzfälle | Entscheidung des Besitzers |
 | L10 | Die Fit-Simulation reserviert 1,5 GB Desktop; ein Headless-NAS hält mehr (MoE dort ~100 % statt 87 %) | 16-GB-Pakete sind konservativ | `--desktop-reserve` für eine Linux-Simulation, oder NAS-perf als Wahrheit |

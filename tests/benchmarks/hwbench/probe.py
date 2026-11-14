@@ -22,8 +22,10 @@ candidates before a single bench cell was spent on them:
   language  the production chat prompt (chat_prompt.build_system_prompt) with
             a German question: does the answer follow the user's language?
 
-Plus what /api/show says: capabilities, context length, whether the template
-carries a system message at all. No owner data: fixtures and questions are
+  system    a system message that asks for one code word: is it followed? A
+            model that drops the system role would never see the constitution.
+
+Plus what /api/show says: capabilities, context length, renderer. No owner data: fixtures and questions are
 the fictional Jane Doe ones. The result is printed and saved under
 hwbench_data/probes/. A probe on a busy GPU (a game, a running bench) is
 refused - it would disturb what is running.
@@ -44,6 +46,8 @@ THINK_PROMPT = "Name one film by Akira Kurosawa and say in one sentence why it m
 SPEED_PROMPT = "Write about 150 words on why film restoration matters."
 SPEED_PREDICT = 160
 LANG_PROMPT = "Was hältst du von Stalker von Andrei Tarkowski? Bitte in zwei Sätzen."
+SYSTEM_WORD = "PELICAN"
+SYSTEM_PROMPT = f"Whatever the user writes, answer with the single word {SYSTEM_WORD} and nothing else."
 SPEED_RATIO_WARN = 0.66      # one endpoint under 2/3 of the other's speed
 _GERMAN = re.compile(r"\b(und|nicht|der|die|das|ist|ein|eine|mit|auch|sich|wie)\b", re.I)
 _ENGLISH = re.compile(r"\b(and|not|the|is|a|an|with|also|it|this|that|of)\b", re.I)
@@ -107,14 +111,17 @@ def assess(r: dict) -> list[tuple[str, str, str]]:
     if lang:
         status = "PASS" if lang.get("detected") == "de" else "WARN"
         out.append(("language", status, f"German question answered in '{lang.get('detected')}'"))
+    sysm = r.get("system") or {}
+    if sysm:
+        out.append(("system", "PASS" if sysm.get("obeyed") else "FAIL",
+                    "the system message is followed" if sysm.get("obeyed")
+                    else "the system message was ignored - the constitution would never reach the judge"))
     show = r.get("show") or {}
     if show:
-        status = "PASS" if show.get("template_has_system") else "WARN"
-        out.append(("template", status,
+        out.append(("info", "PASS",
                     f"capabilities {', '.join(show.get('capabilities') or []) or '?'}; "
                     f"context {show.get('context_length') or '?'}; "
-                    + ("system message supported" if show.get("template_has_system")
-                       else "template has no .System - the constitution would be dropped")))
+                    f"renderer {show.get('renderer') or 'template'}"))
     return out
 
 
@@ -122,9 +129,12 @@ def _show(client: httpx.Client, url: str, model: str) -> dict:
     d = client.post(f"{url}/api/show", json={"model": model}).json()
     info = d.get("model_info") or {}
     ctx = next((v for k, v in info.items() if k.endswith(".context_length")), None)
+    # Newer models render through a built-in renderer (gemma4, qwen3.8: the
+    # template is a 13-character stub) or loop over .Messages (granite4.1),
+    # so the template text cannot tell whether a system message arrives -
+    # the "system" check asks the model instead.
     return {"capabilities": d.get("capabilities") or [], "context_length": ctx,
-            "template_has_system": ".System" in (d.get("template") or ""),
-            "family": (d.get("details") or {}).get("family")}
+            "renderer": d.get("renderer"), "family": (d.get("details") or {}).get("family")}
 
 
 def run_probe(url: str, model: str, profile: str = "large", log=print) -> dict:
@@ -141,6 +151,12 @@ def run_probe(url: str, model: str, profile: str = "large", log=print) -> dict:
         _chat(c, url, {"model": model, "think": False, "keep_alive": "5m",
                        "messages": [{"role": "user", "content": "hi"}],
                        "options": {**opts, "num_predict": 4}})       # load once, untimed
+        log("  system …")
+        sysr = _chat(c, url, {"model": model, "think": False,
+                              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                                           {"role": "user", "content": "Say hello."}],
+                              "options": {**opts, "temperature": 0.0, "num_predict": 20}})
+        res["system"] = {"obeyed": SYSTEM_WORD in sysr["content"].upper()}
         log("  think …")
         res["think"] = _chat(c, url, {"model": model, "think": False,
                                       "messages": [{"role": "user", "content": THINK_PROMPT}],
