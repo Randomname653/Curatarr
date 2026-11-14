@@ -6,6 +6,12 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Last played: Plex's own ids before a title search.** A show in Plex but in no arr app has no
+match pin, and its plays carry no series id, so its poster still came from a search by name and
+a short title found another series. The recent-history posters now take the ids Plex itself files
+for the library item of that name (the tech sync's profiles) when the owner has not pinned one;
+a name two library items share is left to the search.
+
 **Less RAM.** One semantic search used to keep the facet index (~1.2 GB) in memory for good;
 Chroma now lets go of its loaded indexes after 10 idle minutes and reloads on the next query. The
 taste rebuild reads its calibration corpus in pages and stays float32 (peak +855 MB to +379 MB),
