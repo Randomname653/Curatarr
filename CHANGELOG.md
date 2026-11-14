@@ -6,6 +6,36 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+Nothing yet.
+
+---
+
+## 2026-11-15 — v1.2.0: a setup a stranger gets through, one design language, music from Plexamp
+
+A week after 1.1.0, the release for the first people outside the household. The milestones:
+
+- **A fresh install, walked through as a stranger**, and the Docker route the same way: plex.tv
+  sign-in, the AI found by itself, the setup taken over without a restart, the setup code asked
+  first, real sync progress, a library enriched without arr apps.
+- **One design language**: a full UI audit and every finding of it, German UI words settled.
+- **Music from Plexamp**: a library mapped later gets its whole history, an unsaved one says so.
+- **`:latest` is a release**; `:main` follows every merge.
+- **The nightly backup keeps the caches and the vector store** too.
+
+**Music from Plexamp reaches Curatarr: an unsaved library says so, and a library mapped later gets
+its whole history.** The Plex libraries page showed a library with no saved mapping with its
+*suggested* category, exactly like a saved one, and Save stayed grey: on the owner's install Music
+read "music" for half a year while the sync never followed it, so no Plexamp play arrived. Such a
+library now carries a "Not saved" badge, and Save is ready for it. Mapping a library after the first
+sync used to bring only the plays since the last one; now its listing is read whole once and the
+history walks start from the beginning again (stored plays are matched, nothing doubles). And a
+loved genre counts as gone only when its own kind of media went on without it: a quiet music source
+is no longer "Electronic has gone silent for thirty days".
+
+**Two small ones from the bots.** The setup wizard keeps keyboard focus on the radio it redraws
+(choosing Plex/Jellyfin or a Plex server by arrow keys no longer drops focus to the page), and
+an index on the play titles takes Tonight's "played since?" check from 329 ms to 54 ms.
+
 **`:latest` is a release now; `:main` follows every merge.** A merge no longer reaches everyone
 who pulls `:latest`: a `vX.Y.Z` tag publishes `:X.Y.Z` and moves `:latest`, a push to main
 publishes `:main`. Each image knows its track, and "Update available" offers a `:latest` install
