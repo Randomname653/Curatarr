@@ -57,6 +57,15 @@ _YEAR = "localStorage.setItem('curatarr_wrapup', JSON.stringify({scope: 'all', p
 _CLOSE_STORY = "js:document.querySelector('.wus-close')?.click()"
 
 
+# The chat opens on its landing with the last conversation folded behind
+# "Continue our last conversation"; the desktop frame shows the exchange.
+_OPEN_CHAT = ("js:(async () => { for (let i = 0; i < 50 && !document.getElementById('earlier-chat-btn'); i++)"
+              " await new Promise(r => setTimeout(r, 100));"
+              " document.getElementById('earlier-chat-btn')?.click();"
+              " await new Promise(r => setTimeout(r, 400));"
+              " const m = document.getElementById('messages'); if (m) m.scrollTop = 0; })()")
+
+
 def _slide(cls: str) -> str:
     return ("js:(async () => { for (let i = 0; i < 40 && !document.querySelector('.wus-stage.wus-s-"
             + cls + "'); i++) { document.querySelector('.wus-next').click();"
@@ -66,7 +75,7 @@ def _slide(cls: str) -> str:
 SHOTS = [
     ("wrapup", "desktop", "#wrapup", "#wrapup-view .wu-hero, #wrapup-view .wu-empty", _CLOSE_STORY, _YEAR),
     ("deletions", "desktop", "#deletions", "#deletions-view.active", None),
-    ("chat", "desktop", "#chat", "#chat-view.active #chat-input-area", None),
+    ("chat", "desktop", "#chat", "#chat-view.active #chat-input-area", _OPEN_CHAT),
     ("recommendations", "desktop", "#recs", "#recs-view.active",
      "click:#recs-view .cat-tab:nth-child(2)"),
     ("knowledge-base", "desktop", "#enrich", "#enrich-view.active", None),
@@ -126,15 +135,16 @@ def _pseudonymise(page, name: str) -> None:
 
 
 def _settle(page, timeout_ms: int) -> None:
-    """Posters fade in once loaded (img.poster-img.is-loaded); wait for the
-    ones in the viewport, then one more frame for the glow to take its tint."""
+    """Posters fade in once loaded (img.poster-img.is-loaded); Swipe's card
+    has its own (img.swipe-poster). Wait for the ones in the viewport, then
+    one more frame for the glow to take its tint."""
     try:
         page.wait_for_function("""() => {
-            const imgs = [...document.querySelectorAll('img.poster-img')].filter(i => {
+            const imgs = [...document.querySelectorAll('img.poster-img, img.swipe-poster')].filter(i => {
                 const r = i.getBoundingClientRect();
                 return r.bottom > 0 && r.top < innerHeight && r.width > 0;
             });
-            return imgs.every(i => i.classList.contains('is-loaded') || i.complete);
+            return imgs.every(i => i.classList.contains('is-loaded') || (i.complete && i.naturalWidth > 0));
         }""", timeout=timeout_ms)
     except Exception:  # noqa: BLE001 - a poster that never loads still leaves a usable frame
         pass
