@@ -1280,9 +1280,10 @@ select option { background: var(--bg2); }
 #mobile-tabbar { display: none; }
 #ptr { display: none; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+/* the one rotation: spinners and the pull-to-refresh indicator */
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes ptrSpin { from { transform: translate(-50%, 18px) rotate(0); } to { transform: translate(-50%, 18px) rotate(360deg); } }
 
 /* Library sheet (tab bar → Library) and the iOS install steps */
 .install-steps { padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
@@ -1369,7 +1370,7 @@ select option { background: var(--bg2); }
   #chat-input-area .btn-icon { display: block; }
   #chat-input-area .btn-label { display: none; }
   #new-chat-btn, #recheck-btn { width: 44px; height: 44px; min-height: 44px; padding: 0; border-radius: 50%; }
-  #recheck-btn.busy .btn-icon { animation: ptrSpinIcon .8s linear infinite; }
+  #recheck-btn.busy .btn-icon { animation: spin .8s linear infinite; }
   #chat-input { border-radius: 22px; padding: 11px 16px; min-height: 44px; height: 44px; }
   #send-btn { width: 48px; height: 44px; min-height: 44px; padding: 0; border-radius: 22px; }
   #send-btn:disabled { opacity: .5; }
@@ -1411,7 +1412,7 @@ select option { background: var(--bg2); }
     --pull: 0; transform: translate(-50%, calc(var(--pull) * 1px - 40px)) rotate(calc(var(--pull) * 4deg)); transition: opacity var(--dur-1); }
   #ptr.show { opacity: 1; }
   #ptr.armed { color: var(--on-amber); background: var(--amber); border-color: var(--amber); }
-  #ptr.spinning { color: var(--on-amber); background: var(--amber); border-color: var(--amber); animation: ptrSpin .6s linear infinite; }
+  #ptr.spinning { color: var(--on-amber); background: var(--amber); border-color: var(--amber); transform: none; translate: -50% 18px; animation: spin .6s linear infinite; }
 
   /* Swipe on a phone: the deck owns the screen between topbar and tab bar.
      The view header and the session panel step aside, tabs + taste progress
@@ -1437,7 +1438,6 @@ select option { background: var(--bg2); }
   #swipe-view .swipe-star { min-width: 0; height: 46px; font-size: var(--fs-lg); border-radius: var(--radius-lg); }
   #swipe-view .swipe-react:active .swipe-react-ic { transform: scale(.9); }
 }
-@keyframes ptrSpinIcon { to { transform: rotate(360deg); } }
 
 /* Press feedback on touch: things you tap give a little */
 @media (pointer: coarse) {
@@ -2083,9 +2083,8 @@ details.swipe-keys-box > summary:hover { color: var(--text2); }
 .act-sub.s-completed { color: var(--success); border-color: var(--success-line); }
 .act-sub.s-partial, .act-sub.s-warning { color: var(--amber); border-color: var(--amber-line); }
 .act-sub.s-failed { color: var(--danger-fg); border-color: var(--danger-line); }
-.act-spin { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--amber-line); border-top-color: var(--amber); animation: act-spin .9s linear infinite; flex-shrink: 0; }
+.act-spin { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--amber-line); border-top-color: var(--amber); animation: spin .9s linear infinite; flex-shrink: 0; }
 .act-spin.sm { width: 9px; height: 9px; border-width: 2px; }
-@keyframes act-spin { to { transform: rotate(360deg); } }
 .act-bar { height: var(--track-h-sm); margin-top: 8px; }
 .act-completed .act-bar .progress-fill, .act-warning .act-bar .progress-fill { background: var(--success); }
 /* No item count known: a pulse travels the bar instead of a "0%". */
