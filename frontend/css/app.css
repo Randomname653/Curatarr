@@ -799,6 +799,8 @@ details:not(.panel-item) > summary { cursor: pointer; list-style: none; user-sel
 details:not(.panel-item) > summary::-webkit-details-marker { display: none; }
 details:not(.panel-item) > summary::before { content: '▸'; display: inline-block; margin-right: 6px; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
 details:not(.panel-item)[open] > summary::before { transform: rotate(90deg); }
+/* A section head already spaces its children (gap): no extra margin there. */
+details.section > summary::before { margin-right: 0; }
 details:not(.panel-item) > summary:hover { color: var(--amber); }
 .panel-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; transition: border-color var(--dur-1); animation: cardIn var(--dur-2) ease both; }
 .panel-item:hover { border-color: var(--border2); }
@@ -973,6 +975,12 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
 .empty { padding: 26px 16px; text-align: center; color: var(--text3); font-size: var(--fs-base); }
 .empty p { margin-bottom: 10px; }
 .empty.good { color: var(--success); }
+/* A first-run empty state: the brand mark above the text (ui.emptyHtml o.mark). */
+.empty-first { padding-top: 32px; }
+.empty-first .empty-mark { width: 56px; height: 56px; display: block; margin: 0 auto 14px; }
+.empty-first .btn-primary { margin-top: 4px; }
+/* A section's explanation, at the top of its body (it sat in the summary row). */
+.section-body > .cur-hint { display: block; margin: 0 0 12px; }
 /* Pager: "1–50 of 812 · Prev · Next", buttons disabled rather than hidden */
 .pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: var(--fs-sm); color: var(--text3); }
 /* Banner: an in-flow notice above a list (coverage, limbo, setup) */
@@ -1303,9 +1311,12 @@ select option { background: var(--bg2); }
 .sb-footer .pwa-install:hover { border-color: var(--amber); color: var(--amber2); }
 
 /* Offline fallback page (offline.html, served by the service worker) */
-.offline-page { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
+/* The offline page: the first-run stage and the dialog shell (UI audit 2026-11-14). */
+.offline-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100dvh; padding: 24px 16px; text-align: center;
+  background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
+.offline-box { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 32px 28px; max-width: 440px; }
 .offline-page p { max-width: 380px; }
-.offline-mark { border-radius: 22px; box-shadow: 0 8px 30px var(--amber-dim); }
+.offline-mark { display: block; }
 
 @media (max-width: 768px) {
   /* Topbar: avatar only, search folds into an icon and opens across the bar */

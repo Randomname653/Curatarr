@@ -164,10 +164,15 @@ function _controls(d) {
         return `<button type="button" class="wu-chip wu-chip-sm${on ? ' is-on' : ''}" aria-pressed="${on}" ${act('setWrapupYear', y)}>${_s(y)}</button>`;
       }).join('')}</div>` : '';
   const scopes = (d.scopes || ['all']).map(s => `<button type="button" class="wu-tab${s === wu.scope ? ' is-on' : ''}" aria-pressed="${s === wu.scope}" ${act('setWrapupScope', s)}>${esc(_scopeLabel(s))}</button>`).join('');
-  return `<div class="wu-controls">
+  // The page grammar: what to look at (the period) on the left, how to look
+  // at it (media, snapshot) on the right - one .toolbar like every view
+  // (UI audit 2026-11-14).
+  return `<div class="toolbar wu-controls">
     <div class="wu-chips" role="group" aria-label="${th('wrapup.period_group')}">${per}</div>${years}${seasonChips}
-    <div class="wu-tabs" role="group" aria-label="${th('wrapup.media_group')}">${scopes}</div>
-    <button type="button" class="btn btn-secondary btn-sm wu-snap-btn" ${act('toggleWrapupSnapshot')}>${th(wu.snapshot ? 'wrapup.full_view' : 'wrapup.snapshot')}</button></div>`;
+    <div class="toolbar-right">
+      <div class="wu-tabs" role="group" aria-label="${th('wrapup.media_group')}">${scopes}</div>
+      <button type="button" class="btn btn-secondary btn-sm wu-snap-btn" ${act('toggleWrapupSnapshot')}>${th(wu.snapshot ? 'wrapup.full_view' : 'wrapup.snapshot')}</button>
+    </div></div>`;
 }
 
 // ── hero persona ────────────────────────────────────────────────────────────
