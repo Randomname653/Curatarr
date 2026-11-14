@@ -4,8 +4,9 @@
     python -m tests.benchmarks.hwbench.run run [--only a,b] [--phases perf,quality]
     python -m tests.benchmarks.hwbench.run status          # ledger summary
     python -m tests.benchmarks.hwbench.run matrix [--export]
-    python -m tests.benchmarks.hwbench.run score-sheets --refs a,b [--kind mono|chat]
-    python -m tests.benchmarks.hwbench.run record-scores --csv file.csv
+    python -m tests.benchmarks.hwbench.run score-sheets --refs a,b | --runs id,id [--kind mono|chat|judge]
+    python -m tests.benchmarks.hwbench.run record-scores --csv dir/chunk_*.csv [--scorer X] [--replace]
+    python -m tests.benchmarks.hwbench.run probe --model <tag>   # day zero, minutes
 
 ``run`` refuses to start while the owner's Ollama holds a model, the
 Curatarr app answers on its port, or the GPU is busy (a game) — numbers
@@ -34,7 +35,6 @@ fingerprint is already there (``--force`` re-measures).
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import platform
@@ -642,69 +642,58 @@ def cmd_matrix(args) -> None:
 
 
 def cmd_score_sheets(args) -> None:
-    """Side-by-side sheets for the 5-axis rubric (Faith/Rel/Spec/Tone/Format,
-    0-5 each), models anonymised as M1..Mn, 12 titles per chunk — the 2026-08
-    protocol. Writes a sheet .md and a blank .csv per chunk."""
+    """Blind sheets for one rubric (hwbench/scoring.py): the default-server
+    quality runs of ``--refs`` (optionally one ``--profile``), or exactly the
+    runs of ``--runs``. Labels are shuffled; the run ids stay in legend.json."""
+    from . import scoring
     led = Ledger()
-    refs = [r.strip() for r in args.refs.split(",")]
-    kind = "monologue" if args.kind == "mono" else "chat"
-    runs = []
-    for ref in refs:
-        for key in led.keys_for_ref(ref):
-            for r in led.runs(key, "quality"):
-                if r["settings"].get("server") == matrix.DEFAULT_SERVER and \
-                        (not args.profile or r["settings"]["profile"] == args.profile):
-                    art = next((a for a in r["artifacts"] if a.endswith(f"{kind}.jsonl")), None)
-                    if art:
-                        runs.append((ref, r, art))
+    artifact = scoring.RUBRICS[args.kind]["artifact"]
+    picked = []
+    if args.runs:
+        by_id = {r["id"]: r for r in led.runs(status=None)}
+        for rid in (x.strip() for x in args.runs.split(",")):
+            r = by_id.get(rid)
+            if not r:
+                raise SystemExit(f"no run {rid}")
+            picked.append((led.model(r["model_key"])["ref"], r))
+    else:
+        for ref in (x.strip() for x in args.refs.split(",")):
+            for key in led.keys_for_ref(ref):
+                picked += [(ref, r) for r in led.runs(key, "quality")
+                           if r["settings"].get("server") == matrix.DEFAULT_SERVER
+                           and (not args.profile or r["settings"]["profile"] == args.profile)]
+    runs = [(ref, r, art) for ref, r in picked
+            for art in [next((a for a in r.get("artifacts") or [] if a.endswith(artifact)), None)] if art]
     if not runs:
-        raise SystemExit("no matching quality runs with artifacts")
-    legend = {f"M{i + 1}": (ref, r["id"]) for i, (ref, r, _) in enumerate(runs)}
-    rows = {}
-    for (mid, (ref, rid)), (_, _, art) in zip(legend.items(), runs):
-        for line in Path(art).read_text(encoding="utf-8").splitlines():
-            d = json.loads(line)
-            k = d.get("key") or d.get("id")
-            rows.setdefault(k, {})[mid] = d
-    out = DATA / "scoring" / f"{kind}_{datetime.now():%Y%m%d-%H%M}"
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "legend.json").write_text(json.dumps(legend, indent=1), encoding="utf-8")
-    keys = sorted(rows)
-    for n in range(0, len(keys), 12):
-        chunk = keys[n:n + 12]
-        md, cs = [], [["key", "model", "run_id", "faith", "rel", "spec", "tone", "format", "note"]]
-        for k in chunk:
-            md.append(f"## {k}\n")
-            for mid, d in sorted(rows[k].items()):
-                text = d.get("text") or d.get("response") or "\n".join(
-                    f"> {t['user'][:200]}\n{t['assistant']}" for t in d.get("turns", []))
-                md.append(f"**{mid}** ({d.get('verdict', '')})\n\n{text}\n")
-                cs.append([k, mid, legend[mid][1], "", "", "", "", "", ""])
-        (out / f"chunk_{n // 12 + 1:02}.md").write_text("\n".join(md), encoding="utf-8")
-        with (out / f"chunk_{n // 12 + 1:02}.csv").open("w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerows(cs)
-    print(f"{len(keys)} items, {len(legend)} models -> {out}")
+        raise SystemExit(f"no matching quality runs with a {artifact}")
+    out = DATA / "scoring" / f"{args.kind}_{datetime.now():%Y%m%d-%H%M}"
+    n = scoring.write_sheets(args.kind, runs, out)
+    print(f"{n} items, {len(runs)} runs, rubric {scoring.RUBRICS[args.kind]['rubric']} -> {out}")
 
 
 def cmd_record_scores(args) -> None:
+    """Aggregate filled sheets into the ledger. The kind (and so the rubric
+    and the default scorer) comes from the CSV columns; a score of another
+    rubric under the same scorer is never replaced without --replace."""
+    from . import scoring
     led = Ledger()
-    per_run: dict[str, list] = {}
-    for p in args.csv:
-        with open(p, encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                axes = [row.get(a) for a in ("faith", "rel", "spec", "tone", "format")]
-                if all(a not in (None, "") for a in axes):
-                    per_run.setdefault(row["run_id"], []).append([float(a) for a in axes])
-    for rid, items in per_run.items():
-        n = len(items)
-        means = [round(sum(x[i] for x in items) / n, 2) for i in range(5)]
-        agg = {"n": n, "mean25": round(sum(sum(x) for x in items) / n, 2),
-               "faith": means[0], "rel": means[1], "spec": means[2], "tone": means[3],
-               "format": means[4], "ge22": sum(sum(x) >= 22 for x in items),
-               "le19": sum(sum(x) <= 19 for x in items)}
-        led.add_score(rid, scorer=args.scorer, rubric="5-axis-2026-08", aggregate=agg,
-                      item_file=",".join(args.csv))
-        print(rid, agg)
+    kind, per_run = scoring.read_scored(args.csv)
+    rubric = scoring.RUBRICS[kind]["rubric"]
+    scorer = args.scorer or scoring.RUBRICS[kind]["scorer"]
+    clashes = [(rid, c) for rid in per_run
+               for c in [scoring.conflict(led.data["scores"], rid, scorer, rubric)] if c]
+    if clashes and not args.replace:
+        for rid, c in clashes:
+            print(f"REFUSED: {rid} already has a {c['rubric']} score under '{scorer}' "
+                  f"(mean25 {c['aggregate'].get('mean25')}) - this {rubric} write would replace it")
+        raise SystemExit("pick another --scorer, or --replace if that is the intent")
+    for rid, rows in per_run.items():
+        agg = scoring.aggregate(kind, rows)
+        if not agg.get("n"):
+            print(rid, "no fully scored rows - skipped")
+            continue
+        led.add_score(rid, scorer=scorer, rubric=rubric, aggregate=agg, item_file=",".join(args.csv))
+        print(rid, scorer, rubric, agg)
 
 
 def cmd_examples(args) -> None:
@@ -721,6 +710,32 @@ def cmd_examples(args) -> None:
         run_doc = examples.run(todo, log=log, keep_others=bool(args.only))
     print("docs   ->", examples.render_docs(run_doc, review))
     print("wizard ->", examples.export_wizard(run_doc))
+
+
+def cmd_probe(args) -> None:
+    """Day-zero checks of one model before any bench time (hwbench/probe.py)."""
+    from . import probe
+    endpoint = args.endpoint or OWNER_OLLAMA
+    try:
+        httpx.get("http://127.0.0.1:11435/api/version", timeout=2)
+        bench_up = True
+    except httpx.HTTPError:
+        bench_up = False
+    if not args.force_busy:
+        if bench_up:
+            raise SystemExit("REFUSED: a bench server answers on :11435 - a probe now would "
+                             "disturb its timings (--force-busy to override)")
+        if not gpu.is_remote() and gpu.query()["used_mib"] > args.busy_mib:
+            raise SystemExit(f"REFUSED: GPU busy ({gpu.query()['used_mib']} MiB used) - a game? "
+                             "(--force-busy to override)")
+    tags = httpx.get(f"{endpoint}/api/tags", timeout=10).json().get("models") or []
+    if not any(m.get("name") in (args.model, args.model + ":latest") for m in tags):
+        raise SystemExit(f"{args.model} is not on {endpoint} - pull it first: ollama pull {args.model}")
+    print(f"probe {args.model} on {endpoint}, profile {args.profile}")
+    res = probe.run_probe(endpoint, args.model, args.profile)
+    for check, status, detail in res["assessment"]:
+        print(f"  {status:<4}  {check:<9} {detail}")
+    print("saved ->", probe.save(res))
 
 
 def main() -> None:
@@ -765,13 +780,27 @@ def main() -> None:
     sub.add_parser("status")
     p = sub.add_parser("matrix"); p.add_argument("--export", action="store_true")
     p = sub.add_parser("score-sheets")
-    p.add_argument("--refs", required=True); p.add_argument("--kind", default="mono", choices=["mono", "chat"])
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--refs", help="comma list of models: their default-server quality runs")
+    src.add_argument("--runs", help="comma list of quality run ids (exactly these)")
+    p.add_argument("--kind", default="mono", choices=["mono", "chat", "judge"])
     p.add_argument("--profile", default="")
     p = sub.add_parser("examples")
     p.add_argument("--render", action="store_true", help="re-render docs + wizard from the last run, no GPU")
     p.add_argument("--only", default="", help="comma list of models (default: the matrix's curators)")
     p = sub.add_parser("record-scores")
-    p.add_argument("--csv", nargs="+", required=True); p.add_argument("--scorer", default="claude")
+    p.add_argument("--csv", nargs="+", required=True)
+    p.add_argument("--scorer", default="", help="default per kind: mono claude, chat claude-chat, "
+                                               "judge claude-judge (the names the matrix reads)")
+    p.add_argument("--replace", action="store_true",
+                   help="allow replacing a score of another rubric under the same scorer")
+    p = sub.add_parser("probe", help="day-zero checks of an installed model: thinking, "
+                                     "judge schema, chat vs generate speed, language")
+    p.add_argument("--model", required=True)
+    p.add_argument("--profile", default="large", choices=["large", "small"])
+    p.add_argument("--endpoint", default="", help=f"Ollama to probe (default {OWNER_OLLAMA})")
+    p.add_argument("--force-busy", action="store_true")
+    p.add_argument("--busy-mib", type=int, default=3500)
     args = ap.parse_args()
     if getattr(args, "remote", "") and not args.remote_host:
         # Named after the host in its URL, so no machine name is baked in here
@@ -779,7 +808,7 @@ def main() -> None:
         args.remote_host = httpx.URL(args.remote).host or "remote"
     {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "matrix": cmd_matrix,
      "score-sheets": cmd_score_sheets, "record-scores": cmd_record_scores,
-     "examples": cmd_examples}[args.cmd](args)
+     "examples": cmd_examples, "probe": cmd_probe}[args.cmd](args)
 
 
 if __name__ == "__main__":

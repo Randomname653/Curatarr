@@ -451,4 +451,122 @@ check("remote setup: quality dropped, default server only, no simulated tiers",
 _gpu.set_remote([])
 _run.REMOTE_HOST = ""
 
+# ── day-zero probe: the verdict rules (no model) ───────────────────────────
+from tests.benchmarks.hwbench import probe as _probe  # noqa: E402
+
+_clean = {"content": "Ikiru - it asks how to live.", "thinking": ""}
+_ok_judge = [{"fixture": "a", "valid": True, "thinking": ""},
+             {"fixture": "b", "valid": True, "thinking": ""}]
+
+
+def _status(res: dict, name: str) -> str:
+    return next(s for c, s, _ in _probe.assess(res) if c == name)
+
+
+check("probe: an answer in content with no thinking passes",
+      _status({"think": _clean}, "think") == "PASS")
+check("probe: think:false ignored (gpt-oss:20b, 2026-11-03) is a warning naming the cost",
+      _status({"think": {"content": "Ikiru.", "thinking": "x" * 900}}, "think") == "WARN"
+      and "num_predict" in _probe.assess({"think": {"content": "Ikiru.", "thinking": "x" * 900}})[0][2])
+check("probe: an answer only in 'thinking' (gemma4 new weights) fails",
+      _status({"think": {"content": "", "thinking": "Ikiru is..."}}, "think") == "FAIL")
+check("probe: <think> tags inside content warn",
+      _status({"think": {"content": "<think>hm</think>Ikiru.", "thinking": ""}}, "think") == "WARN")
+check("probe: both verdicts valid pass, one warns, none fails",
+      _status({"judge": _ok_judge}, "judge") == "PASS"
+      and _status({"judge": [_ok_judge[0], {"fixture": "b", "valid": False,
+                                            "error": "bare label"}]}, "judge") == "WARN"
+      and _status({"judge": [{"fixture": "a", "valid": False, "error": "x"},
+                             {"fixture": "b", "valid": False, "error": "y"}]}, "judge") == "FAIL")
+check("probe: a judge fault is named in the detail",
+      "bare label" in _probe.assess({"judge": [_ok_judge[0], {"fixture": "b", "valid": False,
+                                                             "error": "bare label"}]})[0][2])
+check("probe: generate at a third of chat's speed warns (gemma4 new format, 2026-10-15)",
+      _status({"speed": {"chat_tok_s": 33.0, "generate_tok_s": 10.5}}, "speed") == "WARN"
+      and _status({"speed": {"chat_tok_s": 37.1, "generate_tok_s": 35.7}}, "speed") == "PASS")
+check("probe: language detection tells German from English",
+      _probe.language_of("Das ist ein stiller Film, und er wirkt lange nach.") == "de"
+      and _probe.language_of("It is a quiet film and it lingers.") == "en"
+      and _status({"language": {"detected": "en"}}, "language") == "WARN")
+check("probe: an ignored system message fails (the constitution would never arrive)",
+      _status({"system": {"obeyed": False}}, "system") == "FAIL"
+      and _status({"system": {"obeyed": True}}, "system") == "PASS")
+check("probe: /api/show facts are information, never a verdict (gemma4's template is a renderer stub)",
+      _status({"show": {"capabilities": ["completion"], "renderer": "gemma4-large"}}, "info") == "PASS")
+check("probe: the fixtures stay the fictional owner's (setup mini-bench)",
+      "Jane Doe" in __import__("src.services.setup_minibench", fromlist=["x"]).JANE_DOE_TASTE)
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+
+_seen, _saved = {}, (_run.cmd_probe, _sys.argv, _os.getcwd())
+_run.cmd_probe = lambda a: _seen.update(model=a.model, profile=a.profile, force=a.force_busy)
+_sys.argv = ["run", "probe", "--model", "qwen4:27b", "--profile", "small"]
+_run.main()
+_run.cmd_probe, _sys.argv = _saved[0], _saved[1]
+_os.chdir(_saved[2])
+check("probe: 'run probe --model X --profile small' reaches cmd_probe with its arguments",
+      _seen == {"model": "qwen4:27b", "profile": "small", "force": False})
+
+# ── scoring: rubrics, blind sheets, the collision guard (no ledger) ────────
+from tests.benchmarks.hwbench import scoring as _sc  # noqa: E402
+
+check("scoring: the sheet kind follows the columns",
+      _sc.detect_kind(["key", "model", "faith", "law", "logic"]) == "judge"
+      and _sc.detect_kind(["key", "model", "faith", "consist", "pushback"]) == "chat"
+      and _sc.detect_kind(["key", "model", "faith", "rel", "spec"]) == "mono")
+check("scoring: each kind has its own default scorer (chat under 'claude' wiped card notes, 2026-11-02)",
+      len({r["scorer"] for r in _sc.RUBRICS.values()}) == 3
+      and _sc.RUBRICS["judge"]["scorer"] == matrix.JUDGE_SCORER
+      and _sc.RUBRICS["mono"]["scorer"] == matrix.NOTES_SCORER)
+check("scoring: every axis of every rubric has a written definition",
+      all(set(r["axes"] + r["extra"]) <= set(r["help"]) for r in _sc.RUBRICS.values()))
+
+_j = [{"faith": "5", "law": "5", "logic": "5", "judgment": "5", "clarity": "4", "rule_hit": "0", "category": "movie"},
+      {"faith": "4", "law": "1", "logic": "1", "judgment": "2", "clarity": "4", "rule_hit": "1", "category": "show"},
+      {"faith": "", "law": "5", "logic": "5", "judgment": "5", "clarity": "5", "rule_hit": "0", "category": "show"}]
+_ja = _sc.aggregate("judge", _j)
+check("scoring: judge aggregate - mean, rule hits, per category, unscored rows skipped",
+      _ja["n"] == 2 and _ja["mean25"] == 18.0 and _ja["rule_hits"] == 1
+      and _ja["by_category"] == {"movie": 24.0, "show": 12.0} and _ja["le15"] == 1)
+_c = [{"faith": "5", "rel": "4", "spec": "3", "tone": "3", "format": "3", "consist": "5", "pushback": "4"},
+      {"faith": "2", "rel": "4", "spec": "3", "tone": "4", "format": "4", "consist": "", "pushback": ""}]
+_ca = _sc.aggregate("chat", _c)
+check("scoring: chat aggregate - multi-turn /35 apart from single-turn /25",
+      _ca["mt_n"] == 1 and _ca["mt_mean35"] == 27.0 and _ca["st_n"] == 1
+      and _ca["st_mean25"] == 17.0 and _ca["faith_le2"] == 1)
+
+_scores = [{"run_id": "r1", "scorer": "claude", "rubric": "5-axis-2026-08", "aggregate": {"mean25": 20.8}}]
+check("scoring: a write of another rubric under the same scorer is a conflict",
+      _sc.conflict(_scores, "r1", "claude", "chat-2026-05") is not None
+      and _sc.conflict(_scores, "r1", "claude", "5-axis-2026-08") is None
+      and _sc.conflict(_scores, "r1", "claude-chat", "chat-2026-05") is None
+      and _sc.conflict(_scores, "r2", "claude", "chat-2026-05") is None)
+
+_sd = tmp / "sheets"
+_art = tmp / "judge_a.jsonl"
+_art.write_text("\n".join(json.dumps({"key": f"movie:Example {i}", "category": "movie", "verdict": "CUT",
+                                      "pillar": "NONE", "raw": {"pillar_0_ego": "Jane Doe dislikes sequels."}})
+                          for i in range(12)), encoding="utf-8")
+_runs = [("model-a", {"id": "run-a", "settings": {"profile": "large"}}, str(_art)),
+         ("model-b", {"id": "run-b", "settings": {"profile": "large"}}, str(_art))]
+check("scoring: judge sheets chunk by ten", _sc.write_sheets("judge", _runs, _sd) == 12
+      and sorted(p.name for p in _sd.glob("chunk_*.csv")) == ["chunk_01.csv", "chunk_02.csv"])
+import csv as _csv  # noqa: E402
+
+_leg = json.loads((_sd / "legend.json").read_text(encoding="utf-8"))
+with open(_sd / "chunk_01.csv", encoding="utf-8", newline="") as _f:
+    _table = list(_csv.reader(_f))
+_cells = {c for row in _table for c in row}
+check("scoring: sheets are blind - run ids only in legend.json, never in the CSV",
+      {v["run_id"] for v in _leg.values()} == {"run-a", "run-b"}
+      and not _cells & {"run-a", "run-b", "run_id"})
+_hdr = _table[0]
+_fill = {"faith": "5", "law": "5", "logic": "5", "judgment": "5", "clarity": "4", "rule_hit": "0"}
+with open(_sd / "chunk_01.csv", "w", encoding="utf-8", newline="") as _f:
+    _csv.writer(_f).writerows([_hdr] + [[_fill.get(h, v) for h, v in zip(_hdr, row)] for row in _table[1:]])
+_kind, _per = _sc.read_scored([_sd / "chunk_01.csv"])
+check("scoring: filled sheets resolve labels through the legend",
+      _kind == "judge" and set(_per) == {"run-a", "run-b"}
+      and _sc.aggregate("judge", _per["run-a"])["mean25"] == 24.0)
+
 check.done()

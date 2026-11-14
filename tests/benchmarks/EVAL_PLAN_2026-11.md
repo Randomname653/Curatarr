@@ -532,20 +532,28 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
    ```
    Danach `venv\Scripts\python.exe -m tests.benchmarks.hwbench.run plan --only ⟨tag⟩` ausführen (keine GPU nötig).
 3. **Pull durch den Besitzer.** `run run` zieht selbst und räumt auf. Ein installierter Tag wird nie neu gezogen.
-4. **Template-, Thinking- und Schema-Smoke** (~5 min GPU, Jane-Doe-Fixtures aus `setup_minibench.FIXTURES`):
-   - `/api/chat` mit `think:false`: Antwort in `message.content`, nicht leer, kein `thinking`-Feld, kein `<think>` (gemma4-Falle).
-   - `format=pillars.VERDICT_SCHEMA`: gültiges JSON ohne bare labels (MoE-Falle), dann `pillars._parse_verdict`.
-   - Tempo `/api/chat` gegen `/api/generate`.
-   - Deutsche Anfrage gegen die Sprachregel.
-   - *Lücke:* Dafür gibt es keinen eigenständigen CLI-Weg. `setup_minibench` läuft nur im Wizard (siehe §6, L7).
+4. **Probe** (wenige Minuten GPU, Modell muss installiert sein, GPU frei):
+   `venv\Scripts\python.exe -m tests.benchmarks.hwbench.run probe --model ⟨tag⟩` (bei Bedarf `--profile small`). Sie prüft:
+   - **think:** `/api/chat` mit `think:false` – kommt die Antwort in `message.content`, oder denkt das Modell trotzdem? FAIL, wenn sie nur in `thinking` steht (gemma4-Falle); WARN bei ignoriertem `think:false` (gpt-oss-Falle).
+   - **judge:** der Produktions-Judge auf den beiden Jane-Doe-Fixtures, mit Verfassung des Profils, `VERDICT_SCHEMA` und dem Budget des ersten Versuchs, geprüft mit `pillars._parse_verdict`. Bare labels, Abbruch und Enum-Fehler werden benannt.
+   - **speed:** `/api/chat` gegen `/api/generate`.
+   - **language:** der echte Chat-Prompt (`chat_prompt.build_system_prompt`) mit einer deutschen Frage.
+   - **system:** Eine System-Nachricht verlangt ein Codewort. Wird sie befolgt? (Ohne System-Rolle käme die Verfassung nie beim Judge an.)
+   - **info:** Fähigkeiten, Kontextlänge, Renderer.
+
+   Ergebnis als PASS/WARN/FAIL, gespeichert unter `hwbench_data/probes/`. Verweigert, solange ein Bench auf :11435 läuft oder die GPU belegt ist. Erst bei PASS (oder einer verstandenen WARN) folgt Schritt 5.
 5. **Bench.**
    `run run --only ⟨tag⟩ --kv-quality` mit sweep, perf (Fit-Target-Stufen) und quality sub40, large und small.
    Danach die NAS-Messung: `run run --only ⟨tag⟩ --remote … --remote-ssh …` (nur perf).
    Bei Finalisten zusätzlich `--items full` (103 Titel).
-6. **Score-Durchgang** (ohne GPU, blind mit den Amtsinhabern):
-   - `run score-sheets --refs gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,⟨tag⟩ --kind mono`, dann `run record-scores --csv … --scorer claude`.
-   - Chat (9 Decider-Fälle): **nicht** über `score-sheets --kind chat` + `record-scores`. Dort folgen die M-Nummern der `--refs`-Reihenfolge (nicht blind), die Multi-Turn-Achsen fehlen, und **`record-scores --scorer claude` überschreibt die Kartentext-Scores derselben Lauf-ID** (`Ledger.add_score` ersetzt pro run_id + scorer). Bis L6 erledigt ist, gilt der Weg vom 2026-11-02: Sheets mit gemischten Labels, scorer `claude-chat`, Rubrik `chat-2026-05` (§1.5), plus Ledger-Sicherung vorab.
-   - Für die Judge-Rubrik (judge-argument-2026-10, scorer `claude-judge`) gibt es **keinen** CLI-Pfad. `record-scores` schreibt fest `5-axis-2026-08` (CODE `run.cmd_record_scores`). Vorschlag in §6, L6.
+6. **Score-Durchgang** (ohne GPU, blind mit den Amtsinhabern; seit 2026-11-14 alles über die CLI, `hwbench/scoring.py`):
+   - **Sheets:** `run score-sheets --refs gemma4:31b-it-qat,gemma4:26b-a4b-it-qat,⟨tag⟩ --kind mono|chat|judge` oder genau bestimmte Läufe mit `--runs id,id,id`.
+     - Die Labels sind gemischt, die Lauf-IDs stehen nur in `legend.json` neben den Chunks.
+     - Jeder Chunk beginnt mit den Achsen-Definitionen seiner Rubrik.
+   - **Eintragen:** `run record-scores --csv …/chunk_*.csv`.
+     - Art und Rubrik ergeben sich aus den Spalten, der Scorer hat einen Standard pro Art: mono → `claude` (5-axis-2026-08), chat → `claude-chat` (chat-2026-05, Multi-Turn /35), judge → `claude-judge` (judge-argument-2026-11r).
+     - Ein Score einer **anderen** Rubrik unter demselben Scorer wird nicht ersetzt, außer mit `--replace`. Damit ist die Falle vom 2026-11-02 zu: Chat-Scores unter `claude` hätten die Kartentext-Scores derselben Lauf-ID gelöscht.
+   - **Achtung Matrix:** Die Judge-Scores in der Matrix (`claude-judge`) stammen noch aus der alten Rubrik vom 20.10. Ein neuer Judge-Score unter `claude-judge` braucht deshalb `--replace` und gehört dann für alle Matrix-Modelle in denselben blinden Durchgang. Sonst mischen sich die Rubriken; die neue fällt etwa 1,1 Punkte großzügiger aus. Ohne diesen Gesamt-Durchgang: `--scorer claude-judge-blind`.
    - Scoring in der Claude-Session ist freigegeben (U1); Sheets und CSVs bleiben lokal.
 7. **CSV-Zeile.** `model_baselines.csv` bekommt eine Zeile mit `verdict_role` ohne „DISQUALIFIED“. Für die Pitcher-Rolle muss „pipeline“ darin stehen (`tests/test_model_catalog.py`).
 8. **Katalog-Eintrag.** `src/services/model_catalog.py` → `CURATOR_MODELS` bzw. `PITCHER_MODELS`, mit `verified: True` nur bei vorhandener CSV-Zeile. `test_model_catalog` verlangt, dass jedes Matrix-Modell im Katalog steht und jedes empfohlene ein Jane-Doe-Beispiel hat.
@@ -567,8 +575,8 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 | L3 | Filter für degenerierte Urteile: **existiert** (`matrix.degenerate`, eine Klasse > 75 %, wirkt nur beim Export). Er erkennt weder „Klasse fehlt“ (0 CUT bei allen gemma4-MoE in small und granite4.2:8b) noch CUT-Fluten knapp unter 75 % (qwen3:14b 65 %, nemotron 62 %, qwen3.5 60 %). Außerdem greift er nicht im Abstieg von `run.py` und nicht im Mini-Benchmark. | small-Pakete könnten durchrutschen | **Teilweise erledigt 2026-11-05:** `matrix.degenerate` macht „kein einziges CUT ab 20 Urteilen“ zum K.O. (siehe U2). CUT-Fluten knapp unter 75 % und der Abstieg in `run.py` und im Mini-Benchmark bleiben offen. |
 | L4 | Chat-Decider-Fälle: die vier Katalog-Curator sind gescort (2026-11-02, n = 9, ein Lauf je Modell); alle anderen Läufe nicht. Chat fließt nicht in die Matrix ein. | Bei n = 9 und Temperatur 0,7 ist das Ranking nicht belastbar | Zweiter Chat-Lauf je Finalist (Streuung messen); entscheiden, ob Chat in die Matrix-Wertung soll |
 | L5 | Keine 103-Titel-Läufe im Ledger | Die sub40-Streuung ist unbekannt (BEST_TIE 0,25) | P1 |
-| L6 | Judge-Rubrik ohne CLI (`score-sheets --kind judge`, `record-scores --rubric`) | Day-Zero nicht reproduzierbar | Kleine Erweiterung von `run.py` (eigener Auftrag) |
-| L7 | Kein eigenständiger Template-, Thinking- und Schema-Smoke | Day-Zero-Schritt 4 ist Handarbeit | `run probe --only ⟨tag⟩` auf Basis von `setup_minibench` |
+| ~~L6~~ | **Gebaut am 2026-11-14:** `score-sheets --kind judge` und `--runs`, blinde Labels für alle Arten, `record-scores` mit Rubrik aus den Spalten, Standard-Scorer pro Art und Schutz gegen Rubrik-Mischung (`hwbench/scoring.py`, Regeln in `tests/test_hwbench.py`) | Probelauf auf den drei Matrix-Läufen: 40 Titel in 4 Chunks, der Schutz meldet die alte Rubrik vom 20.10. | Entscheiden, ob alle Matrix-Modelle unter `claude-judge` blind neu bewertet werden (siehe Schritt 6) |
+| ~~L7~~ | **Gebaut am 2026-11-14:** `run probe --model ⟨tag⟩` (hwbench/probe.py, Regeln in `tests/test_hwbench.py`) | Live geprüft am 2026-11-14: gemma4:26b-a4b-it-qat besteht alle 6 Checks (157 tok/s chat und generate). Die Gegenprobe granite4.1:8b als Judge fällt am Schema durch (nackte Labels „NONE“), wie erwartet. Der erste Template-Check war falsch: gemma4 und qwen3.8 rendern über eingebaute Renderer, ihr Template ist nur ein Platzhalter. Ersetzt durch einen Verhaltenstest der System-Nachricht. | – |
 | L8 | Gate-Erwartungen stammen noch aus der 3-Pillar-Zeit; Treffer 20–100 % werden nur berichtet | Das Gate prüft nur das Schema, keine Urteilstreue | Einmal an der 31b-qat neu kalibrieren |
 | L9 | Overrun-Toleranz 256 MiB noch nicht entschieden; viele MoE-Zellen liegen bei 260–330 MiB | 16-GB- und 6-GB-Grenzfälle | Entscheidung des Besitzers |
 | L10 | Die Fit-Simulation reserviert 1,5 GB Desktop; ein Headless-NAS hält mehr (MoE dort ~100 % statt 87 %) | 16-GB-Pakete sind konservativ | `--desktop-reserve` für eine Linux-Simulation, oder NAS-perf als Wahrheit |
