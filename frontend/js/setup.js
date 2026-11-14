@@ -89,11 +89,19 @@ export function jellyfinConnectAgain() {
   renderSetupStep(state.setupStep);
 }
 
+// A radio change redraws the whole step; focus would fall to <body> and the
+// arrow keys could not walk the group any further. Put it back on the
+// group's checked radio.
+function rerenderKeepingRadio(name) {
+  renderSetupStep(state.setupStep);
+  document.querySelector(`input[name="${name}"]:checked`)?.focus();
+}
+
 export function setupServerKind(el) {
   collectStep();
   const v = el?.value || document.querySelector('input[name="s-media-server"]:checked')?.value;
   state.setupData.media_server_type = v === 'jellyfin' ? 'jellyfin' : 'plex';
-  renderSetupStep(state.setupStep);
+  rerenderKeepingRadio('s-media-server');
 }
 
 function plexServersHtml() {
@@ -217,7 +225,7 @@ export function plexConnectAgain() {
 export function pickPlexServer(el) {
   collectStep();
   state.setupData.plex_server_id = el?.value || '';
-  renderSetupStep(state.setupStep);
+  rerenderKeepingRadio('s-plex-server');
 }
 
 // ── step 2: the AI ──────────────────────────────────────────────────────────
