@@ -70,11 +70,20 @@ _DOMAIN_EMB_PAGE = 2000
 # Idle release. The Rust core keeps every HNSW index it has loaded for the
 # life of the client: one facet query pins ~1.2 GB (199k phrase points), the
 # knowledge index ~160 MB, measured 2026-11-14. Nothing else ever lets go,
-# so a single chat search left the process at 1.4 GB for days. After
-# IDLE_RELEASE_S without any access the scheduler swaps in a fresh client;
-# the next query reloads its index from disk (~6 s for the facets).
+# so a single chat search left the process at 1.4 GB for days. The scheduler
+# swaps in a fresh client once the store has been idle IDLE_RELEASE_S; the
+# next query reloads what it needs from disk (~13 s for the phrases on the
+# NAS, ~1 s for the knowledge collection).
+#
+# Two clocks. Any read of the knowledge collection loads its segments (an
+# id list costs the same ~120 MB as a query), and the enrichment page polls
+# one every ~45 s - with one clock the 1.2 GB phrase index was never freed
+# while that page stayed open (NAS, 2026-11-14). The phrase clock only runs
+# on phrase operations, so the big index goes after its own idle time even
+# while the small one keeps getting used; the swap reloads the small one on
+# the next poll.
 IDLE_RELEASE_S = 600.0
-_idle_state = {"last": 0.0, "dirty": False}
+_idle_state = {"last": 0.0, "dirty": False, "phr_last": 0.0, "phr_dirty": False}
 
 
 def _touch() -> None:
@@ -82,8 +91,22 @@ def _touch() -> None:
     _idle_state["dirty"] = True
 
 
+def _touch_phrases() -> None:
+    _idle_state["phr_last"] = _time.monotonic()
+    _idle_state["phr_dirty"] = True
+
+
+def _due_for_release(idle: float, now: float) -> str:
+    """Which loaded index has been idle long enough: 'phrases', 'all' or ''."""
+    if _idle_state["phr_dirty"] and now - _idle_state["phr_last"] >= idle:
+        return "phrases"
+    if _idle_state["dirty"] and now - _idle_state["last"] >= idle:
+        return "all"
+    return ""
+
+
 def release_if_idle(idle_s: float = None) -> bool:
-    """Free the loaded indexes when the store has been idle long enough.
+    """Free the loaded indexes when they have been idle long enough.
     Meant for the Chroma thread (see release_idle_indexes), so it queues
     behind every bulk read instead of swapping the client under one.
     Expired domain-corpus memos go on every call: the TTL was only checked
@@ -97,16 +120,19 @@ def release_if_idle(idle_s: float = None) -> bool:
     if stale:
         from src.services.memory_reclaim import reclaim_memory
         reclaim_memory()
-    if not _cached_wrapper.cache_info().currsize or not _idle_state["dirty"]:
+    if not _cached_wrapper.cache_info().currsize:
         return False
     idle = IDLE_RELEASE_S if idle_s is None else idle_s
-    if _time.monotonic() - _idle_state["last"] < idle:
+    which = _due_for_release(idle, now)
+    if not which:
         return False
-    with _domain_emb_lock:
-        _domain_emb_memo.clear()
+    if which == "all":
+        with _domain_emb_lock:
+            _domain_emb_memo.clear()
     ok = _cached_wrapper().release_indexes()
     if ok:
-        logger.info("[chroma] idle %.0f s - loaded indexes released", idle)
+        logger.info("[chroma] %s idle %.0f s - loaded indexes released",
+                    "phrase index" if which == "phrases" else "store", idle)
     return ok
 
 
@@ -374,7 +400,7 @@ class ChromaDBWrapper:
             self._phrases = None
             del old
             gc.collect()
-            _idle_state["dirty"] = False
+            _idle_state["dirty"] = _idle_state["phr_dirty"] = False
             from src.services.memory_reclaim import reclaim_memory
             reclaim_memory(collect=False)
             return True
@@ -462,6 +488,7 @@ class ChromaDBWrapper:
                                     usedforsecurity=False).hexdigest()[:24]
 
     def _phrases_collection(self):
+        _touch_phrases()   # every phrase operation comes through here
         if self._phrases is None:
             try:
                 coll = self.client.get_collection(self.PHRASES_COLLECTION)

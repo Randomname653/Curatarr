@@ -90,6 +90,21 @@ check("the store answers after a release (index reloads from disk)",
 check("a query after the release marks the store as used again",
       cw.release_if_idle(idle_s=0) is True)
 
+# The phrase index (1.2 GB on the NAS) has its own clock: the enrichment
+# page polls an id list every ~45 s, and with one clock the big index was
+# never freed while that page stayed open (NAS, 2026-11-14).
+w._phrases_collection()                      # a facet operation loads it
+cw._idle_state["phr_last"] -= 3600           # ...an hour ago
+w.all_ids()                                  # the status poll, just now
+check("an idle phrase index is released while the small collection is still polled",
+      cw.release_if_idle(idle_s=600) is True)
+w.all_ids()
+check("a store kept busy by status polls alone is not swapped again and again",
+      cw.release_if_idle(idle_s=600) is False)
+w._phrases_collection()
+check("a recent facet operation keeps the phrase index",
+      cw.release_if_idle(idle_s=600) is False)
+
 # the corpus is read in pages (Chroma decodes a page as Python floats first)
 class _Paged:
     calls: list = []

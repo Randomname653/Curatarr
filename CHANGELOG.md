@@ -24,13 +24,15 @@ for the library item of that name (the tech sync's profiles) when the owner has 
 a name two library items share is left to the search.
 
 **Less RAM.** One semantic search used to keep the facet index (~1.2 GB) in memory for good;
-Chroma now lets go of its loaded indexes after 10 idle minutes and reloads on the next query. The
+Chroma now lets go of its loaded indexes after 10 idle minutes and reloads on the next query; the
+big phrase index keeps its own clock, so an open Enrichment page (which polls the vector counts)
+no longer holds it in memory. The
 taste rebuild reads its calibration corpus in pages and stays float32 (peak +855 MB to +379 MB),
 and expired corpus caches are dropped right away. The Plex history sync only loads the plays of the
 items it lists (+180 MB to +58 MB), the significance pass reads the raw API cache by key (+258 MB to
 +6 MB), and the tech sync, the music matcher and the lyrics walk work page by page instead of
-holding whole library listings. After big jobs the freed memory goes back to the OS (glibc
-`malloc_trim`). A new test caps the startup import and these operations.
+holding whole library listings. After big jobs, and after every taste rebuild
+whoever starts it, the freed memory goes back to the OS (glibc `malloc_trim`). A new test caps the startup import and these operations.
 
 **Activity, after the first live check.** The Scheduled tab marked nearly every task of a busy
 custodian queue "Queued" and locked its Run now, also weekly jobs that were not due (a run reaches
