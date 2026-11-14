@@ -745,24 +745,27 @@ body.model-busy #logo .brand-spark { animation: brand-breathe 3.2s ease-in-out i
 .card p { font-size: 12px; color: var(--text2); line-height: 1.5; }
 
 /* ── CURATION SECTIONS (protections / downscale / principles) ── */
-.panel-section { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 16px; }
 .panel-hint { font-size: 12px; color: var(--text3); margin-left: 8px; }
 /* ── SECTIONS — every sub-panel inside a view: .section-head (h3 + count
    badge + .section-hint, .section-actions at the right) + .section-body.
    Collapsible ones are <details class="section"> (native <details>, so
-   several can be open at once and each folds away). .cur-section is the
-   older name for the same thing and stays an alias until its markup moves. ── */
-.section, .cur-section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 12px; }
-.section-head, .cur-section > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; font-size: 13px; font-weight: 600; }
+   several can be open at once and each folds away). ── */
+.section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 12px; }
+.section-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; font-size: 13px; font-weight: 600; }
 .section-head h3 { font-size: 13px; font-weight: 600; margin: 0; display: inline-flex; align-items: center; gap: 8px; }
 .section-hint { font-size: 12px; color: var(--text3); font-weight: 400; }
 .section-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
-.section-body, .cur-section .cur-body { padding: 0 16px 14px; }
-details.section > summary, .cur-section > summary { cursor: pointer; list-style: none; user-select: none; }
-details.section > summary::-webkit-details-marker, .cur-section > summary::-webkit-details-marker { display: none; }
-details.section > summary::before, .cur-section > summary::before { content: '▸'; color: var(--amber); transition: transform .15s; }
-details.section[open] > summary::before, .cur-section[open] > summary::before { transform: rotate(90deg); }
-details.section > summary:hover, .cur-section > summary:hover { color: var(--amber); }
+.section-body { padding: 0 16px 14px; }
+/* Every disclosure folds the same way: an amber triangle that turns. One
+   rule for sections and the small inline ones (settings, setup, media
+   switch, the KB, the "why" of a protection, Swipe's keys, the Wrap-Up);
+   three private copies and a handful of browser markers before (UI audit
+   2026-11-14). A row that unfolds (.panel-item) keeps its own head. */
+details:not(.panel-item) > summary { cursor: pointer; list-style: none; user-select: none; }
+details:not(.panel-item) > summary::-webkit-details-marker { display: none; }
+details:not(.panel-item) > summary::before { content: '▸'; display: inline-block; margin-right: 6px; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
+details:not(.panel-item)[open] > summary::before { transform: rotate(90deg); }
+details:not(.panel-item) > summary:hover { color: var(--amber); }
 .panel-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 10px; transition: border-color .12s; animation: cardIn .22s ease both; }
 .panel-item:hover { border-color: var(--border2); }
 /* staggered card entrance (kept subtle; amber stays the identity) */
@@ -1172,7 +1175,6 @@ select option { background: var(--bg2); }
 .btn-ghost-danger { background: var(--danger-dim); border: 1px solid var(--danger-line-strong); color: var(--danger-fg); padding: 3px 10px; border-radius: var(--radius); cursor: pointer; font-size: 11px; }
 .discuss-banner { display: flex; background: var(--amber-dim); border-bottom: 1px solid var(--amber-line); padding: 8px 16px; font-size: 12px; color: var(--text2); align-items: center; gap: 10px; }
 .sb-badge { margin-left: auto; background: var(--amber); color: var(--on-amber); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; }
-.bar-track { background: var(--bg3); border-radius: 3px; height: 8px; overflow: hidden; } .bar-fill { height: 100%; width: 0; }
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
 .grid-row-4 { display: grid; grid-template-columns: 64px 1fr 1fr 90px; gap: 10px; align-items: center; margin-bottom: 6px; }
 .grid-form-140 { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; align-items: center; }
@@ -1447,7 +1449,7 @@ body {
 #topbar, #sidebar { background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border-color: var(--hairline); }
 .sb-footer { border-top-color: var(--hairline); }
 
-.card, .section, .cur-section, .panel-item, .tbl-wrap, .stat-box, .why-panel {
+.card, .section, .panel-item, .tbl-wrap, .stat-box, .why-panel {
   border-color: var(--hairline);
   box-shadow: var(--specular), var(--shadow-1);
   transition: box-shadow var(--dur-2) var(--ease-spring), border-color var(--dur-2);
@@ -1672,11 +1674,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 
 /* ── Curation: a protection's pillar reasoning, folded until asked for ── */
 .pillar-why { margin-top: 6px; }
-.pillar-why > summary { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); cursor: pointer; list-style: none; user-select: none; }
-.pillar-why > summary::-webkit-details-marker { display: none; }
-.pillar-why > summary::before { content: '▸'; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
-.pillar-why[open] > summary::before { transform: rotate(90deg); }
-.pillar-why > summary:hover { color: var(--amber); }
+.pillar-why > summary { display: inline-flex; align-items: center; gap: 0; font-size: 12px; color: var(--text3); cursor: pointer; list-style: none; user-select: none; }
 .pillar-list { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 7px 14px; margin: 10px 0 2px; max-width: 120ch; font-size: 12.5px; line-height: 1.55; }
 .pillar-list dt { padding-top: 2px; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--text3); }
 .pillar-list dd { margin: 0; color: var(--text2); }
@@ -1723,9 +1721,6 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .swipe-poster-ph { font-size: clamp(40px, 9cqh, 84px); color: color-mix(in srgb, var(--text3) 55%, transparent);
   background: radial-gradient(120% 80% at 30% 15%, color-mix(in srgb, var(--amber) 9%, var(--bg3)), var(--bg2) 72%); }
 .swipe-keys-box > summary { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); cursor: pointer; list-style: none; display: inline-flex; gap: 6px; align-items: center; }
-.swipe-keys-box > summary::-webkit-details-marker { display: none; }
-.swipe-keys-box > summary::before { content: '▸'; color: var(--amber); transition: transform var(--dur-2) var(--ease-spring); }
-.swipe-keys-box[open] > summary::before { transform: rotate(90deg); }
 .swipe-keys-box > summary:hover { color: var(--text2); }
 .swipe-keys-box .swipe-keys { margin-top: 10px; }
 @media (max-width: 900px) { .swipe-keys-box { display: none; } }
