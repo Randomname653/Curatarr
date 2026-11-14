@@ -92,4 +92,37 @@ check("a movie pin never answers for a show of the same name",
       history._pinned_ids([("Harbour Lights", "show")]) == {}
       and history._pinned_ids([("Harbour Lights", "movie")]) == {("Harbour Lights", "movie"): (333, None)})
 
+# ── 2026-11-14: a show in Plex but not in Sonarr has no pin to take ──────────
+# The real "Evil" was in Plex only: no arr item, so no pin, and its plays had
+# no series id. Plex's own ids for the library item (the tech sync's
+# media_tech_profiles, filed from the show's Guid) answer before the title
+# search; an ambiguous name does not.
+from src.database.models import MediaTechProfile as P  # noqa: E402
+
+with _session() as db:
+    for i, (title, series, mt) in enumerate([("Pilot", "Lantern Row", "show"),
+                                              ("Part One", "Twin Mirrors", "show"),
+                                              ("Ep 1", "Night Shift Diaries", "anime")]):
+        db.add(W(user_id=1, plex_user_id="1", plex_item_id=f"n{i}", title=title, series_title=series,
+                 media_type=mt, viewed_at=now + timedelta(hours=1 + i), completed=True))
+    db.add(P(plex_rating_key="501", media_type="show", title="Lantern Row", tmdb_id=86848, tvdb_id=363955))
+    db.add(P(plex_rating_key="502", media_type="show", title="Twin Mirrors", tmdb_id=1, tvdb_id=None))
+    db.add(P(plex_rating_key="503", media_type="show", title="Twin Mirrors", tmdb_id=2, tvdb_id=None))
+    db.add(P(plex_rating_key="504", media_type="anime", title="Night Shift Diaries", tmdb_id=777, tvdb_id=None))
+    db.add(P(plex_rating_key="505", media_type="movie", title="Harbour Lights", tmdb_id=444, tvdb_id=None))
+    db.commit()
+
+calls.clear()
+recs._fetch_tmdb = fake_fetch
+asyncio.run(history.recent_history(limit=8, offset=0, category=None, user=User(id=1)))
+check("a show without a pin takes Plex's own ids for the library item",
+      calls.get("Lantern Row") == ("show", 86848, 363955), calls)
+check("...two library items of one name with different ids leave it to the title search",
+      calls.get("Twin Mirrors") == ("show", None, None), calls)
+check("...the owner's pin still comes before Plex's ids",
+      calls.get("Night Shift Diaries") == ("anime", None, 111), calls)
+check("a movie's Plex ids never answer for a show of the same name",
+      history._plex_ids([("Harbour Lights", "show")]) == {}
+      and history._plex_ids([("Harbour Lights", "movie")]) == {("Harbour Lights", "movie"): (444, None)})
+
 check.done()

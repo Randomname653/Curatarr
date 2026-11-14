@@ -186,6 +186,31 @@ def _pinned_ids(keys: list) -> dict:
     return out
 
 
+def _plex_ids(keys: list) -> dict:
+    """{(title, media_type): (tmdb_id, tvdb_id)} from Plex's own ids for the
+    library item of that name (the tech sync files each show's and movie's
+    Guid ids in media_tech_profiles). Only an unambiguous name answers: two
+    library items of one name with different ids leave the title search to
+    decide. A show answers for an anime play and the other way round.
+    Blocking."""
+    from src.database.models import MediaTechProfile as P
+    from src.services.external_ids import _norm
+    want: dict = {}
+    for title, mt in keys:
+        want.setdefault(_norm(title), []).append((title, mt))
+    series = {"show", "anime"}
+    found: dict = {}
+    with get_db_session() as db:
+        rows = (db.query(P.title, P.media_type, P.tmdb_id, P.tvdb_id)
+                .filter((P.tmdb_id.isnot(None)) | (P.tvdb_id.isnot(None))).all())
+    for title, cat, tmdb, tvdb in rows:
+        for key in want.get(_norm(title or ""), []):
+            mt = key[1]
+            if cat == mt or {cat, mt} <= series:
+                found.setdefault(key, set()).add((tmdb or None, tvdb or None))
+    return {k: next(iter(v)) for k, v in found.items() if len(v) == 1}
+
+
 @router.get("/recent")
 async def recent_history(
     limit: int = Query(default=100, le=500),
@@ -246,6 +271,16 @@ async def recent_history(
                     lookups[key] = (tmdb, None, tvdb)
             except Exception as _pe:  # noqa: BLE001 - the title search stays the fallback
                 logger.warning("[history] match pins unreadable for posters: %s", _pe)
+        # No pin either: Plex's own ids for the library item of that name.
+        # "Evil" is in Plex but not in Sonarr, so no pin can exist for it,
+        # and its plays carry no series id (2026-11-14).
+        need = [k for k in need if lookups[k] == (None, None, None)]
+        if need:
+            try:
+                for key, (tmdb, tvdb) in (await run_read(_plex_ids, need)).items():
+                    lookups[key] = (tmdb, None, tvdb)
+            except Exception as _xe:  # noqa: BLE001 - the title search stays the fallback
+                logger.warning("[history] Plex ids unreadable for posters: %s", _xe)
 
         async def _one(key, ids):
             lookup_title, cat = key
