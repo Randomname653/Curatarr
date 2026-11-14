@@ -493,8 +493,16 @@ check("probe: a template without .System warns (the constitution would be droppe
       and _status({"show": {"capabilities": [], "template_has_system": True}}, "template") == "PASS")
 check("probe: the fixtures stay the fictional owner's (setup mini-bench)",
       "Jane Doe" in __import__("src.services.setup_minibench", fromlist=["x"]).JANE_DOE_TASTE)
-check("probe: wired as a run.py subcommand",
-      "def cmd_probe" in Path(_run.__file__).read_text(encoding="utf-8")
-      and '"probe": cmd_probe' in Path(_run.__file__).read_text(encoding="utf-8"))
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+
+_seen, _saved = {}, (_run.cmd_probe, _sys.argv, _os.getcwd())
+_run.cmd_probe = lambda a: _seen.update(model=a.model, profile=a.profile, force=a.force_busy)
+_sys.argv = ["run", "probe", "--model", "qwen4:27b", "--profile", "small"]
+_run.main()
+_run.cmd_probe, _sys.argv = _saved[0], _saved[1]
+_os.chdir(_saved[2])
+check("probe: 'run probe --model X --profile small' reaches cmd_probe with its arguments",
+      _seen == {"model": "qwen4:27b", "profile": "small", "force": False})
 
 check.done()
