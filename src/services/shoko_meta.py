@@ -49,8 +49,13 @@ LOW_RANK = 2             # ...and among the season's weakest two
 # dynamic 2605 and the rest of setting (place 2613 holds "space", "prison",
 # "dungeon", "fictional location": content). Dropped:
 TAG_ROOTS = {2610, 2611, 2607, 2605, 2604, 2606, 2609, 6173, 6151, 30, 2608, 2931, 2613, 2612}
+# A tag goes when it or any ancestor is one of these (the node itself too:
+# the live run showed "Earth" and "summer" under "season" slipping through
+# a children-only check).
 _DROP_BRANCHES = {
     2630,   # Earth: countries, continents, cities - "Japan" 600 on nearly every series
+    2624,   # present (and "alternative present" under it): 600, says nothing
+    6185,   # season: spring, summer, winter
     2606,   # target audience (shounen, seinen): metadata
     2609,   # source material (manga, novel): metadata
     6173,   # origin (Japanese production): metadata
@@ -59,27 +64,40 @@ _DROP_BRANCHES = {
     6151,   # technical aspects (CGI, black and white) - but see _KEEP_IN_DROPPED
     2608,   # fetishes: never into a prompt by default
 }
-_DROP_TAGS = {2624, 6185}        # "present", "season": 600 and say nothing
 _KEEP_IN_DROPPED = {4616}        # "based on real events" hangs in technical aspects
 
 
-def tag_keeps(tag_id, tree: dict) -> bool:
-    """Whether a tag says what a series is about. Walks the tag's chain up
-    the tree; a chain that ends without a known root (59 newer AniDB tags
-    have no parent yet) is kept."""
-    if not isinstance(tag_id, int):
-        return True
-    if tag_id in TAG_ROOTS or tag_id in _DROP_TAGS:
-        return False
-    if tag_id in _KEEP_IN_DROPPED:
-        return True
-    seen, cur = set(), tree.get(tag_id)
+def _ancestors(tag_id: int, tree: dict) -> list:
+    out, seen, cur = [], {tag_id}, tree.get(tag_id)
     while isinstance(cur, int) and cur not in seen:
-        if cur in _DROP_BRANCHES:
-            return False
+        out.append(cur)
         seen.add(cur)
         cur = tree.get(cur)
-    return True
+    return out
+
+
+def tag_keeps(tag_id, tree: dict) -> bool:
+    """Whether a tag says what a series is about: not a root name, and
+    neither it nor any ancestor in a dropped branch. A chain that ends
+    without a known root (59 newer AniDB tags have no parent yet) is kept."""
+    if not isinstance(tag_id, int):
+        return True
+    if tag_id in _KEEP_IN_DROPPED:
+        return True
+    if tag_id in TAG_ROOTS or tag_id in _DROP_BRANCHES:
+        return False
+    return not any(a in _DROP_BRANCHES for a in _ancestors(tag_id, tree))
+
+
+def classify_tags(tags: list, tree: dict) -> list:
+    """Mark each of a series' tags ``keep``. Besides tag_keeps: an
+    unweighted grouping tag ("cast", "fictional location", "the arts") goes
+    when a tag under it is on the series too - the narrower one says it."""
+    implied = {a for t in tags if isinstance(t.get("id"), int) for a in _ancestors(t["id"], tree)}
+    for t in tags:
+        t["keep"] = (tag_keeps(t.get("id"), tree)
+                     and not ((t.get("weight") or 0) == 0 and t.get("id") in implied))
+    return tags
 
 
 def series_tags_for(anidb_id=None, title: str = None, limit: int = 12) -> Optional[list]:
@@ -190,8 +208,7 @@ async def refresh(task=None, *, transport=None, now: Optional[datetime] = None) 
             tags = await sess.series_tags(sid) or []
             if not tree_read:
                 tree, tree_read = (await sess.tag_tree()) or {}, True
-            for t in tags:
-                t["keep"] = tag_keeps(t.get("id"), tree)
+            classify_tags(tags, tree)
             info = await sess.series_info(sid)
             await run_write(_save, sid, info, episodes, tags, now)
             fetched += 1

@@ -42,10 +42,15 @@ SERIES = {
                  ("everybody dies", 400, True, False, 9200), ("betrayal", 0, False, True, 9201),
                  ("manga", 0, False, False, 9100), ("elements", 0, False, False, 2611),
                  ("based on real events", 300, False, False, 4616), ("space", 200, False, False, 2627),
-                 ("friendship", 0, False, False, 9300), ("death game", 100, False, False, 9400)]},
+                 ("friendship", 0, False, False, 9300), ("death game", 100, False, False, 9400),
+                 # the third live run: the dropped nodes themselves, a season, grouping tags
+                 ("Earth", 600, False, False, 2630), ("summer", 400, False, False, 4576),
+                 ("cast", 0, False, False, 6230), ("male protagonist", 0, False, False, 6231),
+                 ("fictional location", 0, False, False, 2628), ("virtual world", 300, False, False, 9500)]},
 }
 # AniDB's tree as /Tag/AniDB lists it: {id: parent}
 TREE = {2672: 2834, 2834: 2630, 2630: 2613, 2613: 2610, 2610: None, 2627: 2613,
+        4576: 6185, 6185: 2612, 6230: 2611, 6231: 6230, 2628: 2613, 9500: 2628,
         9000: 9001, 9001: 2611, 2611: None, 9002: 2611, 9200: 2611, 9201: 2607, 2607: None,
         2624: 2612, 2612: 2610, 9100: 2609, 2609: None, 4616: 6151, 6151: None, 9300: 2607,
         9400: None}
@@ -129,6 +134,12 @@ keep = {t["name"]: t["keep"] for t in tags}
 check("the tag tree sorts out what says nothing about the series: places under Earth, 'present', "
       "source material, the root tags themselves",
       not any(keep[n] for n in ("Japan", "present", "manga", "elements")), keep)
+check("...the dropped nodes themselves and everything under them: 'Earth', 'summer' under 'season' "
+      "(both slipped through the third live run)", not keep["Earth"] and not keep["summer"], keep)
+check("...an unweighted grouping tag goes when a narrower one is on the series: 'cast' beside "
+      "'male protagonist', 'fictional location' beside 'virtual world'",
+      not keep["cast"] and not keep["fictional location"]
+      and keep["male protagonist"] and keep["virtual world"], keep)
 check("...and keeps the content: elements, themes, a place that is a setting ('space'), "
       "'based on real events' out of the technical branch, a tag with no parent yet",
       all(keep[n] for n in ("dark fantasy", "action", "space", "based on real events", "friendship",
@@ -137,7 +148,8 @@ check("the tag tree is read once per run, not per series",
       sum(1 for _m, pth, _q in fake.paths if pth == "/Tag/AniDB") == 1)
 got = sm.series_tags_for(anidb_id=9001)
 check("the curator's tags: no spoilers, strongest first, 'applies, unweighted' (0) last, not dropped",
-      got == ["dark fantasy", "action", "based on real events", "space", "death game", "friendship"], got)
+      got == ["dark fantasy", "action", "based on real events", "virtual world", "space", "death game",
+              "friendship", "male protagonist"], got)
 check("...found by title when there is no AniDB id", sm.series_tags_for(title="Night Harbor") == got)
 check("...and nothing for a series Shoko does not know", sm.series_tags_for(anidb_id=1) is None)
 
