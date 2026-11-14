@@ -1925,7 +1925,12 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .act-list { display: flex; flex-direction: column; }
 .act-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 16px; border-top: 1px solid var(--border); }
 .act-row:first-child { border-top: none; }
-.act-row.act-running { background: linear-gradient(90deg, var(--amber-dim), transparent 40%); }
+/* The running row's tint follows its bar: filled to --act-p (set per row), a
+   sweep while the count is unknown. Registered so the fill glides between ticks. */
+@property --act-p { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+.act-row.act-running { background: linear-gradient(90deg, var(--amber-dim) var(--act-p), transparent calc(var(--act-p) + 6%)); transition: --act-p .6s ease; }
+.act-row.act-running.act-indet { background: linear-gradient(90deg, transparent, var(--amber-dim), transparent) no-repeat; background-size: 35% 100%; animation: act-row-sweep 1.4s ease-in-out infinite; }
+@keyframes act-row-sweep { 0% { background-position: -50% 0; } 100% { background-position: 150% 0; } }
 .act-ico { padding-top: 2px; display: flex; justify-content: center; }
 .act-main { min-width: 0; }
 .act-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; }
@@ -1968,6 +1973,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   .act-sum, .act-hist .act-sum { max-width: 100%; white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .act-spin, .progress-bar.indeterminate .progress-fill { animation: none; }
+  .act-spin, .progress-bar.indeterminate .progress-fill, .act-row.act-running.act-indet { animation: none; }
+  .act-row.act-running { transition: none; }
   .act-fade { animation: none; opacity: .6; }
 }

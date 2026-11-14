@@ -309,7 +309,10 @@ function _queueRowHtml(run, kids) {
   const pct = live ? (run.progress || 0) : 100;
   const showBar = o === 'running' || (!live && o !== 'cancelled' && o !== 'skipped' && o !== 'failed');
   const pctLabel = o === 'running' && !run.indeterminate ? `<span class="t-amber b fs-12">${th('activity.pct', {pct: run.progress || 0})}</span>` : '';
-  return `<div class="act-row act-${o}${live ? '' : ' act-fade'}" role="listitem" data-run-id="${escAttr(String(run.run_id || run.id))}" data-started="${escAttr(run.started_at || '')}">
+  // The row's tint follows the bar: filled to its percentage, a sweep while
+  // the count is unknown (it stood as a fixed 40 % gradient, 2026-11-14).
+  const tint = Math.max(0, Math.min(100, pct || 0));
+  return `<div class="act-row act-${o}${live ? '' : ' act-fade'}${o === 'running' && run.indeterminate ? ' act-indet' : ''}" role="listitem" data-run-id="${escAttr(String(run.run_id || run.id))}" data-started="${escAttr(run.started_at || '')}" data-pct="${tint}">
       <div class="act-ico js-ico">${_icon(o)}</div>
       <div class="act-main">
         <div class="act-title js-title"><span class="b">${esc(run.name)}</span>${kids.length ? '' : _tagPills(run.tags)}${_outcomeBadge(o)}${pctLabel}</div>
@@ -397,6 +400,7 @@ function _renderTasksNow(tasks) {
     let row = rows.get(key);
     if (row) { _patchRow(row, fresh); rows.delete(key); }
     else row = fresh;
+    row.style.setProperty('--act-p', `${fresh.dataset.pct || 0}%`);   // the tint glides (CSS @property)
     const want = prev ? prev.nextSibling : list.firstChild;
     if (row !== want) list.insertBefore(row, want);
     prev = row;

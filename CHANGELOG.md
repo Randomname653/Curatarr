@@ -6,6 +6,10 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Activity: the running row's tint follows its bar.** The amber tint behind a running task was
+a fixed gradient over the first 40 % of the row, whatever the progress. It now fills the row to
+the task's percentage and glides with it, and sweeps along with the bar while the count is unknown.
+
 **Last played: Plex's own ids before a title search.** A show in Plex but in no arr app has no
 match pin, and its plays carry no series id, so its poster still came from a search by name and
 a short title found another series. The recent-history posters now take the ids Plex itself files
