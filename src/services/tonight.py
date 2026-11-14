@@ -108,7 +108,10 @@ def candidates(user_id: int, domain: Optional[str] = None,
             # A film by its title; a series, and a music recommendation (an
             # artist), by the series title its plays carry.
             col = W.title if category == "movie" else W.series_title
-            q = db.query(W.id).filter(W.user_id == user_id, func.lower(col) == title.lower())
+            # ``user_id + 0`` keeps the planner off the user_id index (a walk
+            # of the owner's ~380k plays per title) - the lower() indexes
+            # answer in under a millisecond (pillars._owner_watch's idiom).
+            q = db.query(W.id).filter((W.user_id + 0) == user_id, func.lower(col) == title.lower())
             if since is not None:
                 q = q.filter(W.viewed_at >= since)
             return q.first() is not None

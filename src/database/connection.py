@@ -409,6 +409,10 @@ def _migrate_columns() -> None:
         ("ix_wh_title",                  "watch_history", "title"),
         ("ix_wh_series_title",           "watch_history", "series_title"),
         ("ix_wh_series_title_lc",        "watch_history", "lower(series_title)"),
+        # lower(title) lookups for films (tonight's "played since" check,
+        # post_watch): without it a miss walked all of the owner's rows,
+        # 55-63 ms per title on a 384k-row table, 0.1 ms indexed.
+        ("ix_wh_title_lc",               "watch_history", "lower(title)"),
         ("ix_wh_tmdb_id",                "watch_history", "tmdb_id"),
         # Range scans by user + family + recency (the 90-day windows, the
         # taste rebuild's per-category history read).
