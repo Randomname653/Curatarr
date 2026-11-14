@@ -543,6 +543,7 @@
               </div>
               <div class="mb-0 toolbar">
                 <button class="btn btn-primary" data-action="startEnrichNew" data-args='["$el"]' data-i18n="kb.view.start">Start enrichment</button>
+                <!-- Category-aware (the checkboxes above), unlike History's Recompute taste. -->
                 <button class="btn btn-secondary" data-action="computeTaste" data-args='["$el"]' data-i18n="history.recompute">Recompute taste</button>
                 <!-- Pass 55: audit-requeue — finds profiles with missing metadata
                      (zero rating, not_found) and requeues only those, instead of
@@ -845,15 +846,8 @@
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadModelUpdates" data-args='["$el", true]' data-i18n="set.view.check_now">Check now</button></div></div>
                 <div class="section-body"><div id="maint-models"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
-              <section class="section">
-                <div class="section-head"><h3 data-i18n="set.view.plex_sync">Plex sync</h3><span class="section-hint" data-i18n="set.view.plex_sync_hint">Pull new watch history from Plex and update your taste profile. Safe to repeat.</span>
-                  <div class="section-actions">
-                    <button class="btn btn-secondary btn-sm" data-action="syncHistory" data-args='[false,"maint-sync-status"]' data-i18n="history.sync_now">Sync now</button>
-                    <button class="btn btn-secondary btn-sm" data-action="syncHistory" data-args='[true,"maint-sync-status"]' title="Sync even if the last sync was less than an hour ago" data-i18n-title="history.force_title" data-i18n="history.force_sync">Force sync</button>
-                    <button class="btn btn-secondary btn-sm" data-action="recomputeTaste" data-args='["maint-sync-status"]' data-i18n="history.recompute">Recompute taste</button>
-                  </div></div>
-                <div class="section-body"><span id="maint-sync-status" class="status"></span></div>
-              </section>
+              <!-- Sync now / Force sync / Recompute taste live in History & Taste
+                   (Sync now + More): this section repeated them (UI audit 2026-11-14). -->
               <section class="section" id="maint-reattribute">
                 <div class="section-head"><h3 data-i18n="set.view.reattribute">Re-attribute history</h3>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="reattributeHistory" data-args='["$el"]' data-i18n="set.view.reattribute_run">Run re-attribution</button></div></div>
@@ -995,4 +989,5 @@
 </nav>
 
 <script type="module" src="/js/app.js"></script>
+</body>
 </html>
