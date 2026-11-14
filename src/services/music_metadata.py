@@ -248,10 +248,12 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
 
                 mbid = hit.get("id")
 
-            # Fetch full artist details with tags — rate limited
+            # Fetch full artist details with tags — rate limited. artist-rels
+            # rides along in the same call: a band's members with their roles
+            # and years (members_from_relations).
             r2 = await _mb_request(
                 client, f"{MB_BASE}/artist/{mbid}",
-                {"inc": "tags+genres+ratings", "fmt": "json"},
+                {"inc": "tags+genres+ratings+artist-rels", "fmt": "json"},
             )
             if r2.status_code == 404:
                 await asyncio.to_thread(_cache_set, cache_key, None, 7)   # definitive: no such mbid
@@ -284,11 +286,100 @@ async def fetch_musicbrainz_artist(artist_name: str, mbid: Optional[str] = None,
         "genres": genres or tag_names[:8],
         "tags": tag_names,
         "rating": data.get("rating", {}).get("value"),
+        # A band's line-up (None for a person, who has no members).
+        "members": (members_from_relations(data.get("relations") or [])
+                    if data.get("type") == "Group" else None),
         "source": "musicbrainz",
     }
 
     await asyncio.to_thread(_cache_set, cache_key, result, 60)
     return result
+
+
+# ── band members ─────────────────────────────────────────────────────────────
+# 2026-11-14: the owner named the singer of a band he plays daily, and the
+# curator "corrected" him from a same-named artist elsewhere in the library:
+# it had no line-up at all. MusicBrainz has it ("member of band" relations,
+# with roles and years) in the artist lookup we already make.
+
+_MEMBER_SKIP_ATTRS = {"original", "additional", "guest", "minor"}
+
+
+def members_from_relations(relations: list) -> list:
+    """A group's "member of band" relations, one entry per person:
+    {name, roles, begin, end, current}. MusicBrainz files one relation per
+    role ("lead vocals", then "keyboard") and a role-less one besides; they
+    merge here. Current members first, then by when they joined."""
+    people: dict = {}
+    for rel in relations or []:
+        if rel.get("type") != "member of band" or rel.get("direction") != "backward":
+            continue
+        person = rel.get("artist") or {}
+        key = person.get("id") or person.get("name")
+        if not key:
+            continue
+        p = people.setdefault(key, {"name": person.get("name") or "", "roles": [],
+                                    "begin": None, "end": None, "current": False})
+        for a in rel.get("attributes") or []:
+            if a not in _MEMBER_SKIP_ATTRS and a not in p["roles"]:
+                p["roles"].append(a)
+        begin, end = (rel.get("begin") or "")[:4] or None, (rel.get("end") or "")[:4] or None
+        if begin and (p["begin"] is None or begin < p["begin"]):
+            p["begin"] = begin
+        if rel.get("ended"):
+            if end and (p["end"] is None or end > p["end"]):
+                p["end"] = end
+        else:
+            p["current"] = True
+    out = list(people.values())
+    for p in out:
+        if p["current"]:
+            p["end"] = None
+    return sorted(out, key=lambda p: (not p["current"], p["begin"] or "9999", p["name"]))
+
+
+def format_members(members: list, limit: int = 10) -> str:
+    """'Mira Holt (lead vocals, since 2020), …; former: …' for the
+    curator's metadata block ("" for none)."""
+    def one(p):
+        span = (f"since {p['begin']}" if p["current"] and p.get("begin")
+                else "–".join(x for x in (p.get("begin"), p.get("end")) if x))
+        bits = [", ".join(p.get("roles") or []), span]
+        inner = ", ".join(b for b in bits if b)
+        return f"{p['name']} ({inner})" if inner else p["name"]
+    now = [one(p) for p in members if p.get("current")][:limit]
+    past = [one(p) for p in members if not p.get("current")][:limit]
+    return "; ".join(x for x in (", ".join(now), ("former: " + ", ".join(past)) if past else "") if x)
+
+
+async def fetch_band_members(artist_name: str, mbid: Optional[str] = None) -> Optional[list]:
+    """A band's members from MusicBrainz: [] for a band without a listed
+    line-up, None for a person, an unknown artist or an outage (nothing to
+    say then). Artist records cached before members were read get one
+    artist-rels lookup of their own, cached 60 days like the record."""
+    rec = await fetch_musicbrainz_artist(artist_name, mbid=mbid)
+    if not rec or rec is TRANSIENT:
+        return None
+    if rec.get("type") != "Group":
+        return None
+    if rec.get("members") is not None:
+        return rec["members"]
+    key = f"mb:members:{rec.get('mbid')}"
+    cached = await asyncio.to_thread(_cache_get, key)
+    if cached:
+        return cached["response"].get("members") or []
+    try:
+        async with httpx.AsyncClient(verify=tls_context(), timeout=15) as client:
+            r = await _mb_request(client, f"{MB_BASE}/artist/{rec['mbid']}",
+                                  {"inc": "artist-rels", "fmt": "json"})
+        if r.status_code != 200:
+            return None
+        members = members_from_relations(r.json().get("relations") or [])
+    except (httpx.HTTPError, ValueError) as e:
+        logger.debug("MusicBrainz members for %s: %s", artist_name, e)
+        return None
+    await asyncio.to_thread(_cache_set, key, {"members": members}, 60)
+    return members
 
 
 async def fetch_musicbrainz_album(mbid: str, album_name: str, artist_name: str) -> Optional[dict]:
@@ -626,6 +717,7 @@ async def enrich_artist(artist_name: str, skip_mb: bool = False, mbid: Optional[
         "playcount": (lfm or {}).get("playcount"),
         "disambiguation": (mb or {}).get("disambiguation", ""),
         "rating": (mb or {}).get("rating"),
+        "members": (mb or {}).get("members"),
         # SoulSync extras — mood for prompts, deezer_id lets the poster
         # path skip the MB→Deezer bridge. NOT part of embedding_text: the
         # text template stays byte-stable so the index doesn't drift.
