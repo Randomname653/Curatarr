@@ -43,7 +43,19 @@ def trigger_sync(
     return {"status": "sync_started", "message": "Fetching Plex history and computing taste vectors…"}
 
 
+_sync_in_flight = False   # a Sync-button / onboarding sync is running (GET /sync-state)
+
+
 async def _run_sync(force: bool = False):
+    global _sync_in_flight
+    _sync_in_flight = True
+    try:
+        await _run_sync_inner(force)
+    finally:
+        _sync_in_flight = False
+
+
+async def _run_sync_inner(force: bool = False):
     """The Sync button and the onboarding's first sync. The taste half (the
     curator writes a summary per category) goes to the custodian's model
     queue, as for the scheduled sync: run inline it held the onboarding's
@@ -74,6 +86,20 @@ async def _first_maintenance_now() -> None:
     if any(dc._first_run_done.values()):
         return
     await dc.custodian_tick(wait=False)
+
+
+@router.get("/sync-state")
+def sync_state(user: User = Depends(get_current_user)):
+    """Whether the sync the Sync button (or the onboarding) started is still
+    running, and how many plays the member has now: the onboarding's bar
+    ends with the sync, not with a taste profile that needs hours of
+    enrichment first. Not cached: polled every few seconds while it runs."""
+    from src.services.app_state import get_state
+    with get_db_session() as db:
+        count = db.query(func.count(WatchHistoryEntry.id)).filter(
+            WatchHistoryEntry.user_id == user.id).scalar() or 0
+    locked = get_state("plex_sync_running") not in (None, "", "0")
+    return {"running": bool(_sync_in_flight or locked), "entries": int(count)}
 
 
 @router.get("/status")

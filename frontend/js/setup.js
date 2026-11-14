@@ -1,24 +1,50 @@
 // ── SETUP WIZARD ──────────────────────────────────────────────────────────────
+// Rebuilt after the fresh-install test of 2026-11-14: one plex.tv sign-in
+// instead of a hand-copied token, the AI step detects on its own and says in
+// plain words what will run, TMDB is marked as needed, a closing overview
+// says what is set and what is missing, and finishing signs the owner in
+// (no second "Sign in with Plex", no restart).
 import { serverLabel, state } from './state.js';
 import { refreshSpotifyPending, spotifyDropZone } from './spotify_import.js';
-import { EL, SETUP_STEPS, SVG_WARN, SVG_X, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, loc, toast } from './ui.js';
+import { netflixDropZone, refreshNetflixPending } from './netflix_import.js';
+import { EL, SETUP_STEPS, SVG_CHECK, SVG_WARN, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, esc, focusDialog, loc, toast } from './ui.js';
 import { api } from './api.js';
 import { loadLibraryConfig } from './libraries.js';
 import { loadHistoryStatus } from './history.js';
 import { findJellyfinServers, jellyfinConnectHtml, stopJellyfinConnect } from './jellyfin_connect.js';
 import { t, th } from './i18n.js';
-function serverChoice() {
-  const kind = state.setupData.media_server_type === 'jellyfin' ? 'jellyfin' : 'plex';
-  return `<div class="form-group">
-      <label for="s-media-server">${th('setup.media_server')}</label>
-      <select id="s-media-server" ${actOn('change', 'setupServerKind')}>
-        <option value="plex"${kind === 'plex' ? ' selected' : ''}>Plex</option>
-        <option value="jellyfin"${kind === 'jellyfin' ? ' selected' : ''}>Jellyfin</option>
-      </select>
-      <div class="hint">${th('setup.media_server_hint')}</div>
-    </div>`;
+
+const DOT_KEYS = {plex: 'setup.v2.dot_server', ollama: 'setup.v2.dot_ai', metadata: 'setup.v2.dot_metadata',
+                  arr: 'settings.arr_apps', import: 'setup.v2.dot_import', done: 'setup.v2.dot_done'};
+
+function isJellyfin() { return state.setupData.media_server_type === 'jellyfin'; }
+
+// The wordmark at the head of the wizard: the same inline logo the sign-in
+// screen carries, cloned once.
+function _brandHeader() {
+  const slot = document.getElementById('setup-logo');
+  if (!slot || slot.firstElementChild) return;
+  const logo = document.querySelector('#auth-overlay [data-brand-slot] .brand-logo');
+  if (logo) {
+    const c = logo.cloneNode(true);
+    c.setAttribute('class', 'brand-logo setup-logo-svg');
+    slot.appendChild(c);
+  }
 }
 
+// ── step 1: the media server ────────────────────────────────────────────────
+function serverChoice() {
+  const kind = isJellyfin() ? 'jellyfin' : 'plex';
+  const card = (value, name, sub) => `
+    <label class="wiz-choice${kind === value ? ' on' : ''}">
+      <input type="radio" name="s-media-server" value="${value}" ${kind === value ? 'checked' : ''} ${actOn('change', 'setupServerKind', EL)}>
+      <span class="wiz-choice-body"><b>${name}</b><span class="t3 fs-12">${sub}</span></span>
+    </label>`;
+  return `<div class="wiz-choices" role="radiogroup" aria-label="${th('setup.media_server')}">
+      ${card('plex', 'Plex', th('setup.v2.plex_sub'))}
+      ${card('jellyfin', 'Jellyfin', th('setup.v2.jellyfin_sub'))}
+    </div>`;
+}
 
 // A finished Jellyfin connect: the key stays on the server under the
 // ticket, /complete hands it back.
@@ -36,346 +62,523 @@ export function jellyfinConnectAgain() {
   renderSetupStep(state.setupStep);
 }
 
-export function setupServerKind() {
+export function setupServerKind(el) {
   collectStep();
-  state.setupData.media_server_type = document.getElementById('s-media-server')?.value === 'jellyfin' ? 'jellyfin' : 'plex';
+  const v = el?.value || document.querySelector('input[name="s-media-server"]:checked')?.value;
+  state.setupData.media_server_type = v === 'jellyfin' ? 'jellyfin' : 'plex';
   renderSetupStep(state.setupStep);
 }
 
-const SETUP_CONTENT = {
-  // One media server per install (docs/JELLYFIN_DESIGN.md): Plex, or Jellyfin.
-  plex: () => state.setupData.media_server_type === 'jellyfin' ? `
-    <h2 class="setup-heading">${th('setup.connection', {server: 'Jellyfin'})}</h2>
-    ${serverChoice()}
-    ${jellyfinConnectHtml(state.setupData.jellyfin_url, state.setupData.jellyfin_ticket ? state.setupData.jellyfin_connected : null, setupJellyfinConnected)}
-    ${state.setupData.jellyfin_ticket ? '' : `<details class="mt-12">
-      <summary class="fs-12 t2 pointer">${th('setup.paste_key')}</summary>
-      <div class="form-group mt-8">
-        <label for="s-jellyfin-key">${th('setup.api_key_of', {service: 'Jellyfin'})}</label>
-        <input id="s-jellyfin-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(state.setupData.jellyfin_api_key||'')}">
-        <div class="hint">${th('setup.jf_key_hint')}</div>
-      </div>
-      <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>${th('setup.test_connection')}</button>
-      <div id="test-jellyfin-result"></div>
-    </details>`}` : `
-    <h2 class="setup-heading">${th('setup.connection', {server: 'Plex'})}</h2>
-    ${serverChoice()}
-    <div class="form-group">
-      <label for="s-plex-url">${th('setup.plex_url')}</label>
-      <input id="s-plex-url" type="url" placeholder="http://192.168.1.100:32400" value="${state.setupData.plex_url||''}">
-      <div class="hint">${th('setup.plex_url_hint')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-plex-token">${th('setup.plex_token')}</label>
-      <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${state.setupData.plex_token||''}">
-      <div class="hint">${th('setup.plex_token_hint')}</div>
-    </div>
-    <button class="btn btn-secondary btn-sm" ${act('testConn', 'plex')}>${th('setup.test_connection')}</button>
-    <div id="test-plex-result"></div>`,
+function plexServersHtml() {
+  const d = state.setupData;
+  const servers = d.plex_servers || [];
+  if (!servers.length) {
+    return `<div class="banner warn mt-12"><span class="banner-icon">${SVG_WARN}</span><span class="banner-text">${th('setup.v2.plex_no_server', {account: esc(d.plex_account || '')})}</span></div>
+      <button class="btn btn-secondary btn-sm mt-8" ${act('plexConnectAgain')}>${th('setup.v2.plex_other_account')}</button>`;
+  }
+  const rows = servers.map(s => `
+    <label class="wiz-choice${d.plex_server_id === s.server_id ? ' on' : ''}">
+      <input type="radio" name="s-plex-server" value="${esc(s.server_id)}" ${d.plex_server_id === s.server_id ? 'checked' : ''} ${actOn('change', 'pickPlexServer', EL)}>
+      <span class="wiz-choice-body"><b>${esc(s.name)}</b>
+        <span class="fs-12 ${s.reachable ? 't3' : 't-amber'}">${s.reachable ? esc(s.url) : th('setup.v2.plex_unreachable')}</span></span>
+    </label>`).join('');
+  const picked = servers.find(s => s.server_id === d.plex_server_id);
+  const needsAddress = picked && !picked.reachable;
+  return `<p class="test-status ok">${th('setup.v2.plex_signed_in', {account: esc(d.plex_account || 'Plex')})}</p>
+    <p class="fs-13 t2 mt-12 mb-8">${th(servers.length > 1 ? 'setup.v2.plex_pick' : 'setup.v2.plex_found')}</p>
+    <div class="wiz-choices col">${rows}</div>
+    ${needsAddress ? `<div class="form-group mt-12">
+        <label for="s-plex-url">${th('setup.v2.plex_address')}</label>
+        <input id="s-plex-url" type="url" placeholder="http://192.168.1.100:32400" value="${esc(d.plex_url || '')}">
+        <div class="hint">${th('setup.v2.plex_address_hint')}</div>
+      </div>` : ''}
+    <button class="link-num fs-12 mt-8" ${act('plexConnectAgain')}>${th('setup.v2.plex_other_account')}</button>`;
+}
 
-  ollama: () => `
-    <h2 class="setup-heading">${th('setup.ollama_heading')}</h2>
-    <div class="form-group">
-      <label for="s-ollama">${th('setup.ollama_endpoint')}</label>
-      <input id="s-ollama" type="url" placeholder="http://localhost:11434" value="${state.setupData.ollama_endpoint||'http://localhost:11434'}">
+function plexStepHtml() {
+  const d = state.setupData;
+  if (d.plex_ticket) return plexServersHtml();
+  const waiting = d._plex_code ? `
+    <div class="wiz-pin mt-12" role="status" aria-live="polite">
+      <p class="fs-13 t2">${th('setup.v2.plex_waiting')}</p>
+      <p class="fs-12 t3 mt-8">${th('setup.v2.plex_code_pre')} <a class="t-amber" href="https://plex.tv/link" target="_blank" rel="noopener noreferrer">plex.tv/link</a>:</p>
+      <div class="setup-qc-code">${esc(d._plex_code.slice(0, 4))} ${esc(d._plex_code.slice(4))}</div>
+      <small class="t3" id="plex-connect-status"></small>
+    </div>` : '';
+  return `<p class="fs-13 t2 mb-12">${th('setup.v2.plex_lead')}</p>
+    <button class="btn btn-primary wiz-big" id="plex-connect-btn" ${act('startPlexConnect', EL)}>${th('auth.view.plex')}</button>
+    ${waiting}
+    <details class="mt-20">
+      <summary class="fs-12 t2 pointer">${th('setup.v2.plex_manual')}</summary>
+      <div class="form-group mt-8">
+        <label for="s-plex-url">${th('setup.plex_url')}</label>
+        <input id="s-plex-url" type="url" placeholder="http://192.168.1.100:32400" value="${esc(d.plex_url || '')}">
+      </div>
+      <div class="form-group">
+        <label for="s-plex-token">${th('setup.plex_token')}</label>
+        <input id="s-plex-token" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${esc(d.plex_token || '')}">
+        <div class="hint">${th('setup.v2.plex_token_hint')} <a class="t-amber" href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/" target="_blank" rel="noopener noreferrer">support.plex.tv</a></div>
+      </div>
+      <button class="btn btn-secondary btn-sm" ${act('testConn', 'plex')}>${th('setup.test_connection')}</button>
+      <div id="test-plex-result"></div>
+    </details>`;
+}
+
+let _plexPoll = null;
+function stopPlexConnect() { if (_plexPoll) { clearInterval(_plexPoll); _plexPoll = null; } }
+
+export async function startPlexConnect(btn) {
+  // A tab opened now, inside the click, is not a blocked pop-up; it gets
+  // plex.tv's address once the PIN is there.
+  const tab = window.open('', '_blank');
+  btnBusy(btn, t('setup.v2.plex_opening'));
+  let r;
+  try {
+    r = await api('/api/setup/plex/connect', 'POST');
+  } catch (e) {
+    if (tab) tab.close();
+    btnDone(btn);
+    toast(t('auth.plex_start_failed', {error: _errMsg(e)}), 'danger');
+    return;
+  }
+  if (tab) tab.location.href = r.auth_url;
+  else window.open(r.auth_url, '_blank');
+  state.setupData._plex_code = r.code;
+  state.setupData._plex_login = {id: r.login_id, nonce: r.nonce};
+  renderSetupStep(state.setupStep);
+  const until = Date.now() + (r.expires_in || 900) * 1000;
+  stopPlexConnect();
+  _plexPoll = setInterval(async () => {
+    const st = document.getElementById('plex-connect-status');
+    if (Date.now() > until) {
+      stopPlexConnect();
+      state.setupData._plex_code = null;
+      renderSetupStep(state.setupStep);
+      toast(t('auth.plex_code_expired'), 'amber');
+      return;
+    }
+    const login = state.setupData._plex_login;
+    if (!login) { stopPlexConnect(); return; }
+    try {
+      const res = await api(`/api/setup/plex/connect/${encodeURIComponent(login.id)}`, 'GET', null, false,
+                            {'X-Plex-Login-Nonce': login.nonce});
+      if (res.status !== 'ok') return;
+      stopPlexConnect();
+      const d = state.setupData;
+      d.plex_ticket = res.ticket;
+      d.plex_account = res.account || '';
+      d.plex_servers = res.servers || [];
+      d._plex_code = null;
+      d._plex_login = null;
+      const reachable = d.plex_servers.filter(s => s.reachable);
+      d.plex_server_id = (reachable.length === 1 ? reachable[0] : d.plex_servers.length === 1 ? d.plex_servers[0] : null)?.server_id || '';
+      renderSetupStep(state.setupStep);
+    } catch (e) {
+      if (st) st.textContent = _errMsg(e);
+      if (e.status === 403) stopPlexConnect();   // expired or foreign: polling will not help
+    }
+  }, 3000);
+}
+
+export function plexConnectAgain() {
+  stopPlexConnect();
+  Object.assign(state.setupData, {plex_ticket: '', plex_servers: null, plex_server_id: '',
+                                  plex_account: '', _plex_code: null, _plex_login: null});
+  renderSetupStep(state.setupStep);
+}
+
+export function pickPlexServer(el) {
+  collectStep();
+  state.setupData.plex_server_id = el?.value || '';
+  renderSetupStep(state.setupStep);
+}
+
+// ── step 2: the AI ──────────────────────────────────────────────────────────
+function aiStepHtml() {
+  const d = state.setupData;
+  return `<p class="fs-13 t2 mb-16">${th('setup.v2.ai_lead')}</p>
+    <div class="wiz-status">
+      <div class="wiz-status-row"><span class="wiz-status-name">Ollama</span><span class="grow" id="test-ollama-result"><span class="test-status">${th('setup.testing')}</span></span></div>
+      <div class="wiz-status-row"><span class="wiz-status-name">${th('setup.v2.gpu')}</span><span class="grow" id="gpu-result"><span class="test-status">${th('setup.probing_gpu')}</span></span></div>
     </div>
-    <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>${th('setup.detect_models')}</button>
-    <div class="my-8" id="test-ollama-result"></div>
-    <div class="mt-12 form-group">
-      <label for="s-vram">GPU / VRAM</label>
-      <div class="row">
-        <button class="btn btn-secondary btn-sm" ${act('detectGpu')}>${th('setup.detect_gpu')}</button>
+    <div class="wiz-plan mt-16" id="wiz-ai-plan" role="status" aria-live="polite"></div>
+    <details class="mt-16" id="s-ai-advanced">
+      <summary class="fs-12 t2 pointer">${th('setup.v2.ai_advanced')}</summary>
+      <div class="form-group mt-12">
+        <label for="s-ollama">${th('setup.ollama_endpoint')}</label>
+        <div class="row">
+          <input class="grow" id="s-ollama" type="url" placeholder="http://localhost:11434" value="${esc(d.ollama_endpoint || 'http://localhost:11434')}">
+          <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>${th('setup.detect_models')}</button>
+        </div>
+        <div class="hint">${th('setup.v2.ollama_hint')}</div>
+      </div>
+      <div class="form-group">
+        <label for="s-vram">${th('setup.v2.vram')}</label>
         <select class="w-auto" id="s-vram" ${actOn('change', 'refreshModelRecs')}>
           <option value="">${th('setup.vram_manual')}</option>
+          <option value="4">4 GB</option>
           <option value="8">8 GB</option>
           <option value="12">12 GB</option>
           <option value="16">16 GB</option>
           <option value="24">24 GB</option>
           <option value="32">32+ GB</option>
         </select>
+        <div class="hint">${th('setup.vram_hint')}</div>
       </div>
-      <div class="mt-6" id="gpu-result"></div>
-      <div class="hint">${th('setup.vram_hint')}</div>
-    </div>
-    <div class="my-8" id="model-recs"></div>
-    <details class="mt-12" id="s-profile-wrap">
-      <summary>${th('setup.profile_summary')}</summary>
-      <div class="hint" id="s-profile-note"></div>
-      <div class="form-group mt-8">
-        <label for="s-llm-profile">${th('setup.profile')}</label>
-        <select class="w-auto" id="s-llm-profile">
-          <option value="large"${state.setupData.llm_profile === 'small' ? '' : ' selected'}>${th('setup.profile_large')}</option>
-          <option value="small"${state.setupData.llm_profile === 'small' ? ' selected' : ''}>${th('setup.profile_small')}</option>
-        </select>
-        <div class="hint">${th('setup.profile_hint')}</div>
+      <div class="my-8" id="model-recs"></div>
+      <div class="form-group">
+        <label for="s-curator-model">${th('setup.curator_model')}</label>
+        <select id="s-curator-model" ${actOn('change', 'onSetupCuratorChange')}><option value="gemma4:31b">gemma4:31b (${th('setup.recommended_docs')})</option></select>
       </div>
       <div class="form-group">
-        <label for="s-num-ctx">${th('setup.num_ctx')}</label>
-        <input id="s-num-ctx" type="number" min="0" max="131072" step="1024" value="${state.setupData.curator_num_ctx ?? 0}">
+        <label for="s-summarizer-model">${th('setup.summarizer_model')}</label>
+        <select id="s-summarizer-model" ${actOn('change', 'setupModelChanged')}><option value="granite4.1:8b">granite4.1:8b</option></select>
+        <div class="hint">${th('setup.summarizer_hint')}</div>
       </div>
       <div class="form-group">
-        <label for="s-num-gpu">${th('setup.num_gpu')}</label>
-        <input id="s-num-gpu" type="number" min="-1" max="999" value="${state.setupData.curator_num_gpu ?? 99}">
-        <div class="hint">${th('setup.num_gpu_hint')}</div>
+        <label for="s-embed-model">${th('setup.embed_model')}</label>
+        <select id="s-embed-model" ${actOn('change', 'setupModelChanged')}><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe</option></select>
       </div>
-    </details>
-    <div class="mt-12 form-group">
-      <label for="s-curator-model">${th('setup.curator_model')}</label>
-      <select id="s-curator-model" ${actOn('change', 'onSetupCuratorChange')}><option value="gemma4:31b">gemma4:31b (${th('setup.recommended_docs')})</option></select>
-      <div class="hint">${th('setup.bake_hint')} <code>ollama create</code>.</div>
-    </div>
-    <div class="form-group">
-      <label for="s-summarizer-model">${th('setup.summarizer_model')}</label>
-      <select id="s-summarizer-model"><option value="granite4.1:8b">granite4.1:8b (${th('setup.recommended')})</option></select>
-      <div class="hint">${th('setup.summarizer_hint')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-embed-model">${th('setup.embed_model')}</label>
-      <select id="s-embed-model"><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe (${th('setup.recommended')})</option></select>
-    </div>
-    <div class="mt-12 form-group">
-      <label class="inline-flex pointer">
-        <input type="checkbox" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${state.setupData.enable_pitcher?'checked':''}>
-        ${th('setup.pitcher')}
-      </label>
-      <div class="hint">${th('setup.pitcher_hint')}</div>
-      <div id="s-pitcher-wrap" class="mt-8"${state.setupData.enable_pitcher ? '' : ' hidden'}>
-        <label for="s-pitcher-model">${th('setup.pitcher_model')}</label>
-        <select id="s-pitcher-model"><option value="qwen3.8:27b">qwen3.8:27b (${th('setup.recommended_split')})</option></select>
-        <div id="pitcher-note" class="hint"></div>
+      <details class="mt-12" id="s-profile-wrap">
+        <summary class="fs-12 t2 pointer">${th('setup.profile_summary')}</summary>
+        <div class="hint" id="s-profile-note"></div>
+        <div class="form-group mt-8">
+          <label for="s-llm-profile">${th('setup.profile')}</label>
+          <select class="w-auto" id="s-llm-profile">
+            <option value="large"${d.llm_profile === 'small' ? '' : ' selected'}>${th('setup.profile_large')}</option>
+            <option value="small"${d.llm_profile === 'small' ? ' selected' : ''}>${th('setup.profile_small')}</option>
+          </select>
+          <div class="hint">${th('setup.profile_hint')}</div>
+        </div>
+        <div class="form-group">
+          <label for="s-num-ctx">${th('setup.num_ctx')}</label>
+          <input id="s-num-ctx" type="number" min="0" max="131072" step="1024" value="${d.curator_num_ctx ?? 0}">
+        </div>
+        <div class="form-group">
+          <label for="s-num-gpu">${th('setup.num_gpu')}</label>
+          <input id="s-num-gpu" type="number" min="-1" max="999" value="${d.curator_num_gpu ?? 99}">
+          <div class="hint">${th('setup.num_gpu_hint')}</div>
+        </div>
+      </details>
+      <div class="mt-12 form-group">
+        <label class="inline-flex pointer">
+          <input type="checkbox" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${d.enable_pitcher ? 'checked' : ''}>
+          ${th('setup.pitcher')}
+        </label>
+        <div class="hint">${th('setup.v2.pitcher_hint')}</div>
+        <div id="s-pitcher-wrap" class="mt-8"${d.enable_pitcher ? '' : ' hidden'}>
+          <label for="s-pitcher-model">${th('setup.pitcher_model')}</label>
+          <select id="s-pitcher-model" ${actOn('change', 'setupModelChanged')}><option value="qwen3.8:27b">qwen3.8:27b</option></select>
+          <div id="pitcher-note" class="hint"></div>
+        </div>
       </div>
-    </div>
-    <div class="form-group mt-12">
-      <label class="row fs-13">
-        <input type="checkbox" id="s-cpu-lane" ${state.setupData.llm_cpu_lane === false ? '' : 'checked'}>
-        ${th('setup.cpu_lane')}
-      </label>
-      <div class="hint">${th('setup.cpu_lane_hint')}</div>
-      <label for="s-cpu-threads" class="mt-8">${th('setup.cpu_threads')}</label>
-      <input id="s-cpu-threads" type="number" min="1" max="64" value="${state.setupData.llm_cpu_threads || 6}">
-      <div class="hint">${th('setup.cpu_threads_hint')}</div>
-    </div>`,
+      <div class="form-group mt-12">
+        <label class="row fs-13">
+          <input type="checkbox" id="s-cpu-lane" ${d.llm_cpu_lane === false ? '' : 'checked'}>
+          ${th('setup.cpu_lane')}
+        </label>
+        <div class="hint">${th('setup.cpu_lane_hint')}</div>
+        <label for="s-cpu-threads" class="mt-8">${th('setup.cpu_threads')}</label>
+        <input id="s-cpu-threads" type="number" min="1" max="64" value="${d.llm_cpu_threads || 6}">
+        <div class="hint">${th('setup.cpu_threads_hint')}</div>
+      </div>
+    </details>`;
+}
 
-  metadata: () => `
-    <h2 class="setup-heading">${th('setup.metadata_heading')}</h2>
-    <p class="fs-12 t2 mb-16">${th('setup.metadata_lead')}</p>
-    <div class="form-group">
-      <label for="s-tmdb">${th('setup.api_key_of', {service: 'TMDB'})} <span class="fs-10 badge muted">${th('setup.badge_movies_series')}</span></label>
-      <input id="s-tmdb" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.tmdb_api_key||''}">
-      <div class="hint">${th('setup.free_at')} <a class="t-amber" href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org/settings/api</a>${th('setup.tmdb_hint')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-omdb">${th('setup.api_key_of', {service: 'OMDb'})} <span class="fs-10 badge muted">${th('setup.badge_movies_series')}</span></label>
-      <input id="s-omdb" placeholder="xxxxxxxx" value="${state.setupData.omdb_api_key||''}">
-      <div class="hint">${th('setup.free_at')} <a class="t-amber" href="https://www.omdbapi.com/apikey.aspx" target="_blank">omdbapi.com</a>${th('setup.omdb_hint')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-lastfm">${th('setup.api_key_of', {service: 'Last.fm'})} <span class="fs-10 badge muted">${th('setup.badge_music_only')}</span></label>
-      <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.lastfm_api_key||''}">
-      <div class="hint">${th('setup.lastfm_hint')}</div>
-      <div class="used-for">${th('setup.skip_music')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-spotify-id">${th('setup.spotify_id')} <span class="fs-10 badge muted">${th('setup.badge_music_only')}</span></label>
-      <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_id||''}">
-      <div class="hint">${th('setup.free_at')} <a class="t-amber" href="https://developer.spotify.com/dashboard" target="_blank">developer.spotify.com</a>${th('setup.spotify_hint')}</div>
-      <div class="used-for">${th('setup.skip_music')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-spotify-secret">${th('setup.spotify_secret')}</label>
-      <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${state.setupData.spotify_client_secret||''}">
-      <button class="mt-6 btn btn-secondary btn-sm" ${act('testConn', 'spotify')}>${th('setup.test_service', {service: 'Spotify'})}</button>
-      <div class="mt-4 fs-12" id="test-spotify-result"></div>
-    </div>
-    <div class="form-group">
-      <label for="s-soulsync-url">${th('setup.soulsync_url')} <span class="fs-10 badge muted">${th('setup.badge_optional_music')}</span></label>
-      <input id="s-soulsync-url" type="url" placeholder="http://192.168.1.100:12279" value="${state.setupData.soulsync_url||''}">
-      <div class="hint">${th('setup.soulsync_hint')}</div>
-    </div>
-    <div class="form-group">
-      <label for="s-soulsync-key">${th('setup.api_key_of', {service: 'SoulSync'})}</label>
-      <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${state.setupData.soulsync_api_key||''}">
-    </div>
-    <div class="form-group">
-      <label for="s-listenbrainz">${th('setup.listenbrainz')} <span class="fs-10 badge muted">${th('setup.badge_optional_music')}</span></label>
-      <input id="s-listenbrainz" type="password" placeholder="${th('setup.listenbrainz_ph')}" value="${state.setupData.listenbrainz_token||''}">
-      <div class="hint">${th('setup.listenbrainz_hint')} <a class="t-amber" href="https://listenbrainz.org/settings/" target="_blank">listenbrainz.org/settings</a>${th('setup.listenbrainz_hint_post')}</div>
-    </div>`,
+// The plain-words plan above the advanced section: what runs, and what
+// still has to be downloaded. Redrawn whenever a select or the card changes.
+function renderAiPlan() {
+  const el = document.getElementById('wiz-ai-plan');
+  if (!el) return;
+  const pick = id => document.getElementById(id)?.value || '';
+  const installed = new Set(state.setupData._detected_models || []);
+  const has = m => installed.has(m) || installed.has(m + ':latest');
+  const models = [['setup.v2.role_curator', pick('s-curator-model')],
+                  ['setup.v2.role_summarizer', pick('s-summarizer-model')],
+                  ['setup.v2.role_embed', pick('s-embed-model')]];
+  if (document.getElementById('s-pitcher-enable')?.checked) models.push(['setup.v2.role_pitcher', pick('s-pitcher-model')]);
+  const missing = models.filter(([, m]) => m && !has(m));
+  const rows = models.map(([role, m]) => `<div class="wiz-plan-row"><span class="t3">${th(role)}</span><span><b>${esc(m)}</b>
+      <span class="fs-12 ${has(m) ? 't-success' : 't3'}">${has(m) ? th('setup.v2.installed') : th('setup.v2.will_download')}</span></span></div>`).join('');
+  const card = state.setupData.gpu_name ? `${esc(state.setupData.gpu_name)} · ${state.setupData.vram_gb} GB`
+    : state.setupData.vram_gb ? `${state.setupData.vram_gb} GB` : '';
+  el.innerHTML = `<div class="fs-13 mb-8">${card ? th('setup.v2.plan_for', {card}) : th('setup.v2.plan')}</div>${rows}
+    <div class="hint mt-8">${missing.length ? th('setup.v2.plan_download') : th('setup.v2.plan_ready')}</div>`;
+}
 
-  arr: () => `
-    <h2 class="setup-heading">${th('setup.arr_heading')}</h2>
-    <p class="fs-12 t2 mb-16">${th('setup.arr_lead')}</p>
-    ${[['Radarr', 'nav.movies', 7878], ['Sonarr', 'setup.arr_tv_anime', 8989], ['Lidarr', 'nav.music', 8686]].map(([name, whatKey, port])=>{
-      const what = th(whatKey);
-      const id = name.toLowerCase();
-      return `<div class="boxed mb-12">
-        <div class="inline-flex mb-10">
-          <strong class="fs-13">${name}</strong>
-          <span class="fs-10 badge muted">${what}</span>
+// ── step 3: metadata ────────────────────────────────────────────────────────
+function metadataStepHtml() {
+  const d = state.setupData;
+  const link = (href, text) => `<a class="t-amber" href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  return `<p class="fs-13 t2 mb-16">${th('setup.v2.meta_lead')}</p>
+    <div class="wiz-card">
+      <div class="row"><b class="grow">TMDB</b><span class="badge badge-sm amber">${th('setup.v2.needed')}</span></div>
+      <p class="fs-12 t2 mt-4">${th('setup.v2.tmdb_why')} ${link('https://www.themoviedb.org/settings/api', 'themoviedb.org/settings/api')}</p>
+      <div class="row mt-8">
+        <input class="grow" id="s-tmdb" aria-label="${th('setup.api_key_of', {service: 'TMDB'})}" placeholder="${th('setup.v2.tmdb_ph')}" value="${esc(d.tmdb_api_key || '')}">
+        <button class="btn btn-secondary btn-sm" ${act('testConn', 'tmdb')}>${th('setup.v2.test')}</button>
+      </div>
+      <div id="test-tmdb-result"></div>
+    </div>
+    <div class="wiz-card mt-12">
+      <div class="row"><b class="grow">OMDb</b><span class="badge badge-sm muted">${th('setup.v2.recommended')}</span></div>
+      <p class="fs-12 t2 mt-4">${th('setup.v2.omdb_why')} ${link('https://www.omdbapi.com/apikey.aspx', 'omdbapi.com')}</p>
+      <input class="mt-8" id="s-omdb" aria-label="${th('setup.api_key_of', {service: 'OMDb'})}" placeholder="xxxxxxxx" value="${esc(d.omdb_api_key || '')}">
+    </div>
+    <details class="mt-16">
+      <summary class="fs-12 t2 pointer">${th('setup.v2.music_more')}</summary>
+      <div class="form-group mt-12">
+        <label for="s-lastfm">${th('setup.api_key_of', {service: 'Last.fm'})}</label>
+        <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(d.lastfm_api_key || '')}">
+        <div class="hint">${th('setup.lastfm_hint')} ${link('https://www.last.fm/api/account/create', 'last.fm/api')}</div>
+      </div>
+      <div class="form-group">
+        <label for="s-spotify-id">${th('setup.spotify_id')}</label>
+        <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(d.spotify_client_id || '')}">
+        <div class="hint">${th('setup.free_at')} ${link('https://developer.spotify.com/dashboard', 'developer.spotify.com')}${th('setup.spotify_hint')}</div>
+      </div>
+      <div class="form-group">
+        <label for="s-spotify-secret">${th('setup.spotify_secret')}</label>
+        <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(d.spotify_client_secret || '')}">
+        <button class="mt-6 btn btn-secondary btn-sm" ${act('testConn', 'spotify')}>${th('setup.test_service', {service: 'Spotify'})}</button>
+        <div class="mt-4 fs-12" id="test-spotify-result"></div>
+      </div>
+      <div class="form-group">
+        <label for="s-soulsync-url">${th('setup.soulsync_url')}</label>
+        <input id="s-soulsync-url" type="url" placeholder="http://192.168.1.100:12279" value="${esc(d.soulsync_url || '')}">
+        <div class="hint">${th('setup.v2.soulsync_hint')}</div>
+      </div>
+      <div class="form-group">
+        <label for="s-soulsync-key">${th('setup.api_key_of', {service: 'SoulSync'})}</label>
+        <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${esc(d.soulsync_api_key || '')}">
+      </div>
+      <div class="form-group">
+        <label for="s-listenbrainz">${th('setup.listenbrainz')}</label>
+        <input id="s-listenbrainz" type="password" placeholder="${th('setup.listenbrainz_ph')}" value="${esc(d.listenbrainz_token || '')}">
+        <div class="hint">${th('setup.listenbrainz_hint')} ${link('https://listenbrainz.org/settings/', 'listenbrainz.org/settings')}${th('setup.listenbrainz_hint_post')}</div>
+      </div>
+    </details>`;
+}
+
+// ── step 4: arr apps ────────────────────────────────────────────────────────
+function arrCard(name, whatKey, port) {
+  const d = state.setupData;
+  const id = name.toLowerCase();
+  return `<div class="wiz-card mb-12">
+      <div class="row mb-8"><b class="grow">${name}</b><span class="badge badge-sm muted">${th(whatKey)}</span></div>
+      <div class="mb-8 form-group">
+        <label for="s-${id}-url">URL</label>
+        <input id="s-${id}-url" type="url" placeholder="http://192.168.1.100:${port}" value="${esc(d[id + '_url'] || '')}">
+      </div>
+      <div class="mb-8 form-group">
+        <label for="s-${id}-key">${th('setup.api_key')}</label>
+        <input id="s-${id}-key" type="password" placeholder="${th('setup.v2.arr_key_ph')}" value="${esc(d[id + '_api_key'] || '')}">
+      </div>
+      <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>${th('setup.test_service', {service: name})}</button>
+      <div id="test-${id}-result"></div>
+    </div>`;
+}
+
+function arrStepHtml() {
+  return `<p class="fs-13 t2 mb-8">${th('setup.v2.arr_lead', {server: isJellyfin() ? 'Jellyfin' : 'Plex'})}</p>
+    <div class="banner warn mb-16"><span class="banner-icon">${SVG_WARN}</span><span class="banner-text">${th('setup.v2.arr_delete')}</span></div>
+    ${arrCard('Radarr', 'nav.movies', 7878)}
+    ${arrCard('Sonarr', 'setup.arr_tv_anime', 8989)}
+    <details>
+      <summary class="fs-12 t2 pointer">${th('setup.v2.lidarr_more')}</summary>
+      <div class="mt-12">${arrCard('Lidarr', 'nav.music', 8686)}</div>
+    </details>`;
+}
+
+// ── step 5: viewing and listening history ───────────────────────────────────
+function importStepHtml() {
+  return `<p class="fs-13 t2 mb-16">${th('setup.v2.import_lead')}</p>
+    <div class="wiz-card">
+      <b>Spotify</b>
+      <p class="fs-12 t2 mt-4 mb-8">${th('setup.import_p1')} <strong>${th('setup.import_s1')}</strong> ${th('setup.import_p2')} <strong>${th('setup.import_s2')}</strong>.</p>
+      ${spotifyDropZone('su-sp')}
+    </div>
+    <div class="wiz-card mt-12">
+      <b>Netflix</b>
+      <p class="fs-12 t2 mt-4 mb-8">${th('setup.v2.netflix_how')} <a class="t-amber" href="https://www.netflix.com/account/getmyinfo" target="_blank" rel="noopener noreferrer">netflix.com/account/getmyinfo</a></p>
+      ${netflixDropZone()}
+    </div>
+    <p class="fs-12 t3 mt-12">${th('setup.v2.import_later')}</p>`;
+}
+
+// ── the overview ────────────────────────────────────────────────────────────
+function summaryHtml() {
+  const d = state.setupData;
+  const line = (ok, label, text, warnText) => `<div class="wiz-sum-row">
+      <span class="${ok ? 't-success' : 't-amber'}">${ok ? SVG_CHECK : SVG_WARN}</span>
+      <span class="wiz-sum-label">${label}</span>
+      <span class="grow fs-13 ${ok ? 't2' : 't-amber'}">${ok ? text : warnText}</span></div>`;
+  const server = isJellyfin()
+    ? (d.jellyfin_connected?.server_name || d.jellyfin_url || '')
+    : ((d.plex_servers || []).find(s => s.server_id === d.plex_server_id)?.name || d.plex_url || '');
+  const arrs = ['radarr', 'sonarr', 'lidarr'].filter(a => d[a + '_url'] && d[a + '_api_key'])
+    .map(a => a[0].toUpperCase() + a.slice(1));
+  return `<div class="wiz-sum">
+      ${line(!!server, isJellyfin() ? 'Jellyfin' : 'Plex', esc(server), th('setup.v2.sum_no_server'))}
+      ${line(true, th('setup.v2.dot_ai'), esc(d.base_curator_model || 'gemma4:31b') + (d.vram_gb ? ` · ${d.vram_gb} GB` : ''), '')}
+      ${line(!!d.tmdb_api_key, 'TMDB', th('setup.v2.sum_set'), th('setup.v2.sum_no_tmdb'))}
+      ${line(!!d.omdb_api_key, 'OMDb', th('setup.v2.sum_set'), th('setup.v2.sum_no_omdb'))}
+      ${line(arrs.length > 0, th('settings.arr_apps'), esc(arrs.join(', ')), th('setup.v2.sum_no_arr'))}
+    </div>
+    <p class="fs-12 t3 mt-16">${th('setup.v2.sum_next')}</p>
+    <button class="btn btn-primary wiz-big mt-16" id="setup-finish" ${act('finishSetup')}>${th('setup.v2.finish')}</button>
+    <div class="mt-12 t2 fs-13" id="setup-saving" role="status" aria-live="polite"></div>`;
+}
+
+const SETUP_CONTENT = {
+  plex: () => `<h2 class="setup-heading">${th('setup.v2.server_heading')}</h2>${serverChoice()}<div class="mt-20">${isJellyfin()
+    ? `${jellyfinConnectHtml(state.setupData.jellyfin_url, state.setupData.jellyfin_ticket ? state.setupData.jellyfin_connected : null, setupJellyfinConnected)}
+      ${state.setupData.jellyfin_ticket ? '' : `<details class="mt-12">
+        <summary class="fs-12 t2 pointer">${th('setup.paste_key')}</summary>
+        <div class="form-group mt-8">
+          <label for="s-jellyfin-key">${th('setup.api_key_of', {service: 'Jellyfin'})}</label>
+          <input id="s-jellyfin-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(state.setupData.jellyfin_api_key || '')}">
+          <div class="hint">${th('setup.jf_key_hint')}</div>
         </div>
-        <div class="mb-8 form-group">
-          <label for="s-${id}-url">URL</label>
-          <input id="s-${id}-url" type="url" placeholder="http://192.168.1.100:${port}" value="${state.setupData[id+'_url']||''}">
-        </div>
-        <div class="mb-8 form-group">
-          <label for="s-${id}-key">${th('setup.api_key')}</label>
-          <input id="s-${id}-key" type="password" placeholder="Settings → General → Security" value="${state.setupData[id+'_api_key']||''}">
-        </div>
-        <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>${th('setup.test_service', {service: name})}</button>
-        <div id="test-${id}-result"></div>
-      </div>`;
-    }).join('')}`,
-
-  import: () => `
-    <h2 class="setup-heading">${th('setup.import_heading')}</h2>
-    <p class="fs-12 t2 mb-16">
-      ${th('setup.import_p1')} <strong>${th('setup.import_s1')}</strong>
-      ${th('setup.import_p2')} <strong>${th('setup.import_s2')}</strong>.
-    </p>
-    ${spotifyDropZone('su-sp')}
-    <p class="fs-11 t3 mt-12">
-      ${th('setup.import_later')}
-    </p>`,
-
-  done: () => `
-    <div class="t-center py-20">
-      <h2 class="fs-16 b t-amber mb-8">${th('setup.ready_heading')}</h2>
-      <p class="setup-lead">
-        ${th('setup.ready_pre')} <code>ollama create</code>${th('setup.ready_post')}
-      </p>
-      <button class="pad-12-32 fs-14 btn btn-primary" ${act('finishSetup')}>
-        ${th('setup.save_start')}
-      </button>
-      <div class="mt-16 t2 fs-13" id="setup-saving"></div>
-    </div>`,
+        <button class="btn btn-secondary btn-sm" ${act('testConn', 'jellyfin')}>${th('setup.test_connection')}</button>
+        <div id="test-jellyfin-result"></div>
+      </details>`}`
+    : plexStepHtml()}</div>`,
+  ollama: () => `<h2 class="setup-heading">${th('setup.v2.ai_heading')}</h2>${aiStepHtml()}`,
+  metadata: () => `<h2 class="setup-heading">${th('setup.v2.meta_heading')}</h2>${metadataStepHtml()}`,
+  arr: () => `<h2 class="setup-heading">${th('settings.arr_apps')}</h2>${arrStepHtml()}`,
+  import: () => `<h2 class="setup-heading">${th('setup.v2.import_heading')}</h2>${importStepHtml()}`,
+  done: () => `<h2 class="setup-heading">${th('setup.v2.sum_heading')}</h2>${summaryHtml()}`,
 };
 
 export function renderSetupStep(step) {
+  _brandHeader();
   state.setupStep = step;
   const key = SETUP_STEPS[step];
   stopJellyfinConnect();
+  if (key !== 'plex') stopPlexConnect();
   document.getElementById('setup-body').innerHTML = SETUP_CONTENT[key]();
-  const steps = SETUP_STEPS.length - 1;   // the closing summary is not a step
-  document.getElementById('setup-step-label').textContent = step < steps ? t('setup.step_of', {n: step + 1, total: steps}) : t('setup.ready');
-  document.getElementById('setup-back').style.visibility = step > 0 ? 'visible' : 'hidden';
-  document.getElementById('setup-next').style.display = step === SETUP_STEPS.length-1 ? 'none' : 'inline-block';
-  const firstDot = document.getElementById('step-dot-0');   // the media server's step, named after it
-  if (firstDot) firstDot.textContent = state.setupData.media_server_type === 'jellyfin' ? 'Jellyfin' : 'Plex';
-  SETUP_STEPS.forEach((s,i) => {
-    const dot = document.getElementById(`step-dot-${i}`);
-    if (dot) dot.className = 'setup-step-dot' + (i===step?' active':i<step?' done':'');
-  });
+  const dots = document.getElementById('setup-steps');
+  if (dots) {
+    dots.innerHTML = SETUP_STEPS.map((s, i) => `<div class="setup-step-dot${i === step ? ' active' : i < step ? ' done' : ''}"${i === step ? ' aria-current="step"' : ''}>${th(DOT_KEYS[s])}</div>`).join('');
+  }
+  const steps = SETUP_STEPS.length - 1;   // the closing overview is not a step
+  document.getElementById('setup-step-label').textContent = step < steps ? t('setup.step_of', {n: step + 1, total: steps}) : '';
+  document.getElementById('setup-back').classList.toggle('invisible', step === 0);
+  document.getElementById('setup-next').hidden = step === SETUP_STEPS.length - 1;
 
-  // Load Ollama models if on ollama step
-  if (key === 'ollama' && state.setupData.ollama_endpoint) {
+  if (key === 'ollama') {
+    // Detection runs by itself: the endpoint's models and this machine's card.
     testConn('ollama');
+    detectGpu();
   }
-  if (key === 'import') refreshSpotifyPending('su-sp');
-  if (key === 'plex' && state.setupData.media_server_type === 'jellyfin' && !state.setupData.jellyfin_ticket) {
-    findJellyfinServers();
-  }
+  if (key === 'import') { refreshSpotifyPending('su-sp'); refreshNetflixPending(); }
+  if (key === 'plex' && isJellyfin() && !state.setupData.jellyfin_ticket) findJellyfinServers();
+  document.getElementById('setup-body').scrollTop = 0;
 }
 
 export function collectStep() {
   const key = SETUP_STEPS[state.setupStep];
+  const val = id => document.getElementById(id)?.value?.trim() || '';
+  const d = state.setupData;
   if (key === 'plex') {
-    const kind = document.getElementById('s-media-server')?.value;
-    if (kind) state.setupData.media_server_type = kind;
-    if (document.getElementById('s-plex-url')) {
-      state.setupData.plex_url = document.getElementById('s-plex-url').value.trim();
-      state.setupData.plex_token = document.getElementById('s-plex-token')?.value?.trim() || '';
-    }
-    if (document.getElementById('s-jellyfin-url')) {
-      state.setupData.jellyfin_url = document.getElementById('s-jellyfin-url').value.trim();
-      state.setupData.jellyfin_api_key = document.getElementById('s-jellyfin-key')?.value?.trim() || '';
-    }
+    if (document.getElementById('s-plex-url')) d.plex_url = val('s-plex-url');
+    if (document.getElementById('s-plex-token')) d.plex_token = val('s-plex-token');
+    if (document.getElementById('s-jellyfin-url')) d.jellyfin_url = val('s-jellyfin-url');
+    if (document.getElementById('s-jellyfin-key')) d.jellyfin_api_key = val('s-jellyfin-key');
   } else if (key === 'ollama') {
-    state.setupData.ollama_endpoint = document.getElementById('s-ollama')?.value?.trim() || 'http://localhost:11434';
-    state.setupData.base_curator_model = document.getElementById('s-curator-model')?.value || 'gemma4:31b';
-    state.setupData.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'granite4.1:8b';
-    state.setupData.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text-v2-moe';
+    d.ollama_endpoint = val('s-ollama') || d.ollama_endpoint || 'http://localhost:11434';
+    d.base_curator_model = document.getElementById('s-curator-model')?.value || 'gemma4:31b';
+    d.base_summarizer_model = document.getElementById('s-summarizer-model')?.value || 'granite4.1:8b';
+    d.embedding_model = document.getElementById('s-embed-model')?.value || 'nomic-embed-text-v2-moe';
     state.setupData.enable_pitcher = !!document.getElementById('s-pitcher-enable')?.checked;
-    state.setupData.base_pitcher_model = document.getElementById('s-pitcher-model')?.value || 'qwen3.8:27b';
-    state.setupData.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || state.setupData.vram_gb || null;
+    d.base_pitcher_model = document.getElementById('s-pitcher-model')?.value || 'qwen3.8:27b';
+    d.vram_gb = parseFloat(document.getElementById('s-vram')?.value) || d.vram_gb || null;
     state.setupData.llm_cpu_lane = !!document.getElementById('s-cpu-lane')?.checked;
     state.setupData.llm_cpu_threads = parseInt(document.getElementById('s-cpu-threads')?.value, 10) || 6;
     const profile = document.getElementById('s-llm-profile')?.value;
-    if (profile) state.setupData.llm_profile = profile;
+    if (profile) d.llm_profile = profile;
     const ctx = parseInt(document.getElementById('s-num-ctx')?.value, 10);
-    if (Number.isFinite(ctx)) state.setupData.curator_num_ctx = ctx;
+    if (Number.isFinite(ctx)) d.curator_num_ctx = ctx;
     const gpu = parseInt(document.getElementById('s-num-gpu')?.value, 10);
-    if (Number.isFinite(gpu)) state.setupData.curator_num_gpu = gpu;
+    if (Number.isFinite(gpu)) d.curator_num_gpu = gpu;
   } else if (key === 'metadata') {
-    state.setupData.listenbrainz_token = document.getElementById('s-listenbrainz')?.value?.trim() || '';
-    state.setupData.tmdb_api_key = document.getElementById('s-tmdb')?.value?.trim() || '';
-    state.setupData.omdb_api_key = document.getElementById('s-omdb')?.value?.trim() || '';
-    state.setupData.soulsync_url = document.getElementById('s-soulsync-url')?.value?.trim() || '';
-    state.setupData.soulsync_api_key = document.getElementById('s-soulsync-key')?.value?.trim() || '';
-    state.setupData.lastfm_api_key = document.getElementById('s-lastfm')?.value?.trim() || '';
-    state.setupData.spotify_client_id = document.getElementById('s-spotify-id')?.value?.trim() || '';
-    state.setupData.spotify_client_secret = document.getElementById('s-spotify-secret')?.value?.trim() || '';
+    for (const [id, field] of [['s-listenbrainz', 'listenbrainz_token'], ['s-tmdb', 'tmdb_api_key'],
+                               ['s-omdb', 'omdb_api_key'], ['s-soulsync-url', 'soulsync_url'],
+                               ['s-soulsync-key', 'soulsync_api_key'], ['s-lastfm', 'lastfm_api_key'],
+                               ['s-spotify-id', 'spotify_client_id'], ['s-spotify-secret', 'spotify_client_secret']]) {
+      if (document.getElementById(id)) d[field] = val(id);
+    }
   } else if (key === 'arr') {
-    state.setupData.radarr_url = document.getElementById('s-radarr-url')?.value?.trim() || '';
-    state.setupData.radarr_api_key = document.getElementById('s-radarr-key')?.value?.trim() || '';
-    state.setupData.sonarr_url = document.getElementById('s-sonarr-url')?.value?.trim() || '';
-    state.setupData.sonarr_api_key = document.getElementById('s-sonarr-key')?.value?.trim() || '';
-    state.setupData.lidarr_url = document.getElementById('s-lidarr-url')?.value?.trim() || '';
-    state.setupData.lidarr_api_key = document.getElementById('s-lidarr-key')?.value?.trim() || '';
+    for (const a of ['radarr', 'sonarr', 'lidarr']) {
+      if (document.getElementById(`s-${a}-url`)) d[a + '_url'] = val(`s-${a}-url`);
+      if (document.getElementById(`s-${a}-key`)) d[a + '_api_key'] = val(`s-${a}-key`);
+    }
   }
+}
+
+// Why the media-server step cannot be left yet, or '' when it can.
+function serverMissing() {
+  const d = state.setupData;
+  if (isJellyfin()) return (d.jellyfin_ticket || (d.jellyfin_url && d.jellyfin_api_key)) ? '' : t('setup.v2.need_jellyfin');
+  if (d.plex_ticket) {
+    const s = (d.plex_servers || []).find(x => x.server_id === d.plex_server_id);
+    if (!s) return t('setup.v2.need_pick');
+    return s.reachable || d.plex_url ? '' : t('setup.v2.need_address');
+  }
+  return d.plex_url && d.plex_token ? '' : t('setup.v2.need_plex');
 }
 
 export function setupNav(dir) {
   collectStep();
-  renderSetupStep(Math.max(0, Math.min(SETUP_STEPS.length-1, state.setupStep + dir)));
+  if (dir > 0 && SETUP_STEPS[state.setupStep] === 'plex') {
+    const why = serverMissing();
+    if (why) { toast(why, 'amber'); return; }
+  }
+  renderSetupStep(Math.max(0, Math.min(SETUP_STEPS.length - 1, state.setupStep + dir)));
 }
 
 export async function testConn(service) {
   const resultEl = document.getElementById(`test-${service}-result`);
   if (resultEl) resultEl.innerHTML = `<div class="test-status">${th('setup.testing')}</div>`;
 
-  let url='', token_='', apiKey='';
-  if (service==='plex') { url=document.getElementById('s-plex-url')?.value; token_=document.getElementById('s-plex-token')?.value; }
-  else if (service==='jellyfin') { url=document.getElementById('s-jellyfin-url')?.value; apiKey=document.getElementById('s-jellyfin-key')?.value; }
-  else if (service==='ollama') { url=document.getElementById('s-ollama')?.value || state.setupData.ollama_endpoint; }
-  else if (service==='radarr') { url=document.getElementById('s-radarr-url')?.value; apiKey=document.getElementById('s-radarr-key')?.value; }
-  else if (service==='sonarr') { url=document.getElementById('s-sonarr-url')?.value; apiKey=document.getElementById('s-sonarr-key')?.value; }
-  else if (service==='lidarr') { url=document.getElementById('s-lidarr-url')?.value; apiKey=document.getElementById('s-lidarr-key')?.value; }
-  else if (service==='tmdb') { apiKey=document.getElementById('s-tmdb')?.value; }
-  else if (service==='lastfm') { apiKey=document.getElementById('s-lastfm')?.value; }
-  else if (service==='spotify') {
-    const clientId = document.getElementById('s-spotify-id')?.value;
-    const clientSecret = document.getElementById('s-spotify-secret')?.value;
+  let url = '', token_ = '', apiKey = '';
+  const v = id => document.getElementById(id)?.value;
+  if (service === 'plex') { url = v('s-plex-url'); token_ = v('s-plex-token'); }
+  else if (service === 'jellyfin') { url = v('s-jellyfin-url'); apiKey = v('s-jellyfin-key'); }
+  else if (service === 'ollama') { url = v('s-ollama') || state.setupData.ollama_endpoint || 'http://localhost:11434'; }
+  else if (['radarr', 'sonarr', 'lidarr'].includes(service)) { url = v(`s-${service}-url`); apiKey = v(`s-${service}-key`); }
+  else if (service === 'tmdb') { apiKey = v('s-tmdb'); }
+  else if (service === 'lastfm') { apiKey = v('s-lastfm'); }
+  else if (service === 'spotify') {
     try {
-      const r = await api('/api/setup/test', 'POST', {service, client_id: clientId, client_secret: clientSecret});
+      const r = await api('/api/setup/test', 'POST', {service, client_id: v('s-spotify-id'), client_secret: v('s-spotify-secret')});
       if (resultEl) resultEl.innerHTML = r.ok
         ? `<div class="test-status ok">${th('setup.spotify_ok')}</div>`
         : `<div class="test-status err">${esc(r.error)}</div>`;
-    } catch(e) { if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`; }
+    } catch (e) { if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`; }
     return;
   }
 
   try {
     const r = await api('/api/setup/test', 'POST', {service, url, token: token_, api_key: apiKey});
     // Pass 97: backend may attach ``privacy_warning`` when the endpoint
-    // doesn't look private (RFC1918 / loopback / .local). Render it as a
-    // yellow banner under the connection result. Doesn't block the user
-    // from continuing — informational only.
+    // doesn't look private (RFC1918 / loopback / .local). Informational only.
     const warnBlock = r.privacy_warning
       ? `<div class="t-amber mt-4 test-status">${SVG_WARN} ${esc(r.privacy_warning)}</div>`
-  : '';
+      : '';
+    let okText = `${th('setup.connected')}${r.server_name ? ' — ' + esc(r.server_name) : r.version ? ' v' + esc(r.version) : ''}`;
+    if (service === 'ollama' && r.ok) okText = th('setup.v2.ollama_found', {url: esc(url), n: (r.models || []).length});
     if (resultEl) resultEl.innerHTML = (r.ok
-      ? `<div class="test-status ok">${th('setup.connected')}${r.server_name ? ' — '+esc(r.server_name) : r.version ? ' v'+esc(r.version) : ''}</div>`
-      : `<div class="test-status err">${esc(r.error)}</div>`) + warnBlock;
-
-    // Feed the recommendation panel. This used to overwrite the three
-    // selects with the RAW installed-model list, wiping the recommended
-    // defaults; the catalog-driven renderer merges bench-verified
-    // recommendations with what's installed instead.
-    if (service==='ollama' && r.ok && r.models) {
-      state.setupData._detected_models = r.models;
+      ? `<div class="test-status ok">${okText}</div>`
+      : `<div class="test-status err">${service === 'ollama' ? th('setup.v2.ollama_missing', {url: esc(url)}) + ' ' : ''}${esc(r.error)}</div>`) + warnBlock;
+    if (service === 'ollama') {
+      // The catalog-driven renderer merges the bench's picks with what is installed.
+      state.setupData._detected_models = r.ok ? (r.models || []) : [];
       refreshModelRecs();
+      if (!r.ok) document.getElementById('s-ai-advanced')?.setAttribute('open', '');
     }
-  } catch(e) {
+  } catch (e) {
     if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
 }
@@ -387,7 +590,9 @@ export async function detectGpu() {
   try {
     const r = await api('/api/setup/gpu');
     if (!r.ok) {
-      if (el) el.innerHTML = `<div class="test-status err">${esc(r.error)}</div>`;
+      if (el) el.innerHTML = `<div class="test-status err">${th('setup.v2.gpu_none')}</div>`;
+      document.getElementById('s-ai-advanced')?.setAttribute('open', '');
+      renderAiPlan();
       return;
     }
     const names = r.gpus.map(g => `${g.name} (${g.vram_gb} GB)`).join(', ');
@@ -420,10 +625,10 @@ export async function refreshModelRecs() {
                         {ollama_endpoint: endpoint, vram_gb: state.setupData.vram_gb ?? null,
                          gpu_name: state.setupData.gpu_name ?? null,
                          ram_gb: state.setupData.ram_gb ?? null});
-    renderRecSelect('s-curator-model', r.curator, r.installed);
-    renderRecSelect('s-summarizer-model', r.summarizer, r.installed);
-    renderRecSelect('s-embed-model', r.embedding, r.installed);
-    renderRecSelect('s-pitcher-model', r.pitcher, r.installed);
+    renderRecSelect('s-curator-model', r.curator, r.installed, 'chat');
+    renderRecSelect('s-summarizer-model', r.summarizer, r.installed, 'chat');
+    renderRecSelect('s-embed-model', r.embedding, r.installed, 'embed');
+    renderRecSelect('s-pitcher-model', r.pitcher, r.installed, 'chat');
     const pn = document.getElementById('pitcher-note');
     if (pn) pn.textContent = r.pitcher_note || '';
     if (panel) panel.innerHTML = (r.floor_note
@@ -431,6 +636,7 @@ export async function refreshModelRecs() {
       : '') + renderHardwarePackage(r.package);
     state.setupPackage = r.package || null;
     onSetupCuratorChange();
+    renderAiPlan();
   } catch(e) {
     if (panel) panel.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
   }
@@ -442,6 +648,7 @@ export async function refreshModelRecs() {
 // The bench's values for the curator the select shows now: a model it measured
 // at this card size gets its own profile, any other keeps what the fields say.
 export function onSetupCuratorChange() {
+  renderAiPlan();
   const pkg = state.setupPackage;
   const model = document.getElementById('s-curator-model')?.value || '';
   const note = document.getElementById('s-profile-note');
@@ -508,7 +715,10 @@ export function renderHardwarePackage(pkg) {
     + (srv.length ? ` ${th('setup.set_on_ollama', {srv: srv.join(' · ')})}` : '') + `</div>` + example;
 }
 
-export function renderRecSelect(id, entries, installed) {
+// role 'embed' lists only embedding models, 'chat' everything else: every list
+// used to offer every installed model, the embedder as a curator and the
+// 31b chat model as an embedder, plus Curatarr's own baked tags.
+export function renderRecSelect(id, entries, installed, role) {
   const sel = document.getElementById(id);
   if (!sel || !entries) return;
   const cur = sel.value;
@@ -525,7 +735,8 @@ export function renderRecSelect(id, entries, installed) {
     return `<option value="${esc(e.model)}" ${unfit}>${esc(e.model)} — ${esc(e.label)}${esc(suffix)}</option>`;
   });
   // Everything else on the server stays reachable — labeled honestly.
-  const extra = (installed || []).filter(m => !catalogNames.includes(m))
+  const fitsRole = m => !role || (role === 'embed' ? /embed/i.test(m) : !/embed/i.test(m) && !/^curatarr-/.test(m));
+  const extra = (installed || []).filter(m => !catalogNames.includes(m) && fitsRole(m))
     .map(m => `<option value="${esc(m)}">${esc(m)} — ${th('setup.untested')}</option>`);
   sel.innerHTML = opts.concat(extra).join('');
   // Keep the user's pick unless it no longer fits; the list is
@@ -536,6 +747,7 @@ export function renderRecSelect(id, entries, installed) {
 
 // ── ONBOARDING ────────────────────────────────────────────────────────────────
 let onboardingStep = null;
+let onboardingEntries = 0;
 
 export async function showOnboarding(step) {
   onboardingStep = step;
@@ -574,10 +786,10 @@ export async function renderOnboardingStep(step) {
 
     body.innerHTML = `
       <div class="mb-20 tbl-wrap">
-        <table class="tbl tbl-cards"><thead><tr><th>${th('setup.ob_library')}</th><th>${th('setup.ob_server_type', {server: serverLabel()})}</th><th>${th('setup.ob_category')}</th></tr></thead><tbody>
+        <table class="tbl tbl-cards"><thead><tr><th>${th('setup.ob_library')}</th><th>${th('setup.v2.ob_holds')}</th><th>${th('setup.ob_category')}</th></tr></thead><tbody>
         ${state.discoverSections.map(s=>`<tr>
           <td class="cell-primary fw-500">${esc(s.title)}</td>
-          <td class="t3 fs-12">${esc(s.type)}</td>
+          <td class="t3 fs-12">${th(`setup.v2.kind.${['movie', 'show', 'artist'].includes(s.type) ? s.type : 'other'}`)}</td>
           <td><select class="field-sm" id="ob-libcat-${s.key}" aria-label="${th('setup.ob_category_aria')}">
             ${['music','movie','show','anime','ignore'].map(o=>`<option value="${o}" ${(s.suggested_category)===o?'selected':''}>${th(`setup.cat.${o}`)}</option>`).join('')}
           </select></td>
@@ -597,40 +809,25 @@ export async function renderOnboardingStep(step) {
         <div class="mb-8 progress-bar"><div class="w-0 progress-fill" id="ob-sync-bar"></div></div>
         <div class="fs-12 t2" id="ob-sync-label" role="status" aria-live="polite">${th('setup.ob_waiting')}</div>
       </div>
-      <button class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
+      <button hidden class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
         ${th('setup.ob_start_sync')}
       </button>`;
-  }
-
-  else if (step === 'models') {
-    title.textContent = t('setup.ob_models_title');
-    sub.textContent = t('setup.ob_models_sub');
-    body.innerHTML = `
-      <p class="fs-13 t2 mb-16">
-        ${th('setup.ob_creates')} <code>curatarr-curator</code> ${th('common.and')} <code>curatarr-summarizer</code>
-        ${th('setup.ob_creates_post')}
-      </p>
-      <div class="mb-20" id="ob-model-status"></div>
-      <button class="w-full p-12 btn btn-primary" ${act('buildOnboardingModels')}>
-        ${th('setup.ob_build')}
-      </button>
-      <button class="w-full p-10 mt-8 btn btn-secondary" ${act('hideOnboarding')}>
-        ${th('setup.ob_skip')}
-      </button>`;
+    startOnboardingSync();   // the sync starts by itself: one click fewer
   }
 
   else if (step === 'done') {
-    title.textContent = t('setup.ob_done_title');
-    sub.textContent = t('setup.ob_done_sub');
+    title.textContent = t('setup.v2.ob_done_title');
+    sub.textContent = t('setup.v2.ob_done_sub');
     body.innerHTML = `
-      <div class="t-center py-20">
-        <p class="fs-13 t2 lh-17 mb-24">
-          ${th('setup.ob_done_p1')}<br>
-          ${th('setup.ob_done_p2')}
-        </p>
-        <button class="pad-12-32 fs-14 btn btn-primary" ${act('hideOnboarding')}>
-          ${th('setup.ob_open')}
-        </button>
+      <div class="wiz-sum">
+        <div class="wiz-sum-row"><span class="t-success">${SVG_CHECK}</span><span class="grow fs-13">${th('setup.v2.ob_done_synced', {n: (onboardingEntries || 0).toLocaleString(loc())})}</span></div>
+        <div class="wiz-sum-row"><span class="t-amber">${SVG_WARN}</span><span class="grow fs-13">${th('setup.v2.ob_done_enrich')}</span></div>
+        <div class="wiz-sum-row"><span class="t3">${SVG_CHECK}</span><span class="grow fs-13 t2">${th('setup.v2.ob_done_where')}</span></div>
+      </div>
+      <div class="mt-16" id="ob-model-status"></div>
+      <div class="row mt-16">
+        <button class="btn btn-secondary" ${act('runOnboardingSpeedCheck', EL)}>${th('setup.v2.ob_speed')}</button>
+        <button class="btn btn-primary grow" ${act('hideOnboarding')}>${th('setup.ob_open')}</button>
       </div>`;
   }
 }
@@ -667,7 +864,7 @@ export async function startOnboardingSync() {
   const btn = document.getElementById('ob-sync-btn');
   const lbl = document.getElementById('ob-sync-label');
   const bar = document.getElementById('ob-sync-bar');
-  if (btn) { btn.disabled = true; btn.textContent = t('setup.syncing'); }
+  if (btn) { btn.hidden = true; btn.disabled = true; btn.textContent = t('setup.syncing'); }
 
   // If a previous attempt was running, kill it before we start the new one.
   _stopOnboardingPoll();
@@ -684,10 +881,11 @@ export async function startOnboardingSync() {
     // stop without a word, the button stuck on "Syncing…". Five misses in a
     // row, or the deadline, now say so and give the button back as Retry.
     let fails = 0;
+    let polls = 0;
     const giveUp = why => {
       _stopOnboardingPoll();
       if (lbl) lbl.textContent = why;
-      if (btn) { btn.disabled = false; btn.textContent = t('common.retry'); }
+      if (btn) { btn.hidden = false; btn.disabled = false; btn.textContent = t('common.retry'); }
     };
 
     _onboardingPoll = setInterval(async () => {
@@ -698,19 +896,24 @@ export async function startOnboardingSync() {
         return;
       }
       try {
-        const s = await api('/api/history/status');
+        // The bar ends with the sync itself. It used to wait for a taste
+        // profile, which needs hours of enrichment on a fresh install:
+        // 14 minutes at 60 % (fresh-install test 2026-11-14).
+        const s = await api('/api/history/sync-state');
         fails = 0;
-        const entries = s.watch_history_entries || 0;
-        lbl.textContent = t('setup.entries_synced', {x: entries.toLocaleString(loc())});
-        if (entries > 0) bar.style.width = '60%';
-        if (s.taste_vector?.computed) {
+        const entries = s.entries || 0;
+        onboardingEntries = entries;
+        lbl.textContent = entries ? t('setup.entries_synced', {x: entries.toLocaleString(loc())}) : t('setup.fetching');
+        polls += 1;
+        bar.style.width = `${Math.min(90, 10 + polls * 4)}%`;
+        if (!s.running && polls > 1) {
           bar.style.width = '100%';
           lbl.textContent = t('setup.entries_done', {x: entries.toLocaleString(loc())});
           _stopOnboardingPoll();
           setTimeout(() => {
-            renderOnboardingStep('models');
-            onboardingStep = 'models';
-          }, 1500);
+            renderOnboardingStep('done');
+            onboardingStep = 'done';
+          }, 1200);
         }
       } catch (e) {
         if (++fails >= ONBOARDING_POLL_MAX_FAILS) {
@@ -721,40 +924,24 @@ export async function startOnboardingSync() {
   } catch(e) {
     _stopOnboardingPoll();
     if (lbl) lbl.textContent = t('setup.error', {error: _errMsg(e)});
-    if (btn) { btn.disabled = false; btn.textContent = t('common.retry'); }
+    if (btn) { btn.hidden = false; btn.disabled = false; btn.textContent = t('common.retry'); }
   }
 }
 
-export async function buildOnboardingModels() {
+// The wizard built the models already; this only measures them: a model
+// that does not quite fit the card runs part-on-CPU and the whole app just
+// feels broken-slow. Caught here, with the calls production makes, rather
+// than in the first real conversation.
+export async function runOnboardingSpeedCheck(btn) {
   const el = document.getElementById('ob-model-status');
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('setup.building')}</p>`;
-
+  btnBusy(btn, t('setup.mb_running'));
+  let mb = null, mbErr = null;
   try {
-    const r = await api('/api/setup/build-models','POST');
-    if (r.curator && r.summarizer) {
-      const okLine = `<p class="t-success">${th('setup.models_created')}</p>`;
-      el.innerHTML = okLine + `<p class="loading" role="status" aria-live="polite">${th('setup.mb_running')}</p>`;
-      // A model that doesn't quite fit VRAM runs silently part-on-CPU and
-      // the whole app just feels broken-slow. Catch that HERE, not on the
-      // user's first real conversation - with the calls production makes.
-      let mb = null, mbErr = null;
-      try {
-        mb = await api('/api/setup/minibench', 'POST',
-                       {vram_gb: state.setupData?.vram_gb ?? null, gpu_name: state.setupData?.gpu_name ?? null});
-      } catch (e) { mbErr = _errMsg(e); }
-      el.innerHTML = okLine + renderMinibench(mb, mbErr);
-      setTimeout(() => { renderOnboardingStep('done'); onboardingStep = 'done'; },
-                 !mb || !mb.ok || mb.verdict !== 'ok' ? 12000 : 4000);
-    } else {
-      let msg = '';
-      if (!r.curator) msg += `${SVG_X} ${th('setup.model_failed', {model: 'curatarr-curator'})}<br>`;
-      if (!r.summarizer) msg += `${SVG_X} ${th('setup.model_failed', {model: 'curatarr-summarizer'})}<br>`;
-      msg += `<br>${th('setup.pull_base')}`;
-      el.innerHTML = `<div class="t-danger fs-13">${msg}</div>`;
-    }
-  } catch(e) {
-    el.innerHTML = `<div class="t-danger">${esc(_errMsg(e))}</div>`;
-  }
+    mb = await api('/api/setup/minibench', 'POST',
+                   {vram_gb: state.setupData?.vram_gb ?? null, gpu_name: state.setupData?.gpu_name ?? null});
+  } catch (e) { mbErr = _errMsg(e); }
+  if (el) el.innerHTML = renderMinibench(mb, mbErr);
+  btnDone(btn);
 }
 
 // The mini-bench result: what this machine did with the curator, next to
@@ -790,4 +977,7 @@ export async function logout() {
 }
 
 // The Pitcher checkbox shows or hides the model picker beneath it.
-export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').hidden = !el.checked; }
+export function togglePitcherWrap(el) { document.getElementById('s-pitcher-wrap').hidden = !el.checked; renderAiPlan(); }
+
+// A select in the advanced section changed: the plan above follows it.
+export function setupModelChanged() { renderAiPlan(); }

@@ -3,7 +3,7 @@ import { applyBenchValues, onAdviceModelChange, onAdviceSizeChange } from './hos
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, openLibraryItem, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish, sendWantedToSoulSync } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, loadMoreDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { buildOnboardingModels, detectGpu, hideOnboarding, onSetupCuratorChange, jellyfinConnectAgain, logout, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupNav, setupServerKind, startOnboardingSync, testConn, togglePitcherWrap } from './setup.js';
+import { hideOnboarding, onSetupCuratorChange, jellyfinConnectAgain, logout, pickPlexServer, plexConnectAgain, refreshModelRecs, renderSetupStep, retryOnboardingStep, runOnboardingSpeedCheck, saveOnboardingLibraries, setupModelChanged, setupNav, setupServerKind, startOnboardingSync, startPlexConnect, testConn, togglePitcherWrap } from './setup.js';
 import { activityTabKey, cancelTask, loadScheduled, loadTaskHistory, reloadPage, runScheduledJob, setHistoryFilter, showActivityTab, showNoopRuns, toggleHideNoop } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
@@ -134,7 +134,6 @@ const actions = {
   approveDelete,
   auditRequeueEnrichments,
   blurOnCtrlEnter,
-  buildOnboardingModels,
   bulkDelete,
   cancelTask,
   checkUncensored,
@@ -154,7 +153,6 @@ const actions = {
   deleteReturned,
   delToggleAll,
   deleteFromDiscussion,
-  detectGpu,
   discussLastPlayed,
   discussPrinciple,
   discussRecCard,
@@ -332,6 +330,11 @@ const actions = {
   setPrinciple,
   setRecLane,
   setupNav,
+  setupModelChanged,
+  startPlexConnect,
+  plexConnectAgain,
+  pickPlexServer,
+  runOnboardingSpeedCheck,
   setupServerKind,
   jellyfinConnectAgain,
   jellyfinConnectStart,

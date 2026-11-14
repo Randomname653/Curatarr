@@ -966,18 +966,48 @@ h1[tabindex="-1"]:focus { outline: none; }
 .progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 4px; }
 
 /* ── SETUP WIZARD ── */
-#setup-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 100; display: flex; align-items: center; justify-content: center; }
+#setup-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+  background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
 #setup-overlay.hidden { display: none; }
-#setup-box { width: 560px; max-height: 90vh; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
-#setup-box .setup-header { padding: 24px 28px 16px; border-bottom: 1px solid var(--border); }
-#setup-box .setup-header h1 { font-size: 20px; font-weight: 700; color: var(--amber); }
-#setup-box .setup-header p { font-size: 13px; color: var(--text2); margin-top: 4px; }
-.setup-steps { display: flex; gap: 0; padding: 16px 28px 0; border-bottom: 1px solid var(--border); }
-.setup-step-dot { flex: 1; text-align: center; padding-bottom: 12px; font-size: 11px; color: var(--text3); position: relative; border-bottom: 2px solid var(--border); }
-.setup-step-dot.active { color: var(--amber); border-bottom-color: var(--amber); }
-.setup-step-dot.done { color: var(--success); border-bottom-color: var(--success); }
-.setup-body { padding: 24px 28px; }
-.setup-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 28px 20px; border-top: 1px solid var(--border); margin-top: 8px; }
+/* The wizard (rebuilt 2026-11-14): one glass card like the rest of the app,
+   readable type, the wordmark on top. */
+#setup-box { width: 640px; max-width: 100%; max-height: calc(100dvh - 48px); display: flex; flex-direction: column;
+  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--hairline-strong); border-radius: 16px; box-shadow: var(--shadow-3), var(--specular); }
+#setup-box .setup-header { padding: 28px 32px 8px; text-align: center; }
+.setup-logo .setup-logo-svg { width: min(240px, 60vw); height: auto; display: block; margin: 0 auto; }
+#setup-box .setup-header p { font-size: var(--fs-md); color: var(--text2); margin-top: 12px; }
+.setup-steps { display: flex; gap: 6px; padding: 16px 32px 0; }
+.setup-step-dot { flex: 1; text-align: center; padding-bottom: 10px; font-size: var(--fs-xs); color: var(--text3); border-bottom: 3px solid var(--border); border-radius: 0 0 2px 2px; transition: color var(--dur-2), border-color var(--dur-2); }
+.setup-step-dot.active { color: var(--amber); border-bottom-color: var(--amber); font-weight: 600; }
+.setup-step-dot.done { color: var(--text2); border-bottom-color: var(--amber-line); }
+.setup-body { padding: 24px 32px; overflow-y: auto; flex: 1; font-size: var(--fs-md); }
+.setup-body .form-group label { font-size: 13px; }
+.setup-body input, .setup-body select { font-size: var(--fs-md); }
+.setup-nav { display: flex; justify-content: space-between; align-items: center; padding: 16px 32px 20px; border-top: 1px solid var(--hairline); }
+.wiz-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.wiz-choices.col { grid-template-columns: 1fr; }
+.wiz-choice { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2); cursor: pointer; transition: border-color var(--dur-2), background var(--dur-2); }
+.wiz-choice:hover { border-color: var(--border2); }
+.wiz-choice.on { border-color: var(--amber); background: var(--amber-dim); }
+.wiz-choice input { margin-top: 3px; accent-color: var(--amber); }
+.wiz-choice-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wiz-choice-body b { font-size: var(--fs-md); color: var(--text); }
+.wiz-big { width: 100%; padding: 12px 20px; font-size: var(--fs-md); }
+.wiz-pin { text-align: center; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; background: var(--bg2); }
+.wiz-card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px; background: var(--bg2); }
+.wiz-card b { color: var(--text); }
+.wiz-status { display: flex; flex-direction: column; gap: 8px; }
+.wiz-status-row { display: flex; gap: 12px; align-items: baseline; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2); }
+.wiz-status-row .test-status { margin-top: 0; }
+.wiz-status-name { width: 110px; flex-shrink: 0; font-size: 13px; color: var(--text3); }
+.wiz-plan { border: 1px solid var(--amber-line); border-radius: var(--radius-lg); padding: 14px 16px; background: var(--amber-dim); }
+.wiz-plan:empty { display: none; }
+.wiz-plan-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; }
+.wiz-sum { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2); }
+.wiz-sum-row { display: flex; gap: 12px; align-items: center; padding: 11px 14px; }
+.wiz-sum-row + .wiz-sum-row { border-top: 1px solid var(--hairline); }
+.wiz-sum-label { width: 90px; flex-shrink: 0; font-size: 13px; color: var(--text); font-weight: 600; }
 
 /* ── AUTH SCREEN ── */
 #auth-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 99; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
@@ -1096,7 +1126,7 @@ select option { background: var(--bg2); }
 .overlay-dim { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 90; display: flex; align-items: center; justify-content: center; }
 .dialog-box-520 { width: 520px; max-height: 90vh; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
 .box-head { padding: 24px 28px 16px; border-bottom: 1px solid var(--border); }
-.setup-heading { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: var(--amber); }
+.setup-heading { font-size: var(--fs-xl); font-weight: 700; margin-bottom: 8px; color: var(--text); }
 .setup-lead { font-size: 13px; color: var(--text2); line-height: 1.6; max-width: 380px; margin: 0 auto 20px; }
 .poster-ph { background: var(--bg3); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--text3); }
 .poster-img { object-fit: cover; flex-shrink: 0; background: var(--bg3); }
@@ -1273,6 +1303,8 @@ select option { background: var(--bg2); }
   .setup-steps { overflow-x: auto; padding-left: 16px; padding-right: 16px; }
   .setup-step-dot { min-width: 64px; }
   .setup-body, .setup-nav, #setup-box .setup-header, .box-head, .pad-24-28 { padding-left: 18px; padding-right: 18px; }
+  .wiz-choices { grid-template-columns: 1fr; }
+  .wiz-status-name { width: 80px; }
   #pin-box { width: calc(100vw - 32px); max-width: 340px; padding: 20px; }
   #pin-box .pin-code { font-size: 30px; letter-spacing: 6px; }
 

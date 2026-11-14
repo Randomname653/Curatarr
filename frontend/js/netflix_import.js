@@ -47,6 +47,8 @@ function _profileRow(name, plays, kind) {
 export function _netflixPendingHtml(d) {
   const files = d?.pending || [];
   if (!files.length) return '';
+  // The setup wizard: no household members yet to attach a profile to.
+  if (!_users.length) return `<div class="hint">${th('netflix.files_waiting_setup', {n: files.length})}</div>`;
   const rows = [];
   for (const f of files) {
     for (const [name, plays] of Object.entries(f.profiles || {})) rows.push(_profileRow(name, plays, f.kind));

@@ -1,6 +1,6 @@
 // ── SPOTIFY HISTORY IMPORT (shared by the setup step and the admin card) ──
 import { state } from './state.js';
-import { EL, EVENT, _errMsg, act, actOn, esc } from './ui.js';
+import { EL, EVENT, _errMsg, act, actOn, esc, toast } from './ui.js';
 import { api } from './api.js';
 import { collectStep } from './setup.js';
 import { t, th } from './i18n.js';
@@ -88,15 +88,29 @@ export async function runSpotifyImport(p) {
   }
 }
 
+// The wizard's finish: the server writes the settings and takes them over
+// at once (no restart); a plex.tv sign-in in the first step also signs the
+// owner in, so the page opens straight on the library mapping.
 export async function finishSetup() {
   collectStep();
   const el = document.getElementById('setup-saving');
+  const btn = document.getElementById('setup-finish');
+  if (btn) btn.disabled = true;
   el.textContent = t('spotify.setup_saving');
+  const body = {...state.setupData};
+  for (const k of Object.keys(body)) if (k.startsWith('_')) delete body[k];
   try {
-    const r = await api('/api/setup/complete', 'POST', state.setupData);
-    el.innerHTML = `${th('spotify.setup_saved')} <strong>${th('spotify.setup_reopen')}</strong>`;
-    setTimeout(()=>location.reload(), 5000);
+    const r = await api('/api/setup/complete', 'POST', body);
+    if (r.login?.token) {
+      state.token = r.login.token;
+      try { localStorage.setItem('curatarr_token', r.login.token); } catch (_) { /* private mode: this tab only */ }
+    } else if (r.login_error) {
+      toast(r.login_error, 'amber', {ms: 10000});
+    }
+    el.textContent = t('spotify.setup_saved');
+    setTimeout(() => location.reload(), 800);
   } catch(e) {
+    if (btn) btn.disabled = false;
     el.innerHTML = `<span class="t-danger">${th('spotify.setup_error', {error: _errMsg(e)})}</span>`;
   }
 }

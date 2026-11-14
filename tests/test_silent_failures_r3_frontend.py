@@ -213,9 +213,10 @@ def test_onboarding_sync_and_saves_report_failures():
           re.search(r"Date\.now\(\) > deadline\)\s*\{\s*giveUp\(", sync) is not None)
     save = _fn(setup, "saveOnboardingLibraries")
     check("saveOnboardingLibraries has an error path", "try {" in save and "toast(" in save and "btnDone(btn)" in save)
-    build = _fn(setup, "buildOnboardingModels")
+    build = _fn(setup, "runOnboardingSpeedCheck")
     # The warm-up became the mini-bench (2026-10-20); its failure text lives
-    # in renderMinibench, which the build step always renders.
+    # in renderMinibench, which the speed check always renders (the build
+    # step left the onboarding 2026-11-14: the wizard bakes the models).
     render = _fn(setup, "renderMinibench")
     check("a failed warm-up / mini-bench is said, not skipped",
           "catch {}" not in build and "renderMinibench(mb, mbErr)" in build
