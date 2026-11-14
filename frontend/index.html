@@ -287,7 +287,7 @@
       <div id="chat-input-area">
         <!-- Icon + label: phones show the icon alone (aria-label carries the name) -->
         <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." data-i18n-title="chat.new_title" aria-label="New chat" data-i18n-aria-label="chat.new_chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label" data-i18n="chat.new">New</span></button>
-        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-enrich metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-enrich</span></button>
+        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Did Curatarr say something wrong about the current topic? Re-enrich fetches this title's facts again: it clears the cached metadata so the next question starts from fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-enrich metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-enrich</span></button>
         <textarea id="chat-input" aria-label="Chat message" data-i18n-aria-label="chat.input_aria" placeholder="Ask about your library, get recommendations, or just chat…" data-i18n-placeholder="chat.input_placeholder" data-on-keydown="handleKey" data-args='["$event"]' enterkeyhint="send" rows="1"></textarea>
         <button id="send-btn" data-action="sendMessage" aria-label="Send message" data-i18n-aria-label="chat.send_aria"><svg class="btn-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span class="btn-label" data-i18n="chat.send">Send</span></button>
       </div>
@@ -446,7 +446,7 @@
       <div class="view-body">
         <details class="section" data-on-toggle="curationSection" data-args='["protections","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.protections">Protected titles</h3>
-            <span class="section-hint" data-i18n="cur.view.protections_hint">Titles Curatarr won't suggest deleting, and why. Lift a protection to have it judged again on the next scan.</span>
+            <span class="section-hint" data-i18n="cur.view.protections_hint">Titles Curatarr won't suggest deleting, and why. Lift a protection to have it assessed again on the next scan.</span>
           </summary>
           <div class="section-body"><div id="protections-content"></div></div>
         </details>
@@ -584,7 +584,7 @@
           <section class="section">
             <div class="section-head"><h3><span data-i18n="kb.view.spotify">Spotify import</span> <span class="badge amber badge-sm" id="music-running-badge" hidden data-i18n="kb.view.running">Running</span></h3>
               <div class="section-actions">
-                <label class="fs-12 t2 row" for="music-batch-input" title="Most tracks each phase handles per run, for Spotify and Last.fm alike. The rest carry over to the next run." data-i18n-title="kb.view.batch_title"><span data-i18n="kb.view.batch">Batch size</span>
+                <label class="fs-12 t2 row" for="music-batch-input" title="Most tracks each step handles per run, for Spotify and Last.fm alike. The rest carry over to the next run." data-i18n-title="kb.view.batch_title"><span data-i18n="kb.view.batch">Batch size</span>
                   <input id="music-batch-input" class="w-70 input" type="number" min="50" max="2000" value="300"></label>
                 <button class="btn btn-primary btn-sm" id="music-start-btn" data-action="startMusicPipeline" data-args='["$el"]' data-i18n="kb.view.start_short">Start</button>
                 <button class="btn btn-secondary btn-sm" id="music-stop-btn" data-action="stopMusicPipeline" data-args='["$el"]' hidden data-i18n="kb.view.stop">Stop</button>
@@ -592,7 +592,7 @@
               </div>
             </div>
             <div class="section-body">
-              <p class="fs-12 t2 mb-12" data-i18n="kb.view.music_hint">Phase 1 matches imported Spotify plays to your Plex tracks. Phase 2 fetches Last.fm genre tags for tracks still missing genres. Safe to repeat: finished entries are skipped.</p>
+              <p class="fs-12 t2 mb-12" data-i18n="kb.view.music_hint">First, imported Spotify plays are matched to your Plex tracks. Then Last.fm genre tags are fetched for tracks still missing genres, and MusicBrainz fills in where Last.fm had none. Safe to repeat: finished entries are skipped.</p>
               <div id="music-lyrics-line" class="fs-12 t3" hidden></div>
               <div id="music-stats-bar" class="fs-12 t3 mb-12">Loading…</div>
               <div id="music-progress-bar" class="mb-12" hidden>
@@ -773,7 +773,7 @@
                 <div class="section-head"><h3 data-i18n="account.curator">Curator</h3><span class="section-hint" data-i18n="account.curator_hint">How the curator talks to you in chat, its openers and its messages. Saves immediately.</span></div>
                 <div class="section-body">
                   <div class="pref-row">
-                    <span class="pref-text" id="curator-voice-label"><span data-i18n="account.tone">Tone</span><small data-i18n="account.tone_hint">Sharp is a touch elitist about titles. Every tone judges the work, not you.</small></span>
+                    <span class="pref-text" id="curator-voice-label"><span data-i18n="account.tone">Tone</span><small data-i18n="account.tone_hint">Sharp is a touch elitist about titles. Every tone is about the work, not you.</small></span>
                     <div class="segmented" role="radiogroup" aria-labelledby="curator-voice-label">
                       <label for="voice-friendly"><input type="radio" name="curator-voice" id="voice-friendly" value="friendly" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_friendly">Friendly</span></label>
                       <label for="voice-neutral"><input type="radio" name="curator-voice" id="voice-neutral" value="neutral" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_neutral">Neutral</span></label>
