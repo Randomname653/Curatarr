@@ -1,13 +1,13 @@
 // ── Protections (judge auto-saves AND chat-intent grants, both liftable) ─────
 import { api } from './api.js';
-import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
+import { EL, SVG_CHECK, _errHtml, _errMsg, act, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast, loadingHtml, skeletonHtml } from './ui.js';
 import { startTaskStream, stopTaskStream } from './activity.js';
 import { brandMark } from './brand.js';
 import { t, th } from './i18n.js';
 export async function loadJudgeProtections() {
   const el = document.getElementById('protections-content');
   if (!el) return;
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('cur.loading_protections')}</p>`;
+  el.innerHTML = skeletonHtml(t('cur.loading_protections'), {kind: 'rows'});
   try {
     const r = await api('/api/recommendations/protections');
     const rows = r.protections || [];
@@ -68,7 +68,7 @@ export async function liftProtection(id, btn) {
 export async function loadPrinciples() {
   const el = document.getElementById('principles-content');
   if (!el) return;
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('cur.loading_principles')}</p>`;
+  el.innerHTML = skeletonHtml(t('cur.loading_principles'), {kind: 'rows'});
   try {
     const r = await api('/api/recommendations/principles');
     const rows = r.principles || [];
@@ -206,7 +206,7 @@ export async function condensePrinciples(btn) {
   if (!res.ok) return;
   const el = document.getElementById('principles-content');
   btnBusy(btn, t('cur.reviewing'));
-  if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('cur.reviewing_long')}</p>`;
+  if (el) el.innerHTML = loadingHtml(t('cur.reviewing_long'));
   let note = '';
   try {
     const r = await api('/api/recommendations/principles/condense', 'POST');
@@ -232,7 +232,7 @@ export function _arrLabel(category) {
 export async function loadDownscale() {
   const el = document.getElementById('downscale-content');
   if (!el) return;
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('cur.loading_downscale')}</p>`;
+  el.innerHTML = skeletonHtml(t('cur.loading_downscale'), {kind: 'cards'});
   try {
     const r = await api('/api/recommendations/downscale');
     const rows = r.candidates || [];
@@ -266,7 +266,7 @@ export async function loadDownscale() {
 export async function loadUpgrades() {
   const el = document.getElementById('upgrade-content');
   if (!el) return;
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('cur.loading_upgrades')}</p>`;
+  el.innerHTML = skeletonHtml(t('cur.loading_upgrades'), {kind: 'cards'});
   try {
     const r = await api('/api/recommendations/upgrade-candidates');
     const rows = r.candidates || [];
@@ -293,7 +293,7 @@ export async function loadUpgrades() {
 export async function loadRedundancy() {
   const el = document.getElementById('redundancy-content');
   if (!el) return;
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('cur.loading_redundancy')}</p>`;
+  el.innerHTML = skeletonHtml(t('cur.loading_redundancy'), {kind: 'cards'});
   try {
     const r = await api('/api/recommendations/redundancy');
     const intra = r.intra_item || [];

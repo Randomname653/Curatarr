@@ -4,7 +4,7 @@
 // on: Link names the AniDB entry (the pin's first episode = its episode 1),
 // Skip stops the retries. AniDB splits a season into cours, so one season can
 // carry two links (episodes 1-11 -> part 1, from episode 12 -> part 2).
-import { EL, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, closeModal, emptyHtml, esc, loc, openModal, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, closeModal, emptyHtml, esc, loc, openModal, toast, loadingHtml } from './ui.js';
 import { api } from './api.js';
 import { t, th } from './i18n.js';
 
@@ -44,7 +44,7 @@ function _row(g, i) {
 export async function loadShokoUnmatched() {
   const box = document.getElementById('shoko-unmatched');
   if (!box) return;
-  box.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  box.innerHTML = loadingHtml(t('common.loading'));
   let r;
   try { r = await api('/api/shoko/unmatched'); }
   catch (e) { box.innerHTML = _errHtml(e, act('loadShokoUnmatched')); return; }
@@ -91,7 +91,7 @@ export async function shokoSearch(btn) {
   const out = document.getElementById('shoko-results');
   if (!q || !out) return;
   if (btn) btnBusy(btn, t('common.searching'));
-  out.innerHTML = `<p class="loading">${th('shoko.searching')}</p>`;
+  out.innerHTML = loadingHtml(t('shoko.searching'));
   try {
     const r = await api(`/api/shoko/search?q=${encodeURIComponent(q)}`);
     const list = r.results || [];

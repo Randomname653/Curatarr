@@ -11,7 +11,7 @@ import { searchLibrary } from './recs.js';
 // from fresh data; saveLibraries() invalidates explicitly on success since
 // this view doesn't otherwise self-reload after a save.
 import { serverLabel, state } from './state.js';
-import { EL, SVG_CHECK, SVG_WARN, _errHtml, _errMsg, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
+import { EL, SVG_CHECK, SVG_WARN, _errHtml, _errMsg, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, toast, loadingHtml, skeletonHtml } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 import { t, th } from './i18n.js';
 // Plex unreachable is not "no libraries": the saved mapping is shown read-only
@@ -21,7 +21,7 @@ export function _plexDownHtml(cfg, err) {
   const saved = (cfg.libraries || []).map(l => `
       <div class="panel-item">
         <div class="panel-item-head">
-          <div class="fs-15 panel-item-title">${esc(l.title || l.key)}<span class="badge muted badge-sm">${esc(l.plex_type || '')}</span></div>
+          <div class="panel-item-title">${esc(l.title || l.key)}<span class="badge muted badge-sm">${esc(l.plex_type || '')}</span></div>
           <div class="panel-actions"><span class="badge muted badge-sm">${esc(l.category || '')}</span></div>
         </div>
       </div>`).join('');
@@ -54,7 +54,7 @@ export function _renderLibraryConfig([cfg, disc]) {
       return `
       <div class="panel-item">
         <div class="panel-item-head">
-          <div class="fs-15 panel-item-title">${esc(s.title)}<span class="badge muted badge-sm">${esc(s.type)}</span></div>
+          <div class="panel-item-title">${esc(s.title)}<span class="badge muted badge-sm">${esc(s.type)}</span></div>
           <div class="panel-actions">
             <label for="libcat-${s.key}" class="fs-11 t3">${th('lib.category')}</label>
             <select id="libcat-${s.key}" class="input" aria-label="${th('lib.category_aria')}">
@@ -83,7 +83,7 @@ export function _renderLibraryConfig([cfg, disc]) {
 
 export async function loadLibraryConfig() {
   const el=document.getElementById('lib-config-content');
-  if (!_swrCache.has('libraries')) el.innerHTML=`<p class="loading" role="status" aria-live="polite">${th('lib.fetching')}</p>`;
+  if (!_swrCache.has('libraries')) el.innerHTML=skeletonHtml(t('lib.fetching'), {kind: 'rows'});
   try {
     const data = await _swrRun('libraries', () => Promise.all([
       api('/api/libraries/config'),
@@ -117,7 +117,7 @@ export async function saveLibraries(btn) {
 export async function checkOrphans(btn) {
   const el = document.getElementById('orphan-content');
   btnBusy(btn, t('lib.scanning'));
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('lib.orphans_looking')}</p>`;
+  el.innerHTML = loadingHtml(t('lib.orphans_looking'));
   try {
     const r = await api('/api/libraries/orphaned');
     if (!r.has_orphans) {
@@ -158,7 +158,7 @@ export async function applyOrphanRepair(sections) {
     plex_type: Object.keys(s.plex_types)[0] === 'track' ? 'artist' : 'show',
     category: document.getElementById(`orphan-cat-${s.section_id}`)?.value || s.suggested_category,
   }));
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('lib.orphans_importing')}</p>`;
+  el.innerHTML = loadingHtml(t('lib.orphans_importing'));
   try {
     const r = await api('/api/libraries/repair-orphans', 'POST', {mappings});
     el.innerHTML = `<div class="banner ok"><span class="banner-icon">${SVG_CHECK}</span><div class="banner-text">${th('lib.orphans_done', {saved: r.saved, synced: r.synced})}</div></div>`;

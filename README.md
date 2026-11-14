@@ -383,6 +383,9 @@ docker run -d --name curatarr --restart unless-stopped \
 docker logs curatarr        # the one-time SETUP CODE, in a box
 ```
 
+`:latest` is the newest release. `:main` follows every merge, if you want
+changes before they are released.
+
 Put the machine that runs Ollama in `OLLAMA_ENDPOINT`: inside the
 container, `localhost` is the container itself. If you leave it out, the
 setup wizard looks for Ollama on your network and offers what it finds.

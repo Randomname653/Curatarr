@@ -3,9 +3,10 @@
 The sidebar shows the running build and, for admins, "Update available"
 when upstream has published something newer:
 
-- **container:** the newest image is what the last successful run of the
-  docker workflow on main pushed as ``:latest``. Compared with the commit
-  baked into this image.
+- **container:** the newest image of the track this one came from: a
+  release image (``:latest``, ``:X.Y.Z``) is offered the newest release, the
+  last successful docker run for a ``vX.Y.Z`` tag; a ``:main`` image the last
+  successful run on main. Compared with the commit baked into this image.
 - **git checkout (desktop):** the newest commit on main, compared with HEAD.
 
 "Newer" comes from GitHub's compare (the published commit is AHEAD of this
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Optional
 
@@ -35,6 +37,10 @@ HOW = {
                  "ghcr.io/randomname653/curatarr:latest (TrueNAS shell) and edit + save the app, "
                  "or docker compose pull && docker compose up -d. With pull_policy: always "
                  "in the app's YAML, edit + save alone does both.",
+    "container-main": "Pull the new image, then redeploy: docker pull "
+                      "ghcr.io/randomname653/curatarr:main (TrueNAS shell) and edit + save the app, "
+                      "or docker compose pull && docker compose up -d. With pull_policy: always "
+                      "in the app's YAML, edit + save alone does both.",
     "git": "In the tray menu: Update now (a fast-forward to main, then a restart). "
            "Or git pull in the Curatarr folder and restart.",
 }
@@ -85,7 +91,7 @@ def summarize(state: dict, build: dict) -> dict:
            "latest_at": state.get("latest_at"), "behind_by": state.get("behind_by"),
            "checked_at": state.get("checked_at")}
     if out["update_available"]:
-        out["how"] = HOW.get(build.get("channel"), "")
+        out["how"] = HOW.get(_how_key(build), "")
     return out
 
 
@@ -98,8 +104,25 @@ async def _get(client, path: str) -> dict:
     return r.json()
 
 
-async def latest_published(client, channel: str) -> tuple:
+def _how_key(build: dict) -> str:
+    if build.get("channel") == "container" and build.get("track") != "release":
+        return "container-main"
+    return build.get("channel") or ""
+
+
+_RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
+
+
+async def latest_published(client, channel: str, track: Optional[str] = None) -> tuple:
     """(sha, when) of what upstream offers this kind of install."""
+    if channel == "container" and track == "release":
+        # A tag push runs the workflow with the tag as its head_branch.
+        data = await _get(client, f"/repos/{REPO}/actions/workflows/docker.yml/runs"
+                                  f"?status=success&event=push&per_page=50")
+        for run in data.get("workflow_runs") or []:
+            if _RELEASE_TAG.match(run.get("head_branch") or ""):
+                return run.get("head_sha"), run.get("updated_at")
+        return None, None
     if channel == "container":
         data = await _get(client, f"/repos/{REPO}/actions/workflows/docker.yml/runs"
                                   f"?branch=main&status=success&event=push&per_page=1")
@@ -122,7 +145,7 @@ async def refresh(build: dict, client=None) -> dict:
             from src.services.http_client import tls_context
             client = httpx.AsyncClient(verify=tls_context(), timeout=10)
         try:
-            latest, when = await latest_published(client, build["channel"])
+            latest, when = await latest_published(client, build["channel"], build.get("track"))
             state.update(latest_sha=latest, latest_at=when)
             if not latest:
                 state["error"] = "nothing published yet"

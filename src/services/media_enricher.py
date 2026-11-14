@@ -1624,7 +1624,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
         got = {}
         for i in range(0, len(wanted), 500):
             part = wanted[i:i + 500]
-            cur.execute("SELECT cache_key, response FROM api_cache WHERE cache_key IN (%s)"
+            cur.execute("SELECT cache_key, response FROM api_cache WHERE cache_key IN (%s)"  # nosec B608 - only "?" placeholders are interpolated, values bound
                         % ",".join("?" * len(part)), part)
             got.update((r[0], r[1]) for r in cur)
         cur.close()

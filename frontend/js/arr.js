@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast } from './ui.js';
+import { skeletonHtml, EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast, loadingHtml } from './ui.js';
 import { serverLabel, state } from './state.js';
 import { showView, tabToHash } from './nav.js';
 import { t, th } from './i18n.js';
@@ -51,7 +51,7 @@ export async function loadArrPage(svc, tab) {
   if (tab) _arrActiveTab[svc] = tab;
   const tabsEl = document.getElementById(`arr-tabs-${svc}`);
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  contentEl.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   tabsEl.innerHTML = '';
 
   let status;
@@ -134,15 +134,7 @@ export function renderArrTab(svc, tabId) {
   } else if (tabId === 'backlog' && svc === 'lidarr') {
     renderSpotifyBacklog(svc);
   } else {
-    const tabKey = (ARR_TABS[svc].find(tb => tb.id === tabId) || {}).key;
-    const tabLabel = tabKey ? t(tabKey) : tabId;
-    const contentEl = document.getElementById(`arr-content-${svc}`);
-    contentEl.innerHTML = `
-      <div class="empty-note">
-        <p class="m-0 mb-6"><strong>${esc(tabLabel)}</strong></p>
-        <p class="m-0 fs-12">${th('arr.skeleton')}</p>
-      </div>
-    `;
+    renderSynopsisBrowser(svc, 'all');
   }
 }
 
@@ -159,7 +151,7 @@ const _arrBrowserState = {
 
 export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  contentEl.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
 
   const st = _arrBrowserState[svc + ':' + tabId] || {
     sort: 'size_desc',
@@ -487,7 +479,7 @@ export function goToLibrarySettings(svc) {
 
 export async function renderSpotifyBacklog(svc) {
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('arr.loading_backlog')}</p>`;
+  contentEl.innerHTML = loadingHtml(t('arr.loading_backlog'));
 
   // Pass 30: not_added_only is the second independent filter — works
   // in combination with only_resolved.
@@ -715,7 +707,7 @@ function _soulsyncBadge(s) {
 
 export async function renderWanted(svc) {
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  contentEl.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   let data;
   try {
     data = await api('/api/library/wishes');

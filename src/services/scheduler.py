@@ -1596,6 +1596,10 @@ async def job_db_backup():
 
         size_mb = os.path.getsize(dest) / (1024 * 1024)
         summary = f"{os.path.basename(dest)} ({size_mb:.1f}MB) · kept {min(len(snaps), KEEP)} · dropped {dropped}"
+        # The caches and the vector store beside it: one snapshot, the newest
+        # (services/cache_snapshot). Its failure never fails this backup.
+        from src.services.cache_snapshot import snapshot_caches
+        summary += " · " + await snapshot_caches(bdir)
         task_monitor.done(task, summary)
         logger.info("[scheduler] DB backup OK: %s", summary)
     except Exception as e:

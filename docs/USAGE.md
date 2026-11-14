@@ -92,10 +92,10 @@ Items marked *(admin)* are visible to the admin account only.
 | Task | Where |
 |---|---|
 | Watch running background jobs | Sidebar → **Activity** |
-| Start / resume enrichment | Knowledge Base → Maintenance → **Start enrichment** |
-| Work through the backlog while you are away | Knowledge Base → Maintenance → hours → **Keep working** |
-| Recompute taste vectors | Knowledge Base → Maintenance → **Recompute taste** |
-| Audit + self-heal metadata | Knowledge Base → Maintenance → **Audit metadata** |
+| Start / resume enrichment | Knowledge Base → Enrichment → **Start enrichment** |
+| Work through the backlog while you are away | Knowledge Base → Enrichment → hours → **Keep working** |
+| Recompute taste vectors | Knowledge Base → Enrichment → **Recompute taste** |
+| Audit + self-heal metadata | Knowledge Base → Enrichment → **Audit metadata** |
 
 **Deletions and curation** *(admin)*
 
@@ -205,7 +205,9 @@ locks as the in-app pipeline, so they cannot collide with it.
 
 ## Running in a container (NAS, server)
 
-Every push to `main` publishes `ghcr.io/randomname653/curatarr:latest`.
+`ghcr.io/randomname653/curatarr:latest` is the newest release; `:main`
+follows every merge, for whoever wants changes first
+([RELEASING.md](RELEASING.md)).
 `deploy/docker-compose.yml` runs it. On TrueNAS SCALE, paste the file under
 Apps → Custom App → Install via YAML.
 

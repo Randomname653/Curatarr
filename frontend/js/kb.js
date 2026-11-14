@@ -1,12 +1,12 @@
 // ── MAPPING STATS + PROFILE BROWSER ──────────────────────────────────────────
 // Two questions, two result areas — the second answer no longer overwrites the first.
-import { CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast } from './ui.js';
+import { skeletonHtml, CAT_LABELS, EL, SVG_STAR, SVG_WARN, _errHtml, _errMsg, _fmtAbs, _fmtRel, act, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, menuHtml, pagerHtml, setBadge, toast, loadingHtml } from './ui.js';
 import { api } from './api.js';
 import { state } from './state.js';
 import { loadMusicStatus } from './music.js';
 import { openMatchPicker } from './picker.js';
 import { tabToHash } from './nav.js';
-import { t, th } from './i18n.js';
+import { t, th, uiLang } from './i18n.js';
 export async function loadMappingStats(btn) {
   const el = document.getElementById('mapping-stats');
   btnBusy(btn, t('common.loading'));
@@ -27,7 +27,7 @@ export async function loadMappingStats(btn) {
 export async function checkMappingCoverage(btn) {
   const el = document.getElementById('mapping-coverage');
   btnBusy(btn, t('kb.checking'));
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('kb.checking_coverage')}</p>`;
+  el.innerHTML = loadingHtml(t('kb.checking_coverage'));
   try {
     const c = await api('/api/enrichment/mapping-coverage');
     if (c.error) el.innerHTML = `<p class="load-err">${esc(c.error)}</p>`;
@@ -53,7 +53,7 @@ export async function loadProfiles(offset = 0) {
   const src    = document.getElementById('profile-source')?.value || 'all';
   const search = document.getElementById('profile-search')?.value || '';
   const el = document.getElementById('profile-browser');
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('kb.loading_profiles')}</p>`;
+  el.innerHTML = skeletonHtml(t('kb.loading_profiles'), {kind: 'rows'});
   try {
     const r = await api(`/api/enrichment/profiles?category=${cat}&source=${src}&limit=${PROFILE_PAGE}&offset=${offset}&search=${encodeURIComponent(search)}`);
     if (!r.profiles?.length) {
@@ -208,7 +208,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
         </div>
       </div>
       <div class="section-body">
-        ${cards ? `<div class="kb-lib-grid">${cards}</div>` : `<p class="fs-13 t2">${th('kb.empty')}</p>`}
+        ${cards ? `<div class="kb-lib-grid">${cards}</div>` : emptyHtml(th('kb.empty'), '', '', {mark: true})}
         <p class="fs-11 t3 mt-12">${th('kb.requeue_note')}</p>
       </div>
     </section>
@@ -275,10 +275,27 @@ export async function loadCacheInventory(btn) {
 // while a run or a custodian tick is in progress; lists are NOT touched here
 // (see _kbRefresh). Called from showKbTab, the Refresh button and after runs.
 let _kbPollTimer = null;
+// The KB's rarer maintenance actions behind one More: the toolbar carried
+// five buttons (UI audit 2026-11-14). Audit metadata does a dry run and asks
+// before it queues anything; Backfill OMDb reports in Activity.
+function _renderKbMore() {
+  const el = document.getElementById('kb-maint-more');
+  // Rendered once per language: the status poll calls this, and a rewrite
+  // closed an open menu; a language switch reloads no page.
+  if (!el || el.dataset.lang === uiLang()) return;
+  el.dataset.lang = uiLang();
+  el.innerHTML = menuHtml([
+    {label: t('kb.view.audit'), action: act('auditRequeueEnrichments', EL), title: t('kb.view.audit_title')},
+    {label: t('kb.view.omdb'), action: act('omdbBackfill', EL), title: t('kb.view.omdb_title')},
+  ], t('common.more'), {size: 'md', align: 'start'});
+}
+
 export async function loadEnrichStatus() {
+  _renderKbMore();
   if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
   const el = document.getElementById('enrich-overview');
-  if (el && !el.innerHTML) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  // The first open reads the whole library (seconds on a fresh install): its shape, not a bare line.
+  if (el && !el.innerHTML) el.innerHTML = skeletonHtml(t('common.loading'), {kind: 'tiles'});
   try {
     // A failed status or custodian read used to fall back to {} / null:
     // "not running" in the middle of a run, and the 8 s refresh stopped. It
@@ -415,7 +432,7 @@ export async function loadKbItems(cat, states, offset = 0) {
   if (!el) return;
   const fresh = !_kbDrill || _kbDrill.cat !== cat || _kbDrill.states !== states;
   _kbDrill = {cat, states, offset};
-  if (fresh) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  if (fresh) el.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   try {
     const r = await api(`/api/enrichment/items?category=${encodeURIComponent(cat)}&state=${encodeURIComponent(states)}&offset=${offset}&limit=${KB_PAGE}`);
     const defs = Object.values(r.definitions || {});
@@ -445,7 +462,7 @@ export async function loadKbAttention(offset = 0, reason = null) {
   const el = document.getElementById('kb-attention');
   if (!el) return;
   _kbAtt = {offset, reason: reason || null};
-  if (!el.dataset.loaded) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  if (!el.dataset.loaded) el.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   try {
     const q = new URLSearchParams({offset: String(offset), limit: String(KB_ATT_PAGE)});
     if (reason) q.set('reason', reason);

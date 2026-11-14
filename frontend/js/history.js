@@ -2,11 +2,11 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, loc, setStatus, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, menuHtml, setStatus, skeletonHtml, toast, loadingHtml } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 import { serverLabel, state } from './state.js';
-import { t, th } from './i18n.js';
+import { t, th, uiLang } from './i18n.js';
 export async function recomputeTaste(statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
@@ -32,9 +32,9 @@ export async function recomputeTaste(statusId = null) {
 export async function syncHistory(force = false, statusId = null) {
   const status = statusId ? document.getElementById(statusId) : null;
   const el = document.getElementById('history-stats');
-  const label = th('history.syncing', {server: serverLabel()});
+  const label = t('history.syncing', {server: serverLabel()});
   if (status) setStatus(status, label, 'busy');
-  else if (el) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${label}</p>`;
+  else if (el) el.innerHTML = loadingHtml(label);
   try {
     const r = await api('/api/history/sync?force=' + (force ? 'true' : 'false'), 'POST');
     if (status) setStatus(status, r.message, 'ok');
@@ -90,7 +90,28 @@ export async function loadHistorySources() {
   } catch (e) { console.warn('[history] sources not read - the line stays hidden', e); }
 }
 
+// The owner's rarer actions behind one "More": the toolbar carried five
+// buttons, two rows on a phone (UI audit 2026-11-14). Sync now stays visible.
+function _renderHistoryMore() {
+  const el = document.getElementById('history-more');
+  if (!el || !state.currentUser?.is_admin) return;
+  // Re-rendered only when its words change: the sync poll calls this every
+  // 5 s and a rewrite closed an open menu.
+  const sig = uiLang() + '|' + serverLabel();
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  el.innerHTML = menuHtml([
+    {label: t('history.force_sync'), action: act('syncHistory', true), title: t('history.force_title')},
+    {label: t('history.recompute'), action: act('recomputeTaste')},
+    {sep: true},
+    {label: t('auth.libraries_btn', {server: serverLabel()}), action: act('showLibrariesForce')},
+  ], t('common.more'), {size: 'md', align: 'start'});
+}
+
 export async function loadHistoryStatus() {
+  _renderHistoryMore();
+  const stats = document.getElementById('history-stats');
+  if (stats && !stats.innerHTML) stats.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows', n: 3});
   loadHistorySources();
   try {
     const s = await _swrRun('history-stats', () => api('/api/history/status'), _renderHistoryStats);
@@ -110,6 +131,14 @@ export async function loadHistoryStatus() {
         const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
         renderRecent(h.entries, types[0]);
       } catch (e) { _tasteErr('recent-history', e, act('showTasteTab', types[0], null)); }
+    } else {
+      // A page with the stats tile and nothing under it was a dead end. No
+      // plays yet: Sync now fills it. Plays but no taste profile yet (a
+      // fresh install learns its library first): Recompute builds it.
+      document.getElementById('taste-tabs').innerHTML = '';
+      document.getElementById('taste-content').innerHTML = (s.watch_history_entries || 0) === 0
+        ? emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false), {mark: true})
+        : emptyHtml(th('history.no_taste'), t('history.recompute'), act('recomputeTaste'));
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }
@@ -132,7 +161,7 @@ function _tasteErr(id, e, retry) {
 
 export function showTasteTabData(byType, summary, type) {
   const d=byType[type];
-  if(!d){document.getElementById('taste-content').innerHTML=`<p class="loading" role="status" aria-live="polite">${th('history.no_data')}</p>`;return;}
+  if(!d){document.getElementById('taste-content').innerHTML=emptyHtml(th('history.no_data'));return;}
   const typeUpper=type.toUpperCase();
   const match=summary.match(new RegExp(`\\[${typeUpper}\\]([^\\[]*)`));
   const typeSummary=match?match[1].trim():'';
@@ -155,7 +184,7 @@ export function showTasteTabData(byType, summary, type) {
 }
 
 export function renderRecent(entries, category) {
-  if(!entries?.length){document.getElementById('recent-history').innerHTML=`<p class="loading" role="status" aria-live="polite">${th('history.none_yet', {category: CAT_LABELS[category]||category})}</p>`;return;}
+  if(!entries?.length){document.getElementById('recent-history').innerHTML=emptyHtml(th('history.none_yet', {category: CAT_LABELS[category]||category}));return;}
   const label = CAT_LABELS[category]||category;
   document.getElementById('recent-history').innerHTML=`
     <div class="eyebrow mb-8">${th('history.recent', {category: label})}</div>
