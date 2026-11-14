@@ -195,18 +195,26 @@ def collect_facts(user_id: int, now: Optional[datetime] = None,
     # And it took "the last 400 rows" of a history where music outnumbers
     # video 300:1, so the video facts never made the window: a Spotify
     # afternoon erased the weekend's binge. Video gets its own window.
+    # Recap specials, credits, trailers: plays Shoko placed on no regular
+    # episode count neither as progress nor as a stall (Shoko phase 2).
+    try:
+        from src.services.shoko_meta import non_regular_play_ids
+        not_episodes = non_regular_play_ids(user_id)
+    except Exception as e:  # noqa: BLE001 - the history stands as it is
+        logger.warning("[starters] Shoko episode types unreadable: %s", e)
+        not_episodes = set()
     with get_db_session() as db:
+        vq = db.query(WatchHistoryEntry).filter(
+            WatchHistoryEntry.user_id == user_id,
+            WatchHistoryEntry.media_type.in_(("movie", "show", "anime")))
+        if not_episodes:
+            vq = vq.filter(~WatchHistoryEntry.id.in_(not_episodes))
         video = [
             {"title": r.title, "series_title": r.series_title,
              "media_type": r.media_type, "season": r.season,
              "episode": r.episode, "viewed_at": r.viewed_at,
              "completed": bool(r.completed)}
-            for r in (db.query(WatchHistoryEntry)
-                      .filter(WatchHistoryEntry.user_id == user_id,
-                              WatchHistoryEntry.media_type.in_(
-                                  ("movie", "show", "anime")))
-                      .order_by(WatchHistoryEntry.viewed_at.desc())
-                      .limit(200).all())]
+            for r in vq.order_by(WatchHistoryEntry.viewed_at.desc()).limit(200).all()]
         music = [
             {"series_title": r.series_title, "viewed_at": r.viewed_at}
             for r in (db.query(WatchHistoryEntry)

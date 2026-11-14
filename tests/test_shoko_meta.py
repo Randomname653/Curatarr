@@ -36,9 +36,19 @@ SERIES = {
         (704, "Episode", 4, 7.3, 15), (705, "Episode", 5, 7.0, 3), (706, "Episode", 6, 7.6, 14),
         (707, "Episode", 7, 0.0, 0), (708, "Special", 1, 3.0, 12),   # a recap special
         (709, "Credits", 1, 0.0, 0)],
-        "tags": [("night", 600, False, False), ("everybody dies", 400, True, False),
-                 ("betrayal", 0, False, True), ("harbour", 300, False, False)]},
+        # (name, weight, IsSpoiler, IsLocalSpoiler, tag id)
+        "tags": [("Japan", 600, False, False, 2672), ("dark fantasy", 600, False, False, 9000),
+                 ("present", 600, False, False, 2624), ("action", 500, False, False, 9002),
+                 ("everybody dies", 400, True, False, 9200), ("betrayal", 0, False, True, 9201),
+                 ("manga", 0, False, False, 9100), ("elements", 0, False, False, 2611),
+                 ("based on real events", 300, False, False, 4616), ("space", 200, False, False, 2627),
+                 ("friendship", 0, False, False, 9300), ("death game", 100, False, False, 9400)]},
 }
+# AniDB's tree as /Tag/AniDB lists it: {id: parent}
+TREE = {2672: 2834, 2834: 2630, 2630: 2613, 2613: 2610, 2610: None, 2627: 2613,
+        9000: 9001, 9001: 2611, 2611: None, 9002: 2611, 9200: 2611, 9201: 2607, 2607: None,
+        2624: 2612, 2612: 2610, 9100: 2609, 2609: None, 4616: 6151, 6151: None, 9300: 2607,
+        9400: None}
 EP_SERIES = {e[0]: sid for sid, s in SERIES.items() for e in s["episodes"]}
 
 
@@ -69,8 +79,12 @@ class FakeShoko:
                     lst = lst[:20]
                 return httpx.Response(200, json={"Total": len(lst), "List": lst})
             if parts[2] == "Tags":
-                return httpx.Response(200, json=[{"Name": n, "Weight": w, "IsSpoiler": sp, "IsLocalSpoiler": lsp}
-                                                 for n, w, sp, lsp in s["tags"]])
+                return httpx.Response(200, json=[{"ID": i, "ParentID": TREE.get(i), "Name": n, "Weight": w,
+                                                  "IsSpoiler": sp, "IsLocalSpoiler": lsp}
+                                                 for n, w, sp, lsp, i in s["tags"]])
+        if parts == ["Tag", "AniDB"] and request.url.params.get("pageSize") == "0":
+            return httpx.Response(200, json={"Total": len(TREE), "List": [
+                {"ID": i, "ParentID": p, "Name": f"t{i}"} for i, p in TREE.items()]})
         return httpx.Response(404)
 
 
@@ -110,8 +124,28 @@ check("...an unrated episode (0.0 on 0 votes) is no rating, not a zero",
       next(e for e in eps if e["id"] == 707)["rating"] is None)
 check("...the series' title and AniDB id", title_anidb == ("Night Harbor", 9001), title_anidb)
 check("...tags with weight, either spoiler flag as one",
-      {t["name"]: t["spoiler"] for t in tags} == {"night": False, "everybody dies": True,
-                                                   "betrayal": True, "harbour": False}, tags)
+      {t["name"]: t["spoiler"] for t in tags if t["spoiler"]} == {"everybody dies": True, "betrayal": True}, tags)
+keep = {t["name"]: t["keep"] for t in tags}
+check("the tag tree sorts out what says nothing about the series: places under Earth, 'present', "
+      "source material, the root tags themselves",
+      not any(keep[n] for n in ("Japan", "present", "manga", "elements")), keep)
+check("...and keeps the content: elements, themes, a place that is a setting ('space'), "
+      "'based on real events' out of the technical branch, a tag with no parent yet",
+      all(keep[n] for n in ("dark fantasy", "action", "space", "based on real events", "friendship",
+                            "death game")), keep)
+check("the tag tree is read once per run, not per series",
+      sum(1 for _m, pth, _q in fake.paths if pth == "/Tag/AniDB") == 1)
+got = sm.series_tags_for(anidb_id=9001)
+check("the curator's tags: no spoilers, strongest first, 'applies, unweighted' (0) last, not dropped",
+      got == ["dark fantasy", "action", "based on real events", "space", "death game", "friendship"], got)
+check("...found by title when there is no AniDB id", sm.series_tags_for(title="Night Harbor") == got)
+check("...and nothing for a series Shoko does not know", sm.series_tags_for(anidb_id=1) is None)
+
+from src.routers.chat import _build_hidden_context  # noqa: E402
+blk = _build_hidden_context("Night Harbor", {"title": "Night Harbor", "shoko_tags": got}, domain="anime")
+check("the anime block carries them", "- AniDB tags (strongest first): dark fantasy, action" in blk, blk)
+check("...and leaves the line out without Shoko data",
+      "AniDB tags" not in _build_hidden_context("X", {"title": "X"}, domain="anime"))
 check("only reads: every call a GET, never a Refresh, MyList-sync or Action route",
       all(m == "GET" and not any(x in pth for x in ("Refresh", "MyList", "/Action")) for m, pth, _ in fake.paths),
       fake.paths)
@@ -159,6 +193,33 @@ facts = cs.collect_facts(1, now=now, zone=ZoneInfo("Europe/Berlin"))
 st = next((f for f in facts if f["kind"] == "stalled_series"), None)
 check("the stalled-series fact names the weakest episode they stopped at",
       st and st["title"] == "Night Harbor" and st.get("stopped_at_weakest_episode", {}).get("episode") == 3, st)
+
+# ── recaps, credits, trailers: no progress, no stall ─────────────────────────
+# Plex/TVDB number a recap as a regular episode (here S01E04); Shoko knows it
+# is AniDB's Special 1. Such a play is neither a finished episode nor a drop.
+with conn.get_db_session() as db:
+    w = W(user_id=1, plex_user_id="p1", plex_item_id="e4", title="Recap", series_title="Night Harbor",
+          media_type="anime", season=1, episode=4, viewed_at=now - timedelta(days=30), completed=True)
+    db.add(w)
+    db.flush()
+    recap_id = w.id
+    db.add(ShokoWatchSync(watch_history_id=w.id, user_id=1, status="sent", shoko_episode_ids="708"))
+    db.commit()
+check("a play on a recap special is no regular episode", sm.non_regular_play_ids(1) == {recap_id},
+      sm.non_regular_play_ids(1))
+check("...the regular ones are", not ({recap_id} ^ sm.non_regular_play_ids(1)) - {recap_id})
+
+import src.services.taste_engine as te  # noqa: E402
+rows = te._load_watch_entries(1, "anime")
+check("the taste rebuild never reads the recap play as a finished episode",
+      [r["title"] for r in rows] == ["Ep 3", "Ep 2", "Ep 1"], [r["title"] for r in rows])
+facts = cs.collect_facts(1, now=now, zone=ZoneInfo("Europe/Berlin"))
+st = next((f for f in facts if f["kind"] == "stalled_series"), None)
+check("...nor do the openers: the stall stays at the episode they left, 58 days ago, not the recap",
+      st and st["days_since"] == 58 and st["plays_before_stall"] == 3
+      and st.get("stopped_at_weakest_episode", {}).get("episode") == 3, st)
+check("a play on an episode Shoko has not described yet still counts (nothing is guessed)",
+      sm.non_regular_play_ids(2) == set())
 
 settings.SHOKO_URL, settings.SHOKO_API_KEY = None, None
 check("without Shoko the refresh does nothing", asyncio.run(sm.refresh())["skipped"] == "no_shoko")

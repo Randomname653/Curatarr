@@ -43,6 +43,69 @@ LOW_GAP = 1.0            # the stop's rating sits this far under the median
 LOW_RANK = 2             # ...and among the season's weakest two
 
 
+# ── tags: what a series is about ────────────────────────────────────────────
+# AniDB's tag tree, ids stable (read on the live server 2026-11-14 by the
+# Shoko session). Kept: elements 2611, themes 2607, content indicators 2604,
+# dynamic 2605 and the rest of setting (place 2613 holds "space", "prison",
+# "dungeon", "fictional location": content). Dropped:
+TAG_ROOTS = {2610, 2611, 2607, 2605, 2604, 2606, 2609, 6173, 6151, 30, 2608, 2931, 2613, 2612}
+_DROP_BRANCHES = {
+    2630,   # Earth: countries, continents, cities - "Japan" 600 on nearly every series
+    2606,   # target audience (shounen, seinen): metadata
+    2609,   # source material (manga, novel): metadata
+    6173,   # origin (Japanese production): metadata
+    30,     # maintenance tags
+    2931,   # unsorted
+    6151,   # technical aspects (CGI, black and white) - but see _KEEP_IN_DROPPED
+    2608,   # fetishes: never into a prompt by default
+}
+_DROP_TAGS = {2624, 6185}        # "present", "season": 600 and say nothing
+_KEEP_IN_DROPPED = {4616}        # "based on real events" hangs in technical aspects
+
+
+def tag_keeps(tag_id, tree: dict) -> bool:
+    """Whether a tag says what a series is about. Walks the tag's chain up
+    the tree; a chain that ends without a known root (59 newer AniDB tags
+    have no parent yet) is kept."""
+    if not isinstance(tag_id, int):
+        return True
+    if tag_id in TAG_ROOTS or tag_id in _DROP_TAGS:
+        return False
+    if tag_id in _KEEP_IN_DROPPED:
+        return True
+    seen, cur = set(), tree.get(tag_id)
+    while isinstance(cur, int) and cur not in seen:
+        if cur in _DROP_BRANCHES:
+            return False
+        seen.add(cur)
+        cur = tree.get(cur)
+    return True
+
+
+def series_tags_for(anidb_id=None, title: str = None, limit: int = 12) -> Optional[list]:
+    """The tags of a Shoko series that say what it is about, strongest
+    first (weight 0 means "applies, unweighted": last, not dropped), no
+    spoilers. Found by AniDB id, else by title. None when Shoko has nothing
+    on it. Blocking."""
+    from src.database.models import ShokoSeriesMeta
+    with get_db_session() as db:
+        q = db.query(ShokoSeriesMeta.tags)
+        row = None
+        if anidb_id:
+            row = q.filter(ShokoSeriesMeta.anidb_id == int(anidb_id)).first()
+        if row is None and title:
+            row = q.filter(ShokoSeriesMeta.title == title).first()
+    if row is None:
+        return None
+    try:
+        tags = json.loads(row[0] or "[]")
+    except (TypeError, ValueError):
+        return None
+    good = [t for t in tags if t.get("keep", True) and not t.get("spoiler") and t.get("name")]
+    good.sort(key=lambda t: -(t.get("weight") or 0))
+    return [t["name"] for t in good[:limit]]
+
+
 # ── refresh ─────────────────────────────────────────────────────────────────
 
 def _ledger_episode_ids() -> list[int]:
@@ -110,9 +173,11 @@ async def refresh(task=None, *, transport=None, now: Optional[datetime] = None) 
     async with shoko_client.new_client(transport) as c:
         sess = shoko_client.ShokoSession(c, shoko_client.api_keys()[0])
         handled: set[int] = set()
+        tree: dict = {}             # the AniDB tag tree, read once per run
+        tree_read = False
 
         async def fetch(sid: int) -> None:
-            nonlocal fetched, done
+            nonlocal fetched, done, tree, tree_read
             # Marked handled before the cap on purpose: a series over the cap
             # is left for this run, and done=False sends the next one to it.
             handled.add(sid)
@@ -123,6 +188,10 @@ async def refresh(task=None, *, transport=None, now: Optional[datetime] = None) 
             if episodes is None:
                 return                # Shoko did not answer: next run
             tags = await sess.series_tags(sid) or []
+            if not tree_read:
+                tree, tree_read = (await sess.tag_tree()) or {}, True
+            for t in tags:
+                t["keep"] = tag_keeps(t.get("id"), tree)
             info = await sess.series_info(sid)
             await run_write(_save, sid, info, episodes, tags, now)
             fetched += 1
@@ -165,6 +234,34 @@ async def refresh(task=None, *, transport=None, now: Optional[datetime] = None) 
 
 # ── read back ────────────────────────────────────────────────────────────────
 
+def non_regular_play_ids(user_id: int) -> set:
+    """watch_history ids of ``user_id``'s plays that landed on no regular
+    episode: a Special (where AniDB files recaps), Credits, a Trailer, a
+    Parody. Plex/TVDB often number a recap as a regular episode (S01E13),
+    so only the Shoko episode a play was placed on can tell. A play counts
+    only when every episode it covers is known and none is regular.
+    Blocking."""
+    from src.database.models import ShokoSeriesMeta, ShokoWatchSync
+    with get_db_session() as db:
+        plays = db.query(ShokoWatchSync.watch_history_id, ShokoWatchSync.shoko_episode_ids).filter(
+            ShokoWatchSync.user_id == user_id, ShokoWatchSync.shoko_episode_ids.isnot(None)).all()
+        if not plays:
+            return set()
+        types: dict = {}
+        for (eps,) in db.query(ShokoSeriesMeta.episodes):
+            try:
+                for e in json.loads(eps or "[]"):
+                    if isinstance(e.get("id"), int):
+                        types[e["id"]] = e.get("type") or ""
+            except (TypeError, ValueError):
+                continue
+    out = set()
+    for wid, ids in plays:
+        eps = [int(x) for x in str(ids).split(",") if x.strip().isdigit()]
+        if eps and all(e in types for e in eps) and not any(types[e] == "Episode" for e in eps):
+            out.add(wid)
+    return out
+
 def _regular_rated(episodes: list) -> list:
     return [e for e in episodes if e.get("type") == "Episode" and e.get("rating") is not None
             and (e.get("votes") or 0) >= MIN_VOTES]
@@ -198,26 +295,34 @@ def stop_point(user_id: int, series_title: str) -> Optional[dict]:
     placed on a Shoko episode. Blocking."""
     from src.database.models import ShokoSeriesMeta, ShokoWatchSync, WatchHistoryEntry as W
     with get_db_session() as db:
-        row = (db.query(W.completed, ShokoWatchSync.shoko_episode_ids)
-               .join(ShokoWatchSync, ShokoWatchSync.watch_history_id == W.id)
-               .filter(W.user_id == user_id, W.series_title == series_title,
-                       ShokoWatchSync.shoko_episode_ids.isnot(None))
-               .order_by(W.viewed_at.desc()).first())
-        if row is None:
+        plays = (db.query(W.completed, ShokoWatchSync.shoko_episode_ids)
+                 .join(ShokoWatchSync, ShokoWatchSync.watch_history_id == W.id)
+                 .filter(W.user_id == user_id, W.series_title == series_title,
+                         ShokoWatchSync.shoko_episode_ids.isnot(None))
+                 .order_by(W.viewed_at.desc()).limit(20).all())
+        if not plays:
             return None
-        ids = [int(x) for x in str(row[1]).split(",") if x.strip().isdigit()]
-        if not ids:
-            return None
+        series_of: dict = {}
         for (eps,) in db.query(ShokoSeriesMeta.episodes):
             try:
                 episodes = json.loads(eps or "[]")
             except (TypeError, ValueError):
                 continue
-            if any(e.get("id") == ids[-1] for e in episodes):
-                if not _left_midway(episodes, ids[-1]):
-                    return None
-                low = low_point(episodes, ids[-1])
-                return {**low, "finished": bool(row[0])} if low else None
+            for e in episodes:
+                if isinstance(e.get("id"), int):
+                    series_of[e["id"]] = (e, episodes)
+    # The last play on a REGULAR episode: a recap special watched after it
+    # is no place in the season (Shoko phase 2, recaps).
+    for completed, ids in plays:
+        for ep_id in reversed([int(x) for x in str(ids).split(",") if x.strip().isdigit()]):
+            hit = series_of.get(ep_id)
+            if hit is None or hit[0].get("type") != "Episode":
+                continue
+            episodes = hit[1]
+            if not _left_midway(episodes, ep_id):
+                return None
+            low = low_point(episodes, ep_id)
+            return {**low, "finished": bool(completed)} if low else None
     return None
 
 
