@@ -90,13 +90,19 @@ def tag_keeps(tag_id, tree: dict) -> bool:
 
 
 def classify_tags(tags: list, tree: dict) -> list:
-    """Mark each of a series' tags ``keep``. Besides tag_keeps: an
-    unweighted grouping tag ("cast", "fictional location", "the arts") goes
-    when a tag under it is on the series too - the narrower one says it."""
-    implied = {a for t in tags if isinstance(t.get("id"), int) for a in _ancestors(t["id"], tree)}
+    """Mark each of a series' tags ``keep``. Besides tag_keeps: a broader
+    tag ("cast", "fictional location", "the arts") goes when a narrower one
+    under it is on the series with at least its weight - the narrower one
+    says it. A broader tag weighted above all of its narrower ones stays."""
+    best_below: dict = {}
     for t in tags:
-        t["keep"] = (tag_keeps(t.get("id"), tree)
-                     and not ((t.get("weight") or 0) == 0 and t.get("id") in implied))
+        if isinstance(t.get("id"), int):
+            w = t.get("weight") or 0
+            for a in _ancestors(t["id"], tree):
+                best_below[a] = max(best_below.get(a, -1), w)
+    for t in tags:
+        below = best_below.get(t.get("id"), -1)
+        t["keep"] = tag_keeps(t.get("id"), tree) and not below >= (t.get("weight") or 0)
     return tags
 
 
