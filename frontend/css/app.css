@@ -65,14 +65,24 @@
      --fs-2xs … --fs-2xl      the type scale (10/11/12/13/14/16/20/26px); --fs-sm
                               and --fs-base (12/13px) are the dense-view body
                               text, --fs-md (14px) the first-run screens
-     --dur-1/2/3 + --ease-spring   every transition and spring
+     --dur-1/2/3 + --ease-spring   every transition and spring; --ease-bounce
+                              is the one small overshoot (icons, swipe spring-back)
+     --track / --track-h(-sm,-lg) / --track-r / --track-fill   one bar look for
+                              .progress-bar, .kb-meter, .swipe-meter, .wu-cl-bar
+                              and the split bars; fill = amber gradient, done = --success
+     .eyebrow                 the one small uppercase label (11px, 600, .08em,
+                              --text3); other label classes join its selector list
+     @keyframes spin          the one rotation (.act-spin, retry icon, pull-to-refresh)
+     --fs-base (13px)         is the body size of dense views, with --fs-sm 12px
      --on-amber               text and icons on an amber fill
    COLOUR ROLES, completed: success green marks confirmations AND finished
    states (enrichment done, a sync that finished); --info is for neutral
    information badges; --loved is the Swipe/heart colour only.
    SHARED PIECES beyond the grammar: .chip (one selected look:
-   amber outline on --amber-dim), .banner, .segmented, input.switch,
-   .pref-row, .status / setStatus(), skeletonHtml() for loading,
+   amber outline on --amber-dim; button chips = one active at a time, a
+   label.chip wrapping a checkbox is allowed for multi-select filters), .banner, .segmented, input.switch,
+   .pref-row, .status / .test-status (ONE look: state colour + dot; setStatus()
+   writes .status), skeletonHtml() for loading,
    emptyHtml() for empty, .dialog-shell for first-run dialogs, the .wiz-*
    cards of the setup (choice card, status row, plan, checklist).
    Full-screen experiences that are NOT dialogs and may own their overlay:
@@ -905,9 +915,13 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
 .form-group input:focus-visible, .form-group select:focus-visible { outline: none; border-color: var(--amber); }
 .form-group .hint { font-size: var(--fs-xs); color: var(--text3); margin-top: 4px; line-height: 1.5; }
 .form-group .used-for { font-size: var(--fs-xs); color: var(--amber); margin-top: 3px; }
-.test-status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); margin-top: 6px; }
-.test-status.ok { color: var(--success); }
-.test-status.err { color: var(--danger-fg); }
+/* .test-status (hand-written) and .status (written by setStatus()) are ONE look:
+   words in the state colour, a dot before them once a state is set. */
+.test-status, .status { font-size: var(--fs-sm); }
+.test-status { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
+.test-status.ok, .status.ok { color: var(--success); }
+.test-status.err, .status.err { color: var(--danger-fg); }
+.test-status.busy, .status.busy { color: var(--amber); }
 
 /* ── UI GRAMMAR (see the DESIGN LANGUAGE header): page → .toolbar → content →
    .select-bar; sub-panels are .section; rows are .panel-item with ≤3 visible
@@ -994,10 +1008,7 @@ input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outlin
 /* A heading between groups inside one list (recommendation lanes, report blocks) */
 .list-head { display: flex; align-items: baseline; gap: 8px; margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: var(--fs-md); font-weight: 700; }
 /* Inline status next to a Save/Test button: setStatus(el, text, kind) */
-.status { font-size: var(--fs-sm); color: var(--text3); }
-.status.ok { color: var(--success); }
-.status.err { color: var(--danger-fg); }
-.status.busy { color: var(--amber); }
+.status { color: var(--text3); }
 /* Reclassify cards: a compact poster row inside a grid */
 .rc-card { display: flex; gap: 9px; align-items: flex-start; padding: 9px; margin-bottom: 0; }
 /* A row that unfolds: <details class="panel-item"><summary class="panel-item-head"> */
@@ -1593,9 +1604,10 @@ input.switch:focus-visible { outline: 2px solid var(--amber); outline-offset: 2p
 @media (pointer: coarse) { .segmented label { min-height: 40px; display: inline-flex; align-items: center; } }
 
 /* Connection status: a dot before the words, a slow ring while it is up */
-.test-status.ok::before, .test-status.err::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.test-status:is(.ok, .err, .busy)::before, .status:is(.ok, .err, .busy)::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.status:is(.ok, .err, .busy)::before { margin-right: 6px; }
 /* One ring when the connection comes up, not forever on a page of them. */
-.test-status.ok::before { animation: ring 2.4s var(--ease-spring) 1; }
+.test-status.ok::before, .status.ok::before { animation: ring 2.4s var(--ease-spring) 1; }
 @keyframes ring { 0% { box-shadow: 0 0 0 0 var(--success-line); } 70%, 100% { box-shadow: 0 0 0 7px transparent; } }
 
 /* View changes: a short crossfade + rise (ui.withTransition) */
