@@ -6,6 +6,7 @@
     python -m tests.benchmarks.hwbench.run matrix [--export]
     python -m tests.benchmarks.hwbench.run score-sheets --refs a,b [--kind mono|chat]
     python -m tests.benchmarks.hwbench.run record-scores --csv file.csv
+    python -m tests.benchmarks.hwbench.run probe --model <tag>   # day zero, minutes
 
 ``run`` refuses to start while the owner's Ollama holds a model, the
 Curatarr app answers on its port, or the GPU is busy (a game) — numbers
@@ -723,6 +724,32 @@ def cmd_examples(args) -> None:
     print("wizard ->", examples.export_wizard(run_doc))
 
 
+def cmd_probe(args) -> None:
+    """Day-zero checks of one model before any bench time (hwbench/probe.py)."""
+    from . import probe
+    endpoint = args.endpoint or OWNER_OLLAMA
+    try:
+        httpx.get("http://127.0.0.1:11435/api/version", timeout=2)
+        bench_up = True
+    except httpx.HTTPError:
+        bench_up = False
+    if not args.force_busy:
+        if bench_up:
+            raise SystemExit("REFUSED: a bench server answers on :11435 - a probe now would "
+                             "disturb its timings (--force-busy to override)")
+        if not gpu.is_remote() and gpu.query()["used_mib"] > args.busy_mib:
+            raise SystemExit(f"REFUSED: GPU busy ({gpu.query()['used_mib']} MiB used) - a game? "
+                             "(--force-busy to override)")
+    tags = httpx.get(f"{endpoint}/api/tags", timeout=10).json().get("models") or []
+    if not any(m.get("name") in (args.model, args.model + ":latest") for m in tags):
+        raise SystemExit(f"{args.model} is not on {endpoint} - pull it first: ollama pull {args.model}")
+    print(f"probe {args.model} on {endpoint}, profile {args.profile}")
+    res = probe.run_probe(endpoint, args.model, args.profile)
+    for check, status, detail in res["assessment"]:
+        print(f"  {status:<4}  {check:<9} {detail}")
+    print("saved ->", probe.save(res))
+
+
 def main() -> None:
     sys.path.insert(0, str(REPO))
     os.chdir(REPO)
@@ -772,6 +799,13 @@ def main() -> None:
     p.add_argument("--only", default="", help="comma list of models (default: the matrix's curators)")
     p = sub.add_parser("record-scores")
     p.add_argument("--csv", nargs="+", required=True); p.add_argument("--scorer", default="claude")
+    p = sub.add_parser("probe", help="day-zero checks of an installed model: thinking, "
+                                     "judge schema, chat vs generate speed, language")
+    p.add_argument("--model", required=True)
+    p.add_argument("--profile", default="large", choices=["large", "small"])
+    p.add_argument("--endpoint", default="", help=f"Ollama to probe (default {OWNER_OLLAMA})")
+    p.add_argument("--force-busy", action="store_true")
+    p.add_argument("--busy-mib", type=int, default=3500)
     args = ap.parse_args()
     if getattr(args, "remote", "") and not args.remote_host:
         # Named after the host in its URL, so no machine name is baked in here
@@ -779,7 +813,7 @@ def main() -> None:
         args.remote_host = httpx.URL(args.remote).host or "remote"
     {"plan": cmd_plan, "run": cmd_run, "status": cmd_status, "matrix": cmd_matrix,
      "score-sheets": cmd_score_sheets, "record-scores": cmd_record_scores,
-     "examples": cmd_examples}[args.cmd](args)
+     "examples": cmd_examples, "probe": cmd_probe}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -451,4 +451,50 @@ check("remote setup: quality dropped, default server only, no simulated tiers",
 _gpu.set_remote([])
 _run.REMOTE_HOST = ""
 
+# ── day-zero probe: the verdict rules (no model) ───────────────────────────
+from tests.benchmarks.hwbench import probe as _probe  # noqa: E402
+
+_clean = {"content": "Ikiru - it asks how to live.", "thinking": ""}
+_ok_judge = [{"fixture": "a", "valid": True, "thinking": ""},
+             {"fixture": "b", "valid": True, "thinking": ""}]
+
+
+def _status(res: dict, name: str) -> str:
+    return next(s for c, s, _ in _probe.assess(res) if c == name)
+
+
+check("probe: an answer in content with no thinking passes",
+      _status({"think": _clean}, "think") == "PASS")
+check("probe: think:false ignored (gpt-oss:20b, 2026-11-03) is a warning naming the cost",
+      _status({"think": {"content": "Ikiru.", "thinking": "x" * 900}}, "think") == "WARN"
+      and "num_predict" in _probe.assess({"think": {"content": "Ikiru.", "thinking": "x" * 900}})[0][2])
+check("probe: an answer only in 'thinking' (gemma4 new weights) fails",
+      _status({"think": {"content": "", "thinking": "Ikiru is..."}}, "think") == "FAIL")
+check("probe: <think> tags inside content warn",
+      _status({"think": {"content": "<think>hm</think>Ikiru.", "thinking": ""}}, "think") == "WARN")
+check("probe: both verdicts valid pass, one warns, none fails",
+      _status({"judge": _ok_judge}, "judge") == "PASS"
+      and _status({"judge": [_ok_judge[0], {"fixture": "b", "valid": False,
+                                            "error": "bare label"}]}, "judge") == "WARN"
+      and _status({"judge": [{"fixture": "a", "valid": False, "error": "x"},
+                             {"fixture": "b", "valid": False, "error": "y"}]}, "judge") == "FAIL")
+check("probe: a judge fault is named in the detail",
+      "bare label" in _probe.assess({"judge": [_ok_judge[0], {"fixture": "b", "valid": False,
+                                                             "error": "bare label"}]})[0][2])
+check("probe: generate at a third of chat's speed warns (gemma4 new format, 2026-10-15)",
+      _status({"speed": {"chat_tok_s": 33.0, "generate_tok_s": 10.5}}, "speed") == "WARN"
+      and _status({"speed": {"chat_tok_s": 37.1, "generate_tok_s": 35.7}}, "speed") == "PASS")
+check("probe: language detection tells German from English",
+      _probe.language_of("Das ist ein stiller Film, und er wirkt lange nach.") == "de"
+      and _probe.language_of("It is a quiet film and it lingers.") == "en"
+      and _status({"language": {"detected": "en"}}, "language") == "WARN")
+check("probe: a template without .System warns (the constitution would be dropped)",
+      _status({"show": {"capabilities": ["completion"], "template_has_system": False}}, "template") == "WARN"
+      and _status({"show": {"capabilities": [], "template_has_system": True}}, "template") == "PASS")
+check("probe: the fixtures stay the fictional owner's (setup mini-bench)",
+      "Jane Doe" in __import__("src.services.setup_minibench", fromlist=["x"]).JANE_DOE_TASTE)
+check("probe: wired as a run.py subcommand",
+      "def cmd_probe" in Path(_run.__file__).read_text(encoding="utf-8")
+      and '"probe": cmd_probe' in Path(_run.__file__).read_text(encoding="utf-8"))
+
 check.done()

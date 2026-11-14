@@ -532,12 +532,15 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
    ```
    Danach `venv\Scripts\python.exe -m tests.benchmarks.hwbench.run plan --only ⟨tag⟩` ausführen (keine GPU nötig).
 3. **Pull durch den Besitzer.** `run run` zieht selbst und räumt auf. Ein installierter Tag wird nie neu gezogen.
-4. **Template-, Thinking- und Schema-Smoke** (~5 min GPU, Jane-Doe-Fixtures aus `setup_minibench.FIXTURES`):
-   - `/api/chat` mit `think:false`: Antwort in `message.content`, nicht leer, kein `thinking`-Feld, kein `<think>` (gemma4-Falle).
-   - `format=pillars.VERDICT_SCHEMA`: gültiges JSON ohne bare labels (MoE-Falle), dann `pillars._parse_verdict`.
-   - Tempo `/api/chat` gegen `/api/generate`.
-   - Deutsche Anfrage gegen die Sprachregel.
-   - *Lücke:* Dafür gibt es keinen eigenständigen CLI-Weg. `setup_minibench` läuft nur im Wizard (siehe §6, L7).
+4. **Probe** (wenige Minuten GPU, Modell muss installiert sein, GPU frei):
+   `venv\Scripts\python.exe -m tests.benchmarks.hwbench.run probe --model ⟨tag⟩` (bei Bedarf `--profile small`). Sie prüft:
+   - **think:** `/api/chat` mit `think:false` – kommt die Antwort in `message.content`, oder denkt das Modell trotzdem? FAIL, wenn sie nur in `thinking` steht (gemma4-Falle); WARN bei ignoriertem `think:false` (gpt-oss-Falle).
+   - **judge:** der Produktions-Judge auf den beiden Jane-Doe-Fixtures, mit Verfassung des Profils, `VERDICT_SCHEMA` und dem Budget des ersten Versuchs, geprüft mit `pillars._parse_verdict`. Bare labels, Abbruch und Enum-Fehler werden benannt.
+   - **speed:** `/api/chat` gegen `/api/generate`.
+   - **language:** der echte Chat-Prompt (`chat_prompt.build_system_prompt`) mit einer deutschen Frage.
+   - **template:** Fähigkeiten, Kontextlänge und ob das Template überhaupt eine System-Nachricht trägt.
+
+   Ergebnis als PASS/WARN/FAIL, gespeichert unter `hwbench_data/probes/`. Verweigert, solange ein Bench auf :11435 läuft oder die GPU belegt ist. Erst bei PASS (oder einer verstandenen WARN) folgt Schritt 5.
 5. **Bench.**
    `run run --only ⟨tag⟩ --kv-quality` mit sweep, perf (Fit-Target-Stufen) und quality sub40, large und small.
    Danach die NAS-Messung: `run run --only ⟨tag⟩ --remote … --remote-ssh …` (nur perf).
@@ -568,7 +571,7 @@ Jeweils gilt: Spiel aus, Curatarr aus, Ollama ohne geladenes Modell. `run.py pre
 | L4 | Chat-Decider-Fälle: die vier Katalog-Curator sind gescort (2026-11-02, n = 9, ein Lauf je Modell); alle anderen Läufe nicht. Chat fließt nicht in die Matrix ein. | Bei n = 9 und Temperatur 0,7 ist das Ranking nicht belastbar | Zweiter Chat-Lauf je Finalist (Streuung messen); entscheiden, ob Chat in die Matrix-Wertung soll |
 | L5 | Keine 103-Titel-Läufe im Ledger | Die sub40-Streuung ist unbekannt (BEST_TIE 0,25) | P1 |
 | L6 | Judge-Rubrik ohne CLI (`score-sheets --kind judge`, `record-scores --rubric`) | Day-Zero nicht reproduzierbar | Kleine Erweiterung von `run.py` (eigener Auftrag) |
-| L7 | Kein eigenständiger Template-, Thinking- und Schema-Smoke | Day-Zero-Schritt 4 ist Handarbeit | `run probe --only ⟨tag⟩` auf Basis von `setup_minibench` |
+| ~~L7~~ | **Gebaut am 2026-11-14:** `run probe --model ⟨tag⟩` (hwbench/probe.py, Regeln in `tests/test_hwbench.py`) | Der Ablehn-Pfad ist live geprüft (verweigert neben einem laufenden Bench); ein Lauf gegen ein Modell steht noch aus | Am ersten freien GPU-Fenster gegen gemma4:26b-a4b-it-qat (Erwartung: PASS) und qwen3.6:35b-a3b |
 | L8 | Gate-Erwartungen stammen noch aus der 3-Pillar-Zeit; Treffer 20–100 % werden nur berichtet | Das Gate prüft nur das Schema, keine Urteilstreue | Einmal an der 31b-qat neu kalibrieren |
 | L9 | Overrun-Toleranz 256 MiB noch nicht entschieden; viele MoE-Zellen liegen bei 260–330 MiB | 16-GB- und 6-GB-Grenzfälle | Entscheidung des Besitzers |
 | L10 | Die Fit-Simulation reserviert 1,5 GB Desktop; ein Headless-NAS hält mehr (MoE dort ~100 % statt 87 %) | 16-GB-Pakete sind konservativ | `--desktop-reserve` für eine Linux-Simulation, oder NAS-perf als Wahrheit |
