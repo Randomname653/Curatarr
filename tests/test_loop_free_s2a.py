@@ -268,6 +268,9 @@ def _broken():
 
 cw.get_chroma_db = _broken
 app_state.set_state("arr_counts_ts", "")
+# A store unreadable on its first read (the counts are kept between writes
+# once read, so a later outage keeps showing the last counts).
+en._vec_counts_cache.clear()
 try:
     counts = asyncio.run(en._get_arr_counts())
 finally:

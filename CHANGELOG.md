@@ -6,6 +6,16 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**The enrichment page loads in a blink again.** Its status poll took 20-48 s on the NAS (3 s in
+October). Measured on a copy of the owner's data: the four "watched titles enriched" counts for
+shows and anime ran 1.1 s each, because SQLite walked every titled play (380k, nearly all music)
+through the series-title index; a covering index on user, family, series and orphan flag brings
+them to a millisecond (5.4 s to 0.2 s for the whole call here). The poll also read all ~32k
+vector ids every time, which kept the store loaded so the idle release never came while the page
+was open; the counts are now read again only after a write. And the music taste rebuild keeps
+its phrase mean between runs: reading it held the one Chroma thread for 14 s, and a chat search
+waiting behind it took 52 s.
+
 **Shoko, phase 2: recaps don't count, and the curator reads AniDB's tags.** A play Shoko placed on
 no regular episode (AniDB files recaps as specials; Plex often numbers them S01E13) is now neither
 a finished episode nor a drop: the taste profile and the openers skip it, and "where you stopped"
