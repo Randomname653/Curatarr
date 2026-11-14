@@ -81,10 +81,86 @@ def icon_candidates(html: str, base: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-async def _image(client: httpx.AsyncClient, url: str) -> Optional[tuple[bytes, str]]:
+# ── where a fetch may go ─────────────────────────────────────────────────────
+# A page names its icons and a server names its redirects: neither is ours.
+# Every address is checked right before it is fetched, the first one and
+# each redirect hop (redirects are followed here, not by httpx). A public
+# site's fetches stay on https and on hosts that resolve to public internet
+# addresses only (github.com/Radarr.png lands on avatars.githubusercontent.com,
+# netflix.com names a CDN). A LAN app's stay on that app's own host and pass
+# the endpoint policy (code scanning 221/222, 2026-11-14).
+_MAX_HOPS = 3
+
+
+async def _resolve(host: str) -> list[str]:
+    """The addresses ``host`` resolves to (a test replaces this)."""
+    import asyncio
+    infos = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(host, 443), 3.0)
+    return [i[4][0] for i in infos]
+
+
+def _is_literal(host: str) -> bool:
+    import ipaddress
     try:
-        r = await client.get(url)
-    except httpx.HTTPError:
+        ipaddress.ip_address(host.strip("[]"))
+        return True
+    except ValueError:
+        return False
+
+
+async def _public_ok(url: str) -> bool:
+    """https, and every address the host resolves to is on the internet."""
+    import ipaddress
+    try:
+        u = httpx.URL(url)
+    except (httpx.InvalidURL, ValueError, TypeError):
+        return False
+    if u.scheme != "https" or not u.host:
+        return False
+    import asyncio
+    try:
+        addrs = [u.host.strip("[]")] if _is_literal(u.host) else await _resolve(u.host)
+        return bool(addrs) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addrs)
+    except (OSError, asyncio.TimeoutError, ValueError) as e:
+        # Unresolvable, slow or odd: not fetched (a logo is optional).
+        logger.debug("[setup] logo host %s refused: %s", u.host, e)
+        return False
+
+
+def _lan_ok(lan_base: str):
+    """The check for a LAN app: its own host, and the endpoint policy."""
+    from src.services.media_server.jellyfin_connect import _allowed
+    host = httpx.URL(lan_base).host
+
+    async def ok(url: str) -> bool:
+        try:
+            if httpx.URL(url).host != host:
+                return False
+        except (httpx.InvalidURL, ValueError, TypeError):
+            return False
+        return await _allowed(url)
+    return ok
+
+
+async def _get(client: httpx.AsyncClient, url: str, ok) -> Optional[httpx.Response]:
+    """GET ``url``, following up to _MAX_HOPS redirects, each address passing
+    ``ok`` first; None when one does not or the fetch fails."""
+    for _ in range(_MAX_HOPS + 1):
+        if not await ok(url):
+            return None
+        try:
+            r = await client.get(url)
+        except httpx.HTTPError:
+            return None
+        if not r.is_redirect:
+            return r
+        url = str(r.url.join(r.headers.get("location", "")))
+    return None
+
+
+async def _image(client: httpx.AsyncClient, url: str, ok) -> Optional[tuple[bytes, str]]:
+    r = await _get(client, url, ok)
+    if r is None:
         return None
     ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
     if r.status_code != 200 or not ctype.startswith("image/") or not 0 < len(r.content) <= MAX_BYTES:
@@ -100,26 +176,22 @@ async def service_logo(key: str, lan_url: Optional[str] = None, *, transport=Non
         return None
     if base in _logos:
         return _logos[base]
-    if lan_url:
-        from src.services.media_server.jellyfin_connect import _allowed
-        if not await _allowed(base):
-            return None
+    ok = _lan_ok(base) if lan_url else _public_ok
     got = None
-    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, follow_redirects=True,
+    async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, follow_redirects=False,
                                  headers={"User-Agent": _UA}, transport=transport) as c:
         for path in LAN_PATHS if lan_url else ():
-            got = await _image(c, base + path)
+            got = await _image(c, base + path, ok)
             if got:
                 _logos[base] = got
                 return got
-        try:
-            page = await c.get(base + "/")
-            html = page.text[:200_000] if page.status_code == 200 else ""
-            base_url = str(page.url).rstrip("/") if page.status_code == 200 else base
-        except httpx.HTTPError:
+        page = await _get(c, base + "/", ok)
+        if page is not None and page.status_code == 200:
+            html, base_url = page.text[:200_000], str(page.url).rstrip("/")
+        else:
             html, base_url = "", base
         for url in [*icon_candidates(html, base_url)[:4], *([FALLBACK[key]] if key in FALLBACK else [])]:
-            got = await _image(c, url)
+            got = await _image(c, url, ok)
             if got:
                 break
     if got:

@@ -490,7 +490,9 @@ _LANGUAGE_NOTES = {
            "(\"Serien-Sprint\", not \"Serien-Sprintsiegerin\"), and the archetype_subhead uses no personal "
            "pronoun (er, sie) - it says what was watched."),
 }
-_EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF\uFE0F\u200D]")
+# Raw: the regex engine reads the escapes, so a scanner sees the ranges (the
+# regional indicators 1F1E6-1F1FF lie inside 1F000-1FAFF; code scanning 217).
+_EMOJI = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]")
 
 
 def no_emoji(text: str) -> str:
