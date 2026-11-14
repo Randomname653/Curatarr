@@ -275,7 +275,20 @@ export async function loadCacheInventory(btn) {
 // while a run or a custodian tick is in progress; lists are NOT touched here
 // (see _kbRefresh). Called from showKbTab, the Refresh button and after runs.
 let _kbPollTimer = null;
+// The KB's rarer maintenance actions behind one More: the toolbar carried
+// five buttons (UI audit 2026-11-14). Audit metadata does a dry run and asks
+// before it queues anything; Backfill OMDb reports in Activity.
+function _renderKbMore() {
+  const el = document.getElementById('kb-maint-more');
+  if (!el || el.innerHTML) return;
+  el.innerHTML = menuHtml([
+    {label: t('kb.view.audit'), action: act('auditRequeueEnrichments', EL), title: t('kb.view.audit_title')},
+    {label: t('kb.view.omdb'), action: act('omdbBackfill', EL), title: t('kb.view.omdb_title')},
+  ], t('common.more'), {size: 'md'});
+}
+
 export async function loadEnrichStatus() {
+  _renderKbMore();
   if (_kbPollTimer) { clearTimeout(_kbPollTimer); _kbPollTimer = null; }
   const el = document.getElementById('enrich-overview');
   // The first open reads the whole library (seconds on a fresh install): its shape, not a bare line.

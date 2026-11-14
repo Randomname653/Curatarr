@@ -369,10 +369,12 @@ export function confirmDialog(o = {}) {
 // "More" overflow behind a row's visible actions. `call` is the inline
 // handler (rows are string templates; `this` is the menu item, so pass data
 // through `attrs`, e.g. attrs: 'data-pid="7"'); `href` renders a link.
-export function menuHtml(items, label = t('common.more')) {
+// o.size 'md': the trigger matches full-size toolbar buttons (a view's
+// toolbar); the default is the row size.
+export function menuHtml(items, label = t('common.more'), o = {}) {
   const list = (items || []).filter(Boolean);
   if (!list.length) return '';
-  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
+  return `<span class="menu"><button type="button" class="btn btn-secondary${o.size === 'md' ? '' : ' btn-sm'}" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
     it.sep ? '<div class="menu-sep"></div>'
     : it.href ? `<a class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" href="${escAttr(it.href)}" target="_blank" rel="noopener"${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</a>`
     : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" ${it.action || ''}${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;

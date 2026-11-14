@@ -100,7 +100,7 @@ function _renderHistoryMore() {
     {label: t('history.recompute'), action: act('recomputeTaste')},
     {sep: true},
     {label: t('auth.libraries_btn', {server: serverLabel()}), action: act('showLibrariesForce')},
-  ]);
+  ], t('common.more'), {size: 'md'});
 }
 
 export async function loadHistoryStatus() {

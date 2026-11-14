@@ -540,14 +540,9 @@
                 <button class="btn btn-primary" data-action="startEnrichNew" data-args='["$el"]' data-i18n="kb.view.start">Start enrichment</button>
                 <!-- Category-aware (the checkboxes above), unlike History's Recompute taste. -->
                 <button class="btn btn-secondary" data-action="computeTaste" data-args='["$el"]' data-i18n="history.recompute">Recompute taste</button>
-                <!-- Pass 55: audit-requeue — finds profiles with missing metadata
-                     (zero rating, not_found) and requeues only those, instead of
-                     a full-library force-clear. Runs a dry-run first to show the
-                     breakdown, then asks for confirmation. -->
-                <button class="btn btn-secondary" data-action="auditRequeueEnrichments" data-args='["$el"]'
-                  title="Finds titles with missing metadata (no rating, not found) and queues only those again" data-i18n-title="kb.view.audit_title" data-i18n="kb.view.audit">Audit metadata</button>
-                <button class="btn btn-secondary" data-action="omdbBackfill" data-args='["$el"]'
-                  title="Fetches OMDb data (writer, awards, longer plot) for titles that have an IMDb id but no OMDb data yet. Progress shows in Activity." data-i18n-title="kb.view.omdb_title" data-i18n="kb.view.omdb">Backfill OMDb</button>
+                <!-- Audit metadata and Backfill OMDb behind More (kb.js
+                     _renderKbMore): five buttons in one row before. -->
+                <span id="kb-maint-more"></span>
                 <div class="toolbar-right">
                   <button class="btn btn-secondary" data-action="loadEnrichStatus" data-i18n="history.refresh">Refresh</button>
                 </div>
