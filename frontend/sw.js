@@ -6,7 +6,7 @@
 // as no-cache, and a release must show up on the next load, not the one
 // after); the cache is the fallback for when the server is down or the phone
 // has no route home. Bump VERSION to drop an old shell on activate.
-const VERSION = 'curatarr-shell-v3';   // v3: the UI's dictionaries
+const VERSION = 'curatarr-shell-v4';   // v4: the offline page in the dialog shell (UI audit 2026-11)
 const SHELL = [
   '/',
   '/css/app.css',

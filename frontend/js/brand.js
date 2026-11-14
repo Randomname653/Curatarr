@@ -5,6 +5,8 @@
 // (#logo, the login wordmark, <template> clones), coloured by the --brand-*
 // tokens in app.css.
 
+import { t as tr } from './i18n.js';
+
 const ICON_KEY = 'curatarr_icon';
 export const ICON_STYLES = ['modern', 'classic'];
 const FAVICON = {modern: '/icons/favicon.svg', classic: '/icons/favicon-classic.svg'};
@@ -70,7 +72,7 @@ export function thinkingIndicator() {
   const el = document.createElement('div');
   el.className = 'thinking';
   el.setAttribute('role', 'img');
-  el.setAttribute('aria-label', 'Thinking');
+  el.setAttribute('aria-label', tr('chat.thinking_aria'));
   const badge = el.appendChild(document.createElement('span'));
   badge.className = 'thinking-mark';
   const t = document.getElementById(iconStyle() === 'classic' ? 'brand-ring' : 'brand-mark')?.content.firstElementChild;
@@ -85,7 +87,7 @@ export function thinkingIndicator() {
   const label = el.appendChild(document.createElement('span'));
   label.className = 'thinking-label';
   label.setAttribute('aria-hidden', 'true');
-  label.textContent = 'Thinking…';
+  label.textContent = tr('chat.thinking');
   return el;
 }
 

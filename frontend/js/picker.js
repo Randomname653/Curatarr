@@ -3,7 +3,7 @@
 //    deletion cards; the category is resolved server-side, never invented
 //    here. Pin closes it (toast + the caller's onDone), "Not this one" only
 //    drops that candidate from the list so another can be picked.
-import { EL, EVENT, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, closeModal, emptyHtml, esc, escAttr, openModal, toast } from './ui.js';
+import { EL, EVENT, _errHtml, _errMsg, act, actOn, btnBusy, btnDone, closeModal, emptyHtml, esc, escAttr, openModal, toast, loadingHtml } from './ui.js';
 import { api } from './api.js';
 import { PIN_ID_KINDS } from './kb.js';
 import { t, th } from './i18n.js';
@@ -22,7 +22,7 @@ export function openMatchPicker(opts) {
 
 export async function renderMatchPicker(box, opts) {
   const {service, arrId, title, year, category} = opts;
-  box.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('picker.searching')}</p>`;
+  box.innerHTML = loadingHtml(t('picker.searching'));
   const q = new URLSearchParams({service, arr_id: String(arrId), title: title || ''});
   if (year) q.set('year', String(year));
   if (category) q.set('category', category);

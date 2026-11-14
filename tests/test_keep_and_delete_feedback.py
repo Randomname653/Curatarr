@@ -172,7 +172,7 @@ check("the All tab sums every category and takes the latest time",
       {k: allr[k] for k in ("judged", "flagged", "deferred", "failed", "at")}
       == {"judged": 30, "flagged": 5, "deferred": 2, "failed": 3, "at": "2026-10-10T09:00:00"})
 check("the Deletions view renders the run banner from last_run",
-      "_renderRunBanner(r.last_run)" in ui and "couldn't be judged" in ui)
+      "_renderRunBanner(r.last_run)" in ui and "del.run.failed_pre" in ui)
 check("the engine's Keep comment names this suite",
       "tests/test_keep_and_delete_feedback.py pins the two together" in src)
 

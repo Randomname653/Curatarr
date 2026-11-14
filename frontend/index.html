@@ -106,10 +106,10 @@
 
 <!-- ONBOARDING OVERLAY -->
 <div id="onboarding-overlay" class="overlay-dim hidden">
-  <div class="dialog-box-520" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+  <div class="dialog-box-520 dialog-shell" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
     <div class="box-head">
       <div class="setup-logo ob-logo" id="ob-logo"></div>
-      <h1 class="fs-18 fw-700 t-amber" id="onboarding-title"></h1>
+      <h1 class="setup-heading" id="onboarding-title"></h1>
       <p class="fs-13 t2 mt-6 lh-15" id="onboarding-sub"></p>
     </div>
     <div class="pad-24-28" id="onboarding-body"></div>
@@ -121,7 +121,7 @@
   <button id="sb-hamburger" data-action="toggleMobileSidebar" title="Menu" data-i18n-title="top.menu" aria-label="Open menu" data-i18n-aria-label="top.open_menu">
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
-  <span id="logo" data-brand-slot><svg class="brand-logo" viewBox="201.3 804.4 1597.9 391.6" role="img" aria-label="Curatarr"><path class="brand-c" d="M808.885,1095.953c-15.091,7.307-34.797,10.958-59.115,10.958c-31.72,0-56.663-9.323-74.83-27.972 c-18.167-18.647-27.251-43.493-27.251-74.543c0-33.065,10.212-59.883,30.64-80.454c20.424-20.568,46.931-30.855,79.516-30.855 c20.186,0,37.199,2.548,51.041,7.641v44.841c-13.841-8.265-29.607-12.399-47.292-12.399c-19.418,0-35.086,6.105-47.004,18.31 c-11.92,12.209-17.878,28.743-17.878,49.599c0,19.994,5.623,35.926,16.869,47.796c11.246,11.873,26.386,17.807,45.418,17.807 c18.167,0,34.795-4.42,49.887-13.264V1095.953z"/><path class="brand-c" d="M980.751,1103.307h-45.419v-22.492h-0.721c-11.245,17.399-26.291,26.097-45.128,26.097 c-34.221,0-51.328-20.713-51.328-62.142v-89.105h45.417v85.067c0,20.859,8.266,31.288,24.798,31.288 c8.17,0,14.708-2.859,19.609-8.578c4.902-5.718,7.353-13.481,7.353-23.286v-84.491h45.419V1103.307z"/><path class="brand-c" d="M1115.417,996.756c-5.479-2.978-11.873-4.47-19.177-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M1259.455,1103.307h-43.11v-21.195h-0.577c-9.901,16.534-24.56,24.8-43.975,24.8 c-14.324,0-25.593-4.059-33.81-12.184c-8.219-8.121-12.327-18.959-12.327-32.513c0-28.642,16.963-45.176,50.896-49.598 l40.082-5.335c0-16.148-8.747-24.223-26.241-24.223c-17.591,0-34.316,5.24-50.176,15.716v-34.316 c6.343-3.266,15.017-6.15,26.025-8.651c11.006-2.498,21.026-3.748,30.062-3.748c42.101,0,63.152,21.003,63.152,63.008V1103.307z M1216.632,1043.326v-9.948l-26.818,3.46c-14.803,1.924-22.204,8.604-22.204,20.042c0,5.191,1.802,9.443,5.407,12.759 c3.605,3.317,8.482,4.974,14.635,4.974c8.554,0,15.522-2.956,20.907-8.867 C1213.941,1059.836,1216.632,1052.363,1216.632,1043.326z"/><path class="brand-c" d="M1384.75,1101.576c-6.729,3.555-16.87,5.335-30.423,5.335c-32.106,0-48.157-16.675-48.157-50.031 v-67.622h-23.935v-33.594h23.935v-31.865l45.417-12.976v44.842h33.162v33.594h-33.162v59.692c0,15.38,6.103,23.069,18.311,23.069 c4.806,0,9.755-1.392,14.851-4.181V1101.576z"/><path class="brand-c" d="M1533.258,1103.307h-43.11v-21.195h-0.577c-9.901,16.534-24.56,24.8-43.975,24.8 c-14.324,0-25.592-4.059-33.81-12.184c-8.219-8.121-12.327-18.959-12.327-32.513c0-28.642,16.963-45.176,50.896-49.598 l40.082-5.335c0-16.148-8.747-24.223-26.24-24.223c-17.591,0-34.316,5.24-50.176,15.716v-34.316 c6.343-3.266,15.017-6.15,26.025-8.651c11.006-2.498,21.026-3.748,30.062-3.748c42.101,0,63.152,21.003,63.152,63.008V1103.307z M1490.435,1043.326v-9.948l-26.818,3.46c-14.803,1.924-22.204,8.604-22.204,20.042c0,5.191,1.802,9.443,5.407,12.759 c3.605,3.317,8.482,4.974,14.635,4.974c8.554,0,15.522-2.956,20.907-8.867 C1487.744,1059.836,1490.435,1052.363,1490.435,1043.326z"/><path class="brand-c" d="M1665.618,996.756c-5.479-2.978-11.873-4.47-19.177-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M1783.127,996.756c-5.479-2.978-11.873-4.47-19.176-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M376.99,1111.406c-37.299,19.618-75.467,29.779-87.905,32.784 c-43.847-32.836-72.213-85.2-72.213-144.188c0-29.242,6.97-56.859,19.343-81.273c0,0,0,0.006,0.006,0.025 C236.773,920.852,270.586,1047.142,376.99,1111.406z"/><path class="brand-c" d="M561.693,1072.644c-11.987,27.156-30.492,50.788-53.529,68.919 c-6.792,5.344-13.978,10.212-21.505,14.553c-26.42,15.218-57.066,23.925-89.747,23.925c-31.262,0-60.662-7.968-86.283-21.984 c26.461-5.668,60.659-17.465,98.643-41.486c6.658-4.209,13.435-8.794,20.305-13.791c20.13-14.634,41.075-32.774,62.297-55.248 c17.807,8.026,37.529,15.484,59.358,22.068C554.667,1070.635,558.152,1071.651,561.693,1072.644z"/><path class="brand-c" d="M472.347,849.803c-19.514,9.971-38.66,22.472-57.189,37.326 c4.806,3.164,9.667,6.521,14.578,10.092c20.13,14.634,41.075,32.774,62.297,55.248c17.807-8.026,37.529-15.484,59.358-22.068 c3.435-1.036,6.92-2.052,10.461-3.044c-11.987-27.156-30.492-50.788-53.529-68.919c-6.792-5.344-13.978-10.212-21.505-14.553 c-0.454-0.262-0.913-0.517-1.37-0.775L472.347,849.803z"/><path class="brand-c" d="M463.616,832.723c0,0-0.006,0-0.013,0.006c-1.311,0.371-84.074,24.293-174.159,148.128 c-19.618-28.388-34.856-60.658-41.327-82.252c6.388-9.355,13.639-18.083,21.632-26.057 c32.573-32.496,77.52-52.588,127.16-52.588C420.479,819.96,442.987,824.487,463.616,832.723z"/><path class="brand-diamond" d="M396.911,944.929C364.313,967.837,341.839,1000,341.839,1000s11.807,24.87,55.071,55.072 c43.265-30.201,55.071-55.072,55.071-55.072S429.509,967.837,396.911,944.929z"/></svg><span class="admin-action-row" hidden>beta</span></span>
+  <span id="logo" data-brand-slot><svg class="brand-logo" viewBox="201.3 804.4 1597.9 391.6" role="img" aria-label="Curatarr"><path class="brand-c" d="M808.885,1095.953c-15.091,7.307-34.797,10.958-59.115,10.958c-31.72,0-56.663-9.323-74.83-27.972 c-18.167-18.647-27.251-43.493-27.251-74.543c0-33.065,10.212-59.883,30.64-80.454c20.424-20.568,46.931-30.855,79.516-30.855 c20.186,0,37.199,2.548,51.041,7.641v44.841c-13.841-8.265-29.607-12.399-47.292-12.399c-19.418,0-35.086,6.105-47.004,18.31 c-11.92,12.209-17.878,28.743-17.878,49.599c0,19.994,5.623,35.926,16.869,47.796c11.246,11.873,26.386,17.807,45.418,17.807 c18.167,0,34.795-4.42,49.887-13.264V1095.953z"/><path class="brand-c" d="M980.751,1103.307h-45.419v-22.492h-0.721c-11.245,17.399-26.291,26.097-45.128,26.097 c-34.221,0-51.328-20.713-51.328-62.142v-89.105h45.417v85.067c0,20.859,8.266,31.288,24.798,31.288 c8.17,0,14.708-2.859,19.609-8.578c4.902-5.718,7.353-13.481,7.353-23.286v-84.491h45.419V1103.307z"/><path class="brand-c" d="M1115.417,996.756c-5.479-2.978-11.873-4.47-19.177-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M1259.455,1103.307h-43.11v-21.195h-0.577c-9.901,16.534-24.56,24.8-43.975,24.8 c-14.324,0-25.593-4.059-33.81-12.184c-8.219-8.121-12.327-18.959-12.327-32.513c0-28.642,16.963-45.176,50.896-49.598 l40.082-5.335c0-16.148-8.747-24.223-26.241-24.223c-17.591,0-34.316,5.24-50.176,15.716v-34.316 c6.343-3.266,15.017-6.15,26.025-8.651c11.006-2.498,21.026-3.748,30.062-3.748c42.101,0,63.152,21.003,63.152,63.008V1103.307z M1216.632,1043.326v-9.948l-26.818,3.46c-14.803,1.924-22.204,8.604-22.204,20.042c0,5.191,1.802,9.443,5.407,12.759 c3.605,3.317,8.482,4.974,14.635,4.974c8.554,0,15.522-2.956,20.907-8.867 C1213.941,1059.836,1216.632,1052.363,1216.632,1043.326z"/><path class="brand-c" d="M1384.75,1101.576c-6.729,3.555-16.87,5.335-30.423,5.335c-32.106,0-48.157-16.675-48.157-50.031 v-67.622h-23.935v-33.594h23.935v-31.865l45.417-12.976v44.842h33.162v33.594h-33.162v59.692c0,15.38,6.103,23.069,18.311,23.069 c4.806,0,9.755-1.392,14.851-4.181V1101.576z"/><path class="brand-c" d="M1533.258,1103.307h-43.11v-21.195h-0.577c-9.901,16.534-24.56,24.8-43.975,24.8 c-14.324,0-25.592-4.059-33.81-12.184c-8.219-8.121-12.327-18.959-12.327-32.513c0-28.642,16.963-45.176,50.896-49.598 l40.082-5.335c0-16.148-8.747-24.223-26.24-24.223c-17.591,0-34.316,5.24-50.176,15.716v-34.316 c6.343-3.266,15.017-6.15,26.025-8.651c11.006-2.498,21.026-3.748,30.062-3.748c42.101,0,63.152,21.003,63.152,63.008V1103.307z M1490.435,1043.326v-9.948l-26.818,3.46c-14.803,1.924-22.204,8.604-22.204,20.042c0,5.191,1.802,9.443,5.407,12.759 c3.605,3.317,8.482,4.974,14.635,4.974c8.554,0,15.522-2.956,20.907-8.867 C1487.744,1059.836,1490.435,1052.363,1490.435,1043.326z"/><path class="brand-c" d="M1665.618,996.756c-5.479-2.978-11.873-4.47-19.177-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M1783.127,996.756c-5.479-2.978-11.873-4.47-19.176-4.47c-9.902,0-17.64,3.629-23.213,10.886 c-5.577,7.259-8.363,17.135-8.363,29.629v70.506h-45.561V955.664h45.561v27.394h0.577c7.208-19.991,20.185-29.99,38.929-29.99 c4.805,0,8.554,0.576,11.246,1.73V996.756z"/><path class="brand-c" d="M376.99,1111.406c-37.299,19.618-75.467,29.779-87.905,32.784 c-43.847-32.836-72.213-85.2-72.213-144.188c0-29.242,6.97-56.859,19.343-81.273c0,0,0,0.006,0.006,0.025 C236.773,920.852,270.586,1047.142,376.99,1111.406z"/><path class="brand-c" d="M561.693,1072.644c-11.987,27.156-30.492,50.788-53.529,68.919 c-6.792,5.344-13.978,10.212-21.505,14.553c-26.42,15.218-57.066,23.925-89.747,23.925c-31.262,0-60.662-7.968-86.283-21.984 c26.461-5.668,60.659-17.465,98.643-41.486c6.658-4.209,13.435-8.794,20.305-13.791c20.13-14.634,41.075-32.774,62.297-55.248 c17.807,8.026,37.529,15.484,59.358,22.068C554.667,1070.635,558.152,1071.651,561.693,1072.644z"/><path class="brand-c" d="M472.347,849.803c-19.514,9.971-38.66,22.472-57.189,37.326 c4.806,3.164,9.667,6.521,14.578,10.092c20.13,14.634,41.075,32.774,62.297,55.248c17.807-8.026,37.529-15.484,59.358-22.068 c3.435-1.036,6.92-2.052,10.461-3.044c-11.987-27.156-30.492-50.788-53.529-68.919c-6.792-5.344-13.978-10.212-21.505-14.553 c-0.454-0.262-0.913-0.517-1.37-0.775L472.347,849.803z"/><path class="brand-c" d="M463.616,832.723c0,0-0.006,0-0.013,0.006c-1.311,0.371-84.074,24.293-174.159,148.128 c-19.618-28.388-34.856-60.658-41.327-82.252c6.388-9.355,13.639-18.083,21.632-26.057 c32.573-32.496,77.52-52.588,127.16-52.588C420.479,819.96,442.987,824.487,463.616,832.723z"/><path class="brand-diamond" d="M396.911,944.929C364.313,967.837,341.839,1000,341.839,1000s11.807,24.87,55.071,55.072 c43.265-30.201,55.071-55.072,55.071-55.072S429.509,967.837,396.911,944.929z"/></svg><span class="beta-tag">beta</span></span>
   <div class="tb-spacer"></div>
   <form id="topbar-search-form" data-on-submit="topbarSearch" data-args='["$event"]' role="search">
     <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -135,7 +135,7 @@
     <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>
     <span id="game-indicator-label" data-i18n="top.game_mode">Game mode</span>
   </div>
-  <button id="msg-bell" data-action="toggleMsgPanel" title="Notifications" data-i18n-title="top.notifications" aria-label="Notifications" data-i18n-aria-label="top.notifications">
+  <button id="msg-bell" data-action="toggleMsgPanel" aria-expanded="false" aria-controls="msg-panel" title="Notifications" data-i18n-title="top.notifications" aria-label="Notifications" data-i18n-aria-label="top.notifications">
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <div id="msg-badge"></div>
   </button>
@@ -233,7 +233,7 @@
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v7m-3-3 3 3 3-3"/></svg>
         <span class="sb-text" data-i18n="nav.install">Install app</span>
       </button>
-      <button data-action="logout" title="Sign out" data-i18n-title="nav.sign_out" aria-label="Sign out" data-i18n-aria-label="nav.sign_out">
+      <button data-action="logoutHere" title="Sign out" data-i18n-title="nav.sign_out" aria-label="Sign out" data-i18n-aria-label="nav.sign_out">
         <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         <span class="sb-text" data-i18n="nav.sign_out">Sign out</span>
       </button>
@@ -287,7 +287,7 @@
       <div id="chat-input-area">
         <!-- Icon + label: phones show the icon alone (aria-label carries the name) -->
         <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." data-i18n-title="chat.new_title" aria-label="New chat" data-i18n-aria-label="chat.new_chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label" data-i18n="chat.new">New</span></button>
-        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-fetch metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-fetch</span></button>
+        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Did Curatarr say something wrong about the current topic? Re-enrich fetches this title's facts again: it clears the cached metadata so the next question starts from fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-enrich metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-enrich</span></button>
         <textarea id="chat-input" aria-label="Chat message" data-i18n-aria-label="chat.input_aria" placeholder="Ask about your library, get recommendations, or just chat…" data-i18n-placeholder="chat.input_placeholder" data-on-keydown="handleKey" data-args='["$event"]' enterkeyhint="send" rows="1"></textarea>
         <button id="send-btn" data-action="sendMessage" aria-label="Send message" data-i18n-aria-label="chat.send_aria"><svg class="btn-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span class="btn-label" data-i18n="chat.send">Send</span></button>
       </div>
@@ -302,11 +302,9 @@
       <div class="view-body">
         <div class="toolbar">
           <button class="btn btn-primary" data-action="syncHistory" data-args='[false]' data-i18n="history.sync_now">Sync now</button>
-          <button class="btn btn-secondary admin-action-row" hidden data-action="syncHistory" data-args='[true]' title="Sync even if the last sync was less than an hour ago" data-i18n-title="history.force_title" data-i18n="history.force_sync">Force sync</button>
-          <button class="btn btn-secondary admin-action-row" hidden data-action="recomputeTaste" data-i18n="history.recompute">Recompute taste</button>
+          <span class="admin-action-row" hidden id="history-more"></span>
           <div class="toolbar-right">
             <button class="btn btn-secondary" data-action="loadHistoryStatus" data-i18n="history.refresh">Refresh</button>
-            <button class="btn btn-secondary admin-action-row" hidden id="libraries-btn" data-action="showLibrariesForce">Plex libraries</button>
           </div>
         </div>
         <div class="mb-20" id="history-stats"></div>
@@ -334,15 +332,15 @@
         </div>
         <div class="toolbar">
           <div class="row" role="group" aria-label="Lane" data-i18n-aria-label="recs.lane">
-            <button id="lane-all-btn" class="chip active" data-action="setRecLane" data-args='["all","$el"]' data-i18n="common.all">All</button>
-            <button id="lane-because-btn" class="chip" data-action="setRecLane" data-args='["because","$el"]' title="Close to three titles you watched recently" data-i18n-title="recs.lane_because_title" data-i18n="recs.lane_because">Because you watched</button>
-            <button id="lane-rediscover-btn" class="chip" data-action="setRecLane" data-args='["rediscover","$el"]' title="Loved once, untouched for two years" data-i18n-title="recs.lane_rediscover_title" data-i18n="recs.lane_rediscover">Rediscover</button>
-            <button id="lane-lib-btn" class="chip" data-action="setRecLane" data-args='["library","$el"]' title="In your library — still unwatched" data-i18n-title="recs.lane_library_title" data-i18n="recs.lane_library">In library</button>
-            <button id="lane-disc-btn" class="chip" data-action="setRecLane" data-args='["discovery","$el"]' title="Not in your library — worth acquiring" data-i18n-title="recs.lane_discovery_title" data-i18n="recs.lane_discovery">Discover new</button>
+            <button id="lane-all-btn" class="chip active" aria-pressed="true" data-action="setRecLane" data-args='["all","$el"]' data-i18n="common.all">All</button>
+            <button id="lane-because-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["because","$el"]' title="Close to three titles you watched recently" data-i18n-title="recs.lane_because_title" data-i18n="recs.lane_because">Because you watched</button>
+            <button id="lane-rediscover-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["rediscover","$el"]' title="Loved once, untouched for two years" data-i18n-title="recs.lane_rediscover_title" data-i18n="recs.lane_rediscover">Rediscover</button>
+            <button id="lane-lib-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["library","$el"]' title="In your library — still unwatched" data-i18n-title="recs.lane_library_title" data-i18n="recs.lane_library">In library</button>
+            <button id="lane-disc-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["discovery","$el"]' title="Not in your library — worth acquiring" data-i18n-title="recs.lane_discovery_title" data-i18n="recs.lane_discovery">Discover new</button>
           </div>
           <button class="btn btn-secondary" data-action="regenerateRecs" data-i18n="recs.regenerate">Regenerate</button>
           <div class="toolbar-right">
-            <input id="lib-search" type="search" class="w-220 input" aria-label="Search your library" data-i18n-aria-label="recs.search_aria" placeholder="Search your library…" data-i18n-placeholder="recs.search" data-on-keydown="searchOnEnter" data-args='["$event"]'>
+            <input id="lib-search" type="search" class="w-220 input" aria-label="Search your library" data-i18n-aria-label="recs.search_aria" placeholder="Describe a mood or theme…" data-i18n-placeholder="recs.semantic_ph" data-on-keydown="searchOnEnter" data-args='["$event"]'>
             <button class="btn btn-secondary btn-sm" data-action="searchLibrary" title="Semantic search over what you own — describe a mood, theme or 'like X but…'" data-i18n-title="recs.search_title" aria-label="Semantic search over what you own" data-i18n-aria-label="recs.search_button"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
           </div>
         </div>
@@ -443,42 +441,37 @@
     <div class="view" id="curation-view">
       <div class="view-header">
         <h1 tabindex="-1" data-i18n="nav.curation">Curation</h1>
-        <p data-i18n="cur.view.lead">The judge's ledger: what it protected, what it flagged for downscaling, and the rules it has learned from your debates. Sections load when opened; keep several open at once.</p>
+        <p data-i18n="cur.view.lead">Curatarr's ledger: what it protected, what it flagged for downscaling, and the rules it has learned from your debates. Sections load when opened; keep several open at once.</p>
       </div>
       <div class="view-body">
         <details class="section" data-on-toggle="curationSection" data-args='["protections","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.protections">Protected titles</h3>
-            <span class="section-hint" data-i18n="cur.view.protections_hint">Titles Curatarr won't suggest deleting, and why. Lift a protection to have it judged again on the next scan.</span>
           </summary>
-          <div class="section-body"><div id="protections-content"></div></div>
+          <div class="section-body"><p class="section-hint cur-hint" data-i18n="cur.view.protections_hint">Titles Curatarr won't suggest deleting, and why. Lift a protection to have it assessed again on the next scan.</p><div id="protections-content"></div></div>
         </details>
 
         <details class="section" data-on-toggle="curationSection" data-args='["downscale","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.downscale">Downscale candidates</h3>
-            <span class="section-hint" data-i18n="cur.view.downscale_hint">Kept, but bitrate outliers — reclaim storage without deleting. Click "Done" after transcoding.</span>
           </summary>
-          <div class="section-body"><div id="downscale-content"></div></div>
+          <div class="section-body"><p class="section-hint cur-hint" data-i18n="cur.view.downscale_hint">Kept, but bitrate outliers — reclaim storage without deleting. Click "Done" after transcoding.</p><div id="downscale-content"></div></div>
         </details>
 
         <details class="section" data-on-toggle="curationSection" data-args='["upgrades","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.upgrades">Upgrade candidates</h3>
-            <span class="section-hint" data-i18n="cur.view.upgrades_hint">The inverse of downscale: titles you demonstrably love sitting on weak files (below 1080p or a lean bitrate). Acting on it is your click in the arr — nothing is re-grabbed automatically.</span>
           </summary>
-          <div class="section-body"><div id="upgrade-content"></div></div>
+          <div class="section-body"><p class="section-hint cur-hint" data-i18n="cur.view.upgrades_hint">The inverse of downscale: titles you demonstrably love sitting on weak files (below 1080p or a lean bitrate). Acting on it is your click in the Arr app — nothing is re-grabbed automatically.</p><div id="upgrade-content"></div></div>
         </details>
 
         <details class="section" data-on-toggle="curationSection" data-args='["redundancy","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.redundancy">Redundant storage</h3>
-            <span class="section-hint" data-i18n="cur.view.redundancy_hint">Duplicate versions of the same title (4K Remux + 1080p) and the same id kept as separate items — the GB you could reclaim without losing anything.</span>
           </summary>
-          <div class="section-body"><div id="redundancy-content"></div></div>
+          <div class="section-body"><p class="section-hint cur-hint" data-i18n="cur.view.redundancy_hint">Duplicate versions of the same title (4K Remux + 1080p) and the same id kept as separate items — the GB you could reclaim without losing anything.</p><div id="redundancy-content"></div></div>
         </details>
 
         <details class="section" data-on-toggle="curationSection" data-args='["principles","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.principles">Learned principles</h3>
-            <span class="section-hint"><span data-i18n="cur.view.principles_hint1">Rules the curator extracted from your debates.</span> <strong data-i18n="cur.view.shadow">Shadow</strong> <span data-i18n="cur.view.principles_hint2">= captured but not yet applied;</span> <strong data-i18n="cur.view.activate">activate</strong> <span data-i18n="cur.view.principles_hint3">to inject it into the judge. contradiction = your call.</span></span>
           </summary>
-          <div class="section-body"><div id="principles-content"></div></div>
+          <div class="section-body"><p class="section-hint cur-hint"><span data-i18n="cur.view.principles_hint1">Rules the curator extracted from your debates.</span> <strong data-i18n="cur.view.shadow">Shadow</strong> <span data-i18n="cur.view.principles_hint2">= captured but not yet applied;</span> <strong data-i18n="cur.view.activate">activate</strong> <span data-i18n="cur.view.principles_hint3">to apply it to deletion checks. contradiction = your call.</span></p><div id="principles-content"></div></div>
         </details>
       </div>
     </div>
@@ -506,7 +499,7 @@
         <div class="cat-tabs" id="kb-tabs">
           <button class="cat-tab active" data-kbtab="overview" data-action="showKbTab" data-args='["overview"]' data-i18n="kb.view.overview">Overview</button>
           <button class="cat-tab" data-kbtab="attention" data-action="showKbTab" data-args='["attention"]'><span data-i18n="kb.view.attention">Needs attention</span> <span class="badge amber badge-sm" hidden id="kb-tab-badge">0</span></button>
-          <button class="cat-tab" data-kbtab="maintenance" data-action="showKbTab" data-args='["maintenance"]' data-i18n="settings.maintenance">Maintenance</button>
+          <button class="cat-tab" data-kbtab="maintenance" data-action="showKbTab" data-args='["maintenance"]' data-i18n="kb.view.tab_enrichment">Enrichment</button>
           <button class="cat-tab" data-kbtab="music" data-action="showKbTab" data-args='["music"]' data-i18n="kb.view.music">Music pipeline</button>
           <button class="cat-tab" data-kbtab="profiles" data-action="showKbTab" data-args='["profiles"]' data-i18n="kb.view.profiles">Profile browser</button>
         </div>
@@ -528,7 +521,7 @@
           <div id="backfill-panel"></div>
           <div id="enrich-live-section" hidden></div>
           <section class="section">
-            <div class="section-head"><h3 data-i18n="kb.view.enrich_run">Enrichment run</h3><span class="section-hint" data-i18n="kb.view.enrich_run_hint">The custodian runs this on its own schedule — these are the manual controls.</span></div>
+            <div class="section-head"><h3 data-i18n="kb.view.enrich_run">Enrichment run</h3><span class="section-hint" data-i18n="kb.view.enrich_run_hint">Maintenance runs this on its own schedule — these are the manual controls.</span></div>
             <div class="section-body">
               <div class="row mb-8">
                 <span class="fs-12 t3" data-i18n="kb.view.libraries">Libraries:</span>
@@ -545,15 +538,11 @@
               </div>
               <div class="mb-0 toolbar">
                 <button class="btn btn-primary" data-action="startEnrichNew" data-args='["$el"]' data-i18n="kb.view.start">Start enrichment</button>
+                <!-- Category-aware (the checkboxes above), unlike History's Recompute taste. -->
                 <button class="btn btn-secondary" data-action="computeTaste" data-args='["$el"]' data-i18n="history.recompute">Recompute taste</button>
-                <!-- Pass 55: audit-requeue — finds profiles with missing metadata
-                     (zero rating, not_found) and requeues only those, instead of
-                     a full-library force-clear. Runs a dry-run first to show the
-                     breakdown, then asks for confirmation. -->
-                <button class="btn btn-secondary" data-action="auditRequeueEnrichments" data-args='["$el"]'
-                  title="Finds titles with missing metadata (no rating, not found) and queues only those again" data-i18n-title="kb.view.audit_title" data-i18n="kb.view.audit">Audit metadata</button>
-                <button class="btn btn-secondary" data-action="omdbBackfill" data-args='["$el"]'
-                  title="Fetches OMDb data (writer, awards, longer plot) for titles that have an IMDb id but no OMDb data yet. Progress shows in Activity." data-i18n-title="kb.view.omdb_title" data-i18n="kb.view.omdb">Backfill OMDb</button>
+                <!-- Audit metadata and Backfill OMDb behind More (kb.js
+                     _renderKbMore): five buttons in one row before. -->
+                <span id="kb-maint-more"></span>
                 <div class="toolbar-right">
                   <button class="btn btn-secondary" data-action="loadEnrichStatus" data-i18n="history.refresh">Refresh</button>
                 </div>
@@ -585,7 +574,7 @@
           <section class="section">
             <div class="section-head"><h3><span data-i18n="kb.view.spotify">Spotify import</span> <span class="badge amber badge-sm" id="music-running-badge" hidden data-i18n="kb.view.running">Running</span></h3>
               <div class="section-actions">
-                <label class="fs-12 t2 row" for="music-batch-input" title="Most tracks each phase handles per run, for Spotify and Last.fm alike. The rest carry over to the next run." data-i18n-title="kb.view.batch_title"><span data-i18n="kb.view.batch">Batch size</span>
+                <label class="fs-12 t2 row" for="music-batch-input" title="Most tracks each step handles per run, for Spotify and Last.fm alike. The rest carry over to the next run." data-i18n-title="kb.view.batch_title"><span data-i18n="kb.view.batch">Batch size</span>
                   <input id="music-batch-input" class="w-70 input" type="number" min="50" max="2000" value="300"></label>
                 <button class="btn btn-primary btn-sm" id="music-start-btn" data-action="startMusicPipeline" data-args='["$el"]' data-i18n="kb.view.start_short">Start</button>
                 <button class="btn btn-secondary btn-sm" id="music-stop-btn" data-action="stopMusicPipeline" data-args='["$el"]' hidden data-i18n="kb.view.stop">Stop</button>
@@ -593,11 +582,11 @@
               </div>
             </div>
             <div class="section-body">
-              <p class="fs-12 t2 mb-12" data-i18n="kb.view.music_hint">Phase 1 matches imported Spotify plays to your Plex tracks. Phase 2 fetches Last.fm genre tags for tracks still missing genres. Safe to repeat: finished entries are skipped.</p>
+              <p class="fs-12 t2 mb-12" data-i18n="kb.view.music_hint">First, imported Spotify plays are matched to your Plex tracks. Then Last.fm genre tags are fetched for tracks still missing genres, and MusicBrainz fills in where Last.fm had none. Safe to repeat: finished entries are skipped.</p>
               <div id="music-lyrics-line" class="fs-12 t3" hidden></div>
-              <div id="music-stats-bar" class="fs-12 t3 mb-12">Loading…</div>
+              <div id="music-stats-bar" class="fs-12 t3 mb-12" data-i18n="common.loading">Loading…</div>
               <div id="music-progress-bar" class="mb-12" hidden>
-                <div class="fs-12 t-amber mb-4" id="music-progress-label">Starting…</div>
+                <div class="fs-12 t-amber mb-4" id="music-progress-label" data-i18n="music.starting">Starting…</div>
                 <div class="mt-0 progress-bar"><div class="w-0 progress-fill" id="music-progress-fill"></div></div>
               </div>
             </div>
@@ -671,7 +660,7 @@
     <!-- RECLASSIFY (anime ↔ TV library sorting) -->
     <div class="view" id="reclassify-view">
       <div class="view-header">
-        <h1 tabindex="-1"><span data-i18n="nav.reclassify">Reclassify</span> <span class="fw-400 fs-13 t3">· anime ↔ TV</span></h1>
+        <h1 tabindex="-1"><span data-i18n="nav.reclassify">Reclassify</span> <span class="fw-400 fs-13 t3">· <span data-i18n="recl.view.sub">anime ↔ TV shows</span></span></h1>
         <p data-i18n="recl.view.lead">Series filed in the wrong Sonarr library. Review and move — nothing happens until you confirm.</p>
       </div>
       <div class="view-body">
@@ -726,7 +715,7 @@
               <button type="button" class="chip active" aria-pressed="true" data-filter-kind="area" data-filter-value="all" data-action="setHistoryFilter" data-args='["area","all"]' data-i18n="act.view.all_areas">All areas</button>
               <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="sync" data-action="setHistoryFilter" data-args='["area","sync"]' data-i18n="act.view.area_sync">Sync</button>
               <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="enrichment" data-action="setHistoryFilter" data-args='["area","enrichment"]' data-i18n="act.view.area_enrichment">Enrichment</button>
-              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="taste" data-action="setHistoryFilter" data-args='["area","taste"]' data-i18n="act.view.area_taste">Taste / vectors</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="taste" data-action="setHistoryFilter" data-args='["area","taste"]' data-i18n="act.view.area_taste">Taste profile</button>
               <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="maintenance" data-action="setHistoryFilter" data-args='["area","maintenance"]' data-i18n="settings.maintenance">Maintenance</button>
             </div>
             <label class="chip act-noop-toggle"><input type="checkbox" id="act-hide-noop" checked data-on-change="toggleHideNoop" data-args='["$el"]'> <span data-i18n="act.view.hide_noop">Hide empty runs</span></label>
@@ -750,7 +739,7 @@
           <nav class="side-col-200 settings-nav">
             <button class="settings-tab active" data-pane="account" data-action="openSettingsPane" data-args='["account","$el"]' data-i18n="settings.account">Account</button>
             <button class="settings-tab" data-pane="notifications" data-action="openSettingsPane" data-args='["notifications","$el"]' data-i18n="settings.notifications">Notifications</button>
-            <button class="settings-tab admin-action-row" hidden data-pane="plex-libraries" data-action="openSettingsPane" data-args='["plex-libraries","$el"]' data-i18n="settings.plex_libraries">Plex libraries</button>
+            <button class="settings-tab admin-action-row" hidden data-pane="plex-libraries" data-action="openSettingsPane" data-args='["plex-libraries","$el"]' id="settings-libs-tab">Plex libraries</button>
             <button class="settings-tab admin-action-row" hidden data-pane="library" data-action="openSettingsPane" data-args='["library","$el"]' data-i18n="settings.arr_apps">Arr apps</button>
             <button class="settings-tab admin-action-row" hidden data-pane="integrations" data-action="openSettingsPane" data-args='["integrations","$el"]' data-i18n="settings.integrations">Integrations</button>
             <button class="settings-tab admin-action-row" hidden data-pane="media-server" data-action="openSettingsPane" data-args='["media-server","$el"]' data-i18n="settings.media_server">Media server</button>
@@ -764,7 +753,7 @@
             <!-- Account pane -->
             <section class="settings-pane" data-pane="account">
               <section class="section">
-                <div class="section-head"><h3 data-i18n="account.signed_in_plex">Signed in via Plex</h3></div>
+                <div class="section-head"><h3 id="account-signed-in">Signed in via Plex</h3></div>
                 <div class="section-body" id="settings-plex-info">
                   <div class="fs-13"><b id="settings-plex-username">—</b> <span id="settings-plex-role" class="fs-12 t3"></span></div>
                   <div class="fs-12 t3 mt-4"><span data-i18n="account.plex_id">Plex ID:</span> <code id="settings-plex-id">—</code></div>
@@ -774,7 +763,7 @@
                 <div class="section-head"><h3 data-i18n="account.curator">Curator</h3><span class="section-hint" data-i18n="account.curator_hint">How the curator talks to you in chat, its openers and its messages. Saves immediately.</span></div>
                 <div class="section-body">
                   <div class="pref-row">
-                    <span class="pref-text" id="curator-voice-label"><span data-i18n="account.tone">Tone</span><small data-i18n="account.tone_hint">Sharp is a touch elitist about titles. Every tone judges the work, not you.</small></span>
+                    <span class="pref-text" id="curator-voice-label"><span data-i18n="account.tone">Tone</span><small data-i18n="account.tone_hint">Sharp is a touch elitist about titles. Every tone is about the work, not you.</small></span>
                     <div class="segmented" role="radiogroup" aria-labelledby="curator-voice-label">
                       <label for="voice-friendly"><input type="radio" name="curator-voice" id="voice-friendly" value="friendly" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_friendly">Friendly</span></label>
                       <label for="voice-neutral"><input type="radio" name="curator-voice" id="voice-neutral" value="neutral" data-on-change="setCuratorVoice" data-args='["$el"]'><span data-i18n="account.tone_neutral">Neutral</span></label>
@@ -834,28 +823,21 @@
             <section class="settings-pane" data-pane="maintenance" hidden>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.nodes">Compute nodes</h3><span class="section-hint" data-i18n="set.view.nodes_hint">This server and the node that lends its card. Name the node as you like; work for its card moves here while it is busy or away.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadNodes" data-i18n="set.view.check_again">Check again</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadNodes" data-i18n="set.view.check_again">Refresh</button></div></div>
                 <div class="section-body"><div id="maint-nodes"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.deps">Dependencies</h3><span class="section-hint" data-i18n="set.view.deps_hint">Pinned requirements versus the interpreter that runs this server. The launchers install; the server only reports.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadDepsStatus" data-args='["$el"]' data-i18n="set.view.check_again">Check again</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadDepsStatus" data-args='["$el"]' data-i18n="set.view.check_again">Refresh</button></div></div>
                 <div class="section-body"><div id="maint-deps"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.models">Model updates</h3><span class="section-hint" data-i18n="set.view.models_hint">Each model runs the weights it was installed with. When the registry has new ones, test old against new on your own titles and decide.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadModelUpdates" data-args='["$el", true]' data-i18n="set.view.check_now">Check now</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadModelUpdates" data-args='["$el", true]' data-i18n="set.view.check_now">Check for updates</button></div></div>
                 <div class="section-body"><div id="maint-models"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
-              <section class="section">
-                <div class="section-head"><h3 data-i18n="set.view.plex_sync">Plex sync</h3><span class="section-hint" data-i18n="set.view.plex_sync_hint">Pull new watch history from Plex and update your taste profile. Safe to repeat.</span>
-                  <div class="section-actions">
-                    <button class="btn btn-secondary btn-sm" data-action="syncHistory" data-args='[false,"maint-sync-status"]' data-i18n="history.sync_now">Sync now</button>
-                    <button class="btn btn-secondary btn-sm" data-action="syncHistory" data-args='[true,"maint-sync-status"]' title="Sync even if the last sync was less than an hour ago" data-i18n-title="history.force_title" data-i18n="history.force_sync">Force sync</button>
-                    <button class="btn btn-secondary btn-sm" data-action="recomputeTaste" data-args='["maint-sync-status"]' data-i18n="history.recompute">Recompute taste</button>
-                  </div></div>
-                <div class="section-body"><span id="maint-sync-status" class="status"></span></div>
-              </section>
+              <!-- Sync now / Force sync / Recompute taste live in History & Taste
+                   (Sync now + More): this section repeated them (UI audit 2026-11-14). -->
               <section class="section" id="maint-reattribute">
                 <div class="section-head"><h3 data-i18n="set.view.reattribute">Re-attribute history</h3>
                   <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="reattributeHistory" data-args='["$el"]' data-i18n="set.view.reattribute_run">Run re-attribution</button></div></div>
@@ -874,7 +856,7 @@
               </section>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.hide_orphans">Hide history for removed media</h3>
-                  <div class="section-actions"><button class="btn btn-sm" data-action="cleanupOrphans" data-args='["$el"]' data-i18n="set.view.hide_orphans_btn">Hide history</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="cleanupOrphans" data-args='["$el"]' data-i18n="set.view.hide_orphans_btn">Hide history</button></div></div>
                 <div class="section-body">
                   <p class="lh-15 fs-12 t3" data-i18n="set.view.hide_orphans_hint">Hides watch history for titles that are no longer in any library of your media server from history, taste and recommendations. The plays are kept for your Wrap-Up, and come back if the title returns. Spotify history is never hidden. Nothing is hidden if a library can't be read.</p>
                   <div id="maint-cleanup-status" class="status mt-8"></div>
@@ -913,8 +895,8 @@
                  server reports set / not set, typing a value replaces it. -->
             <section class="settings-pane" data-pane="integrations" hidden>
               <p class="lh-15 fs-12 t3 mb-12">
-                <span data-i18n="set.view.integr_1">Plex, Ollama, the model bakes and every metadata source. Saving writes</span>
-                <code>.env</code> <span data-i18n="set.view.integr_2">and reloads settings live; a model change also needs</span>
+                <span data-i18n="set.view.integr_1">Plex, Ollama, Curatarr's models and every metadata source. Saving stores them</span>
+                <span data-i18n="set.view.integr_2">and reloads settings live; a model change also needs</span>
                 <strong data-i18n="set.view.integr_rebuild">Rebuild models</strong> <span data-i18n="set.view.integr_3">and a restart — the panel says so.</span>
                 <span data-i18n="set.view.integr_4">Sonarr, Radarr and Lidarr live under</span> <em data-i18n="settings.arr_apps">Arr apps</em>.
               </p>
@@ -962,7 +944,7 @@
 </div>
 
 <!-- MOBILE TAB BAR (≤768px): the thumb-reach shortcuts to the everyday views,
-     the curator in the middle; everything else (Library, Report, ...) stays in
+     the curator in the middle; everything else (Library, Curation, ...) stays in
      the drawer behind "More". Admins get Deletions, members History & Taste
      (auth.setUser). nav.showView marks the tab whose data-views names the view
      on screen. -->
@@ -997,4 +979,5 @@
 </nav>
 
 <script type="module" src="/js/app.js"></script>
+</body>
 </html>

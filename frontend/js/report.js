@@ -4,7 +4,7 @@
 // Stubbornness Index, taste evolution. The yearly paragraph is gone — the
 // curator writes the whole wrap-up now.
 import { _swrCache, _swrRun, api } from './api.js';
-import { _errHtml, act, emptyHtml, esc, loc } from './ui.js';
+import { _errHtml, act, emptyHtml, esc, loc, skeletonHtml } from './ui.js';
 import { t, th } from './i18n.js';
 // The report's one computed style: a fill's share as --v (0-100 %). The
 // class says what it is and which way it grows (.rep-col-* is a column's
@@ -22,7 +22,7 @@ let _ledgerEl = null;
 export async function renderLedger(el) {
   _ledgerEl = el || _ledgerEl;
   if (!_ledgerEl) return;
-  if (!_swrCache.has('report')) _ledgerEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('report.loading')}</p>`;
+  if (!_swrCache.has('report')) _ledgerEl.innerHTML = skeletonHtml(t('report.loading'), {kind: 'rows'});
   try {
     await _swrRun('report', () => api('/api/stats/curation?months=12'), _renderReport);
   } catch (e) {

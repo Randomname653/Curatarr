@@ -209,7 +209,7 @@ if _mxs and _shipped_ex:
         check(f"shipped example: the matrix's {_m} has one", _m in (_shipped_ex.get("models") or {}))
     check("shipped example: the owner is the fictional one", "fictional" in (_shipped_ex.get("owner") or ""))
 check("the wizard renders the example next to the package",
-      "pkg.example" in _frontend_everything() and "CURATOR_EXAMPLES.md" in _frontend_everything())
+      "pkg.example" in _frontend_everything() and "setup.all_examples" in _frontend_everything())
 check("the wizard sends the host RAM and names the fallback",
       "ram_gb: state.setupData.ram_gb" in _frontend_everything()
       and "ram_fallback" in _frontend_everything())

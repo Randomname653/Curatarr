@@ -44,8 +44,12 @@ USER 568:568
 # the file: a new commit only rebuilds these few layers.
 ARG CURATARR_BUILD_SHA=""
 ARG CURATARR_BUILD_DATE=""
+# release: a vX.Y.Z build (:latest, :X.Y.Z); main: every merge (:main).
+# The update check asks about the track the image came from.
+ARG CURATARR_BUILD_TRACK="main"
 ENV CURATARR_BUILD_SHA=$CURATARR_BUILD_SHA \
-    CURATARR_BUILD_DATE=$CURATARR_BUILD_DATE
+    CURATARR_BUILD_DATE=$CURATARR_BUILD_DATE \
+    CURATARR_BUILD_TRACK=$CURATARR_BUILD_TRACK
 LABEL org.opencontainers.image.revision=$CURATARR_BUILD_SHA \
       org.opencontainers.image.created=$CURATARR_BUILD_DATE \
       org.opencontainers.image.source="https://github.com/Randomname653/Curatarr"

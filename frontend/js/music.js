@@ -1,6 +1,6 @@
 // ── MUSIC PIPELINE ────────────────────────────────────────────────────────────
 import { api } from './api.js';
-import { CAT_LABELS, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, loc, toast } from './ui.js';
+import { CAT_LABELS, _errHtml, _errMsg, btnBusy, btnDone, confirmDialog, esc, loc, toast, loadingHtml } from './ui.js';
 import { loadEnrichStatus } from './kb.js';
 import { showView } from './nav.js';
 import { t, th } from './i18n.js';
@@ -177,7 +177,7 @@ export async function computeTaste(btn) {
 export async function auditRequeueEnrichments(btn) {
   const el = document.getElementById('enrich-progress-area');
   btnBusy(btn, t('music.scanning'));
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('music.audit_scanning')}</p>`;
+  el.innerHTML = loadingHtml(t('music.audit_scanning'));
 
   // the reasons are server keys; their words are in the dictionary (music.reason.*)
   const _REASONS = ['zero_rating', 'not_found', 'malformed', 'wrong_entity:title', 'wrong_entity:year', 'wrong_entity:mbid'];
@@ -202,7 +202,7 @@ export async function auditRequeueEnrichments(btn) {
       return;
     }
     // Step 2 — real requeue.
-    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('music.requeuing')}</p>`;
+    el.innerHTML = loadingHtml(t('music.requeuing'));
     const r = await api('/api/enrichment/audit-requeue?dry_run=false', 'POST');
     el.innerHTML = `<p class="fs-13 t-success">${th('music.requeued', {n: r.requeued, of: r.incomplete, why: _fmtBreakdown(r.by_reason)})}</p>`;
     setTimeout(loadEnrichStatus, 2000);

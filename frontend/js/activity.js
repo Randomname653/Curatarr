@@ -180,7 +180,7 @@ export function fmtCadence(text) {
 // The scheduler's notes beside a job (services/activity): a closed set of
 // UI phrases, said in the UI language; anything else as it came.
 const _NOTES = {'running now': 'activity.note.running_now', 'queued': 'activity.note.queued',
-  'due — next custodian tick': 'activity.note.due_next_tick', 'due now': 'activity.note.due_now', 'paused': 'activity.note.paused',
+  'due — next maintenance run': 'activity.note.due_next_tick', 'due now': 'activity.note.due_now', 'paused': 'activity.note.paused',
   'waiting for the GPU (a game holds it)': 'activity.note.wait_gpu', 'waiting for the PC agent': 'activity.note.wait_agent',
   'backing off after a failed run': 'activity.note.backoff'};
 export const fmtNote = s => (_NOTES[s] ? t(_NOTES[s]) : String(s ?? ''));

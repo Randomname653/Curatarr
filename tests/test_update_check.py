@@ -128,6 +128,28 @@ check("a build GitHub does not know: no answer, an error to retry",
 st, _ = refresh(container, {"/actions/workflows/docker.yml/runs": (403, {"message": "rate limit"})})
 check("rate limited: an error, never raises", "error" in st and "update_available" not in st)
 
+# ── tracks: a release image is offered releases, a :main image main builds ──
+release = {"sha": A, "channel": "container", "track": "release"}
+tag_runs = (200, {"workflow_runs": [
+    {"head_branch": "main", "head_sha": C, "updated_at": "t3"},           # newer main build: not a release
+    {"head_branch": "v1.2.0-beta", "head_sha": C, "updated_at": "t2"},    # not a plain release tag
+    {"head_branch": "v1.2.0", "head_sha": B, "updated_at": "t1"}]})
+st, gh = refresh(release, {"/actions/workflows/docker.yml/runs": tag_runs,
+                           f"/compare/{A}...{B}": (200, {"status": "ahead", "ahead_by": 9})})
+check("a release image is offered the newest vX.Y.Z build, not a newer main build",
+      st["latest_sha"] == B and st["update_available"] is True and "branch=main" not in gh.calls[0])
+st, _ = refresh(release, {"/actions/workflows/docker.yml/runs": (200, {"workflow_runs": [
+    {"head_branch": "main", "head_sha": C, "updated_at": "t"}]})})
+check("no release published yet: nothing offered", st["latest_sha"] is None and "error" in st)
+with tempfile.TemporaryDirectory() as tmp:
+    b_rel = bi.build({"CURATARR_BUILD_SHA": A, "CURATARR_BUILD_TRACK": "release"}, Path(tmp))
+    b_old = bi.build({"CURATARR_BUILD_SHA": A}, Path(tmp))
+    check("the image's track: release when built so, main otherwise (old images too)",
+          b_rel["track"] == "release" and b_old["track"] == "main" and bi.build({}, Path(tmp))["track"] is None)
+ok_state = {"for_sha": A, "update_available": True}
+check("the hint names the tag to pull: :latest for a release image, :main for a main image",
+      ":latest" in uc.summarize(ok_state, b_rel)["how"] and ":main" in uc.summarize(ok_state, b_old)["how"])
+
 st, gh = refresh({"sha": None, "channel": "unknown"}, {})
 check("no commit to compare: GitHub is not asked", gh.calls == [] and "error" in st)
 

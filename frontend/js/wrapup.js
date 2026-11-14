@@ -7,10 +7,18 @@ import { api } from './api.js';
 import { serverLabel, state } from './state.js';
 import { _busyStreaming, enterThread, sendMessage } from './chat.js';
 import { _repBar as _bar, renderLedger } from './report.js';
-import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, escAttr, haptic, loc, toast } from './ui.js';
+import { skeletonHtml, EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, countTo, esc, escAttr, haptic, loc, toast } from './ui.js';
 import { periodLabel, playStory, seasonLabel } from './wrapup_story.js';
 import { t, th } from './i18n.js';
 import { brandMarkHtml } from './brand.js';
+
+// A day as the reader writes it: the peak line printed the raw ISO date
+// ("2026-03-14") in the showpiece view (UI audit 2026-11-14).
+function _day(iso) {
+  if (!iso) return '';
+  const d = new Date(`${iso}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(loc(), {day: 'numeric', month: 'long', year: 'numeric'});
+}
 
 const WU_KEY = 'curatarr_wrapup';
 const SEEN_KEY = 'curatarr_wrapup_seen';
@@ -61,7 +69,7 @@ const _poster = (f, title) => (f.posters || {})[title] || null;
 export async function loadWrapup() {
   const el = document.getElementById('wrapup-content');
   if (!el) return;
-  if (!wu.data) el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('wrapup.loading')}</p>`;
+  if (!wu.data) el.innerHTML = skeletonHtml(t('wrapup.loading'), {kind: 'tiles'});
   try {
     wu.data = await api(`/api/wrapup?scope=${encodeURIComponent(wu.scope)}&period=${encodeURIComponent(_periodKey())}`);
     if (!(wu.data.scopes || []).includes(wu.scope) && wu.scope !== 'all') {
@@ -156,10 +164,15 @@ function _controls(d) {
         return `<button type="button" class="wu-chip wu-chip-sm${on ? ' is-on' : ''}" aria-pressed="${on}" ${act('setWrapupYear', y)}>${_s(y)}</button>`;
       }).join('')}</div>` : '';
   const scopes = (d.scopes || ['all']).map(s => `<button type="button" class="wu-tab${s === wu.scope ? ' is-on' : ''}" aria-pressed="${s === wu.scope}" ${act('setWrapupScope', s)}>${esc(_scopeLabel(s))}</button>`).join('');
-  return `<div class="wu-controls">
+  // The page grammar: what to look at (the period) on the left, how to look
+  // at it (media, snapshot) on the right - one .toolbar like every view
+  // (UI audit 2026-11-14).
+  return `<div class="toolbar wu-controls">
     <div class="wu-chips" role="group" aria-label="${th('wrapup.period_group')}">${per}</div>${years}${seasonChips}
-    <div class="wu-tabs" role="group" aria-label="${th('wrapup.media_group')}">${scopes}</div>
-    <button type="button" class="btn btn-secondary btn-sm wu-snap-btn" ${act('toggleWrapupSnapshot')}>${th(wu.snapshot ? 'wrapup.full_view' : 'wrapup.snapshot')}</button></div>`;
+    <div class="toolbar-right">
+      <div class="wu-tabs" role="group" aria-label="${th('wrapup.media_group')}">${scopes}</div>
+      <button type="button" class="btn btn-secondary btn-sm wu-snap-btn" ${act('toggleWrapupSnapshot')}>${th(wu.snapshot ? 'wrapup.full_view' : 'wrapup.snapshot')}</button>
+    </div></div>`;
 }
 
 // ── hero persona ────────────────────────────────────────────────────────────
@@ -281,7 +294,7 @@ function _bento(f) {
        <div class="wu-meta">${_num(tp.active_days)} ${th('wrapup.active_days', {n: tp.active_days || 0})} · ${th('wrapup.best_streak', {n: tp.longest_streak_days || 0})}${delta != null ? ` · <b class="${delta >= 0 ? 't-amber' : ''}">${delta >= 0 ? '+' : ''}${delta}%</b> ${th('wrapup.vs_before')}` : ''}</div>
        <div class="wu-clock" role="img" aria-label="${th('wrapup.clock_aria', {h: tp.peak_hour ?? ''})}">${clock}</div>
        <div class="wu-clock-axis" aria-hidden="true"><span>0</span><span>6</span><span>12</span><span>18</span><span>23</span></div>
-       <div class="wu-meta">${th('wrapup.peak_line', {h: tp.peak_hour ?? '', day, date: tp.biggest_day?.date ?? '', hours: tp.biggest_day?.hours != null ? Number(tp.biggest_day.hours).toLocaleString(loc()) : ''})}</div>`,
+       <div class="wu-meta">${th('wrapup.peak_line', {h: tp.peak_hour ?? '', day, date: _day(tp.biggest_day?.date), hours: tp.biggest_day?.hours != null ? Number(tp.biggest_day.hours).toLocaleString(loc()) : ''})}</div>`,
       `${approx}${t('wrapup.hours_share', {n: tp.active_days || 0, hours: tp.hours, days: tp.active_days ?? '', h: tp.peak_hour ?? ''})}`));
   }
   const hc = f.highbrow_comfort;

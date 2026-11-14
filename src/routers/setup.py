@@ -772,9 +772,10 @@ async def setup_logo(key: str, lan: str = "", _gate=Depends(require_admin_or_fir
     """A service's logo for the wizard, fetched live from its own website
     (or from its instance on the LAN, ``lan``): none ships with Curatarr."""
     from fastapi import Response
-    from src.services.setup_icons import SITES, service_logo
+    from src.services.setup_icons import SITES, prefetch_logos, service_logo
     if key not in SITES:
         raise HTTPException(status_code=404, detail="Unknown service")
+    prefetch_logos()    # the later steps' logos load while this one is read
     lan_url = None
     if lan:
         try:
@@ -784,8 +785,10 @@ async def setup_logo(key: str, lan: str = "", _gate=Depends(require_admin_or_fir
     got = await service_logo(key, lan_url)
     if not got:
         raise HTTPException(status_code=404, detail="No logo")
+    # sandbox: a site's SVG opened on its own runs nothing in Curatarr's origin
     return Response(content=got[0], media_type=got[1],
-                    headers={"Cache-Control": "private, max-age=86400"})
+                    headers={"Cache-Control": "private, max-age=86400",
+                             "Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/program-icon")

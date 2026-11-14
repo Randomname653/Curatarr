@@ -266,9 +266,141 @@ def _site(req):
     return httpx.Response(404)
 
 
+# Names resolve through a fake: "*.lan" is a private address, the rest public.
+async def _fake_resolve(host):
+    return ["192.168.0.9"] if host.endswith(".lan") else ["93.184.216.34"]
+
+
+setup_icons._resolve = _fake_resolve
+
+
+def _forget_logos():
+    import shutil
+    setup_icons._logos.clear()
+    shutil.rmtree(setup_icons._cache_dir(), ignore_errors=True)
+
+
+_forget_logos()
 got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
 check("a service's logo is fetched from its own site, an image only", got and got[1] == "image/png")
 check("a key outside the list fetches nothing", asyncio.run(setup_icons.service_logo("evil")) is None)
+
+# Every address is checked before it is fetched: a page's icon links and
+# each redirect hop (code scanning 221/222).
+_asked: list = []
+
+
+def _hostile(req):
+    _asked.append(str(req.url))
+    if req.url.path == "/":
+        return httpx.Response(200, text=(
+            '<link rel="apple-touch-icon" href="https://10.0.0.5/a.png">'
+            '<link rel="icon" sizes="64x64" href="https://router.lan/b.png">'
+            '<link rel="icon" sizes="32x32" href="http://cdn.example/c.png">'
+            '<link rel="icon" sizes="16x16" href="/hop.png">'))
+    if req.url.path == "/hop.png":
+        return httpx.Response(302, headers={"location": "https://169.254.169.254/latest"})
+    return httpx.Response(404)
+
+
+_forget_logos()
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_hostile)))
+check("a public site's icon links to a private, plain-http or link-local address are never fetched",
+      not any(h in u for u in _asked for h in ("10.0.0.5", "router.lan", "http://cdn.example", "169.254")), _asked)
+check("so a page offering only those yields no logo", got is None, got)
+
+
+def _cdn(req):
+    if req.url.path == "/favicon.ico":
+        return httpx.Response(301, headers={"location": "https://cdn.example/ok.png"})
+    if str(req.url) == "https://cdn.example/ok.png":
+        return httpx.Response(200, content=b"ico", headers={"content-type": "image/png"})
+    return httpx.Response(200, text="<p>no icon links</p>")
+
+
+_forget_logos()
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_cdn)))
+check("a redirect to a public https host is followed", got == (b"ico", "image/png"), got)
+
+_asked.clear()
+
+
+def _lan_app(req):
+    _asked.append(str(req.url))
+    if req.url.path == "/":
+        return httpx.Response(200, text='<link rel="icon" href="https://evil.example/x.png">')
+    if req.url.path.startswith("/Content/"):
+        return httpx.Response(302, headers={"location": "https://evil.example/y.png"})
+    return httpx.Response(404)
+
+
+_forget_logos()
+got = asyncio.run(setup_icons.service_logo("radarr", "http://192.168.0.10:7878",
+                                           transport=httpx.MockTransport(_lan_app)))
+check("a LAN app's logo never leaves that app's host (no foreign icon link, no redirect away)",
+      got is None and _asked and all(u.startswith("http://192.168.0.10:7878/") for u in _asked), _asked)
+
+# Kept in the data folder: a new run answers without the network; a month
+# old copy is fetched again, and still answers when the site does not.
+import os as _os  # noqa: E402
+import time as _time  # noqa: E402
+
+_forget_logos()
+asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
+kept = setup_icons._cache_dir() / "tmdb.png"
+check("a fetched website logo is kept in the data folder", kept.exists())
+setup_icons._logos.clear()
+
+
+def _down(req):
+    raise httpx.ConnectError("offline")
+
+
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_down)))
+check("the next run answers from the data folder, no network", got == (b"png-bytes", "image/png"), got)
+old = _time.time() - setup_icons.LOGO_MAX_AGE_S - 60
+_os.utime(kept, (old, old))
+setup_icons._logos.clear()
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_down)))
+check("a stale copy still answers when the site is down", got == (b"png-bytes", "image/png"), got)
+setup_icons._logos.clear()
+asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
+check("and is replaced once the site answers again", _time.time() - kept.stat().st_mtime < 60)
+setup_icons._disk_put("../escape", (b"x", "image/png"))
+check("a kept logo's file name is only ever a known service, never the caller's string",
+      setup_icons._disk_get("../escape") is None
+      and not (setup_icons._cache_dir().parent / "escape.png").exists()
+      and not any("escape" in x.name for x in setup_icons._cache_dir().iterdir()))
+check("a LAN app's logo is not written to the data folder",
+      sorted(x.name for x in setup_icons._cache_dir().iterdir()) == ["tmdb.png"])
+
+# The first logo request prefetches every other one, once, each site asked once.
+_forget_logos()
+_hits: dict = {}
+
+
+def _count(req):
+    if req.url.path.endswith("/"):        # a site's front page (SoulSync's is a GitHub path)
+        _hits[req.url.host] = _hits.get(req.url.host, 0) + 1
+        return httpx.Response(200, text='<link rel="apple-touch-icon" href="/a.png">')
+    return _site(req)
+
+
+async def _prefetch_then_ask():
+    setup_icons._prefetched = False
+    setup_icons.prefetch_logos(transport=httpx.MockTransport(_count))
+    setup_icons.prefetch_logos(transport=httpx.MockTransport(_count))      # once per run
+    first = await setup_icons.service_logo("plex", transport=httpx.MockTransport(_count))
+    while setup_icons._bg:
+        await asyncio.sleep(0.01)
+    return first
+
+
+first = asyncio.run(_prefetch_then_ask())
+check("a prefetch fetches every website logo, and a page asking meanwhile shares that fetch",
+      first and sum(_hits.values()) == len(setup_icons.SITES), _hits)
+check("all of them kept for the next run",
+      len(list(setup_icons._cache_dir().iterdir())) == len(setup_icons.SITES))
 
 
 # ── the onboarding's bar follows the sync ───────────────────────────────────

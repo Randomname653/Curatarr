@@ -81,7 +81,7 @@ def test_messages_live_region():
     brand = (ROOT / "frontend/js/brand.js").read_text(encoding="utf-8")
     check("the thinking placeholder is announced as 'Thinking' (a labelled img, not a bare div)",
           "div.appendChild(thinkingIndicator());" in chat
-          and "el.setAttribute('role', 'img');" in brand and "el.setAttribute('aria-label', 'Thinking');" in brand)
+          and "el.setAttribute('role', 'img');" in brand and "el.setAttribute('aria-label', tr('chat.thinking_aria'));" in brand)
     # landing panels inside the log are not conversation
     for pid in ("glance-panel", "last-played-panel", "suggested-prompts"):
         check(f"#{pid} is not read out as it fills",
@@ -328,8 +328,11 @@ def test_danger_fill_is_used():
     body = css[css.index("}", css.index(":root {")):]     # outside the token block
     rule = re.search(r"([^\n{}]*)\{[^}]*background:\s*var\(--danger-fill\)[^}]*\}", body)
     hard = re.findall(r"background:\s*(?:#(?:c93a3a|e55353)|rgba?\(2[0-9]{2},\s*[0-9]{1,2},)", body)
+    # White text through --on-fill (the token for text on a strong fill)
+    white = re.search(r"--on-fill:\s*#fff\b", css) is not None
     check("--danger-fill paints the solid danger fill (white text, no hard-coded red beside it)",
-          rule is not None and "color: #fff" in rule.group(0) and "--danger-fg" not in rule.group(0) and not hard)
+          rule is not None and white and "color: var(--on-fill)" in rule.group(0)
+          and "--danger-fg" not in rule.group(0) and not hard)
 
 
 def test_thinking_status_log_contrast():

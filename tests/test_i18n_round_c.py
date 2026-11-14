@@ -81,12 +81,12 @@ def _ids(html):
 if node:
     en, de = render("en"), render("de")
     check("the deletion cards render in both languages", bool(en.get("cards") and de.get("cards")))
-    words = ("Deine Entscheidung", "Streichen", "Warum?", "Behalten", "Besprechen", "Löschen",
+    words = ("Deine Entscheidung", "Löschkandidat", "Warum?", "Behalten", "Besprechen", "Löschen",
              "Zuordnung korrigieren")
-    check("in German: Cut / Your call, Why?, Keep, Discuss, Delete, Fix match",
+    check("in German: Delete candidate / Your call, Why?, Keep, Discuss, Delete, Fix match",
           all(w in de.get("cards", "") for w in words), [w for w in words if w not in de.get("cards", "")])
     check("...and none of those English labels is left",
-          not re.search(r">(Your call|Cut|Why\?|Keep|Discuss|Delete|Fix match)<", de.get("cards", "")))
+          not re.search(r">(Your call|Delete candidate|Why\?|Keep|Discuss|Delete|Fix match)<", de.get("cards", "")))
     check("...the same actions, arguments, data attributes, titles and links as in English",
           en.get("cards") and _ids(en["cards"]) == _ids(de["cards"]), (_ids(en.get("cards", ""))[0], _ids(de.get("cards", ""))[0]))
     check("...the pitch, the service and the curator's signal labels pass through as the server sent them",
@@ -100,7 +100,7 @@ from src.services import app_context  # noqa: E402
 de_map = app_context.render(app_context.APP_MAP_TEMPLATE, "de")
 en_map = app_context.render(app_context.APP_MAP_TEMPLATE, "en")
 check("the app map in German names the admin buttons as the German UI draws them",
-      all(f"'{w}'" in de_map for w in ("Deine Entscheidung", "Streichen", "Warum?", "Löschen", "Dauerhaft schützen",
+      all(f"'{w}'" in de_map for w in ("Deine Entscheidung", "Löschkandidat", "Warum?", "Löschen", "Dauerhaft schützen",
                                          "Ausgewählte löschen", "Zuordnung korrigieren", "Geschützte Titel",
                                          "Kandidaten zum Verkleinern", "Gelernte Grundsätze")))
 check("...the English one is the map the curator always read",
@@ -127,7 +127,7 @@ CADENCES = sorted({act_svc.fmt_cadence(h) for h in (0, 0.25, 0.4, 0.5, 1, 1.5, 2
                      act_svc._trigger_cadence(DateTrigger(run_date=_dt(2030, 1, 1))),
                      act_svc._trigger_cadence(CronTrigger(minute=5))}
                   | {"every 5 min (sprint)", "every 30 min"})
-NOTES = ["running now", "queued", "due — next custodian tick", "due now", "paused",
+NOTES = ["running now", "queued", "due — next maintenance run", "due now", "paused",
          "waiting for the GPU (a game holds it)", "waiting for the PC agent", "backing off after a failed run"]
 JOB = {"job_id": "deletion_scan", "name": "Deletion scan: anime", "cadence": "daily", "state": "idle",
        "can_run": True, "uses_model": True, "last_run": None, "last_duration_s": 65,

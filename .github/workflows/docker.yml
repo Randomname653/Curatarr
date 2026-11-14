@@ -1,11 +1,13 @@
 name: docker
 
 # Builds the container image on every PR and push, starts it and waits for
-# the app to answer (a first-run instance: no .env, no data). A push to main
-# then publishes it as ghcr.io/randomname653/curatarr:latest (+ :sha-<commit>).
-# A release tag vX.Y.Z (docs/RELEASING.md) publishes the same build as
-# :X.Y.Z, the fixed tag a TrueNAS catalog app pins (deploy/truenas/catalog);
-# the tag must match VERSION in src/config.py.
+# the app to answer (a first-run instance: no .env, no data). Two tracks:
+# - a push to main publishes ghcr.io/randomname653/curatarr:main (+ :sha-<commit>):
+#   every merge, for whoever wants it first;
+# - a release tag vX.Y.Z (docs/RELEASING.md) publishes :X.Y.Z, the fixed tag a
+#   TrueNAS catalog app pins (deploy/truenas/catalog), and moves :latest, so
+#   :latest is always a release. The tag must match VERSION in src/config.py.
+# The image carries its track (CURATARR_BUILD_TRACK) for the update check.
 # Plain docker CLI on the runner: no third-party actions to pin or trust.
 
 on:
@@ -30,8 +32,11 @@ jobs:
 
       - name: Build
         run: |
+          track=main
+          case "$GITHUB_REF" in refs/tags/v*) track=release ;; esac
           docker build --pull -t curatarr:ci \
             --build-arg CURATARR_BUILD_SHA="$GITHUB_SHA" \
+            --build-arg CURATARR_BUILD_TRACK="$track" \
             --build-arg CURATARR_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
 
       - name: Smoke test (starts, answers, runs as the apps user)
@@ -47,6 +52,10 @@ jobs:
           test "$(docker exec curatarr id -u)" = "568"
           test "$(docker exec curatarr printenv CURATARR_ENV_FILE)" = "/app/data/.env"
           test "$(docker exec curatarr printenv CURATARR_BUILD_SHA)" = "$GITHUB_SHA"
+          case "$GITHUB_REF" in
+            refs/tags/v*) test "$(docker exec curatarr printenv CURATARR_BUILD_TRACK)" = "release" ;;
+            *)            test "$(docker exec curatarr printenv CURATARR_BUILD_TRACK)" = "main" ;;
+          esac
           # The users' own clocks (services/user_time) need the zone database
           # in the image: without it every zone would fall back to UTC.
           docker exec curatarr python -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/Berlin'); ZoneInfo('America/New_York')"
@@ -72,9 +81,11 @@ jobs:
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           docker tag curatarr:ci "$IMAGE:${TAG#v}"
+          docker tag curatarr:ci "$IMAGE:latest"
           docker push "$IMAGE:${TAG#v}"
+          docker push "$IMAGE:latest"
 
-      - name: Publish to GHCR
+      - name: Publish main to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,7 +93,7 @@ jobs:
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           short="${GITHUB_SHA::7}"
-          docker tag curatarr:ci "$IMAGE:latest"
+          docker tag curatarr:ci "$IMAGE:main"
           docker tag curatarr:ci "$IMAGE:sha-$short"
-          docker push "$IMAGE:latest"
+          docker push "$IMAGE:main"
           docker push "$IMAGE:sha-$short"

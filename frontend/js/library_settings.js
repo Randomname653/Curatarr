@@ -1,11 +1,11 @@
 // ── Pass 16b: Library Settings (admin only) ───────────────────────────────
 import { api } from './api.js';
-import { EL, _errHtml, _errMsg, _showTestResult, act, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty } from './ui.js';
+import { EL, _errHtml, _errMsg, _showTestResult, act, btnBusy, btnDone, esc, escAttr, setStatus, toast, trackDirty, loadingHtml } from './ui.js';
 import { t, th } from './i18n.js';
 export async function loadLibrarySettings() {
   const shell = document.getElementById('library-settings-shell');
   if (!shell) return;
-  shell.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  shell.innerHTML = loadingHtml(t('common.loading'));
   try {
     const status = await api('/api/library/status');
     shell.innerHTML = '';
@@ -92,7 +92,7 @@ export async function saveArrConfig(svc, btn) {
 export async function loadArrProfiles(svc, btn) {
   const target = document.getElementById(`arr-defaults-${svc}`);
   btnBusy(btn, t('common.loading'));
-  target.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('libset.loading_profiles')}</p>`;
+  target.innerHTML = loadingHtml(t('libset.loading_profiles'));
   try {
     const [profiles, defaults] = await Promise.all([
       api(`/api/library/profiles/${encodeURIComponent(svc)}`),

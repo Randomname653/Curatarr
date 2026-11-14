@@ -13,29 +13,47 @@ docs/screenshots/
 The README shows a demo household on a real library, not anyone's real
 viewing: Jane Doe, the fictional owner of
 [CURATOR_EXAMPLES.md](../CURATOR_EXAMPLES.md), and Sam, who lives with her.
-The 2026-11-02 set was made like this, from the same copy:
+One script builds it and takes the frames, the same every time:
 
-1. **A copy, never the live data.** The database, the vector store and the
-   enrichment caches copied into a separate checkout. Its own `.env`: the
-   metadata keys and the local models stay; Plex, SoulSync and the PC agent
-   are blanked, so the copy can write to nothing outside itself. Radarr and
-   Sonarr were added back, read only, for one deletion analysis.
-2. **Scrubbed.** Every row that belongs to a person goes: watch history,
-   chats, discussions, proposals, memories, principles, swipes, ratings,
-   protections, messages, recommendations, taste vectors, and the app state
-   that names anyone. The two accounts become Jane Doe (the admin) and Sam,
-   with no Plex token.
-3. **An invented 2026.** Jane: slow-burn horror and sharp satire (films,
+```bash
+python scripts/demo/build_demo.py --source <the live install's data folder>
+```
+
+1. **This checkout's code** (`git archive HEAD`) in a demo folder
+   (`%TEMP%/curatarr-demo` by default; it carries a `.curatarr-demo` marker
+   and nothing else is ever deleted).
+2. **The live install's newest nightly backup** (`backups/curatarr_*.db`)
+   as the database, and the nightly cache snapshot (`backups/caches`: the
+   enrichment cache, music index, lyrics, anime maps and the vector store),
+   both made with SQLite's backup API, so the demo has today's library and
+   today's schema. A running install's own files are never copied: they
+   are open, and a share refuses them. Each copied database is checked.
+3. **Its own `.env`:** a fresh JWT secret; from your `.env` only the model
+   names, Ollama, the metadata keys, and Radarr/Sonarr (read only, for the
+   deletion analysis). The media server, SoulSync and the node are blank,
+   so the copy can write to nothing outside itself. No value is printed.
+4. **Scrubbed** (`scripts/demo/seed.py`): every row that belongs to a
+   person goes (watch history, chats, discussions, proposals, memories,
+   principles, swipes, ratings, protections, messages, recommendations,
+   taste vectors, Wrap-Ups, any other table with a `user_id`, and the app
+   state that names anyone). The two accounts become Jane Doe (the admin)
+   and Sam, with no Plex token.
+5. **An invented 2026.** Jane: slow-burn horror and sharp satire (films,
    Severance, Dark, Midnight Mass, late-night anime) and trip-hop and dream
    pop; three episodes of The Big Bang Theory, then nothing. Sam: The Big
    Bang Theory from the start, and back to it. Episode lists and runtimes
-   from TMDB, tracks from the Plex music index.
-4. **Real output on top.** Taste vectors, nanogenres, both Wrap-Ups with
-   their stories, recommendations, a deletion analysis and one chat
-   question ("tell me something about the big bang theory"), each run by
-   the app itself with the production models.
-5. **Served without its scheduler** on loopback, with a session token
-   minted from the copy's own fresh `JWT_SECRET`.
+   from TMDB, tracks from the Plex music index. A title the library no
+   longer has is skipped and named.
+6. **Served without its scheduler** on loopback, with tokens minted from
+   the copy's own secret.
+7. **Real output on top,** through the app's own API with the production
+   models: nanogenre names, both taste profiles, recommendations, the
+   household Wrap-Up 2026 with its story, one chat question ("tell me
+   something about the big bang theory"), a deletion analysis.
+8. **The frames** below, written into this checkout's `docs/screenshots`.
+
+`--stages serve,capture` shoots again without rebuilding; `--stages serve
+--keep-running` leaves the copy running to look at by hand.
 
 ## Capturing
 

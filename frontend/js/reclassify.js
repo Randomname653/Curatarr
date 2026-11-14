@@ -5,7 +5,7 @@
 // redraw these out from under a selection in progress. moveReclassify()
 // invalidates explicitly before its own reload, so a real refresh after an
 // apply still shows the post-apply state, not a stale one.
-import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast } from './ui.js';
+import { EL, _errHtml, _errMsg, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, toast, loadingHtml } from './ui.js';
 import { _swrCache, _swrInvalidate, _swrRun, api } from './api.js';
 import { t, th } from './i18n.js';
 export function _renderReclassify(res) {
@@ -38,7 +38,7 @@ export async function loadReclassify() {
   const el = document.getElementById('reclassify-content');
   const sum = document.getElementById('reclassify-summary');
   if (!_swrCache.has('reclassify')) {
-    el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('recl.scanning')}</p>`;
+    el.innerHTML = loadingHtml(t('recl.scanning'));
     if (sum) sum.textContent = '';
   }
   try {
@@ -70,7 +70,7 @@ export function reclassifyCard(it, mode) {
     return card(`<input type="checkbox" class="rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix="" data-fa='${fa}' data-ft='${ft}' hidden>
       ${poster}
       <div class="grow">
-        <div class="fs-12-5 mb-3 b">${esc(it.title)}${link}</div>
+        <div class="fs-13 mb-3 b">${esc(it.title)}${link}</div>
         <div class="fs-11 t3">${esc(cu.library)} · ${esc(cu.series_type || '')} · ${esc(cu.profile || '—')}</div>
         <div class="gap-5 row mt-8">${dirBtn('tv', th('recl.to_tv'))}${dirBtn('anime', th('recl.to_anime'))}${dirBtn('skip', th('recl.skip'))}</div>
       </div>`);
@@ -84,7 +84,7 @@ export function reclassifyCard(it, mode) {
   return card(`<input type="checkbox" class="mt-3 shrink-0 rc-cb" data-id="${it.sonarr_id}" data-title="${escAttr(it.title)}" data-fix='${escAttr(JSON.stringify(it.fix || {}))}' ${actOn('change', 'updateReclassifyCount')}>
     ${poster}
     <div class="grow">
-      <div class="fs-12-5 mb-3 b">${esc(it.title)}${link}${moveTag}</div>
+      <div class="fs-13 mb-3 b">${esc(it.title)}${link}${moveTag}</div>
       ${body}
     </div>`);
 }

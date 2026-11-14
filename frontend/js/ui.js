@@ -369,10 +369,16 @@ export function confirmDialog(o = {}) {
 // "More" overflow behind a row's visible actions. `call` is the inline
 // handler (rows are string templates; `this` is the menu item, so pass data
 // through `attrs`, e.g. attrs: 'data-pid="7"'); `href` renders a link.
-export function menuHtml(items, label = t('common.more')) {
+// o.size 'md': the trigger matches full-size toolbar buttons (a view's
+// toolbar); the default is the row size.
+// o.size 'md': a toolbar-sized button. o.align 'start': the list opens from
+// the button's left edge, for a menu that can sit at the left of its row
+// (a toolbar that wraps on a phone); the default opens leftwards from the
+// right edge, for menus at the end of a card or row.
+export function menuHtml(items, label = t('common.more'), o = {}) {
   const list = (items || []).filter(Boolean);
   if (!list.length) return '';
-  return `<span class="menu"><button type="button" class="btn btn-secondary btn-sm" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
+  return `<span class="menu${o.align === 'start' ? ' menu-start' : ''}"><button type="button" class="btn btn-secondary${o.size === 'md' ? '' : ' btn-sm'}" aria-haspopup="true" aria-expanded="false" ${act('toggleMenu', EL)}>${esc(label)} ▾</button><div class="menu-list" role="menu">${list.map(it =>
     it.sep ? '<div class="menu-sep"></div>'
     : it.href ? `<a class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" href="${escAttr(it.href)}" target="_blank" rel="noopener"${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</a>`
     : `<button type="button" class="menu-item${it.danger ? ' danger' : ''}" role="menuitem" ${it.action || ''}${it.attrs ? ' ' + it.attrs : ''}${it.title ? ` title="${escAttr(it.title)}"` : ''}>${esc(it.label)}</button>`).join('')}</div></span>`;
@@ -453,8 +459,60 @@ export function pulseHeldBy(id, source) {
 // emptyHtml(html, ctaLabel, ctaAction, {good}) — one sentence (HTML, the caller
 // escapes), at most one action; ctaAction is the attribute text from act().
 // good: the empty state is the happy case.
+// Tab rows (.cat-tabs / .arr-tabs of .cat-tab / .arr-tab buttons) tell a
+// screen reader which tab is chosen: role="tablist", role="tab" and
+// aria-selected from the .active class every view already sets. Only
+// Activity said so (UI audit 2026-11-14). Cheap: called after a tab click
+// and on view changes.
+export function syncTabRoles(root = document) {
+  for (const list of root.querySelectorAll('.cat-tabs, .arr-tabs')) {
+    list.setAttribute('role', 'tablist');
+    for (const tab of list.querySelectorAll(':scope > .cat-tab, :scope > .arr-tab')) {
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-selected', String(tab.classList.contains('active')));
+    }
+  }
+}
+
+// skeletonHtml(label, {kind, n}) — the shape of what is loading, shimmering
+// like a poster that has not arrived: 'cards' (recommendations, deletions),
+// 'rows' (lists), 'tiles' (Wrap-Up). The label stays for screen readers and
+// as a line under it. A bare italic "Loading…" made every first open look
+// unfinished (UI audit 2026-11-14).
+// One line about work in progress (scanning, searching, still running):
+// the plain-text label is escaped here. A list or cards about to appear
+// take skeletonHtml instead, the shape of what comes.
+export function loadingHtml(label) {
+  return `<p class="loading" role="status" aria-live="polite">${esc(label || '')}</p>`;
+}
+export function skeletonHtml(label, o = {}) {
+  const kind = o.kind || 'cards';
+  const n = o.n || (kind === 'rows' ? 6 : kind === 'tiles' ? 4 : 3);
+  const one = kind === 'cards'
+    ? '<div class="sk-card"><div class="sk sk-poster"></div><div class="sk-lines"><div class="sk sk-line w-60"></div><div class="sk sk-line"></div><div class="sk sk-line w-80"></div></div></div>'
+    : kind === 'tiles' ? '<div class="sk sk-tile"></div>'
+    : '<div class="sk sk-row"></div>';
+  return `<div class="skeleton sk-${kind}" role="status" aria-live="polite">${one.repeat(n)}
+    <p class="fs-12 t3 mt-8">${esc(label || '')}</p></div>`;
+}
+
+// o.mark: the brand mark above the text, for a first-run empty state (a
+// fresh install's History and Knowledge Base) - the app's first screens
+// carried no mark at all (UI audit 2026-11-14). o.primary: the action is
+// the next step, not an aside.
 export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
-  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
+  const btn = o.primary ? 'btn btn-primary' : 'btn btn-secondary btn-sm';
+  return `<div class="empty${o.good ? ' good' : ''}${o.mark ? ' empty-first' : ''}" role="status">${o.mark ? _markHtml() : ''}<p>${html}</p>${ctaLabel ? `<button type="button" class="${btn}" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
+}
+function _markHtml() {
+  const tpl = globalThis.document?.getElementById('brand-mark')?.content?.firstElementChild;
+  if (!tpl) return '';
+  const m = tpl.cloneNode(true);
+  m.setAttribute('class', 'brand-logo empty-mark');
+  m.setAttribute('aria-hidden', 'true');
+  m.removeAttribute('role');
+  m.removeAttribute('aria-label');
+  return m.outerHTML;
 }
 
 // _fmtRel(iso) → "in 3 d" / "2 h ago"; pair it with _fmtAbs(iso) in title=.

@@ -94,11 +94,13 @@ Admins see "Update available" under the sidebar once a newer image is
 published. Two ways to install it, the data volume stays as it is either way:
 
 - **On demand (the default):** in the TrueNAS shell,
-  `docker pull ghcr.io/randomname653/curatarr:latest`, then edit the app and
-  save it again. The container is recreated from the new image.
+  `docker pull ghcr.io/randomname653/curatarr:latest` (or `:main`, the tag
+  the app's YAML names), then edit the app and save it again. The container
+  is recreated from the new image. `:latest` is the newest release, `:main`
+  every merge (docs/RELEASING.md).
 - **Always:** add `pull_policy: always` under `image:` in the app's YAML
   (commented out in `deploy/docker-compose.yml`). Then edit + save alone
-  pulls `:latest`. Every redeploy checks the registry, which is why it is
+  pulls the tag. Every redeploy checks the registry, which is why it is
   optional.
 
 TrueNAS's own "update available" badge is unreliable for custom YAML apps,

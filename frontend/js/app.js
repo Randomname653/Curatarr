@@ -3,11 +3,11 @@ import { applyBenchValues, onAdviceModelChange, onAdviceSizeChange, runSpeedChec
 import { addArrItem, addBacklogArtist, debouncedAddSearch, goToLibrarySettings, loadArrPage, openLibraryItem, reEnrich, renderSpotifyBacklog, renderSynopsisBrowser, setArrTab, setBacklogNotAddedOnly, setBacklogOnlyResolved, setBrowserFilter, setBrowserSearch, setBrowserSort, onBrowserSort, onBrowserFilter, onBrowserSearch, onBacklogOnlyResolved, onBacklogNotAddedOnly, wishArtist, renderWanted, removeWish, sendWantedToSoulSync } from './arr.js';
 import { _syncDelPosterVisual, approveDelete, bulkDelete, toggleWhy, delClearSelection, delToggleAll, loadDeletions, loadMoreDeletions, onFixMatch, onReevaluateDeletion, rejectDelete, reloadDeletions, startArrPreEnrich, toggleDelSelect, toggleRecentOnly, updateDelBulkCount, onRecentOnlyChange, onDelCheckbox, blurOnCtrlEnter, deleteReturned, keepReturned } from './deletions.js';
 import { auditRequeueEnrichments, computeTaste, loadMusicStatus, omdbBackfill, startEnrichForce, startEnrichNew, startMusicPipeline, stopMusicPipeline } from './music.js';
-import { submitSetupCode, setupCodeKey, useOllama, hideOnboarding, onSetupCuratorChange, jellyfinConnectAgain, logout, pickPlexServer, plexConnectAgain, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupModelChanged, setupNav, toggleOllamaEdit, loadSetupPrograms, setupServerKind, startOnboardingSync, startPlexConnect, testConn, togglePitcherWrap } from './setup.js';
+import { submitSetupCode, setupCodeKey, useOllama, hideOnboarding, onSetupCuratorChange, jellyfinConnectAgain, logout, logoutHere, pickPlexServer, plexConnectAgain, refreshModelRecs, renderSetupStep, retryOnboardingStep, saveOnboardingLibraries, setupModelChanged, setupNav, toggleOllamaEdit, loadSetupPrograms, setupServerKind, startOnboardingSync, startPlexConnect, testConn, togglePitcherWrap } from './setup.js';
 import { activityTabKey, cancelTask, loadScheduled, loadTaskHistory, reloadPage, runScheduledJob, setHistoryFilter, showActivityTab, showNoopRuns, toggleHideNoop } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { _errMsg, activeDialog, closeMenus, closeModal, toggleMenu, keyActivate, hideOnError, onPageLoad, posterLoaded, toast, trapFocus } from './ui.js';
+import { _errMsg, activeDialog, closeMenus, syncTabRoles, closeModal, toggleMenu, keyActivate, hideOnError, onPageLoad, posterLoaded, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { answerFollowup, askTonight, correctChatAnchor, explainFollowup, hideMoment, hideTonight, momentPlaylist, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -112,6 +112,19 @@ document.addEventListener('keydown', ev => {
   }
   if (state._modal) closeModal();
 });
+// Tab rows render when their view loads, often after an API call: the roles
+// follow every change of the page's tab rows (new rows, a moved .active),
+// batched to one sync per burst. A click hook and hashchange missed rows
+// drawn by code (review of the UI audit, 2026-11-14).
+let _tabSync = null;
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver(muts => {
+    if (_tabSync || !muts.some(m => m.target.closest?.('.cat-tabs, .arr-tabs')
+        || [...(m.addedNodes || [])].some(n => n.querySelector?.('.cat-tabs, .arr-tabs')))) return;
+    _tabSync = setTimeout(() => { _tabSync = null; syncTabRoles(); }, 50);
+  }).observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ['class']});
+}
+syncTabRoles();   // the static rows (Knowledge Base, Settings) before any change
 document.addEventListener('click', ev => {
   const inMenu = ev.target.closest('.menu');
   if (ev.target.closest('.menu-item')) { if (inMenu) closeMenus(inMenu); return; }
@@ -266,6 +279,7 @@ const actions = {
   loadTaskHistory,
   loadUsers,
   logout,
+  logoutHere,
   moveReclassify,
   newChat,
   omdbBackfill,

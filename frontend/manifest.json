@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Curatarr",
   "short_name": "Curatarr",
-  "description": "Your personal AI media curator for Plex.",
+  "description": "Your personal AI media curator for Plex and Jellyfin.",
   "start_url": "/#chat",
   "scope": "/",
   "display": "standalone",

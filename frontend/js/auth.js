@@ -111,10 +111,14 @@ let _libsServer = 'Plex';
 function _paintAuthTexts() {
   const tagline = document.getElementById('auth-tagline');
   if (tagline) tagline.textContent = t('auth.tagline', {server: _login.server});
+  // Named after the server this install runs on: they said Plex on a
+  // Jellyfin install too (UI audit 2026-11-14).
+  const libsTab = document.getElementById('settings-libs-tab');
+  if (libsTab) libsTab.textContent = _libsServer === 'Plex' ? t('settings.plex_libraries') : t('auth.libraries_btn', {server: _libsServer});
+  const signedIn = document.getElementById('account-signed-in');
+  if (signedIn) signedIn.textContent = t('account.signed_in_via', {server: _libsServer});
   const intro = document.getElementById('jf-pw-intro');
   if (intro) intro.textContent = t(_login.quickConnect ? 'auth.jf_pw_intro_or' : 'auth.jf_pw_intro');
-  const lib = document.getElementById('libraries-btn');
-  if (lib) lib.textContent = t('auth.libraries_btn', {server: _libsServer});
 }
 globalThis.addEventListener?.('i18n:changed', _paintAuthTexts);
 
