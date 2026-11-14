@@ -279,4 +279,26 @@ check("the sync says where it is: the plays read of Plex's own total",
                                                                 "total": 38465, "label": ""})
 plex_sync.SYNC_PROGRESS.clear()
 
+# ── the shelves wait until the library is known ─────────────────────────────
+pushed = []
+
+
+async def _push(designs):
+    pushed.append(designs)
+    return {"created": len(designs)}
+import src.services.collection_designer as _cd  # noqa: E402
+import src.services.plex_collections as _pc  # noqa: E402
+_real = (_cd.design_collections, _pc.push_collections)
+_pc.push_collections = _push
+
+
+async def _design():
+    return [{"title": "x"}]
+_cd.design_collections = _design
+check("a fresh install's queue does not replace the shelves before it knows the library",
+      asyncio.run(dc._run_collections()) is False and pushed == [])
+check("...ready once enough films and series have a profile",
+      dc._collections_ready()[2] >= 20)
+_cd.design_collections, _pc.push_collections = _real
+
 check.done()

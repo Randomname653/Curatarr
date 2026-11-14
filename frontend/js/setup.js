@@ -990,26 +990,6 @@ export async function startOnboardingSync() {
   }
 }
 
-// Not offered in the onboarding any more (2026-11-14): it calls Ollama
-// past the model queue, so right after the first sync it raced the
-// enrichment for the card and measured that. Kept for a Settings button
-// that runs it through the queue.
-// The wizard built the models already; this only measures them: a model
-// that does not quite fit the card runs part-on-CPU and the whole app just
-// feels broken-slow. Caught here, with the calls production makes, rather
-// than in the first real conversation.
-export async function runOnboardingSpeedCheck(btn) {
-  const el = document.getElementById('ob-model-status');
-  btnBusy(btn, t('setup.mb_running'));
-  let mb = null, mbErr = null;
-  try {
-    mb = await api('/api/setup/minibench', 'POST',
-                   {vram_gb: state.setupData?.vram_gb ?? null, gpu_name: state.setupData?.gpu_name ?? null});
-  } catch (e) { mbErr = _errMsg(e); }
-  if (el) el.innerHTML = renderMinibench(mb, mbErr);
-  btnDone(btn);
-}
-
 // The mini-bench result: what this machine did with the curator, next to
 // what the hardware bench measured for the card. "Unknown" is never shown as
 // "fits" - a check that could not run says so.

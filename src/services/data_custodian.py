@@ -640,10 +640,37 @@ async def _run_facet_phrases(task=None) -> bool:
     return await migrate_facets(task=task)
 
 
+# The shelves wait until Curatarr knows enough of the library: a push
+# DELETES the old shelves before it creates new ones, and on a fresh install
+# the queue reached it with next to nothing enriched (fresh-install test
+# 2026-11-14) - shelves designed from bare titles, replacing the owner's.
+COLLECTIONS_MIN_ENRICHED = 200
+
+
+def _collections_ready() -> tuple[bool, int, int]:
+    """(ready, enriched video titles, needed): enough films and series have
+    a profile - COLLECTIONS_MIN_ENRICHED, or half of a smaller library."""
+    from src.database.models import EnrichmentStatus, MediaTechProfile
+    from src.database.connection import get_db_session
+    video = ("movie", "show", "anime")
+    with get_db_session() as db:
+        enriched = db.query(EnrichmentStatus).filter(
+            EnrichmentStatus.media_category.in_(video), EnrichmentStatus.enriched == True,  # noqa: E712
+            EnrichmentStatus.error.is_(None)).count()
+        library = db.query(MediaTechProfile).filter(MediaTechProfile.media_type.in_(video)).count()
+    need = min(COLLECTIONS_MIN_ENRICHED, max(20, library // 2))
+    return enriched >= need, enriched, need
+
+
 async def _run_collections(deep: bool = False, task=None) -> bool:
     """Design + push the household's "Curatarr · " collection shelves."""
     from src.services.collection_designer import design_collections
     from src.services.plex_collections import push_collections
+    ready, have, need = await run_read(_collections_ready)
+    if not ready:
+        _report(task, f"Waits until {need} films and series are known ({have} so far)", noop=True)
+        logger.info("[custodian] collections wait: %d of %d video titles enriched", have, need)
+        return False
     _prog(task, message="Curator is designing collection shelves… (LLM)")
     designs = await design_collections()
     if not designs:

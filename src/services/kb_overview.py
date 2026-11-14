@@ -277,9 +277,60 @@ async def classified_items() -> list[dict]:
             item["state"] = state
             items.append(item)
 
+    # Films and series no arr app lists: the media server's own library is
+    # the denominator, as it is the enrichment's source (a Plex- or
+    # Jellyfin-only install showed an empty coverage, 2026-11-14).
+    for li in await _library_items():
+        cat, key = li["media_type"], li["plex_rating_key"]
+        title = li.get("series_title") or li["title"]
+        item = {
+            "category": cat, "service": "plex", "arr_id": None, "plex_rating_key": key,
+            "source": "plex", "title": title, "year": li.get("year"),
+            "tmdb_id": li.get("tmdb_id"), "tvdb_id": li.get("tvdb_id"), "imdb_id": li.get("imdb_id"),
+            "mbid": None, "downloaded": True, "state": None, "has_live": False, "vector": False,
+            "attempt_count": 0, "next_retry_at": None, "error": None,
+            "match_basis": None, "match_confidence": None,
+        }
+        cands = [key, *_candidates(cat, "plex", None, li.get("tmdb_id"), li.get("tvdb_id"), title)]
+        mts = ("show", "anime") if cat in ("show", "anime") else (cat,)
+        item["vector"] = any(f"{m}:{k}" in chroma_ids or k in chroma_ids for m in mts for k in cands)
+        item["has_live"] = any(f"enriched:{m}:{k}" in live_enriched for m in mts for k in cands)
+        row = es_rows.get(key)
+        if row is None:
+            item["state"] = "enriched" if item["has_live"] else "never_processed"
+        else:
+            item["state"] = classify_enrichment_row(row, has_live_cache=item["has_live"], now=now_dt)
+            item.update(attempt_count=getattr(row, "attempt_count", 0) or 0,
+                        next_retry_at=getattr(row, "next_retry_at", None),
+                        error=getattr(row, "error", None),
+                        match_basis=getattr(row, "match_basis", None),
+                        match_confidence=getattr(row, "match_confidence", None))
+        items.append(item)
+
     _mark_credits(items)
 
     _ITEMS.update(at=now, items=items)
+    return items
+
+
+_LIB: dict = {"at": 0.0, "items": None}
+_LIB_TTL = 600.0
+
+
+async def _library_items() -> list[dict]:
+    """The media server's films and series for the categories no arr app
+    covers (the enrichment's own collector), kept ten minutes: the KB polls
+    every minute and a library walk is a few seconds."""
+    now = time.time()
+    if _LIB["items"] is not None and now - _LIB["at"] < _LIB_TTL:
+        return _LIB["items"]
+    try:
+        from src.routers.enrichment import _collect_library_items
+        items = await _collect_library_items(["movie", "show", "anime"])
+    except Exception as e:  # noqa: BLE001 - the arr rows still show
+        logger.warning("[kb-overview] library items unreadable: %s", e)
+        items = []
+    _LIB.update(at=now, items=items)
     return items
 
 

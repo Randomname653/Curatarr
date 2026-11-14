@@ -249,12 +249,18 @@ async def minibench(req: MinibenchRequest,
     pkg = hardware_package(req.vram_gb, req.gpu_name) if req.vram_gb else None
     rec = (pkg or {}).get("recommended") or {}
     same = rec.get("model") == settings.BASE_CURATOR_MODEL
-    result = await run_minibench(endpoint, settings.CURATOR_MODEL,
-                                 num_ctx=rec.get("num_ctx") if same else None,
-                                 num_gpu=rec.get("num_gpu") if same else None,
-                                 expected_gen_tok_s=((pkg.get("estimate") or {}).get("gen_tok_s")
-                                                     or (rec.get("expected") or {}).get("gen_tok_s"))
-                                 if same else None)
+    # Through the curator gate, at a watching user's priority: it waits for
+    # a running curator call and pauses background ones, instead of racing
+    # the enrichment for the card and measuring that (2026-11-14: a check
+    # started beside the first enrichment timed out after 300 s).
+    from src.services.llm_priority import INTERACTIVE, curator_priority
+    async with curator_priority("speed check", priority=INTERACTIVE, url=endpoint):
+        result = await run_minibench(endpoint, settings.CURATOR_MODEL,
+                                     num_ctx=rec.get("num_ctx") if same else None,
+                                     num_gpu=rec.get("num_gpu") if same else None,
+                                     expected_gen_tok_s=((pkg.get("estimate") or {}).get("gen_tok_s")
+                                                         or (rec.get("expected") or {}).get("gen_tok_s"))
+                                     if same else None)
     if same:
         result["package"] = {"tier_gb": pkg.get("tier_gb"), "model": rec.get("model"),
                              "expected": rec.get("expected"), "estimate": pkg.get("estimate"),
