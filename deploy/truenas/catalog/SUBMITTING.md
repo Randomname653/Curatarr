@@ -16,7 +16,7 @@ the issue, the fork and the pull request carry his account.
 
 1. **A release.** The catalog pins a fixed image tag: publish one
    (`docs/RELEASING.md`), then set it in `ix_values.yaml` (`images.image.tag`)
-   and in `app.yaml` (`app_version`). Both say `1.1.0` now as a placeholder.
+   and in `app.yaml` (`app_version`). Both say `1.2.0`, the newest release.
 2. **Icon and screenshots.** The catalog hosts them on the TrueNAS CDN: attach
    `assets/brand/curatarr-app-icon.png` and three screenshots from
    `docs/screenshots/desktop/` to the pull request; the reviewer uploads them
