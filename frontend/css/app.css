@@ -1008,6 +1008,19 @@ h1[tabindex="-1"]:focus { outline: none; }
 .wiz-sum-row { display: flex; gap: 12px; align-items: center; padding: 11px 14px; }
 .wiz-sum-row + .wiz-sum-row { border-top: 1px solid var(--hairline); }
 .wiz-sum-label { width: 90px; flex-shrink: 0; font-size: 13px; color: var(--text); font-weight: 600; }
+.wiz-card.on { border-color: var(--amber-line); }
+.wiz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.wiz-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.wiz-grid3 label { display: flex; flex-direction: column; gap: 4px; }
+.wiz-stack { display: flex; flex-direction: column; gap: 10px; }
+.wiz-sub { font-size: var(--fs-lg); font-weight: 600; color: var(--text); margin-top: 22px; margin-bottom: 4px; }
+.wiz-model { max-width: 230px; }
+.wiz-have { min-width: 72px; text-align: right; }
+.wiz-programs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ob-logo .setup-logo-svg { width: 150px; margin: 0 0 12px; }
+.ob-sync { text-align: center; padding: 8px 0 4px; }
+.ob-sync .ob-sync-mark { position: static; display: inline-block; width: 64px; height: 64px; padding: 12px; margin-bottom: 8px; }
+.ob-sync-count { font-size: var(--fs-2xl); font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }
 
 /* ── AUTH SCREEN ── */
 #auth-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 99; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
@@ -1304,6 +1317,8 @@ select option { background: var(--bg2); }
   .setup-step-dot { min-width: 64px; }
   .setup-body, .setup-nav, #setup-box .setup-header, .box-head, .pad-24-28 { padding-left: 18px; padding-right: 18px; }
   .wiz-choices { grid-template-columns: 1fr; }
+  .wiz-grid, .wiz-grid3 { grid-template-columns: 1fr; }
+  .wiz-model { max-width: 160px; }
   .wiz-status-name { width: 80px; }
   #pin-box { width: calc(100vw - 32px); max-width: 340px; padding: 20px; }
   #pin-box .pin-code { font-size: 30px; letter-spacing: 6px; }

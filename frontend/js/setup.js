@@ -21,8 +21,8 @@ function isJellyfin() { return state.setupData.media_server_type === 'jellyfin';
 
 // The wordmark at the head of the wizard: the same inline logo the sign-in
 // screen carries, cloned once.
-function _brandHeader() {
-  const slot = document.getElementById('setup-logo');
+function _brandHeader(id = 'setup-logo') {
+  const slot = document.getElementById(id);
   if (!slot || slot.firstElementChild) return;
   const logo = document.querySelector('#auth-overlay [data-brand-slot] .brand-logo');
   if (logo) {
@@ -98,17 +98,17 @@ function plexServersHtml() {
 function plexStepHtml() {
   const d = state.setupData;
   if (d.plex_ticket) return plexServersHtml();
+  // No code to type: the PIN is a strong one, which plex.tv/link does not take.
   const waiting = d._plex_code ? `
     <div class="wiz-pin mt-12" role="status" aria-live="polite">
-      <p class="fs-13 t2">${th('setup.v2.plex_waiting')}</p>
-      <p class="fs-12 t3 mt-8">${th('setup.v2.plex_code_pre')} <a class="t-amber" href="https://plex.tv/link" target="_blank" rel="noopener noreferrer">plex.tv/link</a>:</p>
-      <div class="setup-qc-code">${esc(d._plex_code.slice(0, 4))} ${esc(d._plex_code.slice(4))}</div>
+      <div class="progress-bar indeterminate"><div class="progress-fill"></div></div>
+      <p class="fs-13 t2 mt-12">${th('setup.v2.plex_waiting')}</p>
       <small class="t3" id="plex-connect-status"></small>
     </div>` : '';
   return `<p class="fs-13 t2 mb-12">${th('setup.v2.plex_lead')}</p>
     <button class="btn btn-primary wiz-big" id="plex-connect-btn" ${act('startPlexConnect', EL)}>${th('auth.view.plex')}</button>
     ${waiting}
-    <details class="mt-20">
+    <details class="mt-16">
       <summary class="fs-12 t2 pointer">${th('setup.v2.plex_manual')}</summary>
       <div class="form-group mt-8">
         <label for="s-plex-url">${th('setup.plex_url')}</label>
@@ -194,187 +194,172 @@ export function pickPlexServer(el) {
 }
 
 // ── step 2: the AI ──────────────────────────────────────────────────────────
+// Everything on one page, laid out rather than folded away (Don,
+// 2026-11-14: "alles zu verstecken ist nicht die Lösung"): the two things
+// detected, the plan with a model per role to pick from, two switches for
+// sharing the card, the open programs, and the expert values in a card.
 function aiStepHtml() {
   const d = state.setupData;
+  const sel = (id, def, label, on, defText = def) => `<select class="field-sm wiz-model" id="${id}" aria-label="${label}" ${on}><option value="${def}">${defText}</option></select>`;
+  const changed = actOn('change', 'setupModelChanged');
   return `<p class="fs-13 t2 mb-16">${th('setup.v2.ai_lead')}</p>
     <div class="wiz-status">
-      <div class="wiz-status-row"><span class="wiz-status-name">Ollama</span><span class="grow" id="test-ollama-result"><span class="test-status">${th('setup.testing')}</span></span></div>
-      <div class="wiz-status-row"><span class="wiz-status-name">${th('setup.v2.gpu')}</span><span class="grow" id="gpu-result"><span class="test-status">${th('setup.probing_gpu')}</span></span></div>
+      <div class="wiz-status-row"><span class="wiz-status-name">Ollama</span>
+        <span class="grow" id="test-ollama-result"><span class="test-status">${th('setup.testing')}</span></span>
+        <button class="link-num fs-12" ${act('toggleOllamaEdit')}>${th('setup.v2.change')}</button></div>
+      <div class="wiz-status-row" id="s-ollama-edit" hidden>
+        <input class="grow" id="s-ollama" type="url" aria-label="${th('setup.ollama_endpoint')}" placeholder="http://localhost:11434" value="${esc(d.ollama_endpoint || 'http://localhost:11434')}">
+        <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>${th('setup.v2.check')}</button>
+      </div>
+      <div class="wiz-status-row"><span class="wiz-status-name">${th('setup.v2.gpu')}</span>
+        <span class="grow" id="gpu-result"><span class="test-status">${th('setup.probing_gpu')}</span></span>
+        <select class="field-sm w-auto" id="s-vram" aria-label="${th('setup.v2.vram')}" ${actOn('change', 'refreshModelRecs')}>
+          <option value="">${th('setup.v2.vram_auto')}</option>
+          ${[4, 8, 12, 16, 24, 32].map(g => `<option value="${g}">${g === 32 ? '32+' : g} GB</option>`).join('')}
+        </select></div>
     </div>
-    <div class="wiz-plan mt-16" id="wiz-ai-plan" role="status" aria-live="polite"></div>
-    <details class="mt-16" id="s-ai-advanced">
-      <summary class="fs-12 t2 pointer">${th('setup.v2.ai_advanced')}</summary>
-      <div class="form-group mt-12">
-        <label for="s-ollama">${th('setup.ollama_endpoint')}</label>
-        <div class="row">
-          <input class="grow" id="s-ollama" type="url" placeholder="http://localhost:11434" value="${esc(d.ollama_endpoint || 'http://localhost:11434')}">
-          <button class="btn btn-secondary btn-sm" ${act('testConn', 'ollama')}>${th('setup.detect_models')}</button>
-        </div>
-        <div class="hint">${th('setup.v2.ollama_hint')}</div>
+    <div class="wiz-plan mt-16" role="group" aria-labelledby="wiz-plan-head">
+      <div class="fs-13 mb-8" id="wiz-plan-head">${th('setup.v2.plan')}</div>
+      <div class="wiz-plan-row"><span class="t3">${th('setup.v2.role_curator')}</span><span class="row">${sel('s-curator-model', 'gemma4:31b', th('setup.curator_model'), actOn('change', 'onSetupCuratorChange'), `gemma4:31b (${th('setup.recommended_docs')})`)}<span class="wiz-have" data-have="s-curator-model"></span></span></div>
+      <div class="wiz-plan-row"><span class="t3">${th('setup.v2.role_summarizer')}</span><span class="row">${sel('s-summarizer-model', 'granite4.1:8b', th('setup.summarizer_model'), changed)}<span class="wiz-have" data-have="s-summarizer-model"></span></span></div>
+      <div class="wiz-plan-row"><span class="t3">${th('setup.v2.role_embed')}</span><span class="row">${sel('s-embed-model', 'nomic-embed-text-v2-moe', th('setup.embed_model'), changed)}<span class="wiz-have" data-have="s-embed-model"></span></span></div>
+      <div class="hint mt-8" id="wiz-plan-note"></div>
+      <div class="mt-8" id="model-recs"></div>
+    </div>
+    <div class="wiz-grid mt-12">
+      <div class="wiz-card">
+        <label class="row pointer"><input type="checkbox" class="switch" id="s-cpu-lane" ${d.llm_cpu_lane === false ? '' : 'checked'}><b class="grow">${th('setup.v2.lane_title')}</b></label>
+        <p class="fs-12 t2 mt-6">${th('setup.v2.lane_hint')}</p>
+        <label class="row fs-12 t3 mt-8" for="s-cpu-threads">${th('setup.cpu_threads')}
+          <input class="field-sm w-auto" id="s-cpu-threads" type="number" min="1" max="64" value="${d.llm_cpu_threads || 6}"></label>
       </div>
-      <div class="form-group">
-        <label for="s-vram">${th('setup.v2.vram')}</label>
-        <select class="w-auto" id="s-vram" ${actOn('change', 'refreshModelRecs')}>
-          <option value="">${th('setup.vram_manual')}</option>
-          <option value="4">4 GB</option>
-          <option value="8">8 GB</option>
-          <option value="12">12 GB</option>
-          <option value="16">16 GB</option>
-          <option value="24">24 GB</option>
-          <option value="32">32+ GB</option>
-        </select>
-        <div class="hint">${th('setup.vram_hint')}</div>
+      <div class="wiz-card">
+        <label class="row pointer"><input type="checkbox" class="switch" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${d.enable_pitcher ? 'checked' : ''}><b class="grow">${th('setup.v2.judge_title')}</b></label>
+        <p class="fs-12 t2 mt-6">${th('setup.v2.pitcher_hint')}</p>
+        <div id="s-pitcher-wrap" class="row mt-8"${d.enable_pitcher ? '' : ' hidden'}>${sel('s-pitcher-model', 'qwen3.8:27b', th('setup.pitcher_model'), changed)}<span class="wiz-have" data-have="s-pitcher-model"></span></div>
+        <div id="pitcher-note" class="hint"></div>
       </div>
-      <div class="my-8" id="model-recs"></div>
-      <div class="form-group">
-        <label for="s-curator-model">${th('setup.curator_model')}</label>
-        <select id="s-curator-model" ${actOn('change', 'onSetupCuratorChange')}><option value="gemma4:31b">gemma4:31b (${th('setup.recommended_docs')})</option></select>
-      </div>
-      <div class="form-group">
-        <label for="s-summarizer-model">${th('setup.summarizer_model')}</label>
-        <select id="s-summarizer-model" ${actOn('change', 'setupModelChanged')}><option value="granite4.1:8b">granite4.1:8b</option></select>
-        <div class="hint">${th('setup.summarizer_hint')}</div>
-      </div>
-      <div class="form-group">
-        <label for="s-embed-model">${th('setup.embed_model')}</label>
-        <select id="s-embed-model" ${actOn('change', 'setupModelChanged')}><option value="nomic-embed-text-v2-moe">nomic-embed-text-v2-moe</option></select>
-      </div>
-      <details class="mt-12" id="s-profile-wrap">
-        <summary class="fs-12 t2 pointer">${th('setup.profile_summary')}</summary>
-        <div class="hint" id="s-profile-note"></div>
-        <div class="form-group mt-8">
-          <label for="s-llm-profile">${th('setup.profile')}</label>
-          <select class="w-auto" id="s-llm-profile">
+    </div>
+    <div class="wiz-card mt-12" id="wiz-programs">
+      <div class="row"><b class="grow">${th('setup.v2.games_title')}</b><button class="link-num fs-12" ${act('loadSetupPrograms')}>${th('setup.v2.check_again')}</button></div>
+      <p class="fs-12 t2 mt-4">${th('setup.v2.games_hint')}</p>
+      <div class="wiz-programs mt-8" id="wiz-program-list"><span class="t3 fs-12">${th('setup.testing')}</span></div>
+    </div>
+    <div class="wiz-card mt-12">
+      <b>${th('setup.v2.expert_title')}</b>
+      <p class="fs-12 t2 mt-4" id="s-profile-note">${th('setup.v2.expert_hint')}</p>
+      <div class="wiz-grid3 mt-8">
+        <label class="fs-12 t3">${th('setup.profile')}
+          <select class="field-sm" id="s-llm-profile">
             <option value="large"${d.llm_profile === 'small' ? '' : ' selected'}>${th('setup.profile_large')}</option>
             <option value="small"${d.llm_profile === 'small' ? ' selected' : ''}>${th('setup.profile_small')}</option>
-          </select>
-          <div class="hint">${th('setup.profile_hint')}</div>
-        </div>
-        <div class="form-group">
-          <label for="s-num-ctx">${th('setup.num_ctx')}</label>
-          <input id="s-num-ctx" type="number" min="0" max="131072" step="1024" value="${d.curator_num_ctx ?? 0}">
-        </div>
-        <div class="form-group">
-          <label for="s-num-gpu">${th('setup.num_gpu')}</label>
-          <input id="s-num-gpu" type="number" min="-1" max="999" value="${d.curator_num_gpu ?? 99}">
-          <div class="hint">${th('setup.num_gpu_hint')}</div>
-        </div>
-      </details>
-      <div class="mt-12 form-group">
-        <label class="inline-flex pointer">
-          <input type="checkbox" id="s-pitcher-enable" ${actOn('change', 'togglePitcherWrap', EL)} ${d.enable_pitcher ? 'checked' : ''}>
-          ${th('setup.pitcher')}
-        </label>
-        <div class="hint">${th('setup.v2.pitcher_hint')}</div>
-        <div id="s-pitcher-wrap" class="mt-8"${d.enable_pitcher ? '' : ' hidden'}>
-          <label for="s-pitcher-model">${th('setup.pitcher_model')}</label>
-          <select id="s-pitcher-model" ${actOn('change', 'setupModelChanged')}><option value="qwen3.8:27b">qwen3.8:27b</option></select>
-          <div id="pitcher-note" class="hint"></div>
-        </div>
+          </select></label>
+        <label class="fs-12 t3">${th('setup.num_ctx')}
+          <input class="field-sm" id="s-num-ctx" type="number" min="0" max="131072" step="1024" value="${d.curator_num_ctx ?? 0}"></label>
+        <label class="fs-12 t3">${th('setup.num_gpu')}
+          <input class="field-sm" id="s-num-gpu" type="number" min="-1" max="999" value="${d.curator_num_gpu ?? 99}"></label>
       </div>
-      <div class="form-group mt-12">
-        <label class="row fs-13">
-          <input type="checkbox" id="s-cpu-lane" ${d.llm_cpu_lane === false ? '' : 'checked'}>
-          ${th('setup.cpu_lane')}
-        </label>
-        <div class="hint">${th('setup.cpu_lane_hint')}</div>
-        <label for="s-cpu-threads" class="mt-8">${th('setup.cpu_threads')}</label>
-        <input id="s-cpu-threads" type="number" min="1" max="64" value="${d.llm_cpu_threads || 6}">
-        <div class="hint">${th('setup.cpu_threads_hint')}</div>
-      </div>
-    </details>`;
+    </div>`;
 }
 
-// The plain-words plan above the advanced section: what runs, and what
-// still has to be downloaded. Redrawn whenever a select or the card changes.
+export function toggleOllamaEdit() {
+  const row = document.getElementById('s-ollama-edit');
+  if (row) { row.hidden = !row.hidden; if (!row.hidden) document.getElementById('s-ollama')?.focus(); }
+}
+
+// Whether each picked model is installed, and what that means for the finish.
 function renderAiPlan() {
-  const el = document.getElementById('wiz-ai-plan');
-  if (!el) return;
-  const pick = id => document.getElementById(id)?.value || '';
   const installed = new Set(state.setupData._detected_models || []);
   const has = m => installed.has(m) || installed.has(m + ':latest');
-  const models = [['setup.v2.role_curator', pick('s-curator-model')],
-                  ['setup.v2.role_summarizer', pick('s-summarizer-model')],
-                  ['setup.v2.role_embed', pick('s-embed-model')]];
-  if (document.getElementById('s-pitcher-enable')?.checked) models.push(['setup.v2.role_pitcher', pick('s-pitcher-model')]);
-  const missing = models.filter(([, m]) => m && !has(m));
-  const rows = models.map(([role, m]) => `<div class="wiz-plan-row"><span class="t3">${th(role)}</span><span><b>${esc(m)}</b>
-      <span class="fs-12 ${has(m) ? 't-success' : 't3'}">${has(m) ? th('setup.v2.installed') : th('setup.v2.will_download')}</span></span></div>`).join('');
-  const card = state.setupData.gpu_name ? `${esc(state.setupData.gpu_name)} · ${state.setupData.vram_gb} GB`
-    : state.setupData.vram_gb ? `${state.setupData.vram_gb} GB` : '';
-  el.innerHTML = `<div class="fs-13 mb-8">${card ? th('setup.v2.plan_for', {card}) : th('setup.v2.plan')}</div>${rows}
-    <div class="hint mt-8">${missing.length ? th('setup.v2.plan_download') : th('setup.v2.plan_ready')}</div>`;
+  let missing = 0;
+  for (const el of document.querySelectorAll('.wiz-have')) {
+    const sel = document.getElementById(el.dataset.have);
+    if (!sel || sel.closest('[hidden]')) { el.textContent = ''; continue; }
+    const ok = has(sel.value);
+    if (!ok) missing += 1;
+    el.className = `wiz-have fs-12 ${ok ? 't-success' : 't3'}`;
+    el.textContent = ok ? t('setup.v2.installed') : t('setup.v2.will_download');
+  }
+  const head = document.getElementById('wiz-plan-head');
+  const d = state.setupData;
+  const card = d.gpu_name ? `${d.gpu_name} · ${d.vram_gb} GB` : d.vram_gb ? `${d.vram_gb} GB` : '';
+  if (head) head.textContent = card ? t('setup.v2.plan_for', {card}) : t('setup.v2.plan');
+  const note = document.getElementById('wiz-plan-note');
+  if (note) note.textContent = missing ? t('setup.v2.plan_download') : t('setup.v2.plan_ready');
+}
+
+// The open programs: closing the games is asked for; what is left open is
+// remembered as no game when the setup finishes (untick a game).
+export async function loadSetupPrograms() {
+  const el = document.getElementById('wiz-program-list');
+  if (!el) return;
+  let names = [];
+  try { names = (await api('/api/setup/processes')).processes || []; }
+  catch (e) { el.innerHTML = `<span class="test-status err">${esc(_errMsg(e))}</span>`; return; }
+  const games = new Set(state.setupData.games || []);
+  el.innerHTML = names.length
+    ? names.map(n => `<label class="chip pointer"><input type="checkbox" data-program="${esc(n)}" ${games.has(n) ? '' : 'checked'}> ${esc(n)}</label>`).join('')
+    : `<span class="t3 fs-12">${th('setup.v2.games_none')}</span>`;
+  document.getElementById('wiz-programs').hidden = false;
 }
 
 // ── step 3: metadata ────────────────────────────────────────────────────────
-function metadataStepHtml() {
+function keyCard(o) {
   const d = state.setupData;
-  const link = (href, text) => `<a class="t-amber" href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  const link = o.href ? ` <a class="t-amber" href="${o.href}" target="_blank" rel="noopener noreferrer">${o.hrefText}</a>` : '';
+  return `<div class="wiz-card">
+      <div class="row"><b class="grow">${o.name}</b><span class="badge badge-sm ${o.badgeCls || 'muted'}">${o.badge}</span></div>
+      <p class="fs-12 t2 mt-4">${o.why}${link}</p>
+      ${o.fields.map(f => `<input class="mt-8" id="${f.id}" ${f.type ? `type="${f.type}"` : ''} aria-label="${f.label}" placeholder="${f.ph}" value="${esc(d[f.field] || '')}">`).join('')}
+      ${o.test ? `<div class="row mt-8"><button class="btn btn-secondary btn-sm" ${act('testConn', o.test)}>${th('setup.v2.test')}</button><span class="grow" id="test-${o.test}-result"></span></div>` : ''}
+    </div>`;
+}
+
+function metadataStepHtml() {
+  const opt = th('setup.v2.optional');
   return `<p class="fs-13 t2 mb-16">${th('setup.v2.meta_lead')}</p>
-    <div class="wiz-card">
-      <div class="row"><b class="grow">TMDB</b><span class="badge badge-sm amber">${th('setup.v2.needed')}</span></div>
-      <p class="fs-12 t2 mt-4">${th('setup.v2.tmdb_why')} ${link('https://www.themoviedb.org/settings/api', 'themoviedb.org/settings/api')}</p>
-      <div class="row mt-8">
-        <input class="grow" id="s-tmdb" aria-label="${th('setup.api_key_of', {service: 'TMDB'})}" placeholder="${th('setup.v2.tmdb_ph')}" value="${esc(d.tmdb_api_key || '')}">
-        <button class="btn btn-secondary btn-sm" ${act('testConn', 'tmdb')}>${th('setup.v2.test')}</button>
-      </div>
-      <div id="test-tmdb-result"></div>
+    <div class="wiz-grid">
+      ${keyCard({name: 'TMDB', badge: th('setup.v2.needed'), badgeCls: 'amber', why: th('setup.v2.tmdb_why'),
+                 href: 'https://www.themoviedb.org/settings/api', hrefText: 'themoviedb.org/settings/api', test: 'tmdb',
+                 fields: [{id: 's-tmdb', field: 'tmdb_api_key', label: th('setup.api_key_of', {service: 'TMDB'}), ph: th('setup.v2.tmdb_ph')}]})}
+      ${keyCard({name: 'OMDb', badge: th('setup.v2.recommended'), why: th('setup.v2.omdb_why'),
+                 href: 'https://www.omdbapi.com/apikey.aspx', hrefText: 'omdbapi.com',
+                 fields: [{id: 's-omdb', field: 'omdb_api_key', label: th('setup.api_key_of', {service: 'OMDb'}), ph: th('setup.v2.key_ph')}]})}
     </div>
-    <div class="wiz-card mt-12">
-      <div class="row"><b class="grow">OMDb</b><span class="badge badge-sm muted">${th('setup.v2.recommended')}</span></div>
-      <p class="fs-12 t2 mt-4">${th('setup.v2.omdb_why')} ${link('https://www.omdbapi.com/apikey.aspx', 'omdbapi.com')}</p>
-      <input class="mt-8" id="s-omdb" aria-label="${th('setup.api_key_of', {service: 'OMDb'})}" placeholder="xxxxxxxx" value="${esc(d.omdb_api_key || '')}">
-    </div>
-    <details class="mt-16">
-      <summary class="fs-12 t2 pointer">${th('setup.v2.music_more')}</summary>
-      <div class="form-group mt-12">
-        <label for="s-lastfm">${th('setup.api_key_of', {service: 'Last.fm'})}</label>
-        <input id="s-lastfm" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(d.lastfm_api_key || '')}">
-        <div class="hint">${th('setup.lastfm_hint')} ${link('https://www.last.fm/api/account/create', 'last.fm/api')}</div>
-      </div>
-      <div class="form-group">
-        <label for="s-spotify-id">${th('setup.spotify_id')}</label>
-        <input id="s-spotify-id" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(d.spotify_client_id || '')}">
-        <div class="hint">${th('setup.free_at')} ${link('https://developer.spotify.com/dashboard', 'developer.spotify.com')}${th('setup.spotify_hint')}</div>
-      </div>
-      <div class="form-group">
-        <label for="s-spotify-secret">${th('setup.spotify_secret')}</label>
-        <input id="s-spotify-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value="${esc(d.spotify_client_secret || '')}">
-        <button class="mt-6 btn btn-secondary btn-sm" ${act('testConn', 'spotify')}>${th('setup.test_service', {service: 'Spotify'})}</button>
-        <div class="mt-4 fs-12" id="test-spotify-result"></div>
-      </div>
-      <div class="form-group">
-        <label for="s-soulsync-url">${th('setup.soulsync_url')}</label>
-        <input id="s-soulsync-url" type="url" placeholder="http://192.168.1.100:12279" value="${esc(d.soulsync_url || '')}">
-        <div class="hint">${th('setup.v2.soulsync_hint')}</div>
-      </div>
-      <div class="form-group">
-        <label for="s-soulsync-key">${th('setup.api_key_of', {service: 'SoulSync'})}</label>
-        <input id="s-soulsync-key" type="password" placeholder="xxxxxxxxxxxxxxxxxxxx" value="${esc(d.soulsync_api_key || '')}">
-      </div>
-      <div class="form-group">
-        <label for="s-listenbrainz">${th('setup.listenbrainz')}</label>
-        <input id="s-listenbrainz" type="password" placeholder="${th('setup.listenbrainz_ph')}" value="${esc(d.listenbrainz_token || '')}">
-        <div class="hint">${th('setup.listenbrainz_hint')} ${link('https://listenbrainz.org/settings/', 'listenbrainz.org/settings')}${th('setup.listenbrainz_hint_post')}</div>
-      </div>
-    </details>`;
+    <h3 class="wiz-sub mt-20">${th('setup.v2.music_heading')}</h3>
+    <p class="fs-12 t2 mb-12">${th('setup.v2.music_lead')}</p>
+    <div class="wiz-grid">
+      ${keyCard({name: 'Last.fm', badge: opt, why: th('setup.v2.lastfm_why'), href: 'https://www.last.fm/api/account/create', hrefText: 'last.fm/api', test: 'lastfm',
+                 fields: [{id: 's-lastfm', field: 'lastfm_api_key', label: th('setup.api_key_of', {service: 'Last.fm'}), ph: th('setup.v2.key_ph')}]})}
+      ${keyCard({name: 'Spotify', badge: opt, why: th('setup.v2.spotify_why'), href: 'https://developer.spotify.com/dashboard', hrefText: 'developer.spotify.com', test: 'spotify',
+                 fields: [{id: 's-spotify-id', field: 'spotify_client_id', label: th('setup.spotify_id'), ph: th('setup.spotify_id')},
+                          {id: 's-spotify-secret', field: 'spotify_client_secret', type: 'password', label: th('setup.spotify_secret'), ph: th('setup.spotify_secret')}]})}
+      ${keyCard({name: 'SoulSync', badge: opt, why: th('setup.v2.soulsync_hint'),
+                 fields: [{id: 's-soulsync-url', field: 'soulsync_url', type: 'url', label: th('setup.soulsync_url'), ph: 'http://192.168.1.100:12279'},
+                          {id: 's-soulsync-key', field: 'soulsync_api_key', type: 'password', label: th('setup.api_key_of', {service: 'SoulSync'}), ph: th('setup.v2.key_ph')}]})}
+      ${keyCard({name: 'ListenBrainz', badge: opt, why: th('setup.v2.listenbrainz_why'), href: 'https://listenbrainz.org/settings/', hrefText: 'listenbrainz.org/settings',
+                 fields: [{id: 's-listenbrainz', field: 'listenbrainz_token', type: 'password', label: th('setup.listenbrainz'), ph: th('setup.listenbrainz_ph')}]})}
+    </div>`;
 }
 
 // ── step 4: arr apps ────────────────────────────────────────────────────────
-function arrCard(name, whatKey, port) {
+function arrCard(name, whatKey, extraBadge) {
   const d = state.setupData;
   const id = name.toLowerCase();
-  return `<div class="wiz-card mb-12">
-      <div class="row mb-8"><b class="grow">${name}</b><span class="badge badge-sm muted">${th(whatKey)}</span></div>
-      <div class="mb-8 form-group">
-        <label for="s-${id}-url">URL</label>
-        <input id="s-${id}-url" type="url" placeholder="http://192.168.1.100:${port}" value="${esc(d[id + '_url'] || '')}">
+  const url = d[id + '_url'] || '';
+  const found = (d._arr_found || {})[id];
+  const status = d._arr_found === undefined ? `<span class="fs-12 t3">${th('setup.v2.arr_looking')}</span>`
+    : found ? `<span class="test-status ok">${th('setup.v2.arr_found')}</span>`
+    : `<span class="fs-12 t3">${th('setup.v2.arr_not_found')}</span>`;
+  const keyPage = url ? ` <a class="t-amber" href="${esc(url.replace(/\/$/, ''))}/settings/general" target="_blank" rel="noopener noreferrer">${th('setup.v2.arr_key_where', {app: name})}</a>` : '';
+  return `<div class="wiz-card${found ? ' on' : ''}">
+      <div class="row"><b>${name}</b><span class="badge badge-sm muted">${th(whatKey)}</span>${extraBadge ? `<span class="badge badge-sm muted">${extraBadge}</span>` : ''}<span class="grow"></span>${status}</div>
+      <div class="wiz-grid mt-8">
+        <input id="s-${id}-url" type="url" aria-label="${th('setup.v2.address_of', {app: name})}" placeholder="http://192.168.1.100:${{radarr: 7878, sonarr: 8989, lidarr: 8686}[id]}" value="${esc(url)}">
+        <input id="s-${id}-key" type="password" aria-label="${th('setup.api_key_of', {service: name})}" placeholder="${th('setup.api_key')}" value="${esc(d[id + '_api_key'] || '')}">
       </div>
-      <div class="mb-8 form-group">
-        <label for="s-${id}-key">${th('setup.api_key')}</label>
-        <input id="s-${id}-key" type="password" placeholder="${th('setup.v2.arr_key_ph')}" value="${esc(d[id + '_api_key'] || '')}">
-      </div>
-      <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>${th('setup.test_service', {service: name})}</button>
+      <div class="row mt-8"><span class="fs-12 t2 grow">${th('setup.v2.arr_key_hint')}${keyPage}</span>
+        <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>${th('setup.v2.test')}</button></div>
       <div id="test-${id}-result"></div>
     </div>`;
 }
@@ -382,26 +367,37 @@ function arrCard(name, whatKey, port) {
 function arrStepHtml() {
   return `<p class="fs-13 t2 mb-8">${th('setup.v2.arr_lead', {server: isJellyfin() ? 'Jellyfin' : 'Plex'})}</p>
     <div class="banner warn mb-16"><span class="banner-icon">${SVG_WARN}</span><span class="banner-text">${th('setup.v2.arr_delete')}</span></div>
-    ${arrCard('Radarr', 'nav.movies', 7878)}
-    ${arrCard('Sonarr', 'setup.arr_tv_anime', 8989)}
-    <details>
-      <summary class="fs-12 t2 pointer">${th('setup.v2.lidarr_more')}</summary>
-      <div class="mt-12">${arrCard('Lidarr', 'nav.music', 8686)}</div>
-    </details>`;
+    <div class="wiz-stack">
+      ${arrCard('Radarr', 'nav.movies')}
+      ${arrCard('Sonarr', 'setup.arr_tv_anime')}
+      ${arrCard('Lidarr', 'nav.music', th('setup.v2.lidarr_badge'))}
+    </div>`;
+}
+
+// The arr apps' addresses, found next to the media server: filled into the
+// fields still empty, the key pages linked.
+async function findArrApps() {
+  const d = state.setupData;
+  if (d._arr_found !== undefined) return;
+  const server = isJellyfin() ? d.jellyfin_url : ((d.plex_servers || []).find(s => s.server_id === d.plex_server_id)?.url || d.plex_url);
+  let near = '';
+  try { near = server ? new URL(server).hostname : ''; } catch (_) { /* not a URL: ask without it */ }
+  let found = {};
+  try { found = (await api(`/api/setup/arr/find?near=${encodeURIComponent(near)}`)).found || {}; }
+  catch (_) { found = {}; }
+  collectStep();
+  for (const [app, url] of Object.entries(found)) if (!d[app + '_url']) d[app + '_url'] = url;
+  d._arr_found = found;
+  if (SETUP_STEPS[state.setupStep] === 'arr') renderSetupStep(state.setupStep);
 }
 
 // ── step 5: viewing and listening history ───────────────────────────────────
 function importStepHtml() {
-  return `<p class="fs-13 t2 mb-16">${th('setup.v2.import_lead')}</p>
-    <div class="wiz-card">
-      <b>Spotify</b>
-      <p class="fs-12 t2 mt-4 mb-8">${th('setup.import_p1')} <strong>${th('setup.import_s1')}</strong> ${th('setup.import_p2')} <strong>${th('setup.import_s2')}</strong>.</p>
-      ${spotifyDropZone('su-sp')}
-    </div>
-    <div class="wiz-card mt-12">
-      <b>Netflix</b>
-      <p class="fs-12 t2 mt-4 mb-8">${th('setup.v2.netflix_how')} <a class="t-amber" href="https://www.netflix.com/account/getmyinfo" target="_blank" rel="noopener noreferrer">netflix.com/account/getmyinfo</a></p>
-      ${netflixDropZone()}
+  const how = `<a class="t-amber" href="https://github.com/Randomname653/Curatarr/blob/main/docs/USAGE.md#bringing-your-history" target="_blank" rel="noopener noreferrer">${th('setup.v2.import_how')}</a>`;
+  return `<p class="fs-13 t2 mb-16">${th('setup.v2.import_lead')} ${how}</p>
+    <div class="wiz-grid">
+      <div class="wiz-card"><div class="row mb-8"><b class="grow">Spotify</b><span class="badge badge-sm muted">${th('setup.v2.optional')}</span></div>${spotifyDropZone('su-sp')}</div>
+      <div class="wiz-card"><div class="row mb-8"><b class="grow">Netflix</b><span class="badge badge-sm muted">${th('setup.v2.optional')}</span></div>${netflixDropZone()}</div>
     </div>
     <p class="fs-12 t3 mt-12">${th('setup.v2.import_later')}</p>`;
 }
@@ -431,7 +427,7 @@ function summaryHtml() {
 }
 
 const SETUP_CONTENT = {
-  plex: () => `<h2 class="setup-heading">${th('setup.v2.server_heading')}</h2>${serverChoice()}<div class="mt-20">${isJellyfin()
+  plex: () => `<h2 class="setup-heading">${th('setup.v2.server_heading')}</h2>${serverChoice()}<div class="mt-16">${isJellyfin()
     ? `${jellyfinConnectHtml(state.setupData.jellyfin_url, state.setupData.jellyfin_ticket ? state.setupData.jellyfin_connected : null, setupJellyfinConnected)}
       ${state.setupData.jellyfin_ticket ? '' : `<details class="mt-12">
         <summary class="fs-12 t2 pointer">${th('setup.paste_key')}</summary>
@@ -468,10 +464,13 @@ export function renderSetupStep(step) {
   document.getElementById('setup-next').hidden = step === SETUP_STEPS.length - 1;
 
   if (key === 'ollama') {
-    // Detection runs by itself: the endpoint's models and this machine's card.
+    // Detection runs by itself: the endpoint's models, this machine's card,
+    // the programs open now.
     testConn('ollama');
     detectGpu();
+    loadSetupPrograms();
   }
+  if (key === 'arr') findArrApps();
   if (key === 'import') { refreshSpotifyPending('su-sp'); refreshNetflixPending(); }
   if (key === 'plex' && isJellyfin() && !state.setupData.jellyfin_ticket) findJellyfinServers();
   document.getElementById('setup-body').scrollTop = 0;
@@ -502,6 +501,11 @@ export function collectStep() {
     if (Number.isFinite(ctx)) d.curator_num_ctx = ctx;
     const gpu = parseInt(document.getElementById('s-num-gpu')?.value, 10);
     if (Number.isFinite(gpu)) d.curator_num_gpu = gpu;
+    const progs = [...document.querySelectorAll('[data-program]')];
+    if (progs.length) {
+      d.not_games = progs.filter(c => c.checked).map(c => c.dataset.program);
+      d.games = progs.filter(c => !c.checked).map(c => c.dataset.program);
+    }
   } else if (key === 'metadata') {
     for (const [id, field] of [['s-listenbrainz', 'listenbrainz_token'], ['s-tmdb', 'tmdb_api_key'],
                                ['s-omdb', 'omdb_api_key'], ['s-soulsync-url', 'soulsync_url'],
@@ -543,7 +547,7 @@ export async function testConn(service) {
   if (resultEl) resultEl.innerHTML = `<div class="test-status">${th('setup.testing')}</div>`;
 
   let url = '', token_ = '', apiKey = '';
-  const v = id => document.getElementById(id)?.value;
+  const v = id => document.getElementById(id)?.value?.trim();
   if (service === 'plex') { url = v('s-plex-url'); token_ = v('s-plex-token'); }
   else if (service === 'jellyfin') { url = v('s-jellyfin-url'); apiKey = v('s-jellyfin-key'); }
   else if (service === 'ollama') { url = v('s-ollama') || state.setupData.ollama_endpoint || 'http://localhost:11434'; }
@@ -576,7 +580,7 @@ export async function testConn(service) {
       // The catalog-driven renderer merges the bench's picks with what is installed.
       state.setupData._detected_models = r.ok ? (r.models || []) : [];
       refreshModelRecs();
-      if (!r.ok) document.getElementById('s-ai-advanced')?.setAttribute('open', '');
+      if (!r.ok) document.getElementById('s-ollama-edit')?.removeAttribute('hidden');
     }
   } catch (e) {
     if (resultEl) resultEl.innerHTML = `<div class="test-status err">${esc(_errMsg(e))}</div>`;
@@ -591,7 +595,6 @@ export async function detectGpu() {
     const r = await api('/api/setup/gpu');
     if (!r.ok) {
       if (el) el.innerHTML = `<div class="test-status err">${th('setup.v2.gpu_none')}</div>`;
-      document.getElementById('s-ai-advanced')?.setAttribute('open', '');
       renderAiPlan();
       return;
     }
@@ -752,6 +755,7 @@ let onboardingEntries = 0;
 export async function showOnboarding(step) {
   onboardingStep = step;
   const overlay = document.getElementById('onboarding-overlay');
+  _brandHeader('ob-logo');
   overlay.classList.remove('hidden');
   // a dialog: focus goes in once the step has rendered (app.js traps Tab there)
   renderOnboardingStep(step).then(() => focusDialog(overlay));
@@ -804,14 +808,28 @@ export async function renderOnboardingStep(step) {
   else if (step === 'sync') {
     title.textContent = t('setup.ob_sync_title');
     sub.textContent = t('setup.ob_sync_sub', {server: serverLabel()});
+    // A sync has no knowable end: the bar sweeps like a running task in
+    // Activity, the mark turns like the curator thinking, the count is live.
     body.innerHTML = `
-      <div class="mb-20" id="ob-sync-status">
-        <div class="mb-8 progress-bar"><div class="w-0 progress-fill" id="ob-sync-bar"></div></div>
-        <div class="fs-12 t2" id="ob-sync-label" role="status" aria-live="polite">${th('setup.ob_waiting')}</div>
+      <div class="ob-sync" id="ob-sync-status">
+        <span class="thinking-mark ob-sync-mark" id="ob-sync-mark"></span>
+        <div class="ob-sync-count" id="ob-sync-count">0</div>
+        <div class="fs-12 t3">${th('setup.v2.ob_plays')}</div>
+        <div class="progress-bar indeterminate mt-16"><div class="progress-fill" id="ob-sync-bar"></div></div>
+        <div class="fs-12 t2 mt-8" id="ob-sync-label" role="status" aria-live="polite">${th('setup.ob_waiting')}</div>
       </div>
       <button hidden class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
         ${th('setup.ob_start_sync')}
       </button>`;
+    const mark = document.getElementById('brand-mark')?.content.firstElementChild;
+    if (mark) {
+      const m = mark.cloneNode(true);
+      m.setAttribute('class', 'brand-logo');
+      m.setAttribute('aria-hidden', 'true');
+      m.removeAttribute('role');
+      m.removeAttribute('aria-label');
+      document.getElementById('ob-sync-mark').appendChild(m);
+    }
     startOnboardingSync();   // the sync starts by itself: one click fewer
   }
 
@@ -824,11 +842,7 @@ export async function renderOnboardingStep(step) {
         <div class="wiz-sum-row"><span class="t-amber">${SVG_WARN}</span><span class="grow fs-13">${th('setup.v2.ob_done_enrich')}</span></div>
         <div class="wiz-sum-row"><span class="t3">${SVG_CHECK}</span><span class="grow fs-13 t2">${th('setup.v2.ob_done_where')}</span></div>
       </div>
-      <div class="mt-16" id="ob-model-status"></div>
-      <div class="row mt-16">
-        <button class="btn btn-secondary" ${act('runOnboardingSpeedCheck', EL)}>${th('setup.v2.ob_speed')}</button>
-        <button class="btn btn-primary grow" ${act('hideOnboarding')}>${th('setup.ob_open')}</button>
-      </div>`;
+      <button class="btn btn-primary wiz-big mt-16" ${act('hideOnboarding')}>${th('setup.ob_open')}</button>`;
   }
 }
 
@@ -903,11 +917,12 @@ export async function startOnboardingSync() {
         fails = 0;
         const entries = s.entries || 0;
         onboardingEntries = entries;
-        lbl.textContent = entries ? t('setup.entries_synced', {x: entries.toLocaleString(loc())}) : t('setup.fetching');
+        lbl.textContent = entries ? t('setup.v2.ob_reading') : t('setup.fetching');
+        const count = document.getElementById('ob-sync-count');
+        if (count) count.textContent = entries.toLocaleString(loc());
         polls += 1;
-        bar.style.width = `${Math.min(90, 10 + polls * 4)}%`;
         if (!s.running && polls > 1) {
-          bar.style.width = '100%';
+          bar.parentElement?.classList.remove('indeterminate');
           lbl.textContent = t('setup.entries_done', {x: entries.toLocaleString(loc())});
           _stopOnboardingPoll();
           setTimeout(() => {
@@ -928,6 +943,10 @@ export async function startOnboardingSync() {
   }
 }
 
+// Not offered in the onboarding any more (2026-11-14): it calls Ollama
+// past the model queue, so right after the first sync it raced the
+// enrichment for the card and measured that. Kept for a Settings button
+// that runs it through the queue.
 // The wizard built the models already; this only measures them: a model
 // that does not quite fit the card runs part-on-CPU and the whole app just
 // feels broken-slow. Caught here, with the calls production makes, rather

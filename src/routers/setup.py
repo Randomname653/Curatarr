@@ -303,6 +303,11 @@ class SetupCompleteRequest(BaseModel):
     # names the server picked. /complete then signs the owner in as well.
     plex_ticket: str = Field(default="", max_length=128)
     plex_server_id: str = Field(default="", max_length=128)
+    # The programs that were open while the owner set up (the AI step asks
+    # to close games first): remembered as no game / game, so the bell
+    # does not ask about each of them on the first page.
+    not_games: list[str] = Field(default_factory=list, max_length=200)
+    games: list[str] = Field(default_factory=list, max_length=200)
     ollama_endpoint: str = "http://localhost:11434"
     base_curator_model: str = "gemma4:31b"
     base_summarizer_model: str = "granite4.1:8b"
@@ -463,7 +468,7 @@ async def complete_setup(
                             detail="Plex URL and token are required to complete setup")
     # Write .env - enable_pitcher becomes the baked name the runtime keys on
     cfg = req.dict()
-    for k in ("jellyfin_ticket", "plex_ticket", "plex_server_id"):
+    for k in ("jellyfin_ticket", "plex_ticket", "plex_server_id", "not_games", "games"):
         cfg.pop(k, None)
     if plex_login:
         # The owner's token was issued to the id the sign-in used.
@@ -476,6 +481,8 @@ async def complete_setup(
     # subprocesses (up to 10 s each). The 400 mapping travels with it.
     await asyncio.to_thread(_write_env_or_400, cfg)
     _reload_after_setup()
+    if req.not_games or req.games:
+        await asyncio.to_thread(_remember_programs, req.not_games, req.games)
     if ticket:
         from src.services.media_server.jellyfin_connect import release
         release(ticket)
@@ -511,6 +518,30 @@ async def complete_setup(
             out["login_error"] = e.detail
         plex_release(req.plex_ticket)
     return out
+
+
+def _remember_programs(not_games: list, games: list) -> None:
+    """The setup's snapshot of open programs, as answers to "is this a
+    game?" - what the bell would otherwise ask one toast at a time."""
+    from datetime import datetime
+    from src.database.connection import get_db_session
+    from src.database.models import GameProcess
+    from src.services.process_monitor import invalidate_process_cache
+    pairs = [(n, False) for n in not_games] + [(n, True) for n in games]
+    with get_db_session() as db:
+        for name, is_game in pairs:
+            key = (name or "").strip().lower()[:200]
+            if not key.endswith(".exe"):
+                continue
+            row = db.get(GameProcess, key)
+            if row:
+                row.is_game, row.added_at = is_game, datetime.utcnow()
+            else:
+                db.add(GameProcess(process_name=key, is_game=is_game))
+        db.commit()
+    invalidate_process_cache()
+    logger.info("[setup] %d program(s) remembered as no game, %d as game",
+                len(not_games), len(games))
 
 
 def _reload_after_setup() -> None:
@@ -647,7 +678,7 @@ def _ip(request: Request) -> str:
 async def plex_connect_start(request: Request, _gate=Depends(require_admin_or_first_run)):
     """Step 1 - a plex.tv PIN for the server's owner to approve, in a new
     tab or at plex.tv/link."""
-    from src.routers.auth import _enforce_pin_create_rate_limit, _plex_forward_url
+    from src.routers.auth import _enforce_pin_create_rate_limit
     from src.services.media_server.plex_connect import (PENDING_TTL_S, bind_pending, headers,
                                                        setup_client_id)
     _enforce_pin_create_rate_limit(_ip(request))
@@ -664,8 +695,9 @@ async def plex_connect_start(request: Request, _gate=Depends(require_admin_or_fi
         raise HTTPException(status_code=502, detail=f"plex.tv refused the sign-in (HTTP {r.status_code})")
     pin = r.json()
     login_id, nonce = bind_pending(pin["id"], client_id)
-    auth_url = (f"https://app.plex.tv/auth#?clientID={client_id}&code={pin['code']}"
-                f"&forwardUrl={_plex_forward_url(request)}")
+    # No forwardUrl: plex.tv sent the approving tab back to Curatarr, a
+    # second wizard on its first step; the first tab carries on by itself.
+    auth_url = f"https://app.plex.tv/auth#?clientID={client_id}&code={pin['code']}"
     return {"login_id": login_id, "nonce": nonce, "code": pin["code"], "auth_url": auth_url,
             "expires_in": PENDING_TTL_S}
 
@@ -709,6 +741,24 @@ async def plex_connect_poll(login_id: str, request: Request,
         account = None
     return {"status": "ok", "ticket": hold(token, client_id, servers), "account": account,
             "servers": public(servers)}
+
+
+@router.get("/arr/find")
+async def arr_find(request: Request, near: str = "", _gate=Depends(require_admin_or_first_run)):
+    """Radarr, Sonarr and Lidarr on the LAN: ``near`` (the media server's
+    host, where a NAS keeps them) first, then the host this page came from.
+    Addresses only: the API key is the user's to paste."""
+    from src.services.arr_find import clean_host, find_arrs
+    hosts = [h for h in (clean_host(near), clean_host(request.url.hostname)) if h]
+    return {"found": await find_arrs(hosts)}
+
+
+@router.get("/processes")
+def setup_processes(_gate=Depends(require_admin_or_first_run)):
+    """The big programs open now: the AI step lists them while it asks to
+    close games, and the setup remembers the rest as no game."""
+    from src.services.process_monitor import get_unknown_processes
+    return {"processes": [p["name"] for p in get_unknown_processes()]}
 
 
 @router.get("/jellyfin/servers")

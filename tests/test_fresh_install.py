@@ -197,9 +197,55 @@ hist.sync_plex_history, dc.custodian_tick, _ms.active_kind = _real_sync, _real_t
 dc._first_run_done.update(_real_done)
 
 
-# ── a fresh install's first page asks about no well-known program ───────────
-from src.services.process_monitor import SYSTEM_PROCESSES  # noqa: E402
-check("browsers, AI apps, model servers and mod managers are no games",
-      {"zen.exe", "claude.exe", "llama-server.exe", "ollama.exe", "vortex.exe"} <= SYSTEM_PROCESSES)
+# ── the programs open during setup are answered, not asked ─────────────────
+from src.database.connection import get_db_session  # noqa: E402
+from src.database.models import GameProcess  # noqa: E402
+from src.routers import setup as setup_router  # noqa: E402
+
+setup_router._remember_programs(["Zen.exe", "claude.exe", "notes.txt"], ["Fallout4.exe"])
+with get_db_session() as db:
+    rows = {r.process_name: r.is_game for r in db.query(GameProcess).all()}
+check("what was open while setting up is remembered as no game, a ticked-off one as a game",
+      rows.get("zen.exe") is False and rows.get("claude.exe") is False and rows.get("fallout4.exe") is True, rows)
+check("...and only program names are stored", "notes.txt" not in rows)
+
+
+# ── the arr apps, found by their own web page ───────────────────────────────
+from src.services import arr_find  # noqa: E402
+import httpx  # noqa: E402
+
+check("an arr app is named by its page title, whatever the port",
+      arr_find.which_app("<html><head><title>Sonarr</title>") == "sonarr"
+      and arr_find.which_app("<title>Plex</title>") is None)
+check("a host that is no plain name or address is not asked",
+      arr_find.clean_host("192.168.0.189") == "192.168.0.189" and arr_find.clean_host("a b/c") is None)
+
+
+def _lan(req):
+    if req.url.host == "192.168.0.189" and req.url.port == 30025:
+        return httpx.Response(200, text="<title>Radarr</title>")
+    if req.url.host == "192.168.0.189" and req.url.port == 30113:
+        return httpx.Response(200, text="<title>Sonarr</title>")
+    return httpx.Response(404)
+
+
+import src.services.media_server.jellyfin_connect as jc  # noqa: E402
+_real_allowed = jc._allowed
+
+
+async def _all_allowed(url):
+    return True
+jc._allowed = _all_allowed
+found = asyncio.run(arr_find.find_arrs(["192.168.0.189"], transport=httpx.MockTransport(_lan)))
+jc._allowed = _real_allowed
+check("Radarr and Sonarr next to the media server are found on the TrueNAS ports",
+      found == {"radarr": "http://192.168.0.189:30025", "sonarr": "http://192.168.0.189:30113"}, found)
+
+
+# ── TMDB: the long token is named, not refused as a wrong key ────────────────
+from src.services.setup_wizard import test_tmdb  # noqa: E402
+r = asyncio.run(test_tmdb("eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.c2lnbmF0dXJl"))
+check("the API Read Access Token is recognised and the short key asked for",
+      r["ok"] is False and "short API Key" in r["error"])
 
 check.done()
