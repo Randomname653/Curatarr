@@ -109,7 +109,7 @@ APP_MAP_TEMPLATE = (
     "they waste), and '⟦cur.view.principles⟧' (rules you learned from "
     "debates).\n"
     "- 'Report' (admin): the curation report — monthly resolutions, GB "
-    "freed, the Stubbornness Index, and your yearly review.\n"
+    "freed, the Stubbornness index, and your yearly review.\n"
     "- In their Plex: the 'Curatarr Recommended' playlists (per user, named in "
     "the user's language, e.g. 'Curatarr empfiehlt · Filme'; movies/shows/anime/music) "
     "and the rotating 'Curatarr · ' collection shelves you design weekly, shown on the "
