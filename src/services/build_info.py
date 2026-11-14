@@ -67,15 +67,21 @@ def git_head(root: Path = ROOT) -> Optional[str]:
 
 
 def build(environ=os.environ, root: Path = ROOT) -> dict:
-    """{version, sha, short, channel ("container" | "git" | "unknown"), built}."""
+    """{version, sha, short, channel ("container" | "git" | "unknown"), track,
+    built}. ``track`` is a container's: "release" (:latest, :X.Y.Z) or "main"
+    (:main, every merge; also an image from before the tracks existed)."""
     from src.config import settings
     sha = (environ.get("CURATARR_BUILD_SHA") or "").strip()
     channel = "container" if sha else None
     if not sha:
         sha = git_head(root) or ""
         channel = "git" if sha else "unknown"
+    track = None
+    if channel == "container":
+        track = "release" if (environ.get("CURATARR_BUILD_TRACK") or "").strip() == "release" else "main"
     return {"version": settings.VERSION, "sha": sha or None, "short": sha[:7] or None,
-            "channel": channel, "built": (environ.get("CURATARR_BUILD_DATE") or "").strip() or None}
+            "channel": channel, "track": track,
+            "built": (environ.get("CURATARR_BUILD_DATE") or "").strip() or None}
 
 
 def current() -> dict:

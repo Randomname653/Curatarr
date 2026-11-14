@@ -6,6 +6,28 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**`:latest` is a release now; `:main` follows every merge.** A merge no longer reaches everyone
+who pulls `:latest`: a `vX.Y.Z` tag publishes `:X.Y.Z` and moves `:latest`, a push to main
+publishes `:main`. Each image knows its track, and "Update available" offers a `:latest` install
+the next release and a `:main` install the next merge, naming the tag to pull. If you want every
+merge as before, change your image to `:main`.
+
+**One design language, checked screen by screen.** A full UI audit, then all of its findings:
+- one dialog shell for setup, sign-in, the Plex PIN, onboarding and the offline page;
+- one type scale, shadow, duration and radius set, one rotation, one loading line, skeletons where
+  a list is about to appear, a first-run empty state with the mark;
+- the rarer toolbar actions on History and the Knowledge Base behind a More menu that stays on
+  screen on a phone and follows the language;
+- 44 px touch targets, tab roles and states for screen readers, a bell panel that closes like a menu;
+- words: no internal names in the UI (judge, arr, custodian, bake, env names), one German word per
+  concept (Kurator, Wartung, Anreicherung, Benchmark), the Knowledge Base's tab is Enrichment.
+
+**The setup's logo fetch checks every address, and keeps what it fetched.** Icon links in a page
+and redirects were followed unchecked; now each address is checked first (a website's stays on
+public https hosts, a LAN app's on its own host), and the logo response is sandboxed. Logos are kept
+in the data folder (refreshed monthly) and prefetched when the wizard opens. Two scanner findings
+fixed at the source (an emoji pattern, two SQL placeholder lists).
+
 **A fresh install, walked through as a stranger, and rebuilt where it stuck.** A clone of main,
 a new venv, the owner's real Plex: the wizard reloaded into itself until a manual restart, the
 onboarding sat 14 minutes on a taste profile, nothing was enriched for half an hour and then only

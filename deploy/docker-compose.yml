@@ -5,8 +5,10 @@
 # data volume) at a machine that runs it, e.g. the gaming PC on the LAN.
 services:
   curatarr:
+    # :latest is the newest release; :main follows every merge (changes
+    # first, before a release); :X.Y.Z stays where it is.
     image: ghcr.io/randomname653/curatarr:latest
-    # OPTIONAL: uncomment to pull :latest on every deploy. Then "Update
+    # OPTIONAL: uncomment to pull the tag on every deploy. Then "Update
     # available" under the sidebar means: edit the app and save it again
     # (TrueNAS), and the new image replaces the container; the data volume
     # stays. Every redeploy then checks the registry (a small request when

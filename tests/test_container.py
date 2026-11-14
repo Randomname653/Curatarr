@@ -59,7 +59,15 @@ check("compose mounts one volume at /app/data", re.search(r"- [^:\n]+:/app/data\
 # ── the workflow that builds it ─────────────────────────────────────────────
 wf = (ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
 check("the image is published from main only, after the smoke test",
-      "github.ref == 'refs/heads/main'" in wf and wf.index("Smoke test") < wf.index("Publish to GHCR"))
+      "github.ref == 'refs/heads/main'" in wf and wf.index("Smoke test") < wf.index("Publish main to GHCR"))
+# Two tracks: a merge is :main, only a release tag moves :latest.
+_main_step = wf[wf.index("Publish main to GHCR"):]
+_release_step = wf[wf.index("Publish release tag to GHCR"):wf.index("Publish main to GHCR")]
+check("a push to main publishes :main and never :latest; a release tag publishes :X.Y.Z and :latest",
+      '"$IMAGE:main"' in _main_step and ":latest" not in _main_step
+      and '"$IMAGE:latest"' in _release_step and '"$IMAGE:${TAG#v}"' in _release_step)
+check("the build carries its track (release for a vX.Y.Z tag, main otherwise)",
+      'CURATARR_BUILD_TRACK="$track"' in wf and "refs/tags/v*) track=release" in wf)
 
 
 def run_blocks(text):
