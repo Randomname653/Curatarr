@@ -366,6 +366,10 @@ export function _laneParam() {
 }
 
 export async function regenerateRecs() {
+  // Minutes of GPU work: asked first, it started on a stray click.
+  const ask = await confirmDialog({title: t('recs.regen_title'), body: `<p>${th('recs.regen_body')}</p>`,
+                                   confirmLabel: t('recs.regenerate')});
+  if (!ask?.ok) return;
   _stopRecsPoll();
   const cat = state.currentRecsCategory;
   let prevStamp;   // undefined: unknown — the poll takes its first answer as the baseline

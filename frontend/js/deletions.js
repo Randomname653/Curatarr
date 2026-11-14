@@ -206,7 +206,7 @@ function _delCardHtml(p) {
               <div class="fs-16 panel-item-title">${esc(p.title)}
                 ${p.stagnant
                   ? `<span class="badge amber" title="${escAttr(_yourCallWhy(p))}">${th('del.your_call')}</span>`
-                  : `<span class="badge danger" title="${th('del.cut_title')}">${th('del.cut')}</span>`}${_recentActivityBadge(p)}
+                  : `<span class="badge amber" title="${th('del.cut_title')}">${th('del.cut')}</span>`}${_recentActivityBadge(p)}
                 ${_whyButton(p)}
                 ${limbo ? `<span class="badge amber" title="${th('del.parked_title')}">${th('del.parked')}</span>` : ''}
               </div>

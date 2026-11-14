@@ -129,7 +129,7 @@ export async function loadHistoryStatus() {
       // a dead end. It says so, with the action that fills it.
       document.getElementById('taste-tabs').innerHTML = '';
       document.getElementById('taste-content').innerHTML =
-        emptyHtml(th('history.no_data'), t('history.sync_now'), act('syncHistory', false));
+        emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false));
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }

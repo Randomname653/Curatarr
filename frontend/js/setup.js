@@ -804,7 +804,7 @@ export function renderHardwarePackage(pkg) {
   const sample = pkg.example;
   const example = !sample ? '' : `<details class="fs-12 mt-4"><summary class="pointer t2">${th('setup.example_summary', {model: r.model})}</summary>`
     + `<div class="t3">${esc(sample.title)} · ${th('setup.owner')} ${esc(sample.owner)}. ${esc(sample.setup)}</div>`
-    + `<div><b>${esc(sample.verdict_words || sample.verdict)}</b> (${esc(sample.protecting_pillar)}): ${esc(sample.reason)}</div>`
+    + `<div><b>${esc(sample.verdict_words || sample.verdict)}</b> (${th(`setup.v2.pillar.${String(sample.protecting_pillar || '').toLowerCase()}`)}): ${esc(sample.reason)}</div>`
     + (sample.note ? `<blockquote class="t2">${esc(sample.note)}</blockquote>` : '')
     + `<div class="t3">${th('setup.all_examples')}</div></details>`;
   return ramNote + `<div class="fs-12 t2">${th('setup.v2.bench_line', {gb: pkg.tier_gb, model: esc(r.model), s: ex.judge_s ?? '?'})}</div>` + kvNote + example;
