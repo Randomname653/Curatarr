@@ -102,33 +102,55 @@ async def refresh(task=None, *, transport=None, now: Optional[datetime] = None) 
     looked = fetched = 0
     series: set[int] = {known[e] for e in ep_ids if e in known}
     done = True
+
+    def is_due(sid: int) -> bool:
+        return (sid not in stored or not stored[sid][0]
+                or now - stored[sid][0] >= timedelta(days=REFRESH_DAYS))
+
     async with shoko_client.new_client(transport) as c:
         sess = shoko_client.ShokoSession(c, shoko_client.api_keys()[0])
+        handled: set[int] = set()
+
+        async def fetch(sid: int) -> None:
+            nonlocal fetched, done
+            handled.add(sid)
+            if fetched >= MAX_SERIES_PER_RUN:
+                done = False
+                return
+            episodes = await sess.series_episode_meta(sid)
+            if episodes is None:
+                return                # Shoko did not answer: next run
+            tags = await sess.series_tags(sid) or []
+            info = await sess.series_info(sid)
+            await run_write(_save, sid, info, episodes, tags, now)
+            fetched += 1
+            # Every episode of the series is placed now: the plays on its
+            # other episodes need no lookup of their own (500 lookups for
+            # 83 series stopped the first live run at 500 of 700 episodes).
+            for ep in episodes:
+                if isinstance(ep.get("id"), int):
+                    known[ep["id"]] = sid
+            if task is not None and fetched % 20 == 0:
+                from src.services.task_monitor import task_monitor
+                task_monitor.update(task, message=f"{fetched} series refreshed")
+
         for e in unknown:
+            if e in known:
+                continue
             if looked >= MAX_EPISODE_LOOKUPS:
                 done = False
                 break
             looked += 1
             sid = await sess.episode_series(e)
-            if sid is not None:
-                series.add(sid)
-                known[e] = sid
-        due = [s for s in sorted(series)
-               if s not in stored or not stored[s][0]
-               or now - stored[s][0] >= timedelta(days=REFRESH_DAYS)]
-        if len(due) > MAX_SERIES_PER_RUN:
-            due, done = due[:MAX_SERIES_PER_RUN], False
-        for n, sid in enumerate(due, 1):
-            episodes = await sess.series_episode_meta(sid)
-            if episodes is None:
-                continue              # Shoko did not answer: next run
-            tags = await sess.series_tags(sid) or []
-            info = await sess.series_info(sid)
-            await run_write(_save, sid, info, episodes, tags, now)
-            fetched += 1
-            if task is not None and n % 20 == 0:
-                from src.services.task_monitor import task_monitor
-                task_monitor.update(task, processed=n, total=len(due))
+            if sid is None:
+                continue
+            series.add(sid)
+            known[e] = sid
+            if sid not in handled and is_due(sid):
+                await fetch(sid)
+        for sid in sorted(series):
+            if sid not in handled and is_due(sid):
+                await fetch(sid)
     summary = (f"{fetched} series refreshed ({len(series)} watched, "
                f"{looked} episodes placed)")
     if task is not None:
@@ -190,9 +212,23 @@ def stop_point(user_id: int, series_title: str) -> Optional[dict]:
             except (TypeError, ValueError):
                 continue
             if any(e.get("id") == ids[-1] for e in episodes):
+                if not _left_midway(episodes, ids[-1]):
+                    return None
                 low = low_point(episodes, ids[-1])
                 return {**low, "finished": bool(row[0])} if low else None
     return None
+
+
+def _left_midway(episodes: list, episode_id: int) -> bool:
+    """A stop is somewhere inside the season. Not the first episode: one
+    episode is trying a series, not leaving it (the opener rule since
+    #312). Not the last regular one: that season is finished (the first
+    live run named a finale "where you stopped")."""
+    regular = [e for e in episodes if e.get("type") == "Episode" and isinstance(e.get("number"), int)]
+    ep = next((e for e in regular if e.get("id") == episode_id), None)
+    if ep is None or not regular:
+        return False
+    return 1 < ep["number"] < max(e["number"] for e in regular)
 
 
 # ── CLI: ``python -m src.services.shoko_meta`` ──────────────────────────────

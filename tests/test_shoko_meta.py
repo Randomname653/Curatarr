@@ -115,6 +115,10 @@ check("...tags with weight, either spoiler flag as one",
 check("only reads: every call a GET, never a Refresh, MyList-sync or Action route",
       all(m == "GET" and not any(x in pth for x in ("Refresh", "MyList", "/Action")) for m, pth, _ in fake.paths),
       fake.paths)
+check("one lookup per series: the series' episodes place the other plays (the first live run "
+      "spent 500 lookups on 83 series and stopped there)",
+      sum(1 for _m, pth, _q in fake.paths if pth.startswith("/Episode/")) == 1,
+      [pth for _m, pth, _q in fake.paths if pth.startswith("/Episode/")])
 check("...the episode list asks for all of them, the missing and hidden ones, with AniDB data",
       any(pth == "/Series/77/Episode" and q.get("pageSize") == "0" and q.get("includeMissing") == "true"
           and q.get("includeDataFrom") == "AniDB" for _m, pth, q in fake.paths))
@@ -140,6 +144,12 @@ stop = sm.stop_point(1, "Night Harbor")
 check("where they left the series: the weakest episode, unfinished",
       stop and stop["episode"] == 3 and stop["finished"] is False, stop)
 check("...nothing for a series without Shoko data", sm.stop_point(1, "Elsewhere") is None)
+check("the first episode is trying a series, not leaving it (the #312 opener rule)",
+      sm._left_midway(eps, 701) is False)
+check("...the last regular episode finished the season: no stop (the live run named a finale)",
+      sm._left_midway(eps, 707) is False)
+check("...an episode inside the season is one", sm._left_midway(eps, 703) is True)
+check("...a special is never a place in the season", sm._left_midway(eps, 708) is False)
 
 # ── the opener fact ──────────────────────────────────────────────────────────
 from zoneinfo import ZoneInfo  # noqa: E402
