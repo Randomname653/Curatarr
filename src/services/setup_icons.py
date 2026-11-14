@@ -190,12 +190,20 @@ def _cache_dir():
     return Path(settings.ENRICHMENT_CACHE).parent / "logos"
 
 
+# A kept logo's file name is one of these constants, never the caller's
+# string: the key arrives from a URL path (code scanning 224-227).
+_FILE_STEM = {k: k for k in SITES}
+
+
 def _disk_get(key: str) -> Optional[tuple[bytes, str, bool]]:
     """``(bytes, content type, fresh)`` of a kept logo, or None."""
     import time
+    stem = _FILE_STEM.get(key)
+    if stem is None:
+        return None
     d = _cache_dir()
     for ctype, ext in _EXT.items():
-        p = d / f"{key}{ext}"
+        p = d / f"{stem}{ext}"
         try:
             st = p.stat()
             return p.read_bytes(), ctype, time.time() - st.st_mtime < LOGO_MAX_AGE_S
@@ -208,19 +216,19 @@ def _disk_get(key: str) -> Optional[tuple[bytes, str, bool]]:
 
 
 def _disk_put(key: str, got: tuple[bytes, str]) -> None:
-    ext = _EXT.get(got[1])
-    if not ext:
+    ext, stem = _EXT.get(got[1]), _FILE_STEM.get(key)
+    if not ext or stem is None:
         return
     d = _cache_dir()
     try:
         d.mkdir(parents=True, exist_ok=True)
-        for old in d.glob(f"{key}.*"):
+        for old in d.glob(f"{stem}.*"):
             old.unlink()
-        tmp = d / f".{key}{ext}.tmp"
+        tmp = d / f".{stem}{ext}.tmp"
         tmp.write_bytes(got[0])
-        tmp.replace(d / f"{key}{ext}")
+        tmp.replace(d / f"{stem}{ext}")
     except OSError as e:
-        logger.info("[setup] could not keep the %s logo: %s", key, e)
+        logger.info("[setup] could not keep the %s logo: %s", stem, e)
 
 
 def prefetch_logos(*, transport=None) -> None:

@@ -366,6 +366,11 @@ check("a stale copy still answers when the site is down", got == (b"png-bytes", 
 setup_icons._logos.clear()
 asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
 check("and is replaced once the site answers again", _time.time() - kept.stat().st_mtime < 60)
+setup_icons._disk_put("../escape", (b"x", "image/png"))
+check("a kept logo's file name is only ever a known service, never the caller's string",
+      setup_icons._disk_get("../escape") is None
+      and not (setup_icons._cache_dir().parent / "escape.png").exists()
+      and not any("escape" in x.name for x in setup_icons._cache_dir().iterdir()))
 check("a LAN app's logo is not written to the data folder",
       sorted(x.name for x in setup_icons._cache_dir().iterdir()) == ["tmdb.png"])
 
