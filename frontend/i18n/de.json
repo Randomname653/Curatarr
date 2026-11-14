@@ -22,6 +22,7 @@
  "account.session_hint": "Beendet deine Sitzung auf jedem Gerät.",
  "account.sign_out_everywhere": "Überall abmelden",
  "account.signed_in_plex": "Angemeldet über Plex",
+ "account.signed_in_via": "Angemeldet über {server}",
  "account.tone": "Ton",
  "account.tone_friendly": "Freundlich",
  "account.tone_hint": "Scharf ist bei Titeln etwas elitär. Jeder Ton bewertet das Werk, nicht dich.",

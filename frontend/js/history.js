@@ -132,7 +132,7 @@ export async function loadHistoryStatus() {
       // fresh install learns its library first): Recompute builds it.
       document.getElementById('taste-tabs').innerHTML = '';
       document.getElementById('taste-content').innerHTML = (s.watch_history_entries || 0) === 0
-        ? emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false))
+        ? emptyHtml(th('history.empty', {server: serverLabel()}), t('history.sync_now'), act('syncHistory', false), {mark: true, primary: true})
         : emptyHtml(th('history.no_taste'), t('history.recompute'), act('recomputeTaste'));
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }

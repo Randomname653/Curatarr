@@ -22,6 +22,7 @@
  "account.session_hint": "Ends your session on every device.",
  "account.sign_out_everywhere": "Sign out everywhere",
  "account.signed_in_plex": "Signed in via Plex",
+ "account.signed_in_via": "Signed in via {server}",
  "account.tone": "Tone",
  "account.tone_friendly": "Friendly",
  "account.tone_hint": "Sharp is a touch elitist about titles. Every tone judges the work, not you.",

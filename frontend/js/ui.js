@@ -484,8 +484,23 @@ export function skeletonHtml(label, o = {}) {
     <p class="fs-12 t3 mt-8">${esc(label || '')}</p></div>`;
 }
 
+// o.mark: the brand mark above the text, for a first-run empty state (a
+// fresh install's History and Knowledge Base) - the app's first screens
+// carried no mark at all (UI audit 2026-11-14). o.primary: the action is
+// the next step, not an aside.
 export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
-  return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
+  const btn = o.primary ? 'btn btn-primary' : 'btn btn-secondary btn-sm';
+  return `<div class="empty${o.good ? ' good' : ''}${o.mark ? ' empty-first' : ''}" role="status">${o.mark ? _markHtml() : ''}<p>${html}</p>${ctaLabel ? `<button type="button" class="${btn}" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
+}
+function _markHtml() {
+  const tpl = globalThis.document?.getElementById('brand-mark')?.content?.firstElementChild;
+  if (!tpl) return '';
+  const m = tpl.cloneNode(true);
+  m.setAttribute('class', 'brand-logo empty-mark');
+  m.setAttribute('aria-hidden', 'true');
+  m.removeAttribute('role');
+  m.removeAttribute('aria-label');
+  return m.outerHTML;
 }
 
 // _fmtRel(iso) → "in 3 d" / "2 h ago"; pair it with _fmtAbs(iso) in title=.

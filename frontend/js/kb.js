@@ -208,7 +208,7 @@ export function _renderKbOverview(o, running, lastRun, statusErr = null) {
         </div>
       </div>
       <div class="section-body">
-        ${cards ? `<div class="kb-lib-grid">${cards}</div>` : `<p class="fs-13 t2">${th('kb.empty')}</p>`}
+        ${cards ? `<div class="kb-lib-grid">${cards}</div>` : emptyHtml(th('kb.empty'), '', '', {mark: true})}
         <p class="fs-11 t3 mt-12">${th('kb.requeue_note')}</p>
       </div>
     </section>
