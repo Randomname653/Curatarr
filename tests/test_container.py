@@ -9,6 +9,7 @@ process is not root, and nothing secret or bulky is sent as build context.
 """
 from _harness import check  # noqa: I001 - first: temp stores
 
+import os
 import re
 from pathlib import Path
 
@@ -60,14 +61,49 @@ check("compose mounts one volume at /app/data", re.search(r"- [^:\n]+:/app/data\
 wf = (ROOT / ".github" / "workflows" / "docker.yml").read_text(encoding="utf-8")
 check("the image is published from main only, after the smoke test",
       "github.ref == 'refs/heads/main'" in wf and wf.index("Smoke test") < wf.index("Publish main to GHCR"))
-# Two tracks: a merge is :main, only a release tag moves :latest.
-_main_step = wf[wf.index("Publish main to GHCR"):]
-_release_step = wf[wf.index("Publish release tag to GHCR"):wf.index("Publish main to GHCR")]
-check("a push to main publishes :main and never :latest; a release tag publishes :X.Y.Z and :latest",
-      '"$IMAGE:main"' in _main_step and ":latest" not in _main_step
-      and '"$IMAGE:latest"' in _release_step and '"$IMAGE:${TAG#v}"' in _release_step)
-check("the build carries its track (release for a vX.Y.Z tag, main otherwise)",
-      'CURATARR_BUILD_TRACK="$track"' in wf and "refs/tags/v*) track=release" in wf)
+
+
+# Two tracks, run rather than read: the Build and Publish steps' scripts run
+# under bash with a fake docker that logs its arguments, for a push to main
+# and for a release tag, each step only when its `if` holds.
+def _run_publish(ref: str) -> list:
+    import shutil
+    import subprocess
+    import tempfile
+    import types
+
+    import yaml
+    steps = yaml.safe_load(wf)["jobs"]["image"]["steps"]
+    github = types.SimpleNamespace(ref=ref, event_name="push", ref_name=ref.rsplit("/", 1)[-1])
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "docker.log"
+        fake = Path(tmp) / "docker"
+        fake.write_text('#!/bin/sh\necho "$@" >> "$DOCKER_LOG"\n', encoding="utf-8")
+        fake.chmod(0o755)
+        for step in steps:
+            name = step.get("name") or ""
+            if not (name == "Build" or name.startswith("Publish")):
+                continue
+            cond = (step.get("if") or "True").replace("&&", " and ").replace("||", " or ")
+            if not eval(cond, {"startsWith": lambda a, b: a.startswith(b), "github": github}):  # noqa: S307 - the workflow's own conditions
+                continue
+            env = {**os.environ, "PATH": tmp + os.pathsep + os.environ.get("PATH", ""), "DOCKER_LOG": str(log),
+                   "GITHUB_REF": ref, "GITHUB_SHA": "a" * 40, "IMAGE": "ghcr.io/x/curatarr",
+                   "GH_TOKEN": "t", "ACTOR": "a", "TAG": github.ref_name}
+            subprocess.run([shutil.which("bash") or "bash", "-e", "-c", step["run"]], env=env, check=True,
+                           capture_output=True, timeout=30)
+        return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+main_log = _run_publish("refs/heads/main")
+tag_log = _run_publish("refs/tags/v1.2.0")
+pushed = lambda log: sorted(line.split()[-1].rsplit(":", 1)[-1] for line in log if line.startswith("push "))  # noqa: E731
+check("a merge to main pushes :main and its sha tag, never :latest",
+      pushed(main_log) == ["main", "sha-aaaaaaa"], main_log)
+check("a release tag pushes :X.Y.Z and moves :latest", pushed(tag_log) == ["1.2.0", "latest"], tag_log)
+check("each build is labelled with its track",
+      any("CURATARR_BUILD_TRACK=main" in line for line in main_log)
+      and any("CURATARR_BUILD_TRACK=release" in line for line in tag_log), (main_log[:1], tag_log[:1]))
 
 
 def run_blocks(text):
