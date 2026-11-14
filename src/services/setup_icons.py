@@ -44,8 +44,17 @@ SITES = {
     "lidarr": "https://lidarr.audio",
     "soulsync": "https://github.com/Nezreka/SoulSync",
 }
+# Straight image addresses when a site's own page names no usable icon
+# (lidarr.audio answers /favicon.ico with HTML): the project's GitHub avatar.
+FALLBACK = {
+    "radarr": "https://github.com/Radarr.png",
+    "sonarr": "https://github.com/Sonarr.png",
+    "lidarr": "https://github.com/Lidarr.png",
+}
+# The arr apps serve their own logo; their favicon redirects to a login.
+LAN_PATHS = ("/Content/Images/logo.svg", "/Content/Images/Icons/apple-touch-icon.png")
 MAX_BYTES = 300_000
-_TIMEOUT = 6.0
+_TIMEOUT = 12.0     # netflix.com takes about 6 s for its front page
 _UA = "Curatarr setup (logo fetch)"
 _LINK = re.compile(r"<link\b[^>]*>", re.I)
 _ATTR = re.compile(r'(\w[\w-]*)\s*=\s*["\']([^"\']*)["\']')
@@ -98,18 +107,24 @@ async def service_logo(key: str, lan_url: Optional[str] = None, *, transport=Non
     got = None
     async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, follow_redirects=True,
                                  headers={"User-Agent": _UA}, transport=transport) as c:
+        for path in LAN_PATHS if lan_url else ():
+            got = await _image(c, base + path)
+            if got:
+                _logos[base] = got
+                return got
         try:
             page = await c.get(base + "/")
             html = page.text[:200_000] if page.status_code == 200 else ""
             base_url = str(page.url).rstrip("/") if page.status_code == 200 else base
         except httpx.HTTPError:
             html, base_url = "", base
-        for url in icon_candidates(html, base_url)[:4]:
+        for url in [*icon_candidates(html, base_url)[:4], *([FALLBACK[key]] if key in FALLBACK else [])]:
             got = await _image(c, url)
             if got:
                 break
-    _logos[base] = got
-    if not got:
+    if got:
+        _logos[base] = got     # a miss is not kept: a slow site gets another try
+    else:
         logger.info("[setup] no logo for %s", key)
     return got
 

@@ -2181,7 +2181,7 @@
  "setup.v2.import_later": "Files wait here until the first sync; you then attach them to a household member in Settings → Users.",
  "setup.v2.import_lead": "Optional. Years of streaming tell the curator more than a fresh library.",
  "setup.v2.installed": "installed",
- "setup.v2.jellyfin_sub": "Found on your network, approved with Quick Connect",
+ "setup.v2.jellyfin_sub": "Connects with Quick Connect, no key to copy",
  "setup.v2.judge_title": "Separate deletion judge",
  "setup.v2.key_ph": "API key",
  "setup.v2.kind.artist": "Music",

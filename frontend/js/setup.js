@@ -34,8 +34,10 @@ async function _picUrl(path) {
     try { const c = sessionStorage.getItem('curatarr_setup_code'); if (c) h['X-Setup-Code'] = c; } catch (_) { /* no storage: a local setup needs none */ }
     try {
       const r = await fetch(path, {headers: h});
-      return r.ok ? URL.createObjectURL(await r.blob()) : null;
-    } catch (_) { return null; }
+      if (r.ok) return URL.createObjectURL(await r.blob());
+    } catch (_) { /* below: forgotten, so the next render asks again */ }
+    _pics.delete(path);
+    return null;
   })();
   _pics.set(path, p);
   return p;
@@ -935,6 +937,7 @@ export async function startOnboardingSync() {
     // row, or the deadline, now say so and give the button back as Retry.
     let fails = 0;
     let polls = 0;
+    let readTotal = 0;
     const giveUp = why => {
       _stopOnboardingPoll();
       if (lbl) lbl.textContent = why;
@@ -961,7 +964,10 @@ export async function startOnboardingSync() {
         lbl.textContent = step.label;
         bar.style.width = `${step.pct}%`;
         const count = document.getElementById('ob-sync-count');
-        if (count) count.textContent = (pr.phase === 'history' ? pr.done : entries).toLocaleString(loc());
+        // Saving: the plays read are all of Plex's total, not the rows written so far.
+        if (pr.phase === 'history') readTotal = pr.total || readTotal;
+        const shown = pr.phase === 'history' ? pr.done : pr.phase === 'saving' ? (readTotal || entries) : entries;
+        if (count) count.textContent = (shown || 0).toLocaleString(loc());
         polls += 1;
         if (!s.running && polls > 1) {
           lbl.textContent = t('setup.entries_done', {x: entries.toLocaleString(loc())});

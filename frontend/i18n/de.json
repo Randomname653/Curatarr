@@ -2181,7 +2181,7 @@
  "setup.v2.import_later": "Die Dateien warten hier bis zur ersten Synchronisierung; danach ordnest du sie unter Einstellungen → Benutzer einem Haushaltsmitglied zu.",
  "setup.v2.import_lead": "Optional. Jahre an Streaming sagen dem Kurator mehr als eine frische Bibliothek.",
  "setup.v2.installed": "installiert",
- "setup.v2.jellyfin_sub": "Im Netzwerk gefunden, per Quick Connect freigegeben",
+ "setup.v2.jellyfin_sub": "Verbindet sich per Quick Connect, kein Schlüssel zum Kopieren",
  "setup.v2.judge_title": "Eigener Lösch-Richter",
  "setup.v2.key_ph": "API-Schlüssel",
  "setup.v2.kind.artist": "Musik",
