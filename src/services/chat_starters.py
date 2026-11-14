@@ -273,11 +273,23 @@ def collect_facts(user_id: int, now: Optional[datetime] = None,
                       "pause": _pause(video, k, now)})
     if stalled:
         k, v = max(stalled, key=lambda kv: kv[1]["plays"])
-        facts.append({"kind": "stalled_series", "title": k,
-                      "media_type": v["media_type"],
-                      "days_since": (now - v["last"]).days,
-                      "plays_before_stall": v["plays"],
-                      "pause": _pause(video, k, now)})
+        fact = {"kind": "stalled_series", "title": k,
+                "media_type": v["media_type"],
+                "days_since": (now - v["last"]).days,
+                "plays_before_stall": v["plays"],
+                "pause": _pause(video, k, now)}
+        # Shoko phase 2: the episode they left it at, when AniDB rates it
+        # among the season's weakest (on enough votes) - "the weakest
+        # episode of the season is the one you stopped at".
+        try:
+            from src.services.shoko_meta import stop_point
+            low = stop_point(user_id, k)
+        except Exception as e:  # noqa: BLE001 - the fact stands without it
+            logger.warning("[starters] Shoko stop point for %r unreadable: %s", k, e)
+            low = None
+        if low:
+            fact["stopped_at_weakest_episode"] = low
+        facts.append(fact)
 
     if music:
         artists: dict[str, int] = {}

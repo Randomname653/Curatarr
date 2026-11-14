@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Shoko, phase 2: what AniDB knows per episode.** A daily read-only job copies, for the anime the
+household watches, what Shoko keeps locally: every episode's AniDB type, number and rating with its
+votes, and the series' tags with weight and spoiler flags. A series is reached through the watched
+sync's own episode links, never a title search. The first use: when a member left a series at one
+of its season's weakest episodes (a regular episode, rated on at least five votes, among the two
+lowest and a point under the season median), the opener about that series says so. Recaps, which
+AniDB files as specials, are never ranked as episodes. `python -m src.services.shoko_meta` shows
+what it found.
+
 **Music recommendations rank by the themes you listen to.** Taste engine stage 3, measured
 before it was built: on the owner's ten-year history, which newly heard artists did he come back
 to (5+ plays)? A centre over the theme phrases of what he plays found them at AUC 0.57 at three

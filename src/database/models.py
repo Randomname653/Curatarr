@@ -390,6 +390,21 @@ class ShokoWatchSync(Base):
     sent_at = Column(DateTime, nullable=True)
 
 
+class ShokoSeriesMeta(Base):
+    """What Shoko keeps locally about one anime series (an AniDB entry, so
+    one season or cour): every episode with its AniDB type, number and
+    rating, and the series' tags (services/shoko_meta). Read-only copies,
+    refreshed weekly for the series the household watches."""
+    __tablename__ = "shoko_series_meta"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    shoko_series_id = Column(Integer, nullable=False, unique=True, index=True)
+    anidb_id = Column(Integer, nullable=True)
+    title = Column(String(512), nullable=True)
+    episodes = Column(Text, nullable=True)   # JSON [{id, type, number, title, air_date, rating, votes}]
+    tags = Column(Text, nullable=True)       # JSON [{name, weight, spoiler}]
+    fetched_at = Column(DateTime, nullable=True)
+
+
 class ShokoPin(Base):
     """The owner's word on a series of the watch history that the Shoko
     sync cannot place by itself (services/shoko_pins): "link" = its plays

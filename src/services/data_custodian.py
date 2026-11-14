@@ -550,6 +550,15 @@ async def _run_shoko_watched(task=None) -> bool:
     return bool(res.get("done", True))
 
 
+async def _run_shoko_metadata(task=None) -> bool:
+    """Shoko's episode data and tags for the anime the household watches
+    (services/shoko_meta, phase 2). Reads only; no model. False while
+    series are still waiting."""
+    from src.services.shoko_meta import refresh
+    res = await refresh(task=task)
+    return bool(res.get("done", True))
+
+
 async def _run_deletion_returns(task=None) -> bool:
     """Deleted items back in the library, and SoulSync bans of deleted music
     that never held (src/services/deletion_returns.py; the retry is the
@@ -952,6 +961,10 @@ def _registry() -> list[Task]:
         # No-op without Shoko configured; no model.
         Task("shoko_watched", "Anime watched, reported to Shoko", 6.0,
              _run_shoko_watched, takes_task=True),
+        # What Shoko knows per episode of the anime watched here: type,
+        # rating with votes, tags (phase 2). Reads only, no model.
+        Task("shoko_metadata", "Anime episode data from Shoko", 24.0,
+             _run_shoko_metadata, takes_task=True),
         # Deleted items that came back (an arr list, a request, SoulSync's
         # playlist sync), shown in the Deletions view; first the SoulSync
         # bans a music delete could not set.
