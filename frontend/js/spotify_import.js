@@ -4,15 +4,17 @@ import { EL, EVENT, _errMsg, act, actOn, esc, toast } from './ui.js';
 import { api } from './api.js';
 import { collectStep } from './setup.js';
 import { t, th } from './i18n.js';
-export function spotifyDropZone(p) {
+// compact: the setup wizard's card, one short line (the how-to is in
+// docs/USAGE.md); Settings keeps the file names.
+export function spotifyDropZone(p, compact = false) {
   return `
     <div class="dropzone" id="${p}-drop"
          ${actOn('dragover', 'dropzoneOver', EVENT, EL)}
          ${actOn('dragleave', 'dropzoneLeave', EL)}
          ${actOn('drop', 'handleSpotifyDrop', EVENT, p)}
          ${act('openSpotifyPicker', p)}>
-      <div class="fs-13">${th('spotify.drop')}</div>
-      <div class="mt-4 hint">${th('spotify.drop_hint')}</div>
+      <div class="fs-13">${compact ? th('setup.v2.drop_here') : th('spotify.drop')}</div>
+      <div class="mt-4 hint">${compact ? th('setup.v2.drop_spotify') : th('spotify.drop_hint')}</div>
     </div>
     <input hidden id="${p}-file" type="file" multiple accept=".json,.zip" ${actOn('change', 'onSpotifyFile', EL, p)}>
     <div class="mt-8" id="${p}-result"></div>

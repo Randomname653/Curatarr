@@ -11,15 +11,15 @@ import { t, th } from './i18n.js';
 
 let _users = [];
 
-export function netflixDropZone() {
+export function netflixDropZone(compact = false) {
   return `
     <div class="dropzone" id="adm-nf-drop"
          ${actOn('dragover', 'dropzoneOver', EVENT, EL)}
          ${actOn('dragleave', 'dropzoneLeave', EL)}
          ${actOn('drop', 'handleNetflixDrop', EVENT)}
          ${act('openNetflixPicker')}>
-      <div class="fs-13">${th('netflix.drop')}</div>
-      <div class="mt-4 hint">${th('netflix.drop_hint')}</div>
+      <div class="fs-13">${compact ? th('setup.v2.drop_here') : th('netflix.drop')}</div>
+      <div class="mt-4 hint">${compact ? th('setup.v2.drop_netflix') : th('netflix.drop_hint')}</div>
     </div>
     <input hidden id="adm-nf-file" type="file" multiple accept=".csv,.zip" ${actOn('change', 'onNetflixFile', EL)}>
     <div class="mt-8" id="adm-nf-result"></div>

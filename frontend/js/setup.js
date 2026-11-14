@@ -19,6 +19,36 @@ const DOT_KEYS = {plex: 'setup.v2.dot_server', ollama: 'setup.v2.dot_ai', metada
 
 function isJellyfin() { return state.setupData.media_server_type === 'jellyfin'; }
 
+// Logos and program icons, fetched live through the server (none ships with
+// Curatarr; the CSP allows no outside images): <img data-logo="tmdb"> or
+// data-icon="zen.exe", filled after each render, hidden until they load.
+const _pics = new Map();
+function logoImg(key, lan = '') {
+  return `<img class="wiz-logo" alt="" hidden data-logo="${esc(key)}"${lan ? ` data-lan="${esc(lan)}"` : ''}>`;
+}
+async function _picUrl(path) {
+  if (_pics.has(path)) return _pics.get(path);
+  const p = (async () => {
+    const h = {};
+    if (state.token) h.Authorization = 'Bearer ' + state.token;
+    try { const c = sessionStorage.getItem('curatarr_setup_code'); if (c) h['X-Setup-Code'] = c; } catch (_) { /* no storage: a local setup needs none */ }
+    try {
+      const r = await fetch(path, {headers: h});
+      return r.ok ? URL.createObjectURL(await r.blob()) : null;
+    } catch (_) { return null; }
+  })();
+  _pics.set(path, p);
+  return p;
+}
+function hydratePics(root = document) {
+  for (const img of root.querySelectorAll('img[data-logo], img[data-icon]')) {
+    const path = img.dataset.logo
+      ? `/api/setup/logo/${encodeURIComponent(img.dataset.logo)}${img.dataset.lan ? `?lan=${encodeURIComponent(img.dataset.lan)}` : ''}`
+      : `/api/setup/program-icon?name=${encodeURIComponent(img.dataset.icon)}`;
+    _picUrl(path).then(u => { if (u) { img.src = u; img.hidden = false; } });
+  }
+}
+
 // The wordmark at the head of the wizard: the same inline logo the sign-in
 // screen carries, cloned once.
 function _brandHeader(id = 'setup-logo') {
@@ -38,7 +68,7 @@ function serverChoice() {
   const card = (value, name, sub) => `
     <label class="wiz-choice${kind === value ? ' on' : ''}">
       <input type="radio" name="s-media-server" value="${value}" ${kind === value ? 'checked' : ''} ${actOn('change', 'setupServerKind', EL)}>
-      <span class="wiz-choice-body"><b>${name}</b><span class="t3 fs-12">${sub}</span></span>
+      ${logoImg(value)}<span class="wiz-choice-body"><b>${name}</b><span class="t3 fs-12">${sub}</span></span>
     </label>`;
   return `<div class="wiz-choices" role="radiogroup" aria-label="${th('setup.media_server')}">
       ${card('plex', 'Plex', th('setup.v2.plex_sub'))}
@@ -204,7 +234,7 @@ function aiStepHtml() {
   const changed = actOn('change', 'setupModelChanged');
   return `<p class="fs-13 t2 mb-16">${th('setup.v2.ai_lead')}</p>
     <div class="wiz-status">
-      <div class="wiz-status-row"><span class="wiz-status-name">Ollama</span>
+      <div class="wiz-status-row"><span class="wiz-status-name">${logoImg('ollama')}Ollama</span>
         <span class="grow" id="test-ollama-result"><span class="test-status">${th('setup.testing')}</span></span>
         <button class="link-num fs-12" ${act('toggleOllamaEdit')}>${th('setup.v2.change')}</button></div>
       <div class="wiz-status-row" id="s-ollama-edit" hidden>
@@ -298,9 +328,10 @@ export async function loadSetupPrograms() {
   catch (e) { el.innerHTML = `<span class="test-status err">${esc(_errMsg(e))}</span>`; return; }
   const games = new Set(state.setupData.games || []);
   el.innerHTML = names.length
-    ? names.map(n => `<label class="chip pointer"><input type="checkbox" data-program="${esc(n)}" ${games.has(n) ? '' : 'checked'}> ${esc(n)}</label>`).join('')
+    ? names.map(n => `<label class="chip pointer"><input type="checkbox" data-program="${esc(n)}" ${games.has(n) ? '' : 'checked'}><img class="wiz-icon" alt="" hidden data-icon="${esc(n)}"> ${esc(n)}</label>`).join('')
     : `<span class="t3 fs-12">${th('setup.v2.games_none')}</span>`;
   document.getElementById('wiz-programs').hidden = false;
+  hydratePics(el);
 }
 
 // ── step 3: metadata ────────────────────────────────────────────────────────
@@ -308,7 +339,7 @@ function keyCard(o) {
   const d = state.setupData;
   const link = o.href ? ` <a class="t-amber" href="${o.href}" target="_blank" rel="noopener noreferrer">${o.hrefText}</a>` : '';
   return `<div class="wiz-card">
-      <div class="row"><b class="grow">${o.name}</b><span class="badge badge-sm ${o.badgeCls || 'muted'}">${o.badge}</span></div>
+      <div class="row">${logoImg(o.logo)}<b class="grow">${o.name}</b><span class="badge badge-sm ${o.badgeCls || 'muted'}">${o.badge}</span></div>
       <p class="fs-12 t2 mt-4">${o.why}${link}</p>
       ${o.fields.map(f => `<input class="mt-8" id="${f.id}" ${f.type ? `type="${f.type}"` : ''} aria-label="${f.label}" placeholder="${f.ph}" value="${esc(d[f.field] || '')}">`).join('')}
       ${o.test ? `<div class="row mt-8"><button class="btn btn-secondary btn-sm" ${act('testConn', o.test)}>${th('setup.v2.test')}</button><span class="grow" id="test-${o.test}-result"></span></div>` : ''}
@@ -319,31 +350,28 @@ function metadataStepHtml() {
   const opt = th('setup.v2.optional');
   return `<p class="fs-13 t2 mb-16">${th('setup.v2.meta_lead')}</p>
     <div class="wiz-grid">
-      ${keyCard({name: 'TMDB', badge: th('setup.v2.needed'), badgeCls: 'amber', why: th('setup.v2.tmdb_why'),
+      ${keyCard({name: 'TMDB', logo: 'tmdb', badge: th('setup.v2.needed'), badgeCls: 'amber', why: th('setup.v2.tmdb_why'),
                  href: 'https://www.themoviedb.org/settings/api', hrefText: 'themoviedb.org/settings/api', test: 'tmdb',
                  fields: [{id: 's-tmdb', field: 'tmdb_api_key', label: th('setup.api_key_of', {service: 'TMDB'}), ph: th('setup.v2.tmdb_ph')}]})}
-      ${keyCard({name: 'OMDb', badge: th('setup.v2.recommended'), why: th('setup.v2.omdb_why'),
+      ${keyCard({name: 'OMDb', logo: 'omdb', badge: th('setup.v2.recommended'), why: th('setup.v2.omdb_why'),
                  href: 'https://www.omdbapi.com/apikey.aspx', hrefText: 'omdbapi.com',
                  fields: [{id: 's-omdb', field: 'omdb_api_key', label: th('setup.api_key_of', {service: 'OMDb'}), ph: th('setup.v2.key_ph')}]})}
     </div>
     <h3 class="wiz-sub mt-20">${th('setup.v2.music_heading')}</h3>
     <p class="fs-12 t2 mb-12">${th('setup.v2.music_lead')}</p>
     <div class="wiz-grid">
-      ${keyCard({name: 'Last.fm', badge: opt, why: th('setup.v2.lastfm_why'), href: 'https://www.last.fm/api/account/create', hrefText: 'last.fm/api', test: 'lastfm',
+      ${keyCard({name: 'Last.fm', logo: 'lastfm', badge: opt, why: th('setup.v2.lastfm_why'), href: 'https://www.last.fm/api/account/create', hrefText: 'last.fm/api', test: 'lastfm',
                  fields: [{id: 's-lastfm', field: 'lastfm_api_key', label: th('setup.api_key_of', {service: 'Last.fm'}), ph: th('setup.v2.key_ph')}]})}
-      ${keyCard({name: 'Spotify', badge: opt, why: th('setup.v2.spotify_why'), href: 'https://developer.spotify.com/dashboard', hrefText: 'developer.spotify.com', test: 'spotify',
+      ${keyCard({name: 'Spotify', logo: 'spotify', badge: opt, why: th('setup.v2.spotify_why'), href: 'https://developer.spotify.com/dashboard', hrefText: 'developer.spotify.com', test: 'spotify',
                  fields: [{id: 's-spotify-id', field: 'spotify_client_id', label: th('setup.spotify_id'), ph: th('setup.spotify_id')},
                           {id: 's-spotify-secret', field: 'spotify_client_secret', type: 'password', label: th('setup.spotify_secret'), ph: th('setup.spotify_secret')}]})}
-      ${keyCard({name: 'SoulSync', badge: opt, why: th('setup.v2.soulsync_hint'),
-                 fields: [{id: 's-soulsync-url', field: 'soulsync_url', type: 'url', label: th('setup.soulsync_url'), ph: 'http://192.168.1.100:12279'},
-                          {id: 's-soulsync-key', field: 'soulsync_api_key', type: 'password', label: th('setup.api_key_of', {service: 'SoulSync'}), ph: th('setup.v2.key_ph')}]})}
-      ${keyCard({name: 'ListenBrainz', badge: opt, why: th('setup.v2.listenbrainz_why'), href: 'https://listenbrainz.org/settings/', hrefText: 'listenbrainz.org/settings',
+      ${keyCard({name: 'ListenBrainz', logo: 'listenbrainz', badge: opt, why: th('setup.v2.listenbrainz_why'), href: 'https://listenbrainz.org/settings/', hrefText: 'listenbrainz.org/settings',
                  fields: [{id: 's-listenbrainz', field: 'listenbrainz_token', type: 'password', label: th('setup.listenbrainz'), ph: th('setup.listenbrainz_ph')}]})}
     </div>`;
 }
 
 // ── step 4: arr apps ────────────────────────────────────────────────────────
-function arrCard(name, whatKey, extraBadge) {
+function arrCard(name, whatKey, extraBadge, keyHint = 'setup.v2.arr_key_hint', port = 0) {
   const d = state.setupData;
   const id = name.toLowerCase();
   const url = d[id + '_url'] || '';
@@ -351,14 +379,14 @@ function arrCard(name, whatKey, extraBadge) {
   const status = d._arr_found === undefined ? `<span class="fs-12 t3">${th('setup.v2.arr_looking')}</span>`
     : found ? `<span class="test-status ok">${th('setup.v2.arr_found')}</span>`
     : `<span class="fs-12 t3">${th('setup.v2.arr_not_found')}</span>`;
-  const keyPage = url ? ` <a class="t-amber" href="${esc(url.replace(/\/$/, ''))}/settings/general" target="_blank" rel="noopener noreferrer">${th('setup.v2.arr_key_where', {app: name})}</a>` : '';
+  const keyPage = url ? ` <a class="t-amber" href="${esc(url.replace(/\/$/, ''))}${id === 'soulsync' ? '' : '/settings/general'}" target="_blank" rel="noopener noreferrer">${th('setup.v2.arr_key_where', {app: name})}</a>` : '';
   return `<div class="wiz-card${found ? ' on' : ''}">
-      <div class="row"><b>${name}</b><span class="badge badge-sm muted">${th(whatKey)}</span>${extraBadge ? `<span class="badge badge-sm muted">${extraBadge}</span>` : ''}<span class="grow"></span>${status}</div>
+      <div class="row">${logoImg(id, found || '')}<b>${name}</b><span class="badge badge-sm muted">${th(whatKey)}</span>${extraBadge ? `<span class="badge badge-sm amber">${extraBadge}</span>` : ''}<span class="grow"></span>${status}</div>
       <div class="wiz-grid mt-8">
-        <input id="s-${id}-url" type="url" aria-label="${th('setup.v2.address_of', {app: name})}" placeholder="http://192.168.1.100:${{radarr: 7878, sonarr: 8989, lidarr: 8686}[id]}" value="${esc(url)}">
+        <input id="s-${id}-url" type="url" aria-label="${th('setup.v2.address_of', {app: name})}" placeholder="http://192.168.1.100:${port}" value="${esc(url)}">
         <input id="s-${id}-key" type="password" aria-label="${th('setup.api_key_of', {service: name})}" placeholder="${th('setup.api_key')}" value="${esc(d[id + '_api_key'] || '')}">
       </div>
-      <div class="row mt-8"><span class="fs-12 t2 grow">${th('setup.v2.arr_key_hint')}${keyPage}</span>
+      <div class="row mt-8"><span class="fs-12 t2 grow">${th(keyHint)}${keyPage}</span>
         <button class="btn btn-secondary btn-sm" ${act('testConn', id)}>${th('setup.v2.test')}</button></div>
       <div id="test-${id}-result"></div>
     </div>`;
@@ -368,9 +396,10 @@ function arrStepHtml() {
   return `<p class="fs-13 t2 mb-8">${th('setup.v2.arr_lead', {server: isJellyfin() ? 'Jellyfin' : 'Plex'})}</p>
     <div class="banner warn mb-16"><span class="banner-icon">${SVG_WARN}</span><span class="banner-text">${th('setup.v2.arr_delete')}</span></div>
     <div class="wiz-stack">
-      ${arrCard('Radarr', 'nav.movies')}
-      ${arrCard('Sonarr', 'setup.arr_tv_anime')}
-      ${arrCard('Lidarr', 'nav.music', th('setup.v2.lidarr_badge'))}
+      ${arrCard('Radarr', 'nav.movies', '', undefined, 7878)}
+      ${arrCard('Sonarr', 'setup.arr_tv_anime', '', undefined, 8989)}
+      ${arrCard('Lidarr', 'nav.music', th('setup.v2.lidarr_badge'), undefined, 8686)}
+      ${arrCard('SoulSync', 'nav.music', '', 'setup.v2.soulsync_key_hint', 8008)}
     </div>`;
 }
 
@@ -396,8 +425,8 @@ function importStepHtml() {
   const how = `<a class="t-amber" href="https://github.com/Randomname653/Curatarr/blob/main/docs/USAGE.md#bringing-your-history" target="_blank" rel="noopener noreferrer">${th('setup.v2.import_how')}</a>`;
   return `<p class="fs-13 t2 mb-16">${th('setup.v2.import_lead')} ${how}</p>
     <div class="wiz-grid">
-      <div class="wiz-card"><div class="row mb-8"><b class="grow">Spotify</b><span class="badge badge-sm muted">${th('setup.v2.optional')}</span></div>${spotifyDropZone('su-sp')}</div>
-      <div class="wiz-card"><div class="row mb-8"><b class="grow">Netflix</b><span class="badge badge-sm muted">${th('setup.v2.optional')}</span></div>${netflixDropZone()}</div>
+      <div class="wiz-card"><div class="row mb-8">${logoImg('spotify')}<b class="grow">Spotify</b><span class="badge badge-sm muted">${th('setup.v2.optional')}</span></div>${spotifyDropZone('su-sp', true)}</div>
+      <div class="wiz-card"><div class="row mb-8">${logoImg('netflix')}<b class="grow">Netflix</b><span class="badge badge-sm muted">${th('setup.v2.optional')}</span></div>${netflixDropZone(true)}</div>
     </div>
     <p class="fs-12 t3 mt-12">${th('setup.v2.import_later')}</p>`;
 }
@@ -473,6 +502,7 @@ export function renderSetupStep(step) {
   if (key === 'arr') findArrApps();
   if (key === 'import') { refreshSpotifyPending('su-sp'); refreshNetflixPending(); }
   if (key === 'plex' && isJellyfin() && !state.setupData.jellyfin_ticket) findJellyfinServers();
+  hydratePics(document.getElementById('setup-body'));
   document.getElementById('setup-body').scrollTop = 0;
 }
 
@@ -514,7 +544,7 @@ export function collectStep() {
       if (document.getElementById(id)) d[field] = val(id);
     }
   } else if (key === 'arr') {
-    for (const a of ['radarr', 'sonarr', 'lidarr']) {
+    for (const a of ['radarr', 'sonarr', 'lidarr', 'soulsync']) {
       if (document.getElementById(`s-${a}-url`)) d[a + '_url'] = val(`s-${a}-url`);
       if (document.getElementById(`s-${a}-key`)) d[a + '_api_key'] = val(`s-${a}-key`);
     }
@@ -684,38 +714,26 @@ export function _applyPackageProfile(rec) {
 export function renderHardwarePackage(pkg) {
   if (!pkg) return '';
   const r = pkg.recommended;
-  if (!r) return pkg.note ? `<div class="t3 fs-12 test-status">${esc(pkg.note)}</div>` : '';
+  if (!r) return pkg.note ? `<div class="t3 fs-12">${esc(pkg.note)}</div>` : '';
   const ex = r.expected || {};
-  const speed = pkg.estimate
-    ? th('setup.speed_estimate', {tok: pkg.estimate.gen_tok_s, basis: pkg.estimate.basis})
-    : th('setup.speed_measured', {tok: ex.gen_tok_s ?? '?', gpu: (r.measured_on || {}).gpu || t('setup.bench_card')});
-  const q = r.quality || {};
-  const quality = q.score25 != null ? `${t('setup.quality', {score: q.score25})}${q.provisional ? ` ${t('setup.provisional')}` : ''}`
-    : t('setup.quality_none');
-  const env = [`LLM_PROFILE=${r.profile}`, `CURATOR_NUM_CTX=${r.num_ctx}`,
-               `CURATOR_NUM_GPU=${r.num_gpu}`];
-  const srv = Object.entries(r.server || {})
-    .filter(([k]) => k === 'OLLAMA_KV_CACHE_TYPE' || k === 'OLLAMA_FLASH_ATTENTION')
-    .map(([k, v]) => `${k}=${v}`);
   // An offloaded package keeps most of its model in system RAM; when this
   // host has too little, the server already picked the alternative that fits.
   const rf = pkg.ram_fallback;
   const ramNote = !rf ? ''
     : rf.instead_of
-      ? `<div class="t-amber test-status">${SVG_WARN} ${th('setup.ram_instead', {model: rf.instead_of, need: rf.needs_gb, host: rf.host_gb, rec: r.model})}</div>`
-      : `<div class="t-amber test-status">${SVG_WARN} ${th('setup.ram_short', {need: rf.needs_gb, host: rf.host_gb})}</div>`;
-  // How this curator argues, on one fictional example (docs/CURATOR_EXAMPLES.md has all of them).
+      ? `<div class="t-amber fs-12">${SVG_WARN} ${th('setup.ram_instead', {model: rf.instead_of, need: rf.needs_gb, host: rf.host_gb, rec: r.model})}</div>`
+      : `<div class="t-amber fs-12">${SVG_WARN} ${th('setup.ram_short', {need: rf.needs_gb, host: rf.host_gb})}</div>`;
+  // One sentence instead of tok/s and .env lines. The KV cache type is the
+  // Ollama server's own setting: named only when it is not Ollama's default.
+  const kv = (r.server || {}).OLLAMA_KV_CACHE_TYPE;
+  const kvNote = kv && kv !== 'f16' ? `<div class="fs-12 t2 mt-4">${th('setup.v2.bench_kv', {v: esc(kv)})}</div>` : '';
   const sample = pkg.example;
-  const example = !sample ? '' : `<details class="fs-12"><summary>${th('setup.example_summary', {model: r.model})}</summary>`
+  const example = !sample ? '' : `<details class="fs-12 mt-4"><summary class="pointer t2">${th('setup.example_summary', {model: r.model})}</summary>`
     + `<div class="t3">${esc(sample.title)} · ${th('setup.owner')} ${esc(sample.owner)}. ${esc(sample.setup)}</div>`
     + `<div><b>${esc(sample.verdict_words || sample.verdict)}</b> (${esc(sample.protecting_pillar)}): ${esc(sample.reason)}</div>`
     + (sample.note ? `<blockquote class="t2">${esc(sample.note)}</blockquote>` : '')
     + `<div class="t3">${th('setup.all_examples')}</div></details>`;
-  return ramNote + `<div class="test-status">${th('setup.bench_result', {gb: pkg.tier_gb})} <b>${esc(r.model)}</b>`
-    + `${r.installed ? ` (${th('setup.installed')})` : ''} — ${speed}; ${th('setup.judge_per_title', {s: ex.judge_s ?? '?'})}`
-    + ` ${esc(quality)}${ex.gpu_share_pct < 100 ? `; ${th('setup.gpu_share', {pct: ex.gpu_share_pct})}` : ''}.</div>`
-    + `<div class="t3 fs-12">${th('setup.saved_with', {env: env.join(' · ')})}`
-    + (srv.length ? ` ${th('setup.set_on_ollama', {srv: srv.join(' · ')})}` : '') + `</div>` + example;
+  return ramNote + `<div class="fs-12 t2">${th('setup.v2.bench_line', {gb: pkg.tier_gb, model: esc(r.model), s: ex.judge_s ?? '?'})}</div>` + kvNote + example;
 }
 
 // role 'embed' lists only embedding models, 'chat' everything else: every list
@@ -742,6 +760,10 @@ export function renderRecSelect(id, entries, installed, role) {
   const extra = (installed || []).filter(m => !catalogNames.includes(m) && fitsRole(m))
     .map(m => `<option value="${esc(m)}">${esc(m)} — ${th('setup.untested')}</option>`);
   sel.innerHTML = opts.concat(extra).join('');
+  // The wizard's plan rows are narrow: the model's name, the rest on hover.
+  if (sel.classList.contains('wiz-model')) {
+    for (const o of sel.options) { o.title = o.textContent; o.textContent = o.value; }
+  }
   // Keep the user's pick unless it no longer fits; the list is
   // preference-ordered (fitting + installed first), so index 0 is the call.
   const kept = cur && [...sel.options].find(o => o.value === cur && !o.dataset.unfit);
@@ -758,7 +780,11 @@ export async function showOnboarding(step) {
   _brandHeader('ob-logo');
   overlay.classList.remove('hidden');
   // a dialog: focus goes in once the step has rendered (app.js traps Tab there)
-  renderOnboardingStep(step).then(() => focusDialog(overlay));
+  renderOnboardingStep(step).then(() => {
+    focusDialog(overlay);
+    // The first select used to take the focus, its ring read as "selected".
+    overlay.querySelector('.btn-primary')?.focus();
+  });
 }
 
 export function hideOnboarding() {
@@ -812,10 +838,10 @@ export async function renderOnboardingStep(step) {
     // Activity, the mark turns like the curator thinking, the count is live.
     body.innerHTML = `
       <div class="ob-sync" id="ob-sync-status">
-        <span class="thinking-mark ob-sync-mark" id="ob-sync-mark"></span>
+        <span class="ob-sync-mark" id="ob-sync-mark"></span>
         <div class="ob-sync-count" id="ob-sync-count">0</div>
         <div class="fs-12 t3">${th('setup.v2.ob_plays')}</div>
-        <div class="progress-bar indeterminate mt-16"><div class="progress-fill" id="ob-sync-bar"></div></div>
+        <div class="progress-bar mt-16"><div class="progress-fill w-0" id="ob-sync-bar"></div></div>
         <div class="fs-12 t2 mt-8" id="ob-sync-label" role="status" aria-live="polite">${th('setup.ob_waiting')}</div>
       </div>
       <button hidden class="w-full p-12 btn btn-primary" id="ob-sync-btn" ${act('startOnboardingSync')}>
@@ -874,6 +900,19 @@ export function _stopOnboardingPoll() {
   if (_onboardingPoll) { clearInterval(_onboardingPoll); _onboardingPoll = null; }
 }
 
+// Where the sync is, in words and a share of the bar: the libraries are
+// the first tenth, the play history (Plex names its total on the first
+// page) up to 90 %, writing the rest.
+function _syncStep(pr) {
+  const n = v => (v || 0).toLocaleString(loc());
+  if (pr.phase === 'library' && pr.total)
+    return {pct: 2 + Math.round(8 * pr.done / pr.total), label: t('setup.v2.sync_library', {name: pr.label, n: pr.done + 1, total: pr.total})};
+  if (pr.phase === 'history' && pr.total)
+    return {pct: 10 + Math.round(80 * Math.min(1, pr.done / pr.total)), label: t('setup.v2.sync_history', {done: n(pr.done), total: n(pr.total)})};
+  if (pr.phase === 'saving') return {pct: 93, label: t('setup.v2.sync_saving')};
+  return {pct: 2, label: t('setup.fetching')};
+}
+
 export async function startOnboardingSync() {
   const btn = document.getElementById('ob-sync-btn');
   const lbl = document.getElementById('ob-sync-label');
@@ -917,12 +956,14 @@ export async function startOnboardingSync() {
         fails = 0;
         const entries = s.entries || 0;
         onboardingEntries = entries;
-        lbl.textContent = entries ? t('setup.v2.ob_reading') : t('setup.fetching');
+        const pr = s.progress || {};
+        const step = _syncStep(pr);
+        lbl.textContent = step.label;
+        bar.style.width = `${step.pct}%`;
         const count = document.getElementById('ob-sync-count');
-        if (count) count.textContent = entries.toLocaleString(loc());
+        if (count) count.textContent = (pr.phase === 'history' ? pr.done : entries).toLocaleString(loc());
         polls += 1;
         if (!s.running && polls > 1) {
-          bar.parentElement?.classList.remove('indeterminate');
           lbl.textContent = t('setup.entries_done', {x: entries.toLocaleString(loc())});
           _stopOnboardingPoll();
           setTimeout(() => {

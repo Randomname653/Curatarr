@@ -153,6 +153,7 @@ NOT_OWNED = {
     "auth GET /jellyfin/quickconnect/{login_id}": "login nonce checked (pinned below), pre-login",
     "setup GET /jellyfin/connect/{login_id}": "login nonce checked (pinned below), admin or first run",
     "setup GET /plex/connect/{login_id}": "login nonce checked (pinned below), admin or first run",
+    "setup GET /logo/{key}": "a fixed list of services, admin or first run",
     "library GET /items/{service}": "an arr service name",
     "library GET /search/{service}": "an arr service name",
 }

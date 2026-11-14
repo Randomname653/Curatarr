@@ -1,4 +1,4 @@
-"""Finding Radarr, Sonarr and Lidarr on the LAN for the setup wizard.
+"""Finding Radarr, Sonarr, Lidarr and SoulSync on the LAN for the setup wizard.
 
 The wizard's arr step was three empty forms (fresh-install test
 2026-11-14). The apps answer their own web page without a key - the login
@@ -28,6 +28,7 @@ PORTS = {
     "radarr": (7878, 30025),
     "sonarr": (8989, 30113),
     "lidarr": (8686, 30071),
+    "soulsync": (8008, 12279),
 }
 _TIMEOUT = 2.0
 _TITLE = re.compile(r"<title>\s*([^<]{1,80})</title>", re.I)
@@ -41,7 +42,7 @@ def clean_host(raw: Optional[str]) -> Optional[str]:
 
 
 def which_app(html: str) -> Optional[str]:
-    """'radarr' / 'sonarr' / 'lidarr' when the page's title names one."""
+    """'radarr' / 'sonarr' / 'lidarr' / 'soulsync' when the page's title names one."""
     m = _TITLE.search(html or "")
     title = (m.group(1) if m else "").lower()
     for app in PORTS:

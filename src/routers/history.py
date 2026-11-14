@@ -99,7 +99,9 @@ def sync_state(user: User = Depends(get_current_user)):
         count = db.query(func.count(WatchHistoryEntry.id)).filter(
             WatchHistoryEntry.user_id == user.id).scalar() or 0
     locked = get_state("plex_sync_running") not in (None, "", "0")
-    return {"running": bool(_sync_in_flight or locked), "entries": int(count)}
+    from src.services.plex_sync import SYNC_PROGRESS
+    return {"running": bool(_sync_in_flight or locked), "entries": int(count),
+            "progress": dict(SYNC_PROGRESS)}
 
 
 @router.get("/status")

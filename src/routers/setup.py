@@ -753,6 +753,44 @@ async def arr_find(request: Request, near: str = "", _gate=Depends(require_admin
     return {"found": await find_arrs(hosts)}
 
 
+@router.get("/logo/{key}")
+async def setup_logo(key: str, lan: str = "", _gate=Depends(require_admin_or_first_run)):
+    """A service's logo for the wizard, fetched live from its own website
+    (or from its instance on the LAN, ``lan``): none ships with Curatarr."""
+    from fastapi import Response
+    from src.services.setup_icons import SITES, service_logo
+    if key not in SITES:
+        raise HTTPException(status_code=404, detail="Unknown service")
+    lan_url = None
+    if lan:
+        try:
+            lan_url = validate_service_url(lan)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Not a service address")
+    got = await service_logo(key, lan_url)
+    if not got:
+        raise HTTPException(status_code=404, detail="No logo")
+    return Response(content=got[0], media_type=got[1],
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/program-icon")
+async def setup_program_icon(name: str, _gate=Depends(require_admin_or_first_run)):
+    """The icon of a program in the AI step's list (one the setup's own
+    process list holds, nothing else)."""
+    from fastapi import Response
+    from src.services.process_monitor import get_unknown_processes
+    from src.services.setup_icons import program_icon
+    names = {p["name"].lower() for p in await asyncio.to_thread(get_unknown_processes)}
+    if name.lower() not in names:
+        raise HTTPException(status_code=404, detail="Not in the list")
+    png = await asyncio.to_thread(program_icon, name)
+    if not png:
+        raise HTTPException(status_code=404, detail="No icon")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/processes")
 def setup_processes(_gate=Depends(require_admin_or_first_run)):
     """The big programs open now: the AI step lists them while it asks to

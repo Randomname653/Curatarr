@@ -248,4 +248,35 @@ r = asyncio.run(test_tmdb("eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ4In0.c2lnbmF0dXJl"))
 check("the API Read Access Token is recognised and the short key asked for",
       r["ok"] is False and "short API Key" in r["error"])
 
+# ── logos come from the services' own pages, the best icon first ────────────
+from src.services import setup_icons  # noqa: E402
+page = ('<link rel="icon" href="/f.svg"><link rel="icon" sizes="32x32" href="/32.png">'
+        '<link rel="apple-touch-icon" sizes="180x180" href="/apple.png">')
+check("a page's apple-touch-icon first, the root favicon last",
+      setup_icons.icon_candidates(page, "https://x.org") ==
+      ["https://x.org/apple.png", "https://x.org/f.svg", "https://x.org/32.png", "https://x.org/favicon.ico"],
+      setup_icons.icon_candidates(page, "https://x.org"))
+
+
+def _site(req):
+    if req.url.path == "/":
+        return httpx.Response(200, text='<link rel="apple-touch-icon" href="/a.png">')
+    if req.url.path == "/a.png":
+        return httpx.Response(200, content=b"png-bytes", headers={"content-type": "image/png"})
+    return httpx.Response(404)
+
+
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
+check("a service's logo is fetched from its own site, an image only", got and got[1] == "image/png")
+check("a key outside the list fetches nothing", asyncio.run(setup_icons.service_logo("evil")) is None)
+
+
+# ── the onboarding's bar follows the sync ───────────────────────────────────
+from src.services import plex_sync  # noqa: E402
+plex_sync._progress("history", 12000, 38465)
+check("the sync says where it is: the plays read of Plex's own total",
+      hist.sync_state(user=SimpleNamespace(id=1))["progress"] == {"phase": "history", "done": 12000,
+                                                                "total": 38465, "label": ""})
+plex_sync.SYNC_PROGRESS.clear()
+
 check.done()
