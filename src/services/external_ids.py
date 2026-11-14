@@ -354,7 +354,7 @@ async def harvest(cache=None, *, limit: int = 0, task=None, should_stop=None,
             for i in range(0, len(keys), 500):
                 part = keys[i:i + 500]
                 yield from cache.conn.execute(
-                    "SELECT cache_key, response FROM api_cache WHERE cache_key IN (%s)"
+                    "SELECT cache_key, response FROM api_cache WHERE cache_key IN (%s)"  # nosec B608 - only "?" placeholders are interpolated, values bound
                     % ",".join("?" * len(part)), part).fetchall()
 
         keys = _keys()

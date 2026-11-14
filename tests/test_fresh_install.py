@@ -266,9 +266,70 @@ def _site(req):
     return httpx.Response(404)
 
 
+# Names resolve through a fake: "*.lan" is a private address, the rest public.
+async def _fake_resolve(host):
+    return ["192.168.0.9"] if host.endswith(".lan") else ["93.184.216.34"]
+
+
+setup_icons._resolve = _fake_resolve
 got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
 check("a service's logo is fetched from its own site, an image only", got and got[1] == "image/png")
 check("a key outside the list fetches nothing", asyncio.run(setup_icons.service_logo("evil")) is None)
+
+# Every address is checked before it is fetched: a page's icon links and
+# each redirect hop (code scanning 221/222).
+_asked: list = []
+
+
+def _hostile(req):
+    _asked.append(str(req.url))
+    if req.url.path == "/":
+        return httpx.Response(200, text=(
+            '<link rel="apple-touch-icon" href="https://10.0.0.5/a.png">'
+            '<link rel="icon" sizes="64x64" href="https://router.lan/b.png">'
+            '<link rel="icon" sizes="32x32" href="http://cdn.example/c.png">'
+            '<link rel="icon" sizes="16x16" href="/hop.png">'))
+    if req.url.path == "/hop.png":
+        return httpx.Response(302, headers={"location": "https://169.254.169.254/latest"})
+    return httpx.Response(404)
+
+
+setup_icons._logos.clear()
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_hostile)))
+check("a public site's icon links to a private, plain-http or link-local address are never fetched",
+      not any(h in u for u in _asked for h in ("10.0.0.5", "router.lan", "http://cdn.example", "169.254")), _asked)
+check("so a page offering only those yields no logo", got is None, got)
+
+
+def _cdn(req):
+    if req.url.path == "/favicon.ico":
+        return httpx.Response(301, headers={"location": "https://cdn.example/ok.png"})
+    if str(req.url) == "https://cdn.example/ok.png":
+        return httpx.Response(200, content=b"ico", headers={"content-type": "image/png"})
+    return httpx.Response(200, text="<p>no icon links</p>")
+
+
+setup_icons._logos.clear()
+got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_cdn)))
+check("a redirect to a public https host is followed", got == (b"ico", "image/png"), got)
+
+_asked.clear()
+
+
+def _lan_app(req):
+    _asked.append(str(req.url))
+    if req.url.path == "/":
+        return httpx.Response(200, text='<link rel="icon" href="https://evil.example/x.png">')
+    if req.url.path.startswith("/Content/"):
+        return httpx.Response(302, headers={"location": "https://evil.example/y.png"})
+    return httpx.Response(404)
+
+
+setup_icons._logos.clear()
+got = asyncio.run(setup_icons.service_logo("radarr", "http://192.168.0.10:7878",
+                                           transport=httpx.MockTransport(_lan_app)))
+check("a LAN app's logo never leaves that app's host (no foreign icon link, no redirect away)",
+      got is None and _asked and all(u.startswith("http://192.168.0.10:7878/") for u in _asked), _asked)
 
 
 # ── the onboarding's bar follows the sync ───────────────────────────────────
