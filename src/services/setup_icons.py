@@ -92,6 +92,26 @@ async def _image(client: httpx.AsyncClient, url: str) -> Optional[tuple[bytes, s
     return r.content, ctype
 
 
+def _hop_guard(lan_base: Optional[str]):
+    """A request hook that judges every request, redirect hops included: a
+    LAN app's logo stays on that app's origin; a public site's page, the
+    icons it names and their redirects must resolve to public addresses.
+    The page's markup and a Location header are the remote's to write, so
+    without this they could point the server at the LAN or a metadata
+    address (2026-11-14)."""
+    async def _guard(request: httpx.Request) -> None:
+        if lan_base:
+            from src.services.endpoint_policy import same_origin
+            ok = same_origin(str(request.url), lan_base)
+        else:
+            from src.routers.image_proxy import _host_resolves_public
+            ok = await _host_resolves_public(request.url.host)
+        if not ok:
+            raise httpx.RequestError("logo fetch refused: not this service's address",
+                                     request=request)
+    return _guard
+
+
 async def service_logo(key: str, lan_url: Optional[str] = None, *, transport=None
                        ) -> Optional[tuple[bytes, str]]:
     """``(image bytes, content type)`` for a service, or None."""
@@ -106,7 +126,8 @@ async def service_logo(key: str, lan_url: Optional[str] = None, *, transport=Non
             return None
     got = None
     async with httpx.AsyncClient(verify=tls_context(), timeout=_TIMEOUT, follow_redirects=True,
-                                 headers={"User-Agent": _UA}, transport=transport) as c:
+                                 headers={"User-Agent": _UA}, transport=transport,
+                                 event_hooks={"request": [_hop_guard(base if lan_url else None)]}) as c:
         for path in LAN_PATHS if lan_url else ():
             got = await _image(c, base + path)
             if got:
