@@ -1760,6 +1760,7 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
         raise
     except Exception as e:
         task_monitor.error(parent, f"{type(e).__name__}: {str(e)[:160]}")
+        await _reclaim_after_rebuild()
         raise
     if parent.live:
         if updated:
@@ -1767,6 +1768,16 @@ async def compute_all_taste_vectors(user_id: int, categories: list = None,
                                       f"updated ({', '.join(updated)})")
         else:
             task_monitor.done(parent, "No taste data yet", noop=True)
+    await _reclaim_after_rebuild()
+
+
+async def _reclaim_after_rebuild() -> None:
+    """A full rebuild holds the owner's plays (~380k rows), the corpus and
+    the clusters at once (NAS 2026-11-14: 1.0 -> 1.6 GB). Hand the freed
+    pages back here, whoever started it: the enrichment run, a login and a
+    swipe call this directly, outside the custodian's own reclaim hook."""
+    from src.services.memory_reclaim import reclaim_after_job
+    await reclaim_after_job()
 
 
 async def _compute_all_taste_vectors(user_id: int, categories: list,
