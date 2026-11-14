@@ -17,6 +17,7 @@ ChromaDB rather than at import time.
 import asyncio
 import logging
 import threading
+import time as _time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, partial
 from typing import Any, Callable, Dict, List, Optional, TypeVar
@@ -63,6 +64,56 @@ _domain_emb_memo: dict = {}
 _domain_emb_lock = threading.Lock()
 _domain_write_gen = [0]
 _DOMAIN_EMB_TTL = 600.0
+_DOMAIN_EMB_PAGE = 2000
+
+
+# Idle release. The Rust core keeps every HNSW index it has loaded for the
+# life of the client: one facet query pins ~1.2 GB (199k phrase points), the
+# knowledge index ~160 MB, measured 2026-11-14. Nothing else ever lets go,
+# so a single chat search left the process at 1.4 GB for days. After
+# IDLE_RELEASE_S without any access the scheduler swaps in a fresh client;
+# the next query reloads its index from disk (~6 s for the facets).
+IDLE_RELEASE_S = 600.0
+_idle_state = {"last": 0.0, "dirty": False}
+
+
+def _touch() -> None:
+    _idle_state["last"] = _time.monotonic()
+    _idle_state["dirty"] = True
+
+
+def release_if_idle(idle_s: float = None) -> bool:
+    """Free the loaded indexes when the store has been idle long enough.
+    Meant for the Chroma thread (see release_idle_indexes), so it queues
+    behind every bulk read instead of swapping the client under one.
+    Expired domain-corpus memos go on every call: the TTL was only checked
+    on read, so the last rebuild's matrices (up to ~90 MB per domain) stayed
+    resident until the next rebuild."""
+    now = _time.monotonic()
+    with _domain_emb_lock:
+        stale = [k for k, v in _domain_emb_memo.items() if now - v[1] >= _DOMAIN_EMB_TTL]
+        for k in stale:
+            del _domain_emb_memo[k]
+    if stale:
+        from src.services.memory_reclaim import reclaim_memory
+        reclaim_memory()
+    if not _cached_wrapper.cache_info().currsize or not _idle_state["dirty"]:
+        return False
+    idle = IDLE_RELEASE_S if idle_s is None else idle_s
+    if _time.monotonic() - _idle_state["last"] < idle:
+        return False
+    with _domain_emb_lock:
+        _domain_emb_memo.clear()
+    ok = _cached_wrapper().release_indexes()
+    if ok:
+        logger.info("[chroma] idle %.0f s - loaded indexes released", idle)
+    return ok
+
+
+async def release_idle_indexes() -> bool:
+    """Scheduler entry. Not run_chroma: that would count as a use."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_get_chroma_pool(), release_if_idle)
 
 
 def _bump_domain_gen() -> None:
@@ -277,6 +328,26 @@ class ChromaDBWrapper:
         self.collection_name = collection_name
         self.collection = self._get_or_create_collection()
 
+    # Every Chroma call goes through one of these two handles, so reading
+    # them is the "someone used the store" signal release_if_idle() needs.
+    @property
+    def client(self):
+        _touch()
+        return self._client
+
+    @client.setter
+    def client(self, value):
+        self._client = value
+
+    @property
+    def collection(self):
+        _touch()
+        return self._collection
+
+    @collection.setter
+    def collection(self, value):
+        self._collection = value
+
     @staticmethod
     def _open_client():
         return chromadb.PersistentClient(
@@ -296,13 +367,16 @@ class ChromaDBWrapper:
         try:
             import gc
             from chromadb.api.client import SharedSystemClient
-            old = self.client
+            old = self._client
             SharedSystemClient.clear_system_cache()   # else the same System comes back
             self.client = self._open_client()
             self.collection = self._get_or_create_collection()
             self._phrases = None
             del old
             gc.collect()
+            _idle_state["dirty"] = False
+            from src.services.memory_reclaim import reclaim_memory
+            reclaim_memory(collect=False)
             return True
         except Exception as e:
             logger.warning("[chroma] release_indexes failed: %s", e)
@@ -1016,18 +1090,38 @@ class ChromaDBWrapper:
             if hit and hit[0] == gen and _time.monotonic() - hit[1] < _DOMAIN_EMB_TTL:
                 return hit[2]
         try:
-            res = self.collection.get(where=domain_where(domain),
-                                      include=["embeddings", "metadatas"], limit=limit)
-            emb = res.get("embeddings")
-            if emb is None:
-                return []
-            metas = res.get("metadatas") or [None] * len(emb)
-            # A doc merged into its live twin would count the title twice.
-            rows = [e for e, m in zip(emb, metas) if not (m or {}).get(MERGED_INTO)]
-            try:
-                out = np.asarray(rows, dtype=np.float32) if rows else []
-            except (TypeError, ValueError):   # ragged: mixed widths
+            # Paged: Chroma hands embeddings over as Python float lists before
+            # numpy sees them (~32 bytes a float), so one get of 18.8k music
+            # vectors - 58 MB as float32 - peaked at +530 MB (2026-11-14).
+            blocks, rows, offset = [], [], 0
+            while offset < limit:
+                n = min(_DOMAIN_EMB_PAGE, limit - offset)
+                res = self.collection.get(where=domain_where(domain),
+                                          include=["embeddings", "metadatas"],
+                                          limit=n, offset=offset)
+                emb = res.get("embeddings")
+                if emb is None or len(emb) == 0:
+                    break
+                metas = res.get("metadatas") or [None] * len(emb)
+                # A doc merged into its live twin would count the title twice.
+                page = [e for e, m in zip(emb, metas) if not (m or {}).get(MERGED_INTO)]
+                if page and not rows:
+                    try:
+                        block = np.asarray(page, dtype=np.float32)
+                        if block.ndim != 2 or (blocks and block.shape[1] != blocks[0].shape[1]):
+                            raise ValueError("mixed widths")
+                        blocks.append(block)
+                    except (TypeError, ValueError):   # ragged: hand back the rows
+                        rows = [r for b in blocks for r in b] + page
+                        blocks = []
+                elif page:
+                    rows.extend(page)
+                if len(emb) < n:
+                    break
+                offset += len(emb)
+            if rows:
                 return rows
+            out = (blocks[0] if len(blocks) == 1 else np.concatenate(blocks)) if blocks else []
             if not isinstance(out, list) and out.ndim == 2:
                 out.setflags(write=False)
                 with _domain_emb_lock:

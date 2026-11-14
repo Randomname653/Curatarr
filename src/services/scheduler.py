@@ -124,6 +124,9 @@ def _watched(job_id: str):
                 raise
             finally:
                 rec = activity.job_finished(job_id, _time.time() - t0, result, summary)
+                if job_id not in activity.HEARTBEAT_JOBS and _time.time() - t0 > 2:
+                    from src.services.memory_reclaim import reclaim_after_job
+                    await reclaim_after_job()
                 if job_id not in activity.HEARTBEAT_JOBS:
                     try:
                         from src.database.runner import run_write
@@ -386,6 +389,19 @@ def start_scheduler():
         max_instances=1,
         coalesce=True,
         misfire_grace_time=30,
+    )
+    # A loaded HNSW index stays resident for the life of the Chroma client
+    # (the facets alone ~1.2 GB): let go of it after 10 idle minutes.
+    from src.vector_store.chromadb_wrapper import release_idle_indexes
+    scheduler.add_job(
+        _watched("chroma_idle_release")(release_idle_indexes),
+        IntervalTrigger(minutes=2),
+        id="chroma_idle_release",
+        name="Release idle vector indexes (RAM)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
     )
     from src.services import pc_host
     if pc_host.configured():

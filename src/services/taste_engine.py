@@ -480,18 +480,24 @@ def _clean_unit_rows(embs, min_rows: int = _MIN_CORPUS):
     stores as ``NaN`` and the deletion reader then turned into a NaN cosine
     for every candidate — each scored as maximally foreign."""
     import numpy as np
+    # float32 and ONE copy: Chroma stores float32, so float64 bought no
+    # precision and cost 3 full-size copies (+856 MB peak over the four
+    # domains, measured 2026-11-14). The memo's matrix is read-only, the
+    # boolean pick below is the copy we then normalise in place.
     try:
-        m = np.asarray(embs, dtype=float)
+        m = np.asarray(embs, dtype=np.float32)
     except (TypeError, ValueError):   # ragged → mixed dimensions
         return None
     if m.ndim != 2 or len(m) < min_rows:
         return None
-    m = m[np.isfinite(m).all(axis=1)]
-    norms = np.linalg.norm(m, axis=1)
-    keep = norms > 1e-9
+    with np.errstate(over="ignore", invalid="ignore"):
+        norms = np.linalg.norm(m, axis=1)
+    keep = np.isfinite(norms) & (norms > 1e-9)
     if int(keep.sum()) < min_rows:
         return None
-    return m[keep] / norms[keep, None]
+    out = m[keep]
+    out /= norms[keep, None]
+    return out
 
 
 def _domain_corpus_mean(category: str):
@@ -726,10 +732,12 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
         m = _clean_unit_rows(get_chroma_db().embeddings_for_domain(category))
         if m is None:
             return None
-        mean = m.mean(axis=0)
+        mean = m.mean(axis=0, dtype=np.float64).astype(np.float32)
 
         def _center(vec):
-            v = np.asarray(vec, dtype=float)
+            # float32 like mc: a float64 vector would make `mc @ c` cast
+            # the whole corpus matrix to a float64 temporary first
+            v = np.asarray(vec, dtype=np.float32)
             # `if not n` let NaN through (NaN is truthy); a centroid from
             # another space (wrong dimension) must not broadcast either
             if v.shape != mean.shape or not np.isfinite(v).all():
@@ -741,10 +749,12 @@ def _corpus_calibration(embedding, drop_embedding, category: str):
             n = np.linalg.norm(v)
             return v / n if n > 1e-9 else None
 
-        mc = m - mean
+        # in place: m is _clean_unit_rows' own copy and not read again
+        mc = m
+        mc -= mean
         mc_norms = np.linalg.norm(mc, axis=1, keepdims=True)
         mc_norms[mc_norms == 0] = 1.0
-        mc = mc / mc_norms
+        mc /= mc_norms
 
         def _anchors(vec_or_list):
             """Anchors for a single centroid OR max-over-clusters (the

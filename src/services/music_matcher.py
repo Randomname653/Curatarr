@@ -24,6 +24,7 @@ Rate limits:
 import asyncio
 import logging
 import re
+import sys
 import unicodedata
 
 import httpx
@@ -62,25 +63,26 @@ def _normalize(s: str) -> str:
     return " ".join(s.lower().split())
 
 
-def _index_tracks(resp, sec_key, plex_index: dict) -> None:
-    """Parse one section's all-tracks answer and add it to ``plex_index``.
-    Runs in a worker thread: the unpaginated listing measured 64 MB / 1.6 s
-    to parse plus ~0.8 s of normalising at 50k tracks, all of which froze the
-    loop. The caller awaits it, so nothing else touches the dict meanwhile."""
+def _index_tracks(resp, sec_key, plex_index: dict) -> int:
+    """Parse one page of a section's track listing into ``plex_index``;
+    returns the page's item count. Runs in a worker thread (parse plus
+    normalising froze the loop), and page by page: the unpaginated listing
+    was one 64 MB body per 50k tracks, parsed whole. The caller awaits it,
+    so nothing else touches the dict meanwhile."""
     items = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
-    logger.info("[music_matcher] Section %s: %d tracks", sec_key, len(items))
-
     for item in items:
         # originalTitle = track artist (differs from album artist for features)
         artist = item.get("originalTitle") or item.get("grandparentTitle", "")
         title  = item.get("title", "")
         key    = (_normalize(artist), _normalize(title))
         if key[0] and key[1]:
-            genres = [g["tag"] for g in (item.get("Genre") or [])]
+            # a few hundred genre names behind tens of thousands of tracks
+            genres = [sys.intern(g["tag"]) for g in (item.get("Genre") or [])]
             plex_index[key] = {
                 "rating_key": str(item["ratingKey"]),
                 "genres":     genres,
             }
+    return len(items)
 
 
 def _index_identities(rows: list) -> dict:
@@ -138,6 +140,7 @@ def _apply_matches(rows: list[dict]) -> None:
 
 # Flush matched plays to DB every N items (keeps memory low, allows partial saves)
 _MATCH_FLUSH = 500
+_PAGE = 1000           # tracks per Plex listing request
 
 
 async def match_spotify_to_plex(user_id: int) -> dict:
@@ -231,17 +234,27 @@ async def match_spotify_to_plex(user_id: int) -> dict:
                 if await run_read(_stop_requested):
                     break
                 try:
-                    resp = await client.get(
-                        f"{plex_url}/library/sections/{sec_key}/all",
-                        headers=headers,
-                        params={"type": "10"},   # type 10 = track
-                    )
-                    if resp.status_code != 200:
-                        logger.warning("[music_matcher] Section %s returned HTTP %s",
-                                       sec_key, resp.status_code)
-                        continue
-
-                    await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
+                    start = n_tracks = 0
+                    while True:
+                        resp = await client.get(
+                            f"{plex_url}/library/sections/{sec_key}/all",
+                            headers={**headers, "X-Plex-Container-Start": str(start),
+                                     "X-Plex-Container-Size": str(_PAGE)},
+                            params={"type": "10"},   # type 10 = track
+                        )
+                        if resp.status_code != 200:
+                            logger.warning("[music_matcher] Section %s returned HTTP %s",
+                                           sec_key, resp.status_code)
+                            break
+                        n = await asyncio.to_thread(_index_tracks, resp, sec_key, plex_index)
+                        del resp
+                        n_tracks += n
+                        # != not <: a server that ignored the paging headers
+                        # answered everything at once - never ask again
+                        if n != _PAGE or start > 2_000_000:
+                            break
+                        start += n
+                    logger.info("[music_matcher] Section %s: %d tracks", sec_key, n_tracks)
                 except Exception as exc:
                     logger.error("[music_matcher] Failed to fetch section %s: %s", sec_key, exc)
 

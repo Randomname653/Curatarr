@@ -1582,7 +1582,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
         cur = cache.conn.cursor()
         cur.execute(
             """
-            SELECT cache_key, response FROM api_cache
+            SELECT cache_key FROM api_cache
             WHERE (cache_key LIKE 'v2:raw:%' OR cache_key LIKE 'raw:%')
               AND expires_at > ?
               AND (
@@ -1597,11 +1597,14 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
             """,
             (datetime.now().isoformat(), f"%{_SIG_PROMPT_VERSION}%"),
         )
-        rows = cur.fetchall()
+        # keys only: the pass sorts every candidate but reads `limit` of
+        # them; fetching each response with it held the whole raw cache
+        # (~58 MB of JSON text, 28k rows) to use a few hundred
+        keys = [r[0] for r in cur]
         cur.close()
-        return rows
+        return keys
 
-    rows = await asyncio.to_thread(_with_handle, None, _scan)
+    keys = await asyncio.to_thread(_with_handle, None, _scan)
 
     # Never-tried rows first, then the least recently tried: a fixed order
     # put the same failing rows at the front of every pass (see the
@@ -1609,13 +1612,26 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
     from src.services.enrichment_state import load_walker_attempts, save_walker_attempts
 
     def _row_key(row) -> str:
-        k = row["cache_key"]
+        k = row if isinstance(row, str) else row["cache_key"]
         return k.split(":", 1)[1] if k.startswith("v2:") else k
 
     attempts = await run_read(load_walker_attempts, _SIG_ATTEMPTS_KEY)
-    rows = sorted(rows, key=lambda r: attempts.get(_row_key(r), ""))
+    keys.sort(key=lambda k: attempts.get(_row_key(k), ""))
+    total = len(keys)
 
-    total = len(rows)
+    def _responses(cache, wanted):
+        cur = cache.conn.cursor()
+        got = {}
+        for i in range(0, len(wanted), 500):
+            part = wanted[i:i + 500]
+            cur.execute("SELECT cache_key, response FROM api_cache WHERE cache_key IN (%s)"
+                        % ",".join("?" * len(part)), part)
+            got.update((r[0], r[1]) for r in cur)
+        cur.close()
+        return [{"cache_key": k, "response": got[k]} for k in wanted if k in got]
+
+    rows = await asyncio.to_thread(_with_handle, None,
+                                  lambda c, w=keys[:limit]: _responses(c, w))
     checked = added = 0
     for row in rows[:limit]:
         if await run_read(_gaming):
@@ -1651,7 +1667,7 @@ async def run_significance_backfill(limit: int = 150, task=None) -> dict:
         attempts[_row_key(row)] = datetime.now().isoformat(timespec="seconds")
         checked += 1
     await run_write(save_walker_attempts, _SIG_ATTEMPTS_KEY, attempts,
-                    keep={_row_key(r) for r in rows})
+                    keep={_row_key(k) for k in keys})
     return {"checked": checked, "added": added,
             "remaining": max(0, total - checked)}
 
@@ -1674,38 +1690,41 @@ async def run_omdb_backfill(task=None, limit: Optional[int] = None) -> dict:
             "cache_key LIKE '%raw:movie:%' OR cache_key LIKE '%raw:show:%' "
             "OR cache_key LIKE '%raw:anime:%'"
         )
-        return cur.fetchall()
+        # row by row: the candidates are a few hundred tuples, the rows
+        # behind them the whole movie/show/anime raw cache
+        candidates: dict = {}
+        for k, resp in cur:
+            try:
+                b = _json.loads(resp)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(b, dict):
+                continue
+            imdb = b.get("imdb_id")
+            if not imdb or imdb in ("", "N/A"):
+                continue
+            if b.get("omdb_checked") and b.get("ratings_checked"):
+                continue   # fully checked (incl. the ratings era) — never re-query
+            if (((b.get("writer") or "").strip() or (b.get("overview_extended") or "").strip())
+                    and b.get("ratings_checked")):
+                continue   # OMDb data present AND ratings-era done — skip
+            # docs checked before the full-harvest fix (no ratings_checked) fall
+            # through: they get exactly ONE more fetch to pick up RT/Metacritic
+            try:
+                cat, _, cid = k.split("raw:", 1)[1].partition(":")
+            except (IndexError, AttributeError):
+                continue
+            # The row's OWN id rides along: raw rows are keyed by anilist/anidb/
+            # tmdb/tvdb id or title, and the top-up only tried tmdb + title — an
+            # AniList-keyed anime row never got its stamp and was re-fetched from
+            # OMDb every day.
+            candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb,
+                                                b.get("tmdb_id"), cid or None))
 
-    rows = await asyncio.to_thread(_with_handle, None, _scan)
+        cur.close()
+        return candidates
 
-    candidates: dict = {}
-    for k, resp in rows:
-        try:
-            b = _json.loads(resp)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(b, dict):
-            continue
-        imdb = b.get("imdb_id")
-        if not imdb or imdb in ("", "N/A"):
-            continue
-        if b.get("omdb_checked") and b.get("ratings_checked"):
-            continue   # fully checked (incl. the ratings era) — never re-query
-        if (((b.get("writer") or "").strip() or (b.get("overview_extended") or "").strip())
-                and b.get("ratings_checked")):
-            continue   # OMDb data present AND ratings-era done — skip
-        # docs checked before the full-harvest fix (no ratings_checked) fall
-        # through: they get exactly ONE more fetch to pick up RT/Metacritic
-        try:
-            cat, _, cid = k.split("raw:", 1)[1].partition(":")
-        except (IndexError, AttributeError):
-            continue
-        # The row's OWN id rides along: raw rows are keyed by anilist/anidb/
-        # tmdb/tvdb id or title, and the top-up only tried tmdb + title — an
-        # AniList-keyed anime row never got its stamp and was re-fetched from
-        # OMDb every day.
-        candidates.setdefault((cat, imdb), (b.get("title"), cat, imdb,
-                                            b.get("tmdb_id"), cid or None))
+    candidates = await asyncio.to_thread(_with_handle, None, _scan)
 
     cand_list = list(candidates.values())
     if limit:
