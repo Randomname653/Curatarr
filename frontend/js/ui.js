@@ -453,6 +453,22 @@ export function pulseHeldBy(id, source) {
 // emptyHtml(html, ctaLabel, ctaAction, {good}) — one sentence (HTML, the caller
 // escapes), at most one action; ctaAction is the attribute text from act().
 // good: the empty state is the happy case.
+// skeletonHtml(label, {kind, n}) — the shape of what is loading, shimmering
+// like a poster that has not arrived: 'cards' (recommendations, deletions),
+// 'rows' (lists), 'tiles' (Wrap-Up). The label stays for screen readers and
+// as a line under it. A bare italic "Loading…" made every first open look
+// unfinished (UI audit 2026-11-14).
+export function skeletonHtml(label, o = {}) {
+  const kind = o.kind || 'cards';
+  const n = o.n || (kind === 'rows' ? 6 : kind === 'tiles' ? 4 : 3);
+  const one = kind === 'cards'
+    ? '<div class="sk-card"><div class="sk sk-poster"></div><div class="sk-lines"><div class="sk sk-line w-60"></div><div class="sk sk-line"></div><div class="sk sk-line w-80"></div></div></div>'
+    : kind === 'tiles' ? '<div class="sk sk-tile"></div>'
+    : '<div class="sk sk-row"></div>';
+  return `<div class="skeleton sk-${kind}" role="status" aria-live="polite">${one.repeat(n)}
+    <p class="fs-12 t3 mt-8">${esc(label || '')}</p></div>`;
+}
+
 export function emptyHtml(html, ctaLabel, ctaAction, o = {}) {
   return `<div class="empty${o.good ? ' good' : ''}" role="status"><p>${html}</p>${ctaLabel ? `<button type="button" class="btn btn-secondary btn-sm" ${ctaAction || ''}>${esc(ctaLabel)}</button>` : ''}</div>`;
 }

@@ -9,7 +9,7 @@
 //
 // Tab definitions per arr — adjust here when new tabs land.
 import { api } from './api.js';
-import { EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast } from './ui.js';
+import { skeletonHtml, EL, _errHtml, _errMsg, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, emptyHtml, esc, escAttr, loc, openModal, proxyImg, setStatus, toast } from './ui.js';
 import { serverLabel, state } from './state.js';
 import { showView, tabToHash } from './nav.js';
 import { t, th } from './i18n.js';
@@ -51,7 +51,7 @@ export async function loadArrPage(svc, tab) {
   if (tab) _arrActiveTab[svc] = tab;
   const tabsEl = document.getElementById(`arr-tabs-${svc}`);
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  contentEl.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   tabsEl.innerHTML = '';
 
   let status;
@@ -159,7 +159,7 @@ const _arrBrowserState = {
 
 export async function renderSynopsisBrowser(svc, tabId, opts = {}) {
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  contentEl.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
 
   const st = _arrBrowserState[svc + ':' + tabId] || {
     sort: 'size_desc',
@@ -715,7 +715,7 @@ function _soulsyncBadge(s) {
 
 export async function renderWanted(svc) {
   const contentEl = document.getElementById(`arr-content-${svc}`);
-  contentEl.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  contentEl.innerHTML = skeletonHtml(t('common.loading'), {kind: 'rows'});
   let data;
   try {
     data = await api('/api/library/wishes');

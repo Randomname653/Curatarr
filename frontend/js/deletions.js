@@ -5,13 +5,18 @@
 // Invalidated whenever a targeted single-category analysis runs (because that
 // category's slice would then be out of sync with the stored full list).
 // Moved state._delProposalsAll to state
-import { EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, haptic, _errHtml, _errMsg, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast } from './ui.js';
+import { skeletonHtml, EL, EVENT, SVG_CHECK, SVG_TRASH, SVG_WARN, haptic, _errHtml, _errMsg, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, menuHtml, setPulse, toast } from './ui.js';
 import { state } from './state.js';
 import { openMatchPicker } from './picker.js';
 import { api } from './api.js';
 import { _busyStreaming, enterThread, proposalOpener, sendMessage } from './chat.js';
 import { tabToHash } from './nav.js';
 import { t, th } from './i18n.js';
+
+// The service a proposal deletes through, as its product spells it: the card
+// printed the raw key ("radarr · frees 3.3 GB", UI audit 2026-11-14).
+const _SERVICE_NAMES = {radarr: 'Radarr', sonarr: 'Sonarr', lidarr: 'Lidarr', plex: 'Plex', jellyfin: 'Jellyfin'};
+export function serviceName(s) { return _SERVICE_NAMES[s] || s || ''; }
 
 // Proposals deleted through the media server itself (music without Lidarr,
 // or rebound from Plex): no arr entity to re-match, no import list.
@@ -189,7 +194,7 @@ function _delCardHtml(p) {
       const limbo = p.status === 'limbo';
       const ctx = `data-pid="${p.id}" data-title="${escAttr(p.title)}" data-pitch="${escAttr(p.pitch||p.reason||'')}" data-category="${escAttr(p.category||'')}" data-poster="${escAttr(p.poster_url||'')}" data-stagnant="${p.stagnant ? 1 : 0}"`;
       return `
-      <div class="card mb-12${p.stagnant ? ' is-stagnant' : (p.confidence > .7 ? ' is-hot' : '')}" data-del-id="${p.id}" data-title="${escAttr(p.title)}" data-service="${escAttr(p.service || '')}">
+      <div class="card mb-12${p.stagnant ? ' is-stagnant' : ''}" data-del-id="${p.id}" data-title="${escAttr(p.title)}" data-service="${escAttr(p.service || '')}">
         <div class="poster-card">
           <input type="checkbox" class="del-cb" data-id="${p.id}" data-gb="${p.size_gb||0}" ${actOn('change', 'onDelCheckbox', EL)} hidden title="${th('del.select_bulk')}"/>
           <div class="glow-interactive selectable${p.category==='music'?' is-music':''}" data-id="${p.id}" role="button" tabindex="0" aria-pressed="false" aria-label="${th('del.select_title_bulk', {title: p.title})}" ${act('toggleDelSelect', p.id)} ${actOn('keydown', 'keyActivate', EVENT, EL)} title="${th('del.click_select')}">
@@ -212,13 +217,13 @@ function _delCardHtml(p) {
                 ${menuHtml([
                   {label: t('del.challenge'), action: act('onReevaluateDeletion', EL), attrs: ctx, title: t('del.challenge_title')},
                   p.media_id && p.service && !_MEDIA_SERVERS.has(p.service) ? {label: t('del.fix_match'), action: act('onFixMatch', EL), attrs: `${ctx} data-service="${escAttr(p.service)}" data-mediaid="${escAttr(p.media_id)}"`, title: t('del.fix_match_title')} : null,
-                  p.arr_url ? {label: t('del.open_in', {service: p.service}), href: p.arr_url} : null,
+                  p.arr_url ? {label: t('del.open_in', {service: serviceName(p.service)}), href: p.arr_url} : null,
                 ])}
               </div>
             </div>
             ${_whyPanel(p)}
             <div class="quote-text mt-8">${esc(p.pitch||p.reason||'')}</div>
-            <div class="meta-quiet mt-8">${esc(p.service||'')}${p.size_gb ? ` · ${th('del.frees')} <b>${_fmtSize(p.size_gb)}</b>` : ''}</div>
+            <div class="meta-quiet mt-8">${esc(serviceName(p.service))}${p.size_gb ? ` · ${th('del.frees')} <b>${_fmtSize(p.size_gb)}</b>` : ''}</div>
             ${genreTags ? `<div class="gap-5 row mt-8">${genreTags}</div>` : ''}
             ${p.synopsis ? `<div class="clamp-3 fs-12 t3 mt-8">${esc(p.synopsis)}</div>` : ''}
             ${limbo ? `<div class="fs-11 t-amber mt-4">${SVG_WARN} ${th('del.parked_note')}</div>` : ''}
@@ -324,7 +329,7 @@ export async function loadDeletions(category=null, btn=null, refresh=false) {
   // Every tab asks the server for its own first page. Tab clicks used to
   // slice the "All" list in the browser, which held the top 30 of every
   // category together: the Anime tab showed the anime among them (9 of 50).
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th(refresh ? 'del.analysing' : 'del.loading_cached')}</p>`;
+  el.innerHTML = skeletonHtml(t(refresh ? 'del.analysing' : 'del.loading_cached'));
   try {
     const url = `/api/recommendations/deletions?refresh=${refresh}`
               + (category ? `&category=${category}` : '')

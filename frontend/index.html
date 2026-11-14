@@ -106,10 +106,10 @@
 
 <!-- ONBOARDING OVERLAY -->
 <div id="onboarding-overlay" class="overlay-dim hidden">
-  <div class="dialog-box-520" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+  <div class="dialog-box-520 dialog-shell" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
     <div class="box-head">
       <div class="setup-logo ob-logo" id="ob-logo"></div>
-      <h1 class="fs-18 fw-700 t-amber" id="onboarding-title"></h1>
+      <h1 class="setup-heading" id="onboarding-title"></h1>
       <p class="fs-13 t2 mt-6 lh-15" id="onboarding-sub"></p>
     </div>
     <div class="pad-24-28" id="onboarding-body"></div>
@@ -135,7 +135,7 @@
     <svg aria-hidden="true" width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="currentColor"/></svg>
     <span id="game-indicator-label" data-i18n="top.game_mode">Game mode</span>
   </div>
-  <button id="msg-bell" data-action="toggleMsgPanel" title="Notifications" data-i18n-title="top.notifications" aria-label="Notifications" data-i18n-aria-label="top.notifications">
+  <button id="msg-bell" data-action="toggleMsgPanel" aria-expanded="false" aria-controls="msg-panel" title="Notifications" data-i18n-title="top.notifications" aria-label="Notifications" data-i18n-aria-label="top.notifications">
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     <div id="msg-badge"></div>
   </button>
@@ -302,11 +302,9 @@
       <div class="view-body">
         <div class="toolbar">
           <button class="btn btn-primary" data-action="syncHistory" data-args='[false]' data-i18n="history.sync_now">Sync now</button>
-          <button class="btn btn-secondary admin-action-row" hidden data-action="syncHistory" data-args='[true]' title="Sync even if the last sync was less than an hour ago" data-i18n-title="history.force_title" data-i18n="history.force_sync">Force sync</button>
-          <button class="btn btn-secondary admin-action-row" hidden data-action="recomputeTaste" data-i18n="history.recompute">Recompute taste</button>
+          <span class="admin-action-row" hidden id="history-more"></span>
           <div class="toolbar-right">
             <button class="btn btn-secondary" data-action="loadHistoryStatus" data-i18n="history.refresh">Refresh</button>
-            <button class="btn btn-secondary admin-action-row" hidden id="libraries-btn" data-action="showLibrariesForce">Plex libraries</button>
           </div>
         </div>
         <div class="mb-20" id="history-stats"></div>
@@ -334,11 +332,11 @@
         </div>
         <div class="toolbar">
           <div class="row" role="group" aria-label="Lane" data-i18n-aria-label="recs.lane">
-            <button id="lane-all-btn" class="chip active" data-action="setRecLane" data-args='["all","$el"]' data-i18n="common.all">All</button>
-            <button id="lane-because-btn" class="chip" data-action="setRecLane" data-args='["because","$el"]' title="Close to three titles you watched recently" data-i18n-title="recs.lane_because_title" data-i18n="recs.lane_because">Because you watched</button>
-            <button id="lane-rediscover-btn" class="chip" data-action="setRecLane" data-args='["rediscover","$el"]' title="Loved once, untouched for two years" data-i18n-title="recs.lane_rediscover_title" data-i18n="recs.lane_rediscover">Rediscover</button>
-            <button id="lane-lib-btn" class="chip" data-action="setRecLane" data-args='["library","$el"]' title="In your library — still unwatched" data-i18n-title="recs.lane_library_title" data-i18n="recs.lane_library">In library</button>
-            <button id="lane-disc-btn" class="chip" data-action="setRecLane" data-args='["discovery","$el"]' title="Not in your library — worth acquiring" data-i18n-title="recs.lane_discovery_title" data-i18n="recs.lane_discovery">Discover new</button>
+            <button id="lane-all-btn" class="chip active" aria-pressed="true" data-action="setRecLane" data-args='["all","$el"]' data-i18n="common.all">All</button>
+            <button id="lane-because-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["because","$el"]' title="Close to three titles you watched recently" data-i18n-title="recs.lane_because_title" data-i18n="recs.lane_because">Because you watched</button>
+            <button id="lane-rediscover-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["rediscover","$el"]' title="Loved once, untouched for two years" data-i18n-title="recs.lane_rediscover_title" data-i18n="recs.lane_rediscover">Rediscover</button>
+            <button id="lane-lib-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["library","$el"]' title="In your library — still unwatched" data-i18n-title="recs.lane_library_title" data-i18n="recs.lane_library">In library</button>
+            <button id="lane-disc-btn" class="chip" aria-pressed="false" data-action="setRecLane" data-args='["discovery","$el"]' title="Not in your library — worth acquiring" data-i18n-title="recs.lane_discovery_title" data-i18n="recs.lane_discovery">Discover new</button>
           </div>
           <button class="btn btn-secondary" data-action="regenerateRecs" data-i18n="recs.regenerate">Regenerate</button>
           <div class="toolbar-right">
@@ -874,7 +872,7 @@
               </section>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.hide_orphans">Hide history for removed media</h3>
-                  <div class="section-actions"><button class="btn btn-sm" data-action="cleanupOrphans" data-args='["$el"]' data-i18n="set.view.hide_orphans_btn">Hide history</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="cleanupOrphans" data-args='["$el"]' data-i18n="set.view.hide_orphans_btn">Hide history</button></div></div>
                 <div class="section-body">
                   <p class="lh-15 fs-12 t3" data-i18n="set.view.hide_orphans_hint">Hides watch history for titles that are no longer in any library of your media server from history, taste and recommendations. The plays are kept for your Wrap-Up, and come back if the title returns. Spotify history is never hidden. Nothing is hidden if a library can't be read.</p>
                   <div id="maint-cleanup-status" class="status mt-8"></div>

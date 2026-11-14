@@ -3,7 +3,7 @@
 // Moved state._recsPollTimer to state
 // Moved state._recsPollKillswitch to state
 import { serverLabel, state } from './state.js';
-import { EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
+import { skeletonHtml, EL, EVENT, _errHtml, _fmtAbs, _fmtRel, _posterImg, act, actOn, btnBusy, btnDone, confirmDialog, emptyHtml, esc, escAttr, loc, toast } from './ui.js';
 import { onDiscussRec } from './chat.js';
 import { api } from './api.js';
 import { _whyButton } from './deletions.js';
@@ -248,7 +248,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
   document.querySelectorAll('#recs-view .cat-tab').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   const el = document.getElementById('recs-content');
-  el.innerHTML = `<p class="loading" role="status" aria-live="polite">${th('common.loading')}</p>`;
+  el.innerHTML = skeletonHtml(t('common.loading'));
   // Snapshot the category so a stale tab change can't clobber the active view.
   const requestedCategory = category;
   // Both lanes are always cached; state.currentRecsLane just filters the view.
@@ -267,7 +267,7 @@ export async function loadRecs(category=null, btn=null, refresh=false) {
       return;
     }
     const cacheNote = r.cached_at
-      ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">${th('recs.cached', {when: _fmtRel(r.cached_at)})}</span> · <button type="button" class="link-num t-amber" ${act('regenerateRecs')}>${th('recs.regenerate_now')}</button></div>`
+      ? `<div class="fs-11 t3 mb-8"><span title="${escAttr(_fmtAbs(r.cached_at))}">${th('recs.cached', {when: _fmtRel(r.cached_at)})}</span></div>`
       : '';
     const library   = r.recommendations.filter(x => x.lane === 'library');
     const because   = r.recommendations.filter(x => x.lane === 'because');
@@ -289,7 +289,7 @@ export function setRecLane(lane, btn) {
   tabToHash('recs', lane);    // #recs/library survives a reload
   for (const [id, val] of [['lane-all-btn','all'], ['lane-because-btn','because'], ['lane-rediscover-btn','rediscover'], ['lane-lib-btn','library'], ['lane-disc-btn','discovery']]) {
     const b = document.getElementById(id);
-    if (b) b.classList.toggle('active', lane === val);
+    if (b) { b.classList.toggle('active', lane === val); b.setAttribute('aria-pressed', String(lane === val)); }
   }
   loadRecs(state.currentRecsCategory);
 }

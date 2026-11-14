@@ -2,7 +2,7 @@
 // Sync and recompute are called from the History toolbar (status goes into
 // the stats block) and from Settings → Maintenance (status goes into that
 // section's own line, statusId) — never into another view's element.
-import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, esc, loc, setStatus, toast } from './ui.js';
+import { CAT_LABELS, EL, _errHtml, _errMsg, act, countTo, emptyHtml, esc, loc, menuHtml, setStatus, toast } from './ui.js';
 import { _swrInvalidate, _swrRun, api } from './api.js';
 import { loadEnrichStatus } from './kb.js';
 import { serverLabel, state } from './state.js';
@@ -90,7 +90,21 @@ export async function loadHistorySources() {
   } catch (e) { console.warn('[history] sources not read - the line stays hidden', e); }
 }
 
+// The owner's rarer actions behind one "More": the toolbar carried five
+// buttons, two rows on a phone (UI audit 2026-11-14). Sync now stays visible.
+function _renderHistoryMore() {
+  const el = document.getElementById('history-more');
+  if (!el || !state.currentUser?.is_admin) return;
+  el.innerHTML = menuHtml([
+    {label: t('history.force_sync'), action: act('syncHistory', true), title: t('history.force_title')},
+    {label: t('history.recompute'), action: act('recomputeTaste')},
+    {sep: true},
+    {label: t('auth.libraries_btn', {server: serverLabel()}), action: act('showLibrariesForce')},
+  ]);
+}
+
 export async function loadHistoryStatus() {
+  _renderHistoryMore();
   loadHistorySources();
   try {
     const s = await _swrRun('history-stats', () => api('/api/history/status'), _renderHistoryStats);
@@ -110,6 +124,12 @@ export async function loadHistoryStatus() {
         const h=await api(`/api/history/recent?limit=100&category=${types[0]}`);
         renderRecent(h.entries, types[0]);
       } catch (e) { _tasteErr('recent-history', e, act('showTasteTab', types[0], null)); }
+    } else {
+      // No history yet: a page with the stats tile and nothing under it was
+      // a dead end. It says so, with the action that fills it.
+      document.getElementById('taste-tabs').innerHTML = '';
+      document.getElementById('taste-content').innerHTML =
+        emptyHtml(th('history.no_data'), t('history.sync_now'), act('syncHistory', false));
     }
   } catch(e){ document.getElementById('history-stats').innerHTML=_errHtml(e, act('loadHistoryStatus')); }
 }

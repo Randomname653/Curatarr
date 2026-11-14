@@ -98,6 +98,7 @@
   --info: #5b8dee;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-xl: 16px;   /* dialogs and full-screen cards: setup, sign-in, onboarding */
   --sidebar-w: 220px;
   --sidebar-w-collapsed: 56px;
   /* Phone chrome: the topbar grows by the notch / status bar when the app
@@ -114,6 +115,10 @@
 /* The viewport's own overscroll (pull-to-reload, edge-swipe Back) belongs to
    the root element: the app has its own pull-to-refresh and drawer swipe. */
 html { overscroll-behavior: none; }
+/* Form controls do not inherit the page font by default: every button, tab,
+   chip and input rendered in the browser's Arial next to system-ui text
+   (UI audit 2026-11-14). One rule, the whole app. */
+button, input, select, textarea { font-family: inherit; }
 body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
 
 /* ── TOPBAR ── */
@@ -838,6 +843,10 @@ details.section > summary:hover, .cur-section > summary:hover { color: var(--amb
 /* Amber focus everywhere — one interaction language for every input */
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--amber); }
 button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: var(--radius); }
+/* Checkboxes and radios have no border to colour: the rule above left them
+   without any focus mark (wizard choice cards, "Select all", checkbox chips). */
+input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.wiz-choice:has(input:focus-visible), .chip:has(input:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; }
 /* div role=button (sidebar entries, the user pill) had no ring at all: keyboard focus was invisible */
 [role="button"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .form-group input:focus-visible, .form-group select:focus-visible { outline: none; border-color: var(--amber); }
@@ -921,12 +930,11 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--amber); outline
 .link-num { background: none; border: none; padding: 0; font: inherit; color: var(--text); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .link-num:hover { color: var(--amber); }
 /* Filter chips: a row of toggles above a list, one active at a time */
-.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 3px 10px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: border-color .15s, color .15s; }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--hairline-strong); color: var(--text2); padding: 3px 10px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: border-color .15s, color .15s; }
 .chip:hover { border-color: var(--amber); color: var(--amber); }
 .chip.active { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
 .chip input { margin: 0; }
 /* Card states: judge confidence and the stagnant flag colour the frame; done = acted on */
-.card.is-hot { border-color: var(--danger-line); }
 .card.is-stagnant { border-color: var(--amber-line); }
 .card.done { opacity: .45; }
 /* A heading between groups inside one list (recommendation lanes, report blocks) */
@@ -966,14 +974,18 @@ h1[tabindex="-1"]:focus { outline: none; }
 .progress-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 4px; }
 
 /* ── SETUP WIZARD ── */
-#setup-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
-  background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
+/* One stage for the first screens - setup, sign-in, onboarding - and one
+   shell (.dialog-shell): glass, the XL radius, the deepest shadow. Sign-in
+   and onboarding were flat boxes next to the wizard (UI audit 2026-11-14). */
+#setup-overlay, #auth-overlay, #onboarding-overlay { background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
+#setup-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+#setup-box, .dialog-shell, #auth-overlay .pin-box {
+  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--hairline-strong); border-radius: var(--radius-xl); box-shadow: var(--shadow-3), var(--specular); }
 #setup-overlay.hidden { display: none; }
 /* The wizard (rebuilt 2026-11-14): one glass card like the rest of the app,
    readable type, the wordmark on top. */
-#setup-box { width: 640px; max-width: 100%; max-height: calc(100dvh - 48px); display: flex; flex-direction: column;
-  background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--hairline-strong); border-radius: 16px; box-shadow: var(--shadow-3), var(--specular); }
+#setup-box { width: 640px; max-width: 100%; max-height: calc(100dvh - 48px); display: flex; flex-direction: column; }
 #setup-box .setup-header { padding: 28px 32px 8px; text-align: center; }
 .setup-logo .setup-logo-svg { width: min(240px, 60vw); height: auto; display: block; margin: 0 auto; }
 #setup-box .setup-header p { font-size: var(--fs-md); color: var(--text2); margin-top: 12px; }
@@ -1030,7 +1042,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 .ob-sync-count { font-size: var(--fs-2xl); font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }
 
 /* ── AUTH SCREEN ── */
-#auth-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 99; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+#auth-overlay { position: fixed; inset: 0; z-index: 99; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
 #auth-overlay.hidden { display: none; }
 #onboarding-overlay.hidden { display: none !important; }
 #auth-overlay .logo-big .brand-logo { width: min(300px, 72vw); height: auto; display: block; }
@@ -1043,7 +1055,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 #jf-login[hidden] { display: none; }
 /* The setup wizard's Quick Connect code (jellyfin_connect.js), sized like the sign-in one. */
 .setup-qc-code { font-size: 32px; font-weight: 800; letter-spacing: 8px; color: var(--amber); margin: 10px 0; font-family: monospace; }
-#auth-overlay .pin-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 24px 32px; text-align: center; width: 340px; max-width: calc(100vw - 32px); }
+#auth-overlay .pin-box { padding: 24px 32px; text-align: center; width: 340px; max-width: calc(100vw - 32px); }
 #auth-overlay .pin-box .pin-code { font-size: 36px; font-weight: 800; letter-spacing: 10px; color: var(--amber); margin: 12px 0; font-family: monospace; }
 #auth-overlay .pin-box small { font-size: 12px; color: var(--text2); }
 #jf-pw-form { text-align: left; }
@@ -1052,7 +1064,7 @@ h1[tabindex="-1"]:focus { outline: none; }
 #jf-pw-form .btn { display: block; margin-left: auto; }
 
 /* ── MESSAGES PANEL ── */
-#msg-panel { position: fixed; right: 16px; top: 60px; width: 360px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.4); z-index: 50; display: none; }
+#msg-panel { position: fixed; right: 16px; top: 60px; width: 360px; background: var(--glass); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: 1px solid var(--hairline-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-2), var(--specular); z-index: 50; display: none; }
 #msg-panel.open { display: block; }
 #msg-panel .mp-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
 #msg-panel .mp-section { padding: 10px 16px 2px; font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .8px; }
@@ -1144,8 +1156,10 @@ select option { background: var(--bg2); }
 .side-col-200 { flex: 0 0 200px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); padding: 8px; }
 .stack-center-16 { position: relative; display: flex; flex-direction: column; align-items: center; gap: 16px; color: var(--text); }
 .overlay-dim { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 90; display: flex; align-items: center; justify-content: center; }
-.dialog-box-520 { width: 520px; max-height: 90vh; overflow-y: auto; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; }
-.box-head { padding: 24px 28px 16px; border-bottom: 1px solid var(--border); }
+#onboarding-overlay.overlay-dim { background: radial-gradient(1200px 600px at 50% -10%, var(--amber-dim), transparent 60%), var(--bg); }
+.dialog-box-520 { width: 520px; max-height: 90vh; overflow-y: auto; }
+.box-head { padding: 24px 28px 16px; border-bottom: 1px solid var(--hairline); }
+.box-head .setup-heading { margin-bottom: 4px; }
 .setup-heading { font-size: var(--fs-xl); font-weight: 700; margin-bottom: 8px; color: var(--text); }
 .setup-lead { font-size: 13px; color: var(--text2); line-height: 1.6; max-width: 380px; margin: 0 auto 20px; }
 .poster-ph { background: var(--bg3); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--text3); }
@@ -1174,8 +1188,11 @@ select option { background: var(--bg2); }
 @media (pointer: coarse) {
   .btn, .btn-sm, .chip, .cat-tab, .arr-tab, .settings-tab, .sb-item, .menu-item,
   .btn-plain, .btn-ghost-amber, .btn-ghost-danger, .modal-close, .sp-chip,
-  #msg-bell, #sb-hamburger, #new-chat-btn, #recheck-btn, #send-btn { min-height: 44px; }
-  .btn-plain, .modal-close, #msg-bell, #sb-hamburger { min-width: 44px; }
+  #msg-bell, #sb-hamburger, #new-chat-btn, #recheck-btn, #send-btn,
+  #tb-search-btn, #user-pill, .sb-footer button, .wus-close, .wus-share-btn, .wu-tile-share,
+  .toast-close, .lib-refresh, .wu-chip, .link-num { min-height: 44px; }
+  .btn-plain, .modal-close, #msg-bell, #sb-hamburger, #tb-search-btn, .wus-close,
+  .toast-close, .wu-tile-share { min-width: 44px; }
   input, select, textarea, .input, #topbar-search, #chat-input { font-size: 16px; }
 }
 /* Bulk-delete dialog: every selected title, scrolling past a handful */
@@ -1446,6 +1463,20 @@ body {
 .glow-interactive img.poster-img { opacity: 0; transition: opacity var(--dur-3) ease, filter var(--dur-2); }
 .glow-interactive img.poster-img.is-loaded { opacity: 1; }
 @keyframes shimmer { to { background-position: -220% 0; } }
+/* Skeletons (ui.skeletonHtml): the shape of what is loading, with the
+   posters' shimmer. */
+.sk { border-radius: var(--radius); background: linear-gradient(100deg, var(--bg3) 35%, color-mix(in srgb, var(--bg3) 82%, var(--text3)) 50%, var(--bg3) 65%) 0 0 / 220% 100%; animation: shimmer 1.3s linear infinite; }
+.sk-cards { display: flex; flex-direction: column; gap: 12px; }
+.sk-card { display: flex; gap: 14px; padding: 14px; border: 1px solid var(--hairline); border-radius: var(--radius-lg); background: var(--bg2); }
+.sk-poster { width: 72px; height: 108px; flex-shrink: 0; border-radius: var(--radius-poster); }
+.sk-lines { flex: 1; display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+.sk-line { height: 12px; width: 100%; }
+.sk-line.w-60 { width: 60%; height: 16px; } .sk-line.w-80 { width: 80%; }
+.sk-rows { display: flex; flex-direction: column; gap: 8px; }
+.sk-row { height: 44px; border-radius: var(--radius); }
+.sk-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.sk-tiles > p { grid-column: 1 / -1; }
+.sk-tile { height: 160px; border-radius: var(--radius-lg); }
 @media (hover: hover) {
   .glow-interactive:hover { box-shadow: 0 10px 30px color-mix(in srgb, var(--poster-tint, var(--amber)) 45%, transparent); transform: translateY(-2px) scale(1.01); }
 }
@@ -1684,7 +1715,9 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   transition: background var(--dur-2), color var(--dur-2), border-color var(--dur-2); }
 .wu-chip-sm { padding: 3px 10px; font-size: var(--fs-xs); }
 .wu-chip:hover, .wu-tab:hover { color: var(--text); border-color: var(--border2); }
-.wu-chip.is-on, .wu-tab.is-on { background: var(--amber); border-color: var(--amber); color: #000; }
+/* Selected = the shared chip's look (amber outline on amber-dim): Wrap-Up
+   was solid amber where Recommendations is outlined (UI audit 2026-11-14). */
+.wu-chip.is-on, .wu-tab.is-on { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
 .wu-snap-btn { margin-left: auto; }
 
 .wu-hero { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center;
@@ -2027,7 +2060,7 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   .act-sum, .act-hist .act-sum { max-width: 100%; white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .act-spin, .progress-bar.indeterminate .progress-fill, .act-row.act-running.act-indet, .ob-sync-mark .brand-arcs { animation: none; }
+  .act-spin, .progress-bar.indeterminate .progress-fill, .act-row.act-running.act-indet, .ob-sync-mark .brand-arcs, .sk { animation: none; }
   .act-row.act-running { transition: none; }
   .act-fade { animation: none; opacity: .6; }
 }
