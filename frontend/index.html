@@ -287,7 +287,7 @@
       <div id="chat-input-area">
         <!-- Icon + label: phones show the icon alone (aria-label carries the name) -->
         <button id="new-chat-btn" data-action="newChat" title="Clear conversation history (this thread only). Memories + library stay." data-i18n-title="chat.new_title" aria-label="New chat" data-i18n-aria-label="chat.new_chat"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-label" data-i18n="chat.new">New</span></button>
-        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-fetch metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-fetch</span></button>
+        <button id="recheck-btn" class="admin-action-row" hidden data-action="correctChatAnchor" title="Curatarr said something wrong about the current topic? This wipes the cached metadata so the next question re-fetches fresh data from TMDB / AniList / MusicBrainz." data-i18n-title="chat.refetch_title" aria-label="Re-enrich metadata" data-i18n-aria-label="chat.refetch_aria"><svg class="btn-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span class="btn-label" data-i18n="chat.refetch">Re-enrich</span></button>
         <textarea id="chat-input" aria-label="Chat message" data-i18n-aria-label="chat.input_aria" placeholder="Ask about your library, get recommendations, or just chat…" data-i18n-placeholder="chat.input_placeholder" data-on-keydown="handleKey" data-args='["$event"]' enterkeyhint="send" rows="1"></textarea>
         <button id="send-btn" data-action="sendMessage" aria-label="Send message" data-i18n-aria-label="chat.send_aria"><svg class="btn-icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span class="btn-label" data-i18n="chat.send">Send</span></button>
       </div>
@@ -443,7 +443,7 @@
     <div class="view" id="curation-view">
       <div class="view-header">
         <h1 tabindex="-1" data-i18n="nav.curation">Curation</h1>
-        <p data-i18n="cur.view.lead">The judge's ledger: what it protected, what it flagged for downscaling, and the rules it has learned from your debates. Sections load when opened; keep several open at once.</p>
+        <p data-i18n="cur.view.lead">Curatarr's ledger: what it protected, what it flagged for downscaling, and the rules it has learned from your debates. Sections load when opened; keep several open at once.</p>
       </div>
       <div class="view-body">
         <details class="section" data-on-toggle="curationSection" data-args='["protections","$el"]'>
@@ -462,7 +462,7 @@
 
         <details class="section" data-on-toggle="curationSection" data-args='["upgrades","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.upgrades">Upgrade candidates</h3>
-            <span class="section-hint" data-i18n="cur.view.upgrades_hint">The inverse of downscale: titles you demonstrably love sitting on weak files (below 1080p or a lean bitrate). Acting on it is your click in the arr — nothing is re-grabbed automatically.</span>
+            <span class="section-hint" data-i18n="cur.view.upgrades_hint">The inverse of downscale: titles you demonstrably love sitting on weak files (below 1080p or a lean bitrate). Acting on it is your click in the Arr app — nothing is re-grabbed automatically.</span>
           </summary>
           <div class="section-body"><div id="upgrade-content"></div></div>
         </details>
@@ -476,7 +476,7 @@
 
         <details class="section" data-on-toggle="curationSection" data-args='["principles","$el"]'>
           <summary class="section-head"><h3 data-i18n="cur.view.principles">Learned principles</h3>
-            <span class="section-hint"><span data-i18n="cur.view.principles_hint1">Rules the curator extracted from your debates.</span> <strong data-i18n="cur.view.shadow">Shadow</strong> <span data-i18n="cur.view.principles_hint2">= captured but not yet applied;</span> <strong data-i18n="cur.view.activate">activate</strong> <span data-i18n="cur.view.principles_hint3">to inject it into the judge. contradiction = your call.</span></span>
+            <span class="section-hint"><span data-i18n="cur.view.principles_hint1">Rules the curator extracted from your debates.</span> <strong data-i18n="cur.view.shadow">Shadow</strong> <span data-i18n="cur.view.principles_hint2">= captured but not yet applied;</span> <strong data-i18n="cur.view.activate">activate</strong> <span data-i18n="cur.view.principles_hint3">to apply it to deletion checks. contradiction = your call.</span></span>
           </summary>
           <div class="section-body"><div id="principles-content"></div></div>
         </details>
@@ -528,7 +528,7 @@
           <div id="backfill-panel"></div>
           <div id="enrich-live-section" hidden></div>
           <section class="section">
-            <div class="section-head"><h3 data-i18n="kb.view.enrich_run">Enrichment run</h3><span class="section-hint" data-i18n="kb.view.enrich_run_hint">The custodian runs this on its own schedule — these are the manual controls.</span></div>
+            <div class="section-head"><h3 data-i18n="kb.view.enrich_run">Enrichment run</h3><span class="section-hint" data-i18n="kb.view.enrich_run_hint">Maintenance runs this on its own schedule — these are the manual controls.</span></div>
             <div class="section-body">
               <div class="row mb-8">
                 <span class="fs-12 t3" data-i18n="kb.view.libraries">Libraries:</span>
@@ -671,7 +671,7 @@
     <!-- RECLASSIFY (anime ↔ TV library sorting) -->
     <div class="view" id="reclassify-view">
       <div class="view-header">
-        <h1 tabindex="-1"><span data-i18n="nav.reclassify">Reclassify</span> <span class="fw-400 fs-13 t3">· anime ↔ TV</span></h1>
+        <h1 tabindex="-1"><span data-i18n="nav.reclassify">Reclassify</span> <span class="fw-400 fs-13 t3">· <span data-i18n="recl.view.sub">anime ↔ TV shows</span></span></h1>
         <p data-i18n="recl.view.lead">Series filed in the wrong Sonarr library. Review and move — nothing happens until you confirm.</p>
       </div>
       <div class="view-body">
@@ -726,7 +726,7 @@
               <button type="button" class="chip active" aria-pressed="true" data-filter-kind="area" data-filter-value="all" data-action="setHistoryFilter" data-args='["area","all"]' data-i18n="act.view.all_areas">All areas</button>
               <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="sync" data-action="setHistoryFilter" data-args='["area","sync"]' data-i18n="act.view.area_sync">Sync</button>
               <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="enrichment" data-action="setHistoryFilter" data-args='["area","enrichment"]' data-i18n="act.view.area_enrichment">Enrichment</button>
-              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="taste" data-action="setHistoryFilter" data-args='["area","taste"]' data-i18n="act.view.area_taste">Taste / vectors</button>
+              <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="taste" data-action="setHistoryFilter" data-args='["area","taste"]' data-i18n="act.view.area_taste">Taste profile</button>
               <button type="button" class="chip" aria-pressed="false" data-filter-kind="area" data-filter-value="maintenance" data-action="setHistoryFilter" data-args='["area","maintenance"]' data-i18n="settings.maintenance">Maintenance</button>
             </div>
             <label class="chip act-noop-toggle"><input type="checkbox" id="act-hide-noop" checked data-on-change="toggleHideNoop" data-args='["$el"]'> <span data-i18n="act.view.hide_noop">Hide empty runs</span></label>
@@ -834,17 +834,17 @@
             <section class="settings-pane" data-pane="maintenance" hidden>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.nodes">Compute nodes</h3><span class="section-hint" data-i18n="set.view.nodes_hint">This server and the node that lends its card. Name the node as you like; work for its card moves here while it is busy or away.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadNodes" data-i18n="set.view.check_again">Check again</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadNodes" data-i18n="set.view.check_again">Refresh</button></div></div>
                 <div class="section-body"><div id="maint-nodes"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.deps">Dependencies</h3><span class="section-hint" data-i18n="set.view.deps_hint">Pinned requirements versus the interpreter that runs this server. The launchers install; the server only reports.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadDepsStatus" data-args='["$el"]' data-i18n="set.view.check_again">Check again</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadDepsStatus" data-args='["$el"]' data-i18n="set.view.check_again">Refresh</button></div></div>
                 <div class="section-body"><div id="maint-deps"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
               <section class="section">
                 <div class="section-head"><h3 data-i18n="set.view.models">Model updates</h3><span class="section-hint" data-i18n="set.view.models_hint">Each model runs the weights it was installed with. When the registry has new ones, test old against new on your own titles and decide.</span>
-                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadModelUpdates" data-args='["$el", true]' data-i18n="set.view.check_now">Check now</button></div></div>
+                  <div class="section-actions"><button class="btn btn-secondary btn-sm" data-action="loadModelUpdates" data-args='["$el", true]' data-i18n="set.view.check_now">Check for updates</button></div></div>
                 <div class="section-body"><div id="maint-models"><p class="loading" role="status" aria-live="polite" data-i18n="common.loading">Loading…</p></div></div>
               </section>
               <section class="section">
@@ -913,8 +913,8 @@
                  server reports set / not set, typing a value replaces it. -->
             <section class="settings-pane" data-pane="integrations" hidden>
               <p class="lh-15 fs-12 t3 mb-12">
-                <span data-i18n="set.view.integr_1">Plex, Ollama, the model bakes and every metadata source. Saving writes</span>
-                <code>.env</code> <span data-i18n="set.view.integr_2">and reloads settings live; a model change also needs</span>
+                <span data-i18n="set.view.integr_1">Plex, Ollama, Curatarr's models and every metadata source. Saving stores them</span>
+                <span data-i18n="set.view.integr_2">and reloads settings live; a model change also needs</span>
                 <strong data-i18n="set.view.integr_rebuild">Rebuild models</strong> <span data-i18n="set.view.integr_3">and a restart — the panel says so.</span>
                 <span data-i18n="set.view.integr_4">Sonarr, Radarr and Lidarr live under</span> <em data-i18n="settings.arr_apps">Arr apps</em>.
               </p>

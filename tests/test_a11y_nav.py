@@ -81,7 +81,7 @@ def test_messages_live_region():
     brand = (ROOT / "frontend/js/brand.js").read_text(encoding="utf-8")
     check("the thinking placeholder is announced as 'Thinking' (a labelled img, not a bare div)",
           "div.appendChild(thinkingIndicator());" in chat
-          and "el.setAttribute('role', 'img');" in brand and "el.setAttribute('aria-label', 'Thinking');" in brand)
+          and "el.setAttribute('role', 'img');" in brand and "el.setAttribute('aria-label', tr('chat.thinking_aria'));" in brand)
     # landing panels inside the log are not conversation
     for pid in ("glance-panel", "last-played-panel", "suggested-prompts"):
         check(f"#{pid} is not read out as it fills",

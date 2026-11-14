@@ -292,7 +292,7 @@ def scheduled_overview() -> dict:
             next_at, next_note = None, "queued"
         elif due:
             next_at = next_tick
-            next_note = blocked or ("due — next custodian tick" if next_tick else "due now")
+            next_note = blocked or ("due — next maintenance run" if next_tick else "due now")
         else:
             eligible = (last + timedelta(hours=t.cadence_h * 1.1)).replace(tzinfo=timezone.utc)
             next_at = _first_tick_after(eligible, next_tick, tick_minutes)

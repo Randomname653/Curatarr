@@ -127,7 +127,7 @@ CADENCES = sorted({act_svc.fmt_cadence(h) for h in (0, 0.25, 0.4, 0.5, 1, 1.5, 2
                      act_svc._trigger_cadence(DateTrigger(run_date=_dt(2030, 1, 1))),
                      act_svc._trigger_cadence(CronTrigger(minute=5))}
                   | {"every 5 min (sprint)", "every 30 min"})
-NOTES = ["running now", "queued", "due — next custodian tick", "due now", "paused",
+NOTES = ["running now", "queued", "due — next maintenance run", "due now", "paused",
          "waiting for the GPU (a game holds it)", "waiting for the PC agent", "backing off after a failed run"]
 JOB = {"job_id": "deletion_scan", "name": "Deletion scan: anime", "cadence": "daily", "state": "idle",
        "can_run": True, "uses_model": True, "last_run": None, "last_duration_s": 65,
