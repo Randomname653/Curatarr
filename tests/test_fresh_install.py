@@ -266,6 +266,11 @@ def _site(req):
     return httpx.Response(404)
 
 
+# Every hop must resolve to a public address; no DNS in the test.
+import time  # noqa: E402
+
+from src.routers import image_proxy  # noqa: E402
+image_proxy._resolved["www.themoviedb.org"] = (True, time.time() + 3600)
 got = asyncio.run(setup_icons.service_logo("tmdb", transport=httpx.MockTransport(_site)))
 check("a service's logo is fetched from its own site, an image only", got and got[1] == "image/png")
 check("a key outside the list fetches nothing", asyncio.run(setup_icons.service_logo("evil")) is None)
