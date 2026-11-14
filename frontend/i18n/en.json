@@ -1184,6 +1184,7 @@
  "kb.view.start": "Start enrichment",
  "kb.view.start_short": "Start",
  "kb.view.stop": "Stop",
+ "kb.view.tab_enrichment": "Enrichment",
  "kb.view.watch_history": "Watch history",
  "kb.watched": "watched",
  "kb.wh_hint": "own set, not part of the percentages",

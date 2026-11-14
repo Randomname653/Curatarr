@@ -92,10 +92,10 @@ Items marked *(admin)* are visible to the admin account only.
 | Task | Where |
 |---|---|
 | Watch running background jobs | Sidebar → **Activity** |
-| Start / resume enrichment | Knowledge Base → Maintenance → **Start enrichment** |
-| Work through the backlog while you are away | Knowledge Base → Maintenance → hours → **Keep working** |
-| Recompute taste vectors | Knowledge Base → Maintenance → **Recompute taste** |
-| Audit + self-heal metadata | Knowledge Base → Maintenance → **Audit metadata** |
+| Start / resume enrichment | Knowledge Base → Enrichment → **Start enrichment** |
+| Work through the backlog while you are away | Knowledge Base → Enrichment → hours → **Keep working** |
+| Recompute taste vectors | Knowledge Base → Enrichment → **Recompute taste** |
+| Audit + self-heal metadata | Knowledge Base → Enrichment → **Audit metadata** |
 
 **Deletions and curation** *(admin)*
 

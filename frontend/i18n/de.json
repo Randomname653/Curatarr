@@ -1184,6 +1184,7 @@
  "kb.view.start": "Anreicherung starten",
  "kb.view.start_short": "Starten",
  "kb.view.stop": "Stoppen",
+ "kb.view.tab_enrichment": "Anreicherung",
  "kb.view.watch_history": "Verlauf",
  "kb.watched": "gesehen",
  "kb.wh_hint": "eigener Bestand, nicht Teil der Prozente",
