@@ -1344,6 +1344,19 @@ async def _with_shoko_tags(data: dict, title: str) -> dict:
     return {**data, "shoko_tags": tags} if tags else data
 
 
+async def _season_shape_line(user_id: int, title: str) -> str:
+    """Where the user left ``title`` against its AniDB episode ratings
+    (services/shoko_meta.season_note): at one of the season's weakest
+    episodes, or after a weak first one. "" when neither, or no Shoko data."""
+    try:
+        from src.services.shoko_meta import season_note
+        note = await run_read(season_note, user_id, title)
+    except Exception as e:  # noqa: BLE001 - the context stands without it
+        log_topup_failure(logger, "[chat] season shape", title, e)
+        return ""
+    return f"SEASON SHAPE (AniDB episode ratings via Shoko): {note}\n" if note else ""
+
+
 def _build_no_metadata_anchor(title: str) -> str:
     """Anti-hallucination anchor for titles where enrichment returned nothing.
 
@@ -2188,6 +2201,7 @@ async def _build_discuss_context_block(
             except Exception as _e:
                 log_topup_failure(logger, "[chat] viewing pattern", proposal.title, _e)
             if proposal.category in ("show", "anime"):
+                block += await _season_shape_line(proposal.user_id, proposal.title)
                 try:
                     from src.services.episode_context import series_availability
                     _av = await series_availability(proposal.title)
@@ -3355,6 +3369,9 @@ async def _send_message_guarded(message: ChatMessage, user: User,
                     log_topup_failure(logger, "[chat] availability", active_title, _e)
             except Exception as _e:
                 log_topup_failure(logger, "[chat] viewing pattern", active_title, _e)
+            _shape = await _season_shape_line(user.id, active_title)
+            if _shape:
+                hidden_metadata_context = (hidden_metadata_context or "") + _shape
             # the owner curates for the household: who else watches this
             # (members see only their own record - household compare is opt-in)
             if user.is_admin:
