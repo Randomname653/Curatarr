@@ -241,6 +241,29 @@ jc._allowed = _real_allowed
 check("Radarr and Sonarr next to the media server are found on the TrueNAS ports",
       found == {"radarr": "http://192.168.0.189:30025", "sonarr": "http://192.168.0.189:30113"}, found)
 
+asked = []
+
+
+def _redirecting(req):
+    asked.append(req.url.host)
+    if req.url.host == "192.168.0.189" and req.url.port == 7878:
+        if req.url.path == "/":
+            return httpx.Response(302, headers={"location": "/login?returnUrl=%2F"})
+        return httpx.Response(200, text="<title>Login - Radarr</title>")
+    if req.url.host == "192.168.0.189" and req.url.port == 8989:
+        return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+    if req.url.host == "169.254.169.254":
+        return httpx.Response(200, text="<title>Sonarr</title>")
+    return httpx.Response(404)
+
+
+# the real endpoint policy this time: the probe follows a redirect by hand
+found = asyncio.run(arr_find.find_arrs(["192.168.0.189"], transport=httpx.MockTransport(_redirecting)))
+check("an arr's redirect to its own login page is followed and the app found",
+      found.get("radarr") == "http://192.168.0.189:7878", found)
+check("...a redirect to another host is not, so the policy cannot be stepped around",
+      "169.254.169.254" not in asked and "sonarr" not in found, (found, sorted(set(asked))))
+
 
 # ── TMDB: the long token is named, not refused as a wrong key ────────────────
 from src.services.setup_wizard import test_tmdb  # noqa: E402
