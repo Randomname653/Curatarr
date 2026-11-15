@@ -6,7 +6,29 @@ Condensed release history, newest first.
 
 ## Unreleased
 
-Nothing yet.
+**One song played is one play.** Plex gives every copy of a track in the library (the album, the
+remaster, a compilation) the same "last played" second while its history holds one play, and a song
+stored from the library listing and from the history landed twice when the two stamps lay more than
+90 seconds apart (a song's two ends; the rule was made for video). Per song and second one copy is
+kept now (the one with genres), a song's same-play window is its length, and a one-time repair takes
+the copies out of what was stored: on the owner's server 8,577 rows of about 400,000, Spotify plays
+and video untouched. The taste profile had counted them.
+
+**Backups carry no tokens, and the cache snapshot is opt-in.** The nightly DB backup blanks the
+users' Plex tokens in its copy (overwriting their bytes); a restore asks each member to sign in once,
+the way Plex keeps its token out of its own database backups. Backups stay 0600 like the database;
+`BACKUP_GROUP_READABLE=true` makes them 0640 for a NAS user in the app's group, and the start-up pass
+no longer undoes that. The cache and vector-store snapshot from 1.2.0 is off by default now
+(`BACKUP_CACHES=true` keeps it); switched off, the snapshot already written is removed. Like the
+other self-hosted apps, the backup holds what cannot be rebuilt: the database.
+
+**LAN apps keep to their own address, port included.** The setup's logo fetch and the arr
+discovery follow a redirect only on the app's own scheme, host and port (one NAS, an app per port).
+SoulSync's logo shows again: its icon link carries a `?v=` query, which the address check refused.
+
+**From the bots:** the setup wizard moves focus to the new step's heading, the arr discovery checks
+each redirect hop, and the Wrap-Up's comebacks find a title's last earlier play through the title
+indexes.
 
 ---
 

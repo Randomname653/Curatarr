@@ -214,7 +214,10 @@ def checkpoint_and_dispose() -> None:
 #     plays imported from Plex's history without a length count as played (2026-10-25).
 # 3 = episodes marked as played one after another (seconds apart, no play event)
 #     are source "marked" too (2026-10-30).
-SCHEMA_VERSION = 3
+# 4 = music read whole from Plex once: copies of one song at one second are one
+#     play, and a play stored twice from the listing and the history is one
+#     (2026-11-15).
+SCHEMA_VERSION = 4
 
 
 def _migrate_columns() -> None:
@@ -527,6 +530,39 @@ def _migrate_columns() -> None:
                     "    AND player IS NULL AND media_type IN ('movie', 'show', 'anime'))"
                     "  SELECT a.id FROM v a JOIN v b ON b.user_id = a.user_id AND b.t = a.t"
                     "    AND b.p != a.p AND b.s BETWEEN a.s - 60 AND a.s + 60)")
+            if schema_was < 4 and "watch_history" in tables:
+                # The first read of a music library stored every COPY of a
+                # song Plex marked at the play's second (the album, the
+                # remaster, a compilation): 962 rows on the owner's server,
+                # 628 of them parked as "marked" by the three-in-a-second
+                # rule. One per song and second stays - the one with genres,
+                # a play (not "marked") - the others go.
+                conn.exec_driver_sql(
+                    "CREATE TEMP TABLE _copies AS SELECT id, "
+                    "  ROW_NUMBER() OVER (g ORDER BY COALESCE(genres, '') = '', source IS NOT NULL, id) AS rn, "
+                    "  COUNT(*) OVER g AS n, source "     # g unordered: the whole group, not a running count
+                    "  FROM watch_history WHERE media_type = 'music' "
+                    "  AND (source IS NULL OR source = 'marked') "
+                    "  WINDOW g AS (PARTITION BY user_id, LOWER(COALESCE(series_title, '')), "
+                    "    LOWER(title), viewed_at)")
+                conn.exec_driver_sql(
+                    "UPDATE watch_history SET source = NULL WHERE id IN "
+                    "(SELECT id FROM _copies WHERE rn = 1 AND n > 1 AND source = 'marked')")
+                conn.exec_driver_sql(
+                    "DELETE FROM watch_history WHERE id IN (SELECT id FROM _copies WHERE rn > 1)")
+                conn.exec_driver_sql("DROP TABLE _copies")
+                # One play stored twice: the listing stamps a song at one end,
+                # the history at the other (147 s apart for a 4-minute track),
+                # and the 90-second rule took them for two. A second row of the
+                # same song inside the first one's length is that same play.
+                conn.exec_driver_sql(
+                    "DELETE FROM watch_history WHERE id IN ("
+                    "  WITH v AS (SELECT id, user_id, plex_item_id AS p,"
+                    "    CAST(strftime('%s', viewed_at) AS INTEGER) AS s,"
+                    "    COALESCE(duration_ms, 0) / 1000 AS d"
+                    "    FROM watch_history WHERE media_type = 'music' AND source IS NULL)"
+                    "  SELECT b.id FROM v a JOIN v b ON b.user_id = a.user_id AND b.p = a.p"
+                    "    AND b.s > a.s AND b.s - a.s < MAX(90, a.d))")
             # Record the schema generation this boot brought the file to. A
             # future one-shot backfill keys on it (``if user_version < N``)
             # rather than on whether its column happened to be added just now.
@@ -694,8 +730,18 @@ def _rebuild_from_model(conn, table) -> None:
     conn.exec_driver_sql(f'DROP TABLE "{aside}"')
 
 
+def backup_modes() -> tuple:
+    """(file mode, folder mode) for what the nightly backup writes: 0600/0700
+    like the database, or 0640/0750 when BACKUP_GROUP_READABLE opens them to
+    the app's group (a NAS user copying them off a share). The backups carry
+    no tokens (scheduler._strip_secrets); the live database and .env stay
+    0600 either way."""
+    return (0o640, 0o750) if settings.BACKUP_GROUP_READABLE else (0o600, 0o700)
+
+
 def _secure_db_files() -> None:
-    """Ensure SQLite files in data/ and .env are 0600 (POSIX only)."""
+    """Ensure SQLite files in data/ and .env are 0600; backups follow
+    backup_modes() (POSIX only)."""
     import os
     import stat
     import logging as _logging
@@ -711,10 +757,12 @@ def _secure_db_files() -> None:
     if not DATA_DIR.exists():
         return
 
+    backups = (DATA_DIR / "backups").resolve()
     for ext in ("*.db", "*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm", "*.db-wal", "*.db-shm"):
         for p in DATA_DIR.rglob(ext):
             try:
-                os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
+                in_backups = backups in p.resolve().parents
+                os.chmod(p, backup_modes()[0] if in_backups else stat.S_IRUSR | stat.S_IWUSR)
             except FileNotFoundError:
                 pass   # a -wal/-shm sidecar checkpointed away mid-scan
             except OSError as e:

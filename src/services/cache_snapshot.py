@@ -4,7 +4,8 @@ The nightly DB backup (scheduler.job_db_backup) snapshots curatarr.db; the
 enrichment work lives beside it: the enrichment cache, the music index, the
 lyrics, the anime maps (data/cache/*.db) and the vector store
 (data/chromadb). Weeks of API calls and GPU time, with no restore point but
-a hand-made copy. After the DB backup, this keeps ONE consistent snapshot of
+a hand-made copy. With BACKUP_CACHES on (off by default: they are rebuilt
+from their sources), the DB backup is followed by ONE consistent snapshot of
 them in backups/caches/ (the newest only: they are large and rebuilt from
 the same sources):
 
@@ -93,9 +94,32 @@ def _snapshot_chroma(src: Path, dst: Path) -> int:
     return n
 
 
+def _set_modes(root: Path) -> None:
+    """The DB backup's modes (connection.backup_modes): 0600/0700, or
+    0640/0750 when BACKUP_GROUP_READABLE opens backups to the app's group."""
+    from src.database.connection import backup_modes
+    fmode, dmode = backup_modes()
+    try:
+        os.chmod(root, dmode)
+        for p in root.rglob("*"):
+            os.chmod(p, dmode if p.is_dir() else fmode)
+    except OSError as e:
+        logger.debug("[backup] could not set the cache snapshot's modes: %s", e)
+
+
 async def snapshot_caches(bdir: str) -> str:
-    """Write backups/caches; a one-line summary for the backup task. Never
-    raises: the DB backup already succeeded and stands on its own."""
+    """Write backups/caches when BACKUP_CACHES is on; a one-line summary for
+    the backup task ("" when off). Switched off, a snapshot left from before
+    is removed (it is ~2 GB). Never raises: the DB backup already succeeded
+    and stands on its own."""
+    from src.config import settings
+    if not settings.BACKUP_CACHES:
+        old = Path(bdir) / DIR
+        if old.exists():
+            shutil.rmtree(old, ignore_errors=True)
+            logger.info("[backup] cache snapshot removed (BACKUP_CACHES is off)")
+            return "caches: old snapshot removed (BACKUP_CACHES off)"
+        return ""
     from src.services.scheduler import _free_bytes
     from src.vector_store.chromadb_wrapper import run_chroma
     base = Path(bdir)
@@ -120,6 +144,7 @@ async def snapshot_caches(bdir: str) -> str:
                 bad.append(p.name)
                 (tmp / "cache" / p.name).unlink(missing_ok=True)
         files = await run_chroma(_snapshot_chroma, chroma, tmp / "chromadb") if chroma.is_dir() else 0
+        _set_modes(tmp)
         shutil.rmtree(old, ignore_errors=True)
         if final.exists():
             final.rename(old)

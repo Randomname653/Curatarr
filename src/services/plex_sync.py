@@ -480,6 +480,11 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
                         item["_anilist_id"] = gid[10:]
                     elif gid.startswith("mal://"):
                         item["_mal_id"] = gid[6:]
+            if category == "music":
+                copies = drop_music_copies(items)
+                if copies:
+                    logger.info("Library %r: %d copies of songs played once (same song, same "
+                                "second) left out", sec_title, copies)
             marked = mark_bulk_marked(items)
             if marked:
                 logger.info("Library %r: %d item(s) marked as played in Plex (one second "
@@ -855,7 +860,7 @@ async def _run_plex_sync(_sync_task, plex_url: str, plex_token: str,
 
                 if entry.get("_history_extra"):
                     vts = int(viewed_at_ts)
-                    if any(abs(t - vts) <= _SAME_PLAY_S for t in near.get((user.id, rating_key), ())):
+                    if any(abs(t - vts) <= _same_play_s(entry) for t in near.get((user.id, rating_key), ())):
                         skipped += 1
                         continue
                     if not entry.get("duration") or not entry.get("Genre"):
@@ -1338,6 +1343,44 @@ def follow_libraries(section_keys: list) -> None:
 _MARKED_MIN = 3
 
 
+def _song_key(artist, title) -> tuple:
+    return ((artist or "").strip().lower(), (title or "").strip().lower())
+
+
+def drop_music_copies(items: list) -> int:
+    """One song played, every copy of it marked: Plex gives each copy of a
+    track in the library (the album, the remaster, a compilation) the same
+    lastViewedAt second, while its history holds one play. The owner's
+    first music read stored 962 such copies (2026-11-15: "Lovely Day" three
+    times at 00:46:51). Keep one per song and second - the one Plex knows
+    a genre for - and drop the others from ``items``; returns how many."""
+    groups: dict = {}
+    for it in items:
+        ts = it.get("lastViewedAt")
+        if ts and not it.get("_in_progress"):
+            key = (*_song_key(it.get("grandparentTitle"), it.get("title")), int(ts))
+            groups.setdefault(key, []).append(it)
+    drop = set()
+    for group in groups.values():
+        if len(group) > 1:
+            keep = next((it for it in group if it.get("Genre")), group[0])
+            drop.update(id(it) for it in group if it is not keep)
+    if drop:
+        items[:] = [it for it in items if id(it) not in drop]
+    return len(drop)
+
+
+def _same_play_s(entry: dict) -> int:
+    """How far apart the listing's and the history's stamp of ONE play may
+    lie. Plex truncates seconds for video; for a song the two stamps are the
+    start and the end of it (147 s apart for a 4-minute track, measured on
+    the owner's server), so the window is the song's length."""
+    if entry.get("type") == "track" or entry.get("_category") == "music":
+        # a history event carries no length: a song's typical one
+        return max(_SAME_PLAY_S, int(entry.get("duration") or 360_000) // 1000)
+    return _SAME_PLAY_S
+
+
 def mark_bulk_marked(items: list) -> int:
     """Flag the listed items whose lastViewedAt they share with at least
     ``_MARKED_MIN - 1`` others of the same library (``_marked``)."""
@@ -1398,10 +1441,13 @@ def _owner_history_entries(events: list, lib_configs: dict, listing: list,
     Events older than ``backfill_before`` are marked ``_backfill``:
     recovered history, not news."""
     listed: dict = {}
+    songs: dict = {}
     for e in listing:
         ts = e.get("lastViewedAt") or e.get("viewedAt")
         if e.get("ratingKey") and ts:
             listed.setdefault(str(e["ratingKey"]), []).append((int(ts), e))
+            if e.get("_category") == "music":
+                songs.setdefault(_song_key(e.get("grandparentTitle"), e.get("title")), []).append((int(ts), e))
     out: list = []
     for ev in events:
         base = _member_entry(dict(zip(_HISTORY_EVENT_KEYS, ev)), lib_configs, 1)
@@ -1409,8 +1455,12 @@ def _owner_history_entries(events: list, lib_configs: dict, listing: list,
             continue
         vts = base["viewedAt"]
         same = listed.get(base["ratingKey"], ())
-        if any(abs(t - vts) <= _SAME_PLAY_S for t, _ in same):
+        if any(abs(t - vts) <= _same_play_s(e) for t, e in same):
             continue
+        if base["_category"] == "music" and any(
+                abs(t - vts) <= _same_play_s(e)
+                for t, e in songs.get(_song_key(base.get("grandparentTitle"), base.get("title")), ())):
+            continue        # the play of another copy of this song, already listed
         if same:
             entry = {k: v for k, v in same[0][1].items() if k not in _LISTING_ONLY_KEYS}
             entry.update(lastViewedAt=vts, viewedAt=vts)

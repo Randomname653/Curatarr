@@ -1507,6 +1507,31 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
         chk.close()
 
 
+# Secrets a backup must not carry. Users' Plex tokens are refreshed at every
+# sign-in, so a restored database asks each member to sign in once; the
+# server's own token lives in .env, never in the database. Plex keeps its
+# token out of its database backups the same way.
+_SECRET_COLUMNS = (("users", "plex_token"), ("sessions", "access_token"), ("sessions", "refresh_token"))
+
+
+def _strip_secrets(dest: str) -> bool:
+    """Blank the token columns in a backup copy, overwriting the old bytes
+    (secure_delete), and leave it one file (out of WAL mode). True when the
+    copy still checks."""
+    con = sqlite_connect(dest)
+    try:
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.execute("PRAGMA secure_delete=ON")
+        tables = {t for (t,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table, col in _SECRET_COLUMNS:
+            if table in tables and col in {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}:  # nosec B608 - literals above
+                con.execute(f'UPDATE "{table}" SET "{col}" = NULL WHERE "{col}" IS NOT NULL')  # nosec B608 - literals above
+        con.commit()
+        return (con.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
+    finally:
+        con.close()
+
+
 def _free_bytes(path: str) -> int:
     import shutil
     return shutil.disk_usage(path).free
@@ -1584,6 +1609,14 @@ async def job_db_backup():
 
     try:
         ok = await asyncio.to_thread(_snapshot_sqlite, db_path, dest)
+        if ok:
+            ok = await asyncio.to_thread(_strip_secrets, dest)
+        if ok:
+            from src.database.connection import backup_modes
+            try:
+                os.chmod(dest, backup_modes()[0])
+            except OSError as e:
+                logger.debug("[backup] could not set the mode of %s: %s", dest, e)
         if not ok:
             os.remove(dest)
             task_monitor.error(task, "snapshot failed integrity check — discarded")
@@ -1596,10 +1629,13 @@ async def job_db_backup():
 
         size_mb = os.path.getsize(dest) / (1024 * 1024)
         summary = f"{os.path.basename(dest)} ({size_mb:.1f}MB) · kept {min(len(snaps), KEEP)} · dropped {dropped}"
-        # The caches and the vector store beside it: one snapshot, the newest
-        # (services/cache_snapshot). Its failure never fails this backup.
+        # The caches and the vector store beside it, when the operator asked
+        # for them (BACKUP_CACHES): one snapshot, the newest. Its failure never
+        # fails this backup.
         from src.services.cache_snapshot import snapshot_caches
-        summary += " · " + await snapshot_caches(bdir)
+        cache_note = await snapshot_caches(bdir)
+        if cache_note:
+            summary += " · " + cache_note
         task_monitor.done(task, summary)
         logger.info("[scheduler] DB backup OK: %s", summary)
     except Exception as e:

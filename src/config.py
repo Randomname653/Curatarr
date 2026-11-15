@@ -376,6 +376,15 @@ class Settings(BaseSettings):
     # Ask GitHub (anonymously, hourly) whether a newer build is published;
     # admins then see "Update available" under the sidebar (services/update_check.py).
     UPDATE_CHECK: bool = True
+    # The nightly DB backup (data/backups) holds no tokens: users' Plex tokens
+    # are blanked in the copy. Its files are 0600 like the live database;
+    # true makes them 0640, readable by the app's group - for a NAS user in
+    # that group who copies them off a share (scripts/demo/build_demo.py).
+    BACKUP_GROUP_READABLE: bool = False
+    # Also keep ONE snapshot of the caches and the vector store next to the
+    # DB backup (backups/caches, ~2 GB on a large library). They are rebuilt
+    # from their sources; only the demo builder reads them.
+    BACKUP_CACHES: bool = False
 
     # ── API surface hardening ────────────────────────────────────────────────
     # Pass 97: Swagger / ReDoc are off by default. Curatarr binds to

@@ -88,8 +88,8 @@ marked = {r.plex_item_id for r in db.query(W).filter(W.source == "marked")}
 check("the run of marks is marked; an evening's two episodes, plays with a player and one item "
       "played twice are not",
       marked == {f"gs{e}" for e in (8, 5, 7, 1, 3, 4)})
-check("the migration is generation 3",
-      db.execute(text("PRAGMA user_version")).scalar() == conn_mod.SCHEMA_VERSION == 3)
+check("the migration brings the file to the current generation (3 or later)",
+      db.execute(text("PRAGMA user_version")).scalar() == conn_mod.SCHEMA_VERSION >= 3)
 db.close()
 
 # ── played time: a finished row keeps the minutes really watched ────────────

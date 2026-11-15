@@ -39,6 +39,7 @@ _db(chroma / "chroma.sqlite3", 7)
 (chroma / "seg-1" / "data_level0.bin").write_bytes(b"\x01" * 2048)
 (chroma / "stray.sqlite3-wal").write_bytes(b"junk")
 
+settings.BACKUP_CACHES = True           # opt-in; off is checked in test_backup_perms
 settings.ENRICHMENT_CACHE = str(cache / "enrichment.db")
 settings.CHROMADB_PATH = str(chroma)
 

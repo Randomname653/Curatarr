@@ -26,7 +26,9 @@ python scripts/demo/build_demo.py --source <the live install's data folder>
    as the database, and the nightly cache snapshot (`backups/caches`: the
    enrichment cache, music index, lyrics, anime maps and the vector store),
    both made with SQLite's backup API, so the demo has today's library and
-   today's schema. A running install's own files are never copied: they
+   today's schema. The source install needs `BACKUP_CACHES=true` in its
+   `.env` (the snapshot is off by default) and, to copy backups off a share,
+   `BACKUP_GROUP_READABLE=true`. A running install's own files are never copied: they
    are open, and a share refuses them. Each copied database is checked.
 3. **Its own `.env`:** a fresh JWT secret; from your `.env` only the model
    names, Ollama, the metadata keys, and Radarr/Sonarr (read only, for the
