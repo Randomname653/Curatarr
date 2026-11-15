@@ -385,6 +385,34 @@ console.log(JSON.stringify({drawn, focused: radio.focused, asked}));
           and "rerenderKeepingRadio('s-plex-server')" in _fn(setup, "pickPlexServer"))
 
 
+# ── 5. the setup wizard moves focus to the new step's heading ───────────────
+
+def test_setup_nav_focuses_step_heading():
+    """Next/Back replace the step body under the focused button: a screen
+    reader heard nothing, and on the last step (Next hidden) or the first
+    (Back invisible) focus fell to <body> (WCAG 2.4.3, 4.1.3). setupNav now
+    focuses the new step's heading, like a view change focuses its h1."""
+    setup = _read("setup.js")
+    fn = _fn(setup, "setupNav")
+    out = _node("""
+const state = {setupStep: 1};
+const SETUP_STEPS = ['plex', 'ollama', 'metadata', 'done'];
+const h = {tabIndex: 0, opts: null, focus(o) { this.opts = o; this.focused = true; }};
+globalThis.document = {querySelector: sel => sel === '#setup-body .setup-heading' ? h : null};
+const codeNeeded = () => false, collectStep = () => {}, toast = () => {}, serverMissing = () => '';
+const renderSetupStep = n => { state.setupStep = n; };
+%s
+setupNav(1);
+console.log(JSON.stringify({step: state.setupStep, focused: h.focused === true, tabIndex: h.tabIndex, opts: h.opts}));
+""" % fn) if fn else {}
+    if out is not None:
+        check("after Next the new step's heading is focused (programmatically, not tabbable)",
+              out.get("step") == 2 and out.get("focused") is True and out.get("tabIndex") == -1
+              and out.get("opts") == {"preventScroll": True})
+    check("the programmatic focus draws no ring on the heading",
+          '.setup-heading[tabindex="-1"]:focus' in styles())
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
