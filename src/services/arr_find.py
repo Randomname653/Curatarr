@@ -52,14 +52,23 @@ def which_app(html: str) -> Optional[str]:
 
 
 async def _probe(client: httpx.AsyncClient, url: str) -> Optional[str]:
+    # An app's login redirect is followed by hand, each hop on the asked
+    # host and its origin through the endpoint policy, as the wizard's logo
+    # fetch does: the policy judged the first address, the answer names the
+    # next. The origin, because the login hop carries a ?returnUrl= query.
     from src.services.media_server.jellyfin_connect import _allowed
-    if not await _allowed(url):
-        return None
-    try:
-        r = await client.get(f"{url}/", follow_redirects=True)
-    except httpx.HTTPError:
-        return None
-    if r.status_code >= 400:
+    from src.services.setup_icons import _get
+    host = httpx.URL(url).host
+
+    async def ok(hop: str) -> bool:
+        try:
+            u = httpx.URL(hop)
+        except (httpx.InvalidURL, ValueError, TypeError):
+            return False
+        return u.host == host and await _allowed(str(u.copy_with(path="/", query=None, fragment=None)))
+
+    r = await _get(client, f"{url}/", ok)
+    if r is None or r.status_code >= 400:
         return None
     return which_app(r.text[:4000])
 

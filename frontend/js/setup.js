@@ -649,6 +649,11 @@ export function setupNav(dir) {
     if (why) { toast(why, 'amber'); return; }
   }
   renderSetupStep(Math.max(0, Math.min(SETUP_STEPS.length - 1, state.setupStep + dir)));
+  // The step body is replaced under a focused Next/Back: a screen reader hears
+  // nothing, and on the last step (Next hidden) or the first (Back invisible)
+  // focus falls to <body>. Move it to the new step's heading, as a view change does.
+  const h = document.querySelector('#setup-body .setup-heading');
+  if (h) { h.tabIndex = -1; h.focus({preventScroll: true}); }
 }
 
 export async function testConn(service) {
