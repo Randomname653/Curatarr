@@ -88,8 +88,8 @@ def icon_candidates(html: str, base: str) -> list[str]:
 # each redirect hop (redirects are followed here, not by httpx). A public
 # site's fetches stay on https and on hosts that resolve to public internet
 # addresses only (github.com/Radarr.png lands on avatars.githubusercontent.com,
-# netflix.com names a CDN). A LAN app's stay on that app's own host and pass
-# the endpoint policy (code scanning 221/222, 2026-11-14).
+# netflix.com names a CDN). A LAN app's stay on that app's own origin (host and
+# port) and pass the endpoint policy (code scanning 221/222, 2026-11-14).
 _MAX_HOPS = 3
 
 
@@ -129,17 +129,21 @@ async def _public_ok(url: str) -> bool:
 
 
 def _lan_ok(lan_base: str):
-    """The check for a LAN app: its own host, and the endpoint policy."""
+    """The check for a LAN app: its own origin (scheme, host AND port: a
+    NAS answers for a dozen apps on one address, one per port), and the
+    endpoint policy."""
+    from src.services.endpoint_policy import same_origin
     from src.services.media_server.jellyfin_connect import _allowed
-    host = httpx.URL(lan_base).host
+    verdict: dict = {}
 
     async def ok(url: str) -> bool:
-        try:
-            if httpx.URL(url).host != host:
-                return False
-        except (httpx.InvalidURL, ValueError, TypeError):
+        if not same_origin(url, lan_base):
             return False
-        return await _allowed(url)
+        # The policy judges the app's address once: it is for base URLs and
+        # refused an icon link with a query (SoulSync's /static/pwa-icon-192.png?v=...).
+        if "ok" not in verdict:
+            verdict["ok"] = await _allowed(lan_base)
+        return verdict["ok"]
     return ok
 
 

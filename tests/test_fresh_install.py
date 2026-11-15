@@ -340,6 +340,42 @@ got = asyncio.run(setup_icons.service_logo("radarr", "http://192.168.0.10:7878",
 check("a LAN app's logo never leaves that app's host (no foreign icon link, no redirect away)",
       got is None and _asked and all(u.startswith("http://192.168.0.10:7878/") for u in _asked), _asked)
 
+# One NAS, many apps: another port on the same address is another app.
+_asked.clear()
+
+
+def _other_port(req):
+    _asked.append(str(req.url))
+    if req.url.port == 7878 and req.url.path.startswith("/Content/"):
+        return httpx.Response(302, headers={"location": "http://192.168.0.10:8096/Content/x.png"})
+    if req.url.port == 7878 and req.url.path == "/":
+        return httpx.Response(200, text='<link rel="icon" href="http://192.168.0.10:30025/i.png">')
+    if req.url.port == 7878:
+        return httpx.Response(404)
+    return httpx.Response(200, content=b"other-app", headers={"content-type": "image/png"})
+
+
+_forget_logos()
+got = asyncio.run(setup_icons.service_logo("radarr", "http://192.168.0.10:7878",
+                                           transport=httpx.MockTransport(_other_port)))
+check("a LAN app's logo never comes from another port of the same machine (another app)",
+      got is None and all(":7878/" in u for u in _asked), _asked)
+
+
+def _query_icon(req):
+    if req.url.path == "/":
+        return httpx.Response(200, text='<link rel="apple-touch-icon" href="/static/pwa-icon-192.png?v=17945">')
+    if req.url.path == "/static/pwa-icon-192.png" and req.url.query:
+        return httpx.Response(200, content=b"pwa", headers={"content-type": "image/png"})
+    return httpx.Response(404)
+
+
+_forget_logos()
+got = asyncio.run(setup_icons.service_logo("soulsync", "http://192.168.0.10:12279",
+                                           transport=httpx.MockTransport(_query_icon)))
+check("an icon link with a query on the app's own origin is fetched (SoulSync's ?v=)",
+      got == (b"pwa", "image/png"), got)
+
 # Kept in the data folder: a new run answers without the network; a month
 # old copy is fetched again, and still answers when the site does not.
 import os as _os  # noqa: E402
