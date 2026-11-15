@@ -82,6 +82,12 @@ snaps = sorted(p.name for p in bdir.glob("curatarr_*.db"))
 check("room for the snapshot plus as much again: backup taken",
       res is not False and any(not n.startswith("curatarr_2026010") for n in snaps))
 check("rotation keeps seven", len(snaps) == 7)
+import os as _os  # noqa: E402
+import stat as _stat  # noqa: E402
+if _os.name == "posix":
+    newest = max(bdir.glob("curatarr_*.db"), key=lambda p: p.stat().st_mtime)
+    check("a new snapshot is 0640: the app's group may copy it off a NAS share",
+          _stat.S_IMODE(newest.stat().st_mode) == 0o640, oct(_stat.S_IMODE(newest.stat().st_mode)))
 
 # Short at first, enough once the oldest made way: the backup still happens.
 calls = []

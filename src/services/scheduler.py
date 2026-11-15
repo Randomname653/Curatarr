@@ -1584,6 +1584,12 @@ async def job_db_backup():
 
     try:
         ok = await asyncio.to_thread(_snapshot_sqlite, db_path, dest)
+        if ok:
+            from src.database.connection import BACKUP_MODE
+            try:
+                os.chmod(dest, BACKUP_MODE)     # copyable by the app's group (NAS share)
+            except OSError as e:
+                logger.debug("[backup] could not set %s to 0640: %s", dest, e)
         if not ok:
             os.remove(dest)
             task_monitor.error(task, "snapshot failed integrity check — discarded")

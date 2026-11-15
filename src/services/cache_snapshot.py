@@ -93,6 +93,18 @@ def _snapshot_chroma(src: Path, dst: Path) -> int:
     return n
 
 
+def _group_readable(root: Path) -> None:
+    """Files 0640, folders 0750, like the DB backup beside them: copyable by
+    the app's group off a NAS share, not by the world (POSIX only)."""
+    from src.database.connection import BACKUP_MODE
+    try:
+        os.chmod(root, 0o750)
+        for p in root.rglob("*"):
+            os.chmod(p, 0o750 if p.is_dir() else BACKUP_MODE)
+    except OSError as e:
+        logger.debug("[backup] could not open the cache snapshot to the group: %s", e)
+
+
 async def snapshot_caches(bdir: str) -> str:
     """Write backups/caches; a one-line summary for the backup task. Never
     raises: the DB backup already succeeded and stands on its own."""
@@ -120,6 +132,7 @@ async def snapshot_caches(bdir: str) -> str:
                 bad.append(p.name)
                 (tmp / "cache" / p.name).unlink(missing_ok=True)
         files = await run_chroma(_snapshot_chroma, chroma, tmp / "chromadb") if chroma.is_dir() else 0
+        _group_readable(tmp)
         shutil.rmtree(old, ignore_errors=True)
         if final.exists():
             final.rename(old)
