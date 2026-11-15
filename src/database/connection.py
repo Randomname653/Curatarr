@@ -730,8 +730,17 @@ def _rebuild_from_model(conn, table) -> None:
     conn.exec_driver_sql(f'DROP TABLE "{aside}"')
 
 
+# Backups: the owner and the group may read them (0640), so the NAS user in
+# the app's group can copy a snapshot off the share; the world still cannot.
+# This pass used to set them to 0600 at every start - a backup written at
+# 22:47 was copyable until the 23:43 restart (2026-11-14). The live database
+# and .env stay 0600: a live SQLite file is never copied, and .env holds the
+# tokens.
+BACKUP_MODE = 0o640
+
+
 def _secure_db_files() -> None:
-    """Ensure SQLite files in data/ and .env are 0600 (POSIX only)."""
+    """Ensure SQLite files in data/ and .env are 0600, backups 0640 (POSIX only)."""
     import os
     import stat
     import logging as _logging
@@ -747,10 +756,12 @@ def _secure_db_files() -> None:
     if not DATA_DIR.exists():
         return
 
+    backups = (DATA_DIR / "backups").resolve()
     for ext in ("*.db", "*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm", "*.db-wal", "*.db-shm"):
         for p in DATA_DIR.rglob(ext):
             try:
-                os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)
+                in_backups = backups in p.resolve().parents
+                os.chmod(p, BACKUP_MODE if in_backups else stat.S_IRUSR | stat.S_IWUSR)
             except FileNotFoundError:
                 pass   # a -wal/-shm sidecar checkpointed away mid-scan
             except OSError as e:
