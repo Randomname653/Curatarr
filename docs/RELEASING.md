@@ -40,7 +40,23 @@ logo alone).
 
 3. The `docker` workflow builds and tests the image again, checks that the
    tag is `v` + `VERSION`, and publishes `:1.1.0` and `:latest`.
-4. Once the app is in the TrueNAS catalog: its Renovate bot opens the
+4. Publish the release page with its notes. A tag alone shows no notes on
+   GitHub's Releases list (1.1.0 and 1.2.0 had only their tags for a while):
+
+   ```bash
+   gh release create v1.1.0 --verify-tag --title "Curatarr v1.1.0" \
+     --notes-file release-notes.md --latest
+   ```
+
+   The notes are not the CHANGELOG section, which runs to hundreds of lines.
+   They follow the earlier releases: a heading with the version's one-line
+   theme, two or three sentences on what the release is about, themed
+   sections of short bullets (what a user notices, not how it was built), an
+   **Upgrade** section (desktop, container, settings or one-time steps), and
+   a link to `CHANGELOG.md`. Nothing private: no names, addresses, hostnames
+   or tokens. `--latest` only for the newest version; a `-beta` tag is
+   `--prerelease`.
+5. Once the app is in the TrueNAS catalog: its Renovate bot opens the
    catalog's update PR by itself. If it does not within a few days, change
    `app_version` and the image `tag` in the catalog app (and bump its
    `version`) by hand, as in `deploy/truenas/catalog/SUBMITTING.md`.
