@@ -6,6 +6,15 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+**Curatarr steps aside for training and tagging runs, not only for games.** A PyTorch run is
+`python.exe`, and `python.exe` counted as a system process: the card check never saw it. A training
+run that drew 82-92 % of the card with under 1 GB of VRAM also slipped past the full-card gate (memory
+free, overall load swinging), so the curator loaded beside it and the run took 20 minutes instead
+of 7. Now an interpreter that is not Curatarr's own process (the PC agent reports its pid) and
+draws 30 % or more of the card on two readings in a row makes the PC busy, on a NAS-plus-PC install
+and on a desktop install alike. It is never put to the "is this a game?" question: one name, every
+script. Measured on a 4090: tagging 80-88 %, an image embedding 71-74 %, training 82-92 %.
+
 **One song played is one play.** Plex gives every copy of a track in the library (the album, the
 remaster, a compilation) the same "last played" second while its history holds one play, and a song
 stored from the library listing and from the history landed twice when the two stamps lay more than

@@ -16,6 +16,7 @@ Fakes only: no agent, no database, no Ollama.
 """
 from _harness import check  # noqa: I001 - first: temp stores
 
+import os
 import sys
 from pathlib import Path
 
@@ -43,7 +44,8 @@ rows = [("pid_4242_luid_a_phys_0_eng_0_engtype_3D", 60.0),
         ("pid_31337_luid_a_phys_0_eng_0_engtype_3D", 50.0)]      # gone meanwhile
 out = ge.per_process(rows, names.get)
 check("3D only, summed per program and capped at 100, idle and vanished ones left out",
-      out == [{"name": "NewGame.exe", "pct": 100.0}, {"name": "llama-server.exe", "pct": 97.0}])
+      out == [{"name": "NewGame.exe", "pct": 100.0, "pids": [4242, 4243]},
+              {"name": "llama-server.exe", "pct": 97.0, "pids": [99]}])
 
 agent = pc_agent.Agent("t" * 24, processes=lambda: [], gpu=lambda: [1.0, 2.0, 3.0],
                        gpu_procs=lambda: [{"name": "NewGame.exe", "pct": 88.0}])
@@ -99,6 +101,61 @@ try:
 
     check("no report: busy, and the streak is dropped",
           pm.pc_busy(None)[0] and pm._gpu_proc_streak == {})
+
+    # ── someone's python on the card (2026-11-15) ───────────────────────────
+    # Measured on the owner's 4090 while Curatarr's curator sat beside them:
+    # tagging 80-88 %, a SigLIP embedding 71-74 %, a training run 82-92 % of
+    # the 3D engine with 0.8 GB of VRAM - python.exe was "a system process"
+    # and the full-card gate saw free memory and a swinging load.
+    def py(pct, pid, own=(), gpu=(2850.0, 24564.0, 45.0)):
+        r = report(gpu=gpu)
+        r["gpu_procs"] = [{"name": "python.exe", "pct": pct, "pids": [pid]}]
+        r["own_pids"] = list(own)
+        return r
+
+    for label, pct in (("training", 86.9), ("tagging", 84.1), ("SigLIP embedding", 73.3)):
+        pm._compute_streak.clear()
+        first = pm.pc_busy(py(pct, 3204))
+        second = pm.pc_busy(py(pct, 3204))
+        check(f"{label} in python.exe ({pct} %): busy on the second reading, and says why",
+              first == (False, "") and second[0] and "python.exe computes on the card" in second[1], second)
+    pm._compute_streak.clear()
+    for _ in range(3):
+        r = pm.pc_busy(py(90.0, 4321, own=[4321]))
+    check("Curatarr's own python process (the agent's pid) never counts", r == (False, ""))
+    pm._compute_streak.clear()
+    for _ in range(3):
+        r = pm.pc_busy(py(12.0, 3204))
+    check("a python script barely touching the card does not take the PC", r == (False, ""))
+    pm._compute_streak.clear()
+    pm.pc_busy(py(86.0, 3204))
+    pm.pc_busy(py(86.0, 3204))
+    check("...the run ends: free on the next reading", pm.pc_busy(report()) == (False, ""))
+    pm._gpu_drawing_seen.clear()
+    pm.unknown_gpu_user(py(86.0, 3204))
+    pm.unknown_gpu_user(py(86.0, 3204))
+    check("python.exe is never put to the 'is this a game?' question (one name, every script)",
+          not pm.drew_on_gpu("python.exe"))
+    # A desktop install reads its own card through the same counters.
+    class _FakeSampler:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def sample(self):
+            return self.rows
+
+    pm._local_compute_streak.clear()
+    pm._local_sampler["s"] = _FakeSampler([{"name": "python.exe", "pct": 86.0, "pids": [3204]}])
+    pm.local_foreign_compute()
+    check("a desktop install sees someone's training on its own card too",
+          pm.local_foreign_compute() == "python.exe")
+    pm._local_compute_streak.clear()
+    pm._local_sampler["s"] = _FakeSampler([{"name": "python.exe", "pct": 86.0, "pids": [os.getpid()]}])
+    pm.local_foreign_compute()
+    check("...but never its own server process", pm.local_foreign_compute() is None)
+    pm._local_sampler["s"] = None
+    check("the agent reports its own pid", pc_agent.Agent("t" * 24, processes=lambda: [], gpu=lambda: [1.0, 2.0, 3.0],
+                                                          gpu_procs=lambda: []).snapshot()["own_pids"] == [os.getpid()])
 
     # ── whose programs are asked about ──────────────────────────────────────
     pc_host.configured = lambda: True

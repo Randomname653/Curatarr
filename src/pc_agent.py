@@ -42,6 +42,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import os
 import socket
 import subprocess
 import threading
@@ -183,6 +184,9 @@ class Agent:
                 logger.warning("[agent] update state unreadable: %s", e)
         return {"v": AGENT_VERSION, "time": time.time(), "processes": procs,
                 "gpu": gpu, "gpu_procs": gpu_procs, "build": build,
+                # this process (the tray it runs in): a python.exe on the card
+                # that is not one of these is someone's GPU work
+                "own_pids": [os.getpid()],
                 "node": {"name": self.name}, "shutting_down": self.shutting_down}
 
     def update(self) -> "tuple[int, dict]":

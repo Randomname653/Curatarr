@@ -225,8 +225,9 @@ def test_the_wiring():
 
     pm = (_ROOT / "src/services/process_monitor.py").read_text(encoding="utf-8")
     assert "def game_process_running() -> bool:" in pm and "def gpu_pressure_reason() -> str:" in pm
-    # both causes, no short circuit, so the loop's cached verdicts stay fresh
-    assert "pressed = gpu_pressure()\n    game = game_process_running()\n    return pressed or game" in pm
+    # every cause read, no short circuit, so the loop's cached verdicts stay fresh
+    # (someone's GPU compute joined the game and the full card, 2026-11-15)
+    assert "pressed = gpu_pressure()\n    game = game_process_running()\n    computing = local_foreign_compute()" in pm
 
     cust = (_ROOT / "src/services/data_custodian.py").read_text(encoding="utf-8")
     assert 'llm_role: str = "curator"' in cust, "curator is the safe default"
