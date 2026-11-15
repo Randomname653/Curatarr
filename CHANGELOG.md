@@ -14,9 +14,13 @@ kept now (the one with genres), a song's same-play window is its length, and a o
 the copies out of what was stored: on the owner's server 8,577 rows of about 400,000, Spotify plays
 and video untouched. The taste profile had counted them.
 
-**Backups stay copyable.** Every start set all SQLite files under `data/` to 0600, the backups
-included, so a NAS user in the app's group could copy a backup only until the next restart.
-Backups and the cache snapshot are 0640 now; the live database and `.env` stay 0600.
+**Backups carry no tokens, and the cache snapshot is opt-in.** The nightly DB backup blanks the
+users' Plex tokens in its copy (overwriting their bytes); a restore asks each member to sign in once,
+the way Plex keeps its token out of its own database backups. Backups stay 0600 like the database;
+`BACKUP_GROUP_READABLE=true` makes them 0640 for a NAS user in the app's group, and the start-up pass
+no longer undoes that. The cache and vector-store snapshot from 1.2.0 is off by default now
+(`BACKUP_CACHES=true` keeps it); switched off, the snapshot already written is removed. Like the
+other self-hosted apps, the backup holds what cannot be rebuilt: the database.
 
 **LAN apps keep to their own address, port included.** The setup's logo fetch and the arr
 discovery follow a redirect only on the app's own scheme, host and port (one NAS, an app per port).

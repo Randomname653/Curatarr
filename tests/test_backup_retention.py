@@ -86,8 +86,8 @@ import os as _os  # noqa: E402
 import stat as _stat  # noqa: E402
 if _os.name == "posix":
     newest = max(bdir.glob("curatarr_*.db"), key=lambda p: p.stat().st_mtime)
-    check("a new snapshot is 0640: the app's group may copy it off a NAS share",
-          _stat.S_IMODE(newest.stat().st_mode) == 0o640, oct(_stat.S_IMODE(newest.stat().st_mode)))
+    check("a new snapshot is 0600 by default, like the database",
+          _stat.S_IMODE(newest.stat().st_mode) == 0o600, oct(_stat.S_IMODE(newest.stat().st_mode)))
 
 # Short at first, enough once the oldest made way: the backup still happens.
 calls = []

@@ -730,17 +730,18 @@ def _rebuild_from_model(conn, table) -> None:
     conn.exec_driver_sql(f'DROP TABLE "{aside}"')
 
 
-# Backups: the owner and the group may read them (0640), so the NAS user in
-# the app's group can copy a snapshot off the share; the world still cannot.
-# This pass used to set them to 0600 at every start - a backup written at
-# 22:47 was copyable until the 23:43 restart (2026-11-14). The live database
-# and .env stay 0600: a live SQLite file is never copied, and .env holds the
-# tokens.
-BACKUP_MODE = 0o640
+def backup_modes() -> tuple:
+    """(file mode, folder mode) for what the nightly backup writes: 0600/0700
+    like the database, or 0640/0750 when BACKUP_GROUP_READABLE opens them to
+    the app's group (a NAS user copying them off a share). The backups carry
+    no tokens (scheduler._strip_secrets); the live database and .env stay
+    0600 either way."""
+    return (0o640, 0o750) if settings.BACKUP_GROUP_READABLE else (0o600, 0o700)
 
 
 def _secure_db_files() -> None:
-    """Ensure SQLite files in data/ and .env are 0600, backups 0640 (POSIX only)."""
+    """Ensure SQLite files in data/ and .env are 0600; backups follow
+    backup_modes() (POSIX only)."""
     import os
     import stat
     import logging as _logging
@@ -761,7 +762,7 @@ def _secure_db_files() -> None:
         for p in DATA_DIR.rglob(ext):
             try:
                 in_backups = backups in p.resolve().parents
-                os.chmod(p, BACKUP_MODE if in_backups else stat.S_IRUSR | stat.S_IWUSR)
+                os.chmod(p, backup_modes()[0] if in_backups else stat.S_IRUSR | stat.S_IWUSR)
             except FileNotFoundError:
                 pass   # a -wal/-shm sidecar checkpointed away mid-scan
             except OSError as e:

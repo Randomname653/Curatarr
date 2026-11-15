@@ -9,6 +9,9 @@ newest nightly backup there (backups/curatarr_*.db, made with SQLite's
 backup API and integrity-checked) becomes the demo's database, so the demo
 always has today's library and today's schema, never an old copy that is
 missing columns. CURATARR_DEMO_SOURCE may hold it instead of --source.
+The source install needs BACKUP_CACHES=true (the cache snapshot) and, to
+read its backups over a share as a member of the app's group,
+BACKUP_GROUP_READABLE=true in its .env.
 
 Stages, in order (--stages picks some):
 
@@ -188,8 +191,9 @@ def stage_fetch(base: Path, source: str) -> None:
     # cannot be copied safely (a share refuses them outright).
     snap = src / "backups" / "caches"
     if not (snap / "cache").is_dir():
-        sys.exit(f"no cache snapshot in {snap} - it is written with the nightly DB backup; run it now "
-                 "as the admin: Activity -> Scheduled -> DB backup -> Run now")
+        sys.exit(f"no cache snapshot in {snap}: set BACKUP_CACHES=true (and BACKUP_GROUP_READABLE=true "
+                 "to copy backups off a share) in the source install's .env, then run the backup as the "
+                 "admin: Activity -> Scheduled -> DB backup -> Run now")
     for sub in ("cache", "chromadb"):
         if (snap / sub).is_dir():
             say(f"fetch: {sub}/ from the cache snapshot ...")
