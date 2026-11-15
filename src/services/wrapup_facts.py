@@ -622,7 +622,10 @@ def _comebacks(db, W, user_id, period, types) -> list:
     for i in range(0, len(names), 500):
         for k, last in db.query(key, func.max(W.viewed_at)).filter(
                 W.user_id == user_id, W.media_type.in_(types), W.viewed_at < period.start,
-                key.in_(names[i:i + 500])).group_by(key):
+                # Spelled out so ix_wh_series_title / ix_wh_title serve it:
+                # ``coalesce(...) IN`` walks every earlier play of the user.
+                W.series_title.in_(names[i:i + 500]) |
+                (W.series_title.is_(None) & W.title.in_(names[i:i + 500]))).group_by(key):
             gap = (inside[k] - last).days
             if gap >= _COMEBACK_GAP_DAYS:
                 out.append({"title": k, "gap_days": gap})
