@@ -395,6 +395,72 @@ def unknown_gpu_user(report: "dict | None") -> "str | None":
     return max(hits)[1] if hits else None
 
 
+# Interpreters that run GPU compute: training, tagging, embeddings - PyTorch
+# is python.exe. SYSTEM_PROCESSES keeps them out of the "is this a game?"
+# question (a name cannot tell one script from the next, and a "not a game"
+# would hide every later run), so the card check counts them on their own:
+# not by name, by what they draw, minus Curatarr's own processes (the agent
+# reports their pids). Measured on the owner's 4090 (2026-11-15): tagging
+# 80-88 %, SigLIP embedding 71-74 %, a training run 82-92 % of the 3D engine
+# with 0.8 GB of VRAM - the full-card gate never saw that one (memory free,
+# overall load swinging), and it ran 20 minutes instead of 7 beside the curator.
+COMPUTE_HOSTS = frozenset({"python.exe", "pythonw.exe", "python3.exe"})
+_compute_streak: dict = {}
+
+
+def foreign_compute(report: "dict | None", streak: "dict | None" = None) -> "str | None":
+    """The interpreter (python.exe) that is not one of the report's
+    ``own_pids`` and has drawn GPU_PROC_BUSY_PCT or more on the card for
+    GPU_PROC_POLLS readings in a row, if any. Call once per reading."""
+    streak = _compute_streak if streak is None else streak
+    report = report or {}
+    own = {int(p) for p in report.get("own_pids") or [] if str(p).isdigit()}
+    drawing: dict = {}
+    for p in report.get("gpu_procs") or []:
+        name = p.get("name") or ""
+        nl = name.lower()
+        if nl not in COMPUTE_HOSTS:
+            continue
+        pids = {int(x) for x in p.get("pids") or [] if str(x).isdigit()}
+        if pids and pids <= own:
+            continue                      # Curatarr's own process
+        try:
+            pct = float(p.get("pct") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pct >= GPU_PROC_BUSY_PCT:
+            drawing[nl] = (name, pct)
+    for nl in list(streak):
+        if nl not in drawing:
+            del streak[nl]
+    hits = []
+    for nl, (name, pct) in drawing.items():
+        streak[nl] = streak.get(nl, 0) + 1
+        if streak[nl] >= GPU_PROC_POLLS:
+            hits.append((pct, name))
+    return max(hits)[1] if hits else None
+
+
+_local_sampler: dict = {"s": None}
+_local_compute_said: dict = {"name": None}
+_local_compute_streak: dict = {}
+
+
+def local_foreign_compute() -> "str | None":
+    """foreign_compute for the card of THIS machine (a desktop install with its
+    own Ollama), read through the same engine counters the PC agent uses;
+    None where they do not exist (not Windows). On the event loop: the last
+    verdict, never a reading (see _on_loop)."""
+    import os
+    if _on_loop():
+        return _local_compute_said["name"]
+    if _local_sampler["s"] is None:
+        from src.gpu_engine import Sampler
+        _local_sampler["s"] = Sampler()
+    report = {"gpu_procs": _local_sampler["s"].sample(), "own_pids": [os.getpid()]}
+    return foreign_compute(report, _local_compute_streak)
+
+
 def drew_on_gpu(name: str) -> bool:
     """The program drew on the PC's card within the last hour."""
     return (name or "").lower() in _gpu_drawing_seen
@@ -413,6 +479,7 @@ def pc_busy(report: "dict | None") -> "tuple[bool, str]":
     game = next((p.get("name") for p in report.get("processes") or []
                  if (p.get("name") or "").lower() in targets), None)
     drawing = unknown_gpu_user(report)
+    computing = foreign_compute(report)
     pc = pc_host()
     pressed = gpu_pressure(smi=lambda: _smi_from_report(report.get("gpu")),
                            ps=lambda: _ollama_loaded_models(pc.url if pc else None),
@@ -421,6 +488,8 @@ def pc_busy(report: "dict | None") -> "tuple[bool, str]":
         return True, f"{game} running"
     if drawing:
         return True, f"{drawing} draws on the card (not classified yet)"
+    if computing:
+        return True, f"{computing} computes on the card (GPU work, not Curatarr's)"
     if pressed:
         return True, f"card held: {_pc_gpu_cache.get('reason') or 'busy'}"
     return False, ""
@@ -555,7 +624,11 @@ def is_game_running() -> bool:
         return pressed or game
     pressed = gpu_pressure()
     game = game_process_running()
-    return pressed or game
+    computing = local_foreign_compute()
+    if computing and not _local_compute_said["name"]:
+        logger.info("[gpu] %s computes on the card (GPU work, not Curatarr's) - LLM work yields", computing)
+    _local_compute_said["name"] = computing
+    return pressed or game or bool(computing)
 
 
 async def _our_models() -> list[str]:

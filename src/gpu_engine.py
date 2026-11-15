@@ -44,8 +44,9 @@ def parse_instance(name: str) -> "tuple | None":
 
 
 def per_process(values, names_by_pid) -> list[dict]:
-    """[{"name", "pct"}] for the 3D engine, one line per program (its
-    processes summed, capped at 100), largest first."""
+    """[{"name", "pct", "pids"}] for the 3D engine, one line per program (its
+    processes summed, capped at 100), largest first. ``pids`` lets Curatarr
+    tell its own interpreter from someone's training script of the same name."""
     by_pid: dict = {}
     for inst, pct in values:
         parsed = parse_instance(inst)
@@ -53,11 +54,13 @@ def per_process(values, names_by_pid) -> list[dict]:
             continue
         by_pid[parsed[0]] = by_pid.get(parsed[0], 0.0) + float(pct)
     by_name: dict = {}
+    pids_by_name: dict = {}
     for pid, pct in by_pid.items():
         name = names_by_pid(pid)
         if name:
             by_name[name] = min(100.0, by_name.get(name, 0.0) + pct)
-    return [{"name": n, "pct": round(p, 1)}
+            pids_by_name.setdefault(name, set()).add(pid)
+    return [{"name": n, "pct": round(p, 1), "pids": sorted(pids_by_name[n])}
             for n, p in sorted(by_name.items(), key=lambda kv: -kv[1]) if p >= MIN_PCT]
 
 
