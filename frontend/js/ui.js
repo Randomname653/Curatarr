@@ -471,7 +471,28 @@ export function syncTabRoles(root = document) {
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', String(tab.classList.contains('active')));
     }
+    // One Tab stop per row, on the chosen tab; the arrows move along it.
+    const tabs = [...list.querySelectorAll(':scope > [role="tab"]')];
+    const stop = tabs.find(x => x.classList.contains('active')) || tabs.find(x => !x.hidden);
+    for (const tab of tabs) tab.tabIndex = tab === stop ? 0 : -1;
   }
+}
+
+// Arrow keys, Home and End move focus along a tab row (WAI-ARIA tabs,
+// manual activation: Enter or Space picks the tab, as the button already
+// does). Activity's own row has its handler and is left to it.
+export function tabRowKey(ev) {
+  const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+  if (!keys.includes(ev.key) || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+  const list = ev.target.closest?.('.cat-tabs, .arr-tabs');
+  if (!list || list.classList.contains('act-tabs') || ev.target.parentElement !== list) return;
+  const tabs = [...list.querySelectorAll(':scope > [role="tab"]')].filter(x => !x.hidden);
+  const i = tabs.indexOf(ev.target);
+  if (i < 0) return;
+  const j = ev.key === 'Home' ? 0 : ev.key === 'End' ? tabs.length - 1
+    : (i + (ev.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  ev.preventDefault();
+  tabs[j].focus();
 }
 
 // skeletonHtml(label, {kind, n}) — the shape of what is loading, shimmering
