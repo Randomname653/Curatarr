@@ -7,7 +7,7 @@ import { submitSetupCode, setupCodeKey, useOllama, hideOnboarding, onSetupCurato
 import { activityTabKey, cancelTask, loadScheduled, loadTaskHistory, reloadPage, runScheduledJob, setHistoryFilter, showActivityTab, showNoopRuns, toggleHideNoop } from './activity.js';
 import { checkMappingCoverage, closeKbDrilldown, kbDismissFinding, kbFixMatch, kbIgnore, kbRetry, kbUnignore, loadCacheInventory, loadEnrichStatus, loadKbAttention, loadKbItems, loadMappingStats, loadProfiles, runMaintenance, showKbTab, startBackfill, startSprint, stopBackfill, stopSprint } from './kb.js';
 import { checkOrphans, loadLibraryConfig, saveLibraries, searchOnEnter } from './libraries.js';
-import { _errMsg, activeDialog, closeMenus, syncTabRoles, closeModal, toggleMenu, keyActivate, hideOnError, onPageLoad, posterLoaded, toast, trapFocus } from './ui.js';
+import { _errMsg, activeDialog, closeMenus, syncTabRoles, tabRowKey, closeModal, toggleMenu, keyActivate, hideOnError, onPageLoad, posterLoaded, toast, trapFocus } from './ui.js';
 import { condensePrinciples, downscaleDone, liftProtection, loadDownscale, loadJudgeProtections, loadPrinciples, loadRedundancy, loadUpgrades, setPrinciple, shutdownServer, curationSection, checkUncensored } from './curation.js';
 import { answerFollowup, askTonight, correctChatAnchor, explainFollowup, hideMoment, hideTonight, momentPlaylist, titleKeep, titleWatchlist, tonightNext, tonightWatchlist, deleteFromDiscussion, discussLastPlayed, exitDiscussion, fillPrompt, handleKey, hideFollowup, jumpLatest, newChat, onApplyOrphanRepair, onDiscussDeletion, onDiscussRec, saveComment, sendMessage, useStarter } from './chat.js';
 import { discussPrinciple, loadUnreadMessages, respondToMessage, skipMessage, toggleMsgPanel } from './notifications.js';
@@ -103,6 +103,7 @@ window.addEventListener('storage', ev => {
 });
 document.addEventListener('keydown', ev => {
   if (ev.key === 'Tab') { trapFocus(ev, activeDialog()); return; }
+  tabRowKey(ev);
   if (ev.key !== 'Escape') return;
   const menu = document.querySelector('.menu.open');
   if (menu) {   // innermost layer first; focus back on its button
