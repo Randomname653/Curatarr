@@ -2,7 +2,8 @@
 
 * No tokens: users' Plex tokens are blanked in the backup copy, and their
   bytes overwritten (secure_delete) - a restore asks each member to sign in
-  once, as Plex keeps its own token out of its database backups.
+  once, as Plex keeps its own token out of its database backups. The
+  Jellyfin webhook secret (an app_state row) goes too.
 * 0600 like the live database, unless the operator sets
   BACKUP_GROUP_READABLE (0640, folders 0750) to copy backups off a NAS
   share. The start-up pass used to force every backup to 0600 whatever was
@@ -30,6 +31,7 @@ from src.services import scheduler as sched
 
 POSIX = os.name == "posix"
 TOKEN = "zQ7plexTokenAbc123xy"
+HOOK_SECRET = "hK9jellyfinHookSecret42"
 
 
 def mode(p):
@@ -43,6 +45,9 @@ c.execute("PRAGMA journal_mode=WAL")
 c.execute("create table users (id integer primary key, plex_username text, plex_token text)")
 c.execute("create table sessions (id integer primary key, access_token text, refresh_token text)")
 c.execute("insert into users (plex_username, plex_token) values ('owner', ?), ('member', ?)", (TOKEN, TOKEN[::-1]))
+c.execute("create table app_state (key text primary key, value text, updated_at text)")
+c.execute("insert into app_state (key, value) values ('jellyfin_hook_secret', ?), ('last_sync_at', '2026-11-17')",
+          (HOOK_SECRET,))
 c.commit()
 c.close()
 dest = TMP / "backup.db"
@@ -56,6 +61,13 @@ c.close()
 blob = dest.read_bytes()
 check("the token's bytes are gone from the file, not just unlinked (secure_delete)",
       TOKEN.encode() not in blob and TOKEN[::-1].encode() not in blob)
+c = sqlite3.connect(f"file:{dest}?mode=ro", uri=True)
+check("the Jellyfin webhook secret is not in the backup; the rest of app_state stays",
+      c.execute("select key from app_state").fetchall() == [("last_sync_at",)])
+c.close()
+check("...nor its bytes", HOOK_SECRET.encode() not in blob)
+from src.services.media_server import jellyfin_hook  # noqa: E402
+check("the stripped key is the one the webhook route reads", jellyfin_hook.SECRET_KEY in sched._SECRET_STATE_KEYS)
 check("the backup is one file (no -wal beside it)", not (TMP / "backup.db-wal").exists())
 c = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
 check("the live database keeps its tokens", c.execute("select count(*) from users where plex_token is not null").fetchone()[0] == 2)
