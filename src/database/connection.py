@@ -741,7 +741,8 @@ def backup_modes() -> tuple:
 
 def _secure_db_files() -> None:
     """Ensure SQLite files in data/ and .env are 0600; backups follow
-    backup_modes() (POSIX only)."""
+    backup_modes() (POSIX only) - except a media-server switch's restore
+    point (backups/rebind-*/), a full copy with the tokens, which stays 0600."""
     import os
     import stat
     import logging as _logging
@@ -761,8 +762,10 @@ def _secure_db_files() -> None:
     for ext in ("*.db", "*.sqlite3", "*.sqlite3-wal", "*.sqlite3-shm", "*.db-wal", "*.db-shm"):
         for p in DATA_DIR.rglob(ext):
             try:
-                in_backups = backups in p.resolve().parents
-                os.chmod(p, backup_modes()[0] if in_backups else stat.S_IRUSR | stat.S_IWUSR)
+                rp = p.resolve()
+                stripped = (backups in rp.parents
+                            and not rp.relative_to(backups).parts[0].startswith("rebind-"))
+                os.chmod(p, backup_modes()[0] if stripped else stat.S_IRUSR | stat.S_IWUSR)
             except FileNotFoundError:
                 pass   # a -wal/-shm sidecar checkpointed away mid-scan
             except OSError as e:
