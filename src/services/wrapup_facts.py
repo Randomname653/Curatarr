@@ -594,9 +594,15 @@ def _discovery(db, W, user_id, period, types, titles) -> dict:
         return {}
     keys = [t["title"] for t in titles]
     key = func.coalesce(W.series_title, W.title)
-    known = {k for (k,) in db.query(key).filter(
-        W.user_id == user_id, W.viewed_at < period.start,
-        W.media_type.in_(types), key.in_(keys)).distinct()}
+    # One index probe per title that stops at its first earlier play: a regular
+    # artist has thousands, and DISTINCT over them all was the cost.
+    known = set()
+    for k in keys:
+        if db.query(W.id).filter(
+                W.user_id == user_id, W.viewed_at < period.start, W.media_type.in_(types),
+                # Spelled out like _comebacks: ``coalesce(...) = k`` walks every earlier play.
+                (W.series_title == k) | (W.series_title.is_(None) & (W.title == k))).first():
+            known.add(k)
     total = sum(t["hours"] for t in titles) or 1
     new = [t for t in titles if t["title"] not in known]
     return {"new_share": round(sum(t["hours"] for t in new) / total, 2),
