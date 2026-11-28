@@ -472,10 +472,14 @@ async def apply_plan(plan: Plan, *, target_adapter, chroma=None, backup_root: Op
     if (m := running_manifest(root)) is not None:
         raise RuntimeError(f"an unfinished rebind is on record ({m}) - finish it with --undo first")
     folder = root / f"rebind-{datetime.utcnow():%Y%m%d-%H%M%S}"
-    folder.mkdir()
+    # The restore point is the whole database, members' Plex tokens included
+    # (the nightly copy blanks them, this one must restore as it was): 0600
+    # in a 0700 folder like the live database, not the umask's 0644.
+    folder.mkdir(mode=0o700)
     snap = str(folder / "curatarr.db")
     if not await run_read(scheduler._snapshot_sqlite, _db_path(), snap):
         raise RuntimeError("the database backup failed its integrity check - nothing was changed")
+    os.chmod(snap, 0o600)
     pairs = dict(plan.items)
     users = {sid: tid for _, (sid, tid, _) in plan.users.items()}
     libs = {s: t for s, (t, _) in plan.libraries.items()}

@@ -89,8 +89,11 @@ def db(p):
 
 
 backup = data / "backups" / "curatarr_20261114_214712.db"
+# A media-server switch's restore point: the whole database, tokens and all.
+(data / "backups" / "rebind-20261110-120000").mkdir()
+switch_copy = data / "backups" / "rebind-20261110-120000" / "curatarr.db"
 for p in (data / "curatarr.db", data / "cache" / "enrichment.db", backup,
-          data / "backups" / "caches" / "cache" / "lyrics.db"):
+          data / "backups" / "caches" / "cache" / "lyrics.db", switch_copy):
     db(p)
 env = root / ".env"
 env.write_text("JWT_SECRET=x\n", encoding="utf-8")
@@ -115,6 +118,8 @@ if POSIX:
           mode(backup) == 0o640 and mode(data / "backups" / "caches" / "cache" / "lyrics.db") == 0o640)
     check("...while the live database, a cache and .env stay 0600",
           {mode(data / "curatarr.db"), mode(data / "cache" / "enrichment.db"), mode(env)} == {0o600})
+    check("...and so does a switch's restore point: its tokens are not blanked",
+          mode(switch_copy) == 0o600, oct(mode(switch_copy)))
 if not POSIX:
     check("(Windows: file modes are POSIX-only; the pass ran without error)", True)
 
