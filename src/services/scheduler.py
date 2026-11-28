@@ -1512,12 +1512,16 @@ def _snapshot_sqlite(db_path: str, dest: str) -> bool:
 # server's own token lives in .env, never in the database. Plex keeps its
 # token out of its database backups the same way.
 _SECRET_COLUMNS = (("users", "plex_token"), ("sessions", "access_token"), ("sessions", "refresh_token"))
+# app_state rows that are credentials. The Jellyfin webhook secret: without
+# it the route is off, and the admin's next look at the setup card makes a
+# new one to paste into the plugin.
+_SECRET_STATE_KEYS = ("jellyfin_hook_secret",)
 
 
 def _strip_secrets(dest: str) -> bool:
-    """Blank the token columns in a backup copy, overwriting the old bytes
-    (secure_delete), and leave it one file (out of WAL mode). True when the
-    copy still checks."""
+    """Blank the token columns and drop the secret app_state rows in a
+    backup copy, overwriting the old bytes (secure_delete), and leave it one
+    file (out of WAL mode). True when the copy still checks."""
     con = sqlite_connect(dest)
     try:
         con.execute("PRAGMA journal_mode=DELETE")
@@ -1526,6 +1530,8 @@ def _strip_secrets(dest: str) -> bool:
         for table, col in _SECRET_COLUMNS:
             if table in tables and col in {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}:  # nosec B608 - literals above
                 con.execute(f'UPDATE "{table}" SET "{col}" = NULL WHERE "{col}" IS NOT NULL')  # nosec B608 - literals above
+        if "app_state" in tables:
+            con.executemany("DELETE FROM app_state WHERE key = ?", [(k,) for k in _SECRET_STATE_KEYS])
         con.commit()
         return (con.execute("PRAGMA quick_check(1)").fetchone() or ["?"])[0] == "ok"
     finally:
