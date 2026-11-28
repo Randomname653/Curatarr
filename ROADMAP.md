@@ -1,6 +1,6 @@
 # Curatarr — Roadmap
 
-_Last updated: 2026-11-08. This is the working plan, not a promise — items
+_Last updated: 2026-11-28. This is the working plan, not a promise — items
 move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.md)._
 
 ---
@@ -56,6 +56,15 @@ Plex in turn sees running sessions only through the daily sync; polling
   before touching code.
 
 ## Next
+
+**An ARM image (linux/arm64)**
+- The container image is amd64 only, so an ARM NAS or a Raspberry Pi
+  cannot pull it, even with Ollama on another machine. The base image and
+  the heavy dependencies (ChromaDB, Ollama on the other end) exist for
+  arm64. Plan: build and smoke-test natively on GitHub's arm64 runner,
+  then publish one multi-arch tag with the plain docker CLI, as the amd64
+  build does today. The CI covers building and starting; a real ARM
+  device needs a user who runs one.
 
 **Shoko, phase 2: what AniDB knows per episode**
 - The watched sync already ties each play to its Shoko episode. Shoko keeps
