@@ -6,6 +6,14 @@ Condensed release history, newest first.
 
 ## Unreleased
 
+Nothing yet.
+
+---
+
+## 2026-11-28 — v1.2.1: backups without tokens, one play per song, room for your own GPU work
+
+Fixes found in the two weeks after 1.2.0, on the owner's NAS and PC:
+
 **Curatarr steps aside for training and tagging runs, not only for games.** A PyTorch run is
 `python.exe`, and `python.exe` counted as a system process: the card check never saw it. A training
 run that drew 82-92 % of the card with under 1 GB of VRAM also slipped past the full-card gate (memory
@@ -35,9 +43,16 @@ other self-hosted apps, the backup holds what cannot be rebuilt: the database.
 discovery follow a redirect only on the app's own scheme, host and port (one NAS, an app per port).
 SoulSync's logo shows again: its icon link carries a `?v=` query, which the address check refused.
 
-**From the bots:** the setup wizard moves focus to the new step's heading, the arr discovery checks
-each redirect hop, and the Wrap-Up's comebacks find a title's last earlier play through the title
-indexes.
+**From the bots:** the setup wizard moves focus to the new step's heading and keeps it when a
+connect button is redrawn; tab rows have one Tab stop and move with the arrow keys; the arr
+discovery checks each redirect hop; the Wrap-Up's comebacks and discoveries find a title's earlier
+plays through the title indexes (a play exactly a year before still counts as a comeback). The
+nightly backup also drops the Jellyfin webhook secret, and a media-server switch's restore point,
+which keeps every token, stays 0600 whatever `BACKUP_GROUP_READABLE` says.
+
+**A test that broke with the calendar.** The milestone announcement window read the real clock
+while its test used a fixed date, so every CI run turned red from 2026-11-22. The window takes the
+same clock as the rest now; the app's behaviour is unchanged.
 
 ---
 
