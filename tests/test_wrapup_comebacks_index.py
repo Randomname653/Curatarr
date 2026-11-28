@@ -38,7 +38,10 @@ with conn.get_db_session() as db:
              row(9009, "Edge Under", "movie", now - timedelta(days=364 + 2)),
              row(9010, "Edge Under", "movie", now - timedelta(days=2)),
              row(9011, "Edge Over", "movie", now - timedelta(days=366 + 2)),
-             row(9012, "Edge Over", "movie", now - timedelta(days=2))]
+             row(9012, "Edge Over", "movie", now - timedelta(days=2)),
+             # exactly a year: the latest first play of the week minus 365 days
+             row(9013, "Edge Exact", "movie", now - timedelta(days=365 + 1)),
+             row(9014, "Edge Exact", "movie", now - timedelta(days=1))]
     db.bulk_insert_mappings(W, rows)
     db.commit()
 with conn.engine.begin() as c:
@@ -62,7 +65,12 @@ check("364 days of silence is no comeback, 366 is", "Edge Under" not in got and 
 
 stmt, params = next(s for s in statements if "max(watch_history.viewed_at)" in s[0])
 check("titles played within the year are not looked up at all",
-      not {"Regular", "Recent Film", "Edge Under"} & set(params))
+      not {"Regular", "Recent Film"} & set(params))
+# Exactly a year before the latest first play (now - 1 day - 365): still a
+# comeback (gap >= 365), so the pre-filter must keep it for the look-up. It
+# is the fourth-largest gap here, so the top three leave it out of ``got``.
+check("a play exactly a year before is looked up, not filtered away (> cutoff, not >=)",
+      "Edge Exact" in set(params), params)
 raw = conn.engine.raw_connection()
 plan = " ".join(r[3] for r in raw.cursor().execute("EXPLAIN QUERY PLAN " + stmt, params))
 raw.close()

@@ -183,12 +183,13 @@ def history(user_id: int) -> list:
     return sorted(items, key=lambda m: m["reached_at"], reverse=True)
 
 
-def pending_announcements(user_id: int) -> list:
-    """Newly reached milestones the curator has not offered yet. Blocking."""
+def pending_announcements(user_id: int, now: Optional[datetime] = None) -> list:
+    """Newly reached milestones the curator has not offered yet. Blocking.
+    ``now`` as in store(): a test's fixed clock, the real one otherwise."""
     d = _load(user_id)
     keys = set(d.get("pending") or [])
     off = kinds_off(user_id)
-    now = datetime.utcnow()
+    now = now or datetime.utcnow()
     out = []
     for m in d.get("items") or []:
         if _mkey(m) not in keys or m.get("kind") in off:

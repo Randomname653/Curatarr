@@ -630,7 +630,8 @@ def _comebacks(db, W, user_id, period, types) -> list:
     cutoff = max(inside.values()) - timedelta(days=_COMEBACK_GAP_DAYS)
     recent = {k for (k,) in db.query(key).filter(
         W.user_id == user_id, W.media_type.in_(types),
-        W.viewed_at >= cutoff, W.viewed_at < period.start).distinct()}
+        # strictly after: a play exactly a year before is still a comeback
+        W.viewed_at > cutoff, W.viewed_at < period.start).distinct()}
     names = [k for k in inside if k not in recent]
     out = []
     for i in range(0, len(names), 500):
