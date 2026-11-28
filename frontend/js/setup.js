@@ -87,6 +87,7 @@ export function jellyfinConnectAgain() {
   state.setupData.jellyfin_ticket = '';
   state.setupData.jellyfin_connected = null;
   renderSetupStep(state.setupStep);
+  document.getElementById('s-jellyfin-url')?.focus();   // the button that was pressed is gone
 }
 
 // A radio change redraws the whole step; focus would fall to <body> and the
@@ -181,6 +182,7 @@ export async function startPlexConnect(btn) {
   state.setupData._plex_code = r.code;
   state.setupData._plex_login = {id: r.login_id, nonce: r.nonce};
   renderSetupStep(state.setupStep);
+  document.getElementById('plex-connect-btn')?.focus();   // the redraw replaced the pressed button
   const until = Date.now() + (r.expires_in || 900) * 1000;
   stopPlexConnect();
   _plexPoll = setInterval(async () => {
@@ -220,6 +222,7 @@ export function plexConnectAgain() {
   Object.assign(state.setupData, {plex_ticket: '', plex_servers: null, plex_server_id: '',
                                   plex_account: '', _plex_code: null, _plex_login: null});
   renderSetupStep(state.setupStep);
+  document.getElementById('plex-connect-btn')?.focus();   // the link that was pressed is gone
 }
 
 export function pickPlexServer(el) {

@@ -465,6 +465,39 @@ console.log(JSON.stringify({kept, left: focused}));
               out.get("kept") == "active" and out.get("left") is None)
 
 
+# ── 6. the wizard's "connect again" actions keep keyboard focus ──────────────
+
+def test_setup_connect_redraws_keep_focus():
+    """Starting a Plex sign-in, "Use another Plex account" and "Connect
+    another server" redraw the step, replacing the control that was just
+    pressed; focus fell to <body> (WCAG 2.4.3). Each now focuses the control
+    that took its place."""
+    setup = _read("setup.js")
+    cases = [("startPlexConnect", "plex-connect-btn"), ("plexConnectAgain", "plex-connect-btn"),
+             ("jellyfinConnectAgain", "s-jellyfin-url")]
+    for name, want in cases:
+        fn = _fn(setup, name)
+        # Fakes: a drawn step swaps in a fresh element; only that one can be focused.
+        out = _node("""
+const state = {setupStep: 0, setupData: {}};
+let focusedId = null, drawn = 0;
+globalThis.document = {getElementById: id => ({focus() { focusedId = drawn ? id : null; }})};
+globalThis.window = {open: () => null};
+const renderSetupStep = () => { drawn++; };
+const stopPlexConnect = () => {}, btnBusy = () => {}, btnDone = () => {}, t = k => k, toast = () => {};
+const api = async () => ({code: 'C', auth_url: 'x', login_id: '1', nonce: 'n'});
+let _plexPoll = null; const setInterval = () => 0;
+%s
+(async () => {
+  await %s(%s);
+  console.log(JSON.stringify({drawn, focusedId}));
+})();
+""" % (fn, name, "{}" if name == "startPlexConnect" else "")) if fn else {}
+        if out is not None:
+            check("%s redraws, then focuses #%s" % (name, want),
+                  out.get("drawn") == 1 and out.get("focusedId") == want)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):
