@@ -27,6 +27,8 @@ from _harness import app_db, check  # noqa: I001 - first: temp stores
 
 import asyncio
 import json
+import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -197,6 +199,13 @@ check("vectors copied under the new ids and the old ones gone; the TMDB-only doc
 check("setting flipped, backup kept, manifest completed",
       flips == ["jellyfin"] and Path(m["backup"]).exists() and m["status"] == "completed"
       and m["settings"] == "plex-was-blank")
+if os.name == "posix":
+    # The restore point keeps every member's Plex token: 0600 in a 0700
+    # folder like the live database, whatever the umask or BACKUP_GROUP_READABLE.
+    snap = Path(m["backup"])
+    check("the backup is 0600 in a 0700 folder (it carries the tokens)",
+          stat.S_IMODE(snap.stat().st_mode) == 0o600 and stat.S_IMODE(snap.parent.stat().st_mode) == 0o700,
+          (oct(snap.stat().st_mode), oct(snap.parent.stat().st_mode)))
 with conn_mod.engine.connect() as c:
     mem = dict(c.execute(text("SELECT canonical_key, jellyfin_id FROM server_id_map WHERE entity_type='user'")).fetchall())
 check("users filed in the id memory", mem == {"user:1": JANE, "user:2": SAM})

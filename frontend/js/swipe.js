@@ -136,8 +136,10 @@ export function swipeCategory(cat) {
 function _renderTabs() {
   const el = _el('swipe-tabs');
   if (!el) return;
+  const had = el.contains(document.activeElement);   // the redraw would drop a keyboard user's focus
   el.innerHTML = _cats().map(([c, label]) =>
     `<button class="cat-tab${c === _cat ? ' active' : ''}" role="tab" aria-selected="${c === _cat}" ${act('swipeCategory', c)}>${esc(label)}</button>`).join('');
+  if (had) el.querySelector('.cat-tab.active')?.focus();
 }
 
 function _renderReactions() {

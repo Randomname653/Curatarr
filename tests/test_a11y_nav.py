@@ -413,6 +413,91 @@ console.log(JSON.stringify({step: state.setupStep, focused: h.focused === true, 
           '.setup-heading[tabindex="-1"]:focus' in styles())
 
 
+def test_tab_rows_roving_and_arrows():
+    ui = _read("ui.js")
+    sync, key = _fn(ui, "syncTabRoles"), _fn(ui, "tabRowKey")
+    check("syncTabRoles and tabRowKey exist", bool(sync) and bool(key))
+    out = _node(r"""
+const mkTab = (n, active = false, hidden = false) => ({name: n, hidden, tabIndex: 0, attrs: {}, classList: {contains: c => c === 'active' && active},
+  setAttribute(k, v) { this.attrs[k] = v; }, focus() { document.activeElement = this; }});
+const tabs = [mkTab('a'), mkTab('b', true), mkTab('c'), mkTab('gone', false, true)];
+const list = {classList: {contains: () => false}, querySelectorAll: () => tabs};
+tabs.forEach(t => { t.parentElement = list; t.closest = () => list; });
+globalThis.document = {activeElement: null, querySelectorAll: () => [list]};
+list.setAttribute = () => {};
+%s
+%s
+syncTabRoles();
+const out = {stops: tabs.map(t => t.tabIndex)};
+const press = (at, k, extra = {}) => { document.activeElement = at; let p = false;
+  tabRowKey({key: k, target: at, preventDefault() { p = true; }, ...extra}); return [document.activeElement.name, p]; };
+out.right = press(tabs[1], 'ArrowRight');
+out.wrap = press(tabs[2], 'ArrowRight');
+out.left = press(tabs[0], 'ArrowLeft');
+out.end = press(tabs[0], 'End');
+out.home = press(tabs[2], 'Home');
+out.other = press(tabs[0], 'a');
+out.ctrl = press(tabs[0], 'ArrowRight', {ctrlKey: true});
+console.log(JSON.stringify(out));
+""" % (sync, key)) if sync and key else None
+    if out is not None:
+        check("one Tab stop per row: the active tab", out.get("stops") == [-1, 0, -1, -1])
+        check("ArrowRight moves to the next tab, wrapping past the last (hidden tabs skipped)",
+              out.get("right") == ["c", True] and out.get("wrap") == ["a", True])
+        check("ArrowLeft wraps to the last visible tab; Home and End jump", out.get("left") == ["c", True]
+              and out.get("end") == ["c", True] and out.get("home") == ["a", True])
+        check("other keys and modified arrows are left alone",
+              out.get("other") == ["a", False] and out.get("ctrl") == ["a", False])
+    sw = _fn(_read("swipe.js"), "_renderTabs")
+    out = _node(r"""
+const act = () => '', esc = x => x, _cats = () => [['a', 'A'], ['b', 'B']]; let _cat = 'b';
+let focused = null; const active = {focus() { focused = 'active'; }};
+let inside = true;
+const el = {contains: () => inside, set innerHTML(v) {}, querySelector: () => active};
+globalThis.document = {activeElement: {}, getElementById: () => el};
+const _el = id => document.getElementById(id);
+%s
+_renderTabs(); const kept = focused; focused = null; inside = false; _renderTabs();
+console.log(JSON.stringify({kept, left: focused}));
+""" % sw) if sw else None
+    if out is not None:
+        check("Swipe's tab redraw refocuses the active tab, only if focus was on the row",
+              out.get("kept") == "active" and out.get("left") is None)
+
+
+# ── 6. the wizard's "connect again" actions keep keyboard focus ──────────────
+
+def test_setup_connect_redraws_keep_focus():
+    """Starting a Plex sign-in, "Use another Plex account" and "Connect
+    another server" redraw the step, replacing the control that was just
+    pressed; focus fell to <body> (WCAG 2.4.3). Each now focuses the control
+    that took its place."""
+    setup = _read("setup.js")
+    cases = [("startPlexConnect", "plex-connect-btn"), ("plexConnectAgain", "plex-connect-btn"),
+             ("jellyfinConnectAgain", "s-jellyfin-url")]
+    for name, want in cases:
+        fn = _fn(setup, name)
+        # Fakes: a drawn step swaps in a fresh element; only that one can be focused.
+        out = _node("""
+const state = {setupStep: 0, setupData: {}};
+let focusedId = null, drawn = 0;
+globalThis.document = {getElementById: id => ({focus() { focusedId = drawn ? id : null; }})};
+globalThis.window = {open: () => null};
+const renderSetupStep = () => { drawn++; };
+const stopPlexConnect = () => {}, btnBusy = () => {}, btnDone = () => {}, t = k => k, toast = () => {};
+const api = async () => ({code: 'C', auth_url: 'x', login_id: '1', nonce: 'n'});
+let _plexPoll = null; const setInterval = () => 0;
+%s
+(async () => {
+  await %s(%s);
+  console.log(JSON.stringify({drawn, focusedId}));
+})();
+""" % (fn, name, "{}" if name == "startPlexConnect" else "")) if fn else {}
+        if out is not None:
+            check("%s redraws, then focuses #%s" % (name, want),
+                  out.get("drawn") == 1 and out.get("focusedId") == want)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

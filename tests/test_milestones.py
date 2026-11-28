@@ -75,16 +75,16 @@ check("phrases", [ms.phrase(m) for m in (
     "1 year since the first play"])
 
 first = ms.store(1, items, now=NOW)
-check("the first run is history: nothing to announce", first == [] and ms.pending_announcements(1) == [])
+check("the first run is history: nothing to announce", first == [] and ms.pending_announcements(1, now=NOW) == [])
 new = {"kind": "films", "value": 50, "reached_at": NOW - timedelta(days=2), "title": "Fiftieth"}
 fresh = ms.store(1, items + [new], now=NOW)
 check("a later run announces what is new and recent", [m["title"] for m in fresh] == ["Fiftieth"]
-      and [m["title"] for m in ms.pending_announcements(1)] == ["Fiftieth"])
+      and [m["title"] for m in ms.pending_announcements(1, now=NOW)] == ["Fiftieth"])
 ms.mark_announced(1, ["films:50"])
-check("...once", ms.pending_announcements(1) == [])
+check("...once", ms.pending_announcements(1, now=NOW) == [])
 ms.store(1, items + [new, {"kind": "episodes", "value": 100, "reached_at": NOW - timedelta(days=30),
                            "title": "Old News"}], now=NOW)
-check("one reached a month before it was seen is history, not news", ms.pending_announcements(1) == [])
+check("one reached a month before it was seen is history, not news", ms.pending_announcements(1, now=NOW) == [])
 ms.set_kind(1, "years", False)
 check("a kind switched off leaves the history", not any(m["kind"] == "years" for m in ms.history(1))
       and ms.kinds_off(1) == {"years"})

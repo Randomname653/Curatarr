@@ -594,9 +594,15 @@ def _discovery(db, W, user_id, period, types, titles) -> dict:
         return {}
     keys = [t["title"] for t in titles]
     key = func.coalesce(W.series_title, W.title)
-    known = {k for (k,) in db.query(key).filter(
-        W.user_id == user_id, W.viewed_at < period.start,
-        W.media_type.in_(types), key.in_(keys)).distinct()}
+    # One index probe per title that stops at its first earlier play: a regular
+    # artist has thousands, and DISTINCT over them all was the cost.
+    known = set()
+    for k in keys:
+        if db.query(W.id).filter(
+                W.user_id == user_id, W.viewed_at < period.start, W.media_type.in_(types),
+                # Spelled out like _comebacks: ``coalesce(...) = k`` walks every earlier play.
+                (W.series_title == k) | (W.series_title.is_(None) & (W.title == k))).first():
+            known.add(k)
     total = sum(t["hours"] for t in titles) or 1
     new = [t for t in titles if t["title"] not in known]
     return {"new_share": round(sum(t["hours"] for t in new) / total, 2),
@@ -617,7 +623,16 @@ def _comebacks(db, W, user_id, period, types) -> list:
         W.viewed_at >= period.start, W.viewed_at < period.end).group_by(key).all() if k}
     if not inside:
         return []
-    names = list(inside)
+    # A title played inside the year before the latest first play cannot have a
+    # gap that long; one range scan on ix_wh_user_type_viewed drops those, so
+    # the max() look-up below only walks the history of the few that remain
+    # (an artist the member plays all the time has thousands of earlier plays).
+    cutoff = max(inside.values()) - timedelta(days=_COMEBACK_GAP_DAYS)
+    recent = {k for (k,) in db.query(key).filter(
+        W.user_id == user_id, W.media_type.in_(types),
+        # strictly after: a play exactly a year before is still a comeback
+        W.viewed_at > cutoff, W.viewed_at < period.start).distinct()}
+    names = [k for k in inside if k not in recent]
     out = []
     for i in range(0, len(names), 500):
         for k, last in db.query(key, func.max(W.viewed_at)).filter(

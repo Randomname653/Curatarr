@@ -30,7 +30,18 @@ with conn.get_db_session() as db:
              row(9003, "ep 1", "show", now - timedelta(days=900), "Old Show"),      # series: keyed by series
              row(9004, "ep 9", "show", now - timedelta(days=1), "Old Show"),
              row(9005, "Recent Film", "movie", now - timedelta(days=100)),          # gap < a year
-             row(9006, "Recent Film", "movie", now - timedelta(days=1))]
+             row(9006, "Recent Film", "movie", now - timedelta(days=1)),
+             # played inside the year before: no comeback, and never worth the max() look-up
+             row(9007, "Regular", "movie", now - timedelta(days=40)),
+             row(9008, "Regular", "movie", now - timedelta(days=2)),
+             # just under / just over a year of silence before the week's first play
+             row(9009, "Edge Under", "movie", now - timedelta(days=364 + 2)),
+             row(9010, "Edge Under", "movie", now - timedelta(days=2)),
+             row(9011, "Edge Over", "movie", now - timedelta(days=366 + 2)),
+             row(9012, "Edge Over", "movie", now - timedelta(days=2)),
+             # exactly a year: the latest first play of the week minus 365 days
+             row(9013, "Edge Exact", "movie", now - timedelta(days=365 + 1)),
+             row(9014, "Edge Exact", "movie", now - timedelta(days=1))]
     db.bulk_insert_mappings(W, rows)
     db.commit()
 with conn.engine.begin() as c:
@@ -49,8 +60,17 @@ got = {c["title"]: c["gap_days"] for c in out}
 check("a film with no series_title comes back after 700 days", got.get("Old Film") == 698)
 check("a series comes back keyed by series_title", got.get("Old Show") == 899)
 check("a gap under a year is no comeback", "Recent Film" not in got)
+check("a title played the year before is no comeback", "Regular" not in got)
+check("364 days of silence is no comeback, 366 is", "Edge Under" not in got and got.get("Edge Over") == 366)
 
 stmt, params = next(s for s in statements if "max(watch_history.viewed_at)" in s[0])
+check("titles played within the year are not looked up at all",
+      not {"Regular", "Recent Film"} & set(params))
+# Exactly a year before the latest first play (now - 1 day - 365): still a
+# comeback (gap >= 365), so the pre-filter must keep it for the look-up. It
+# is the fourth-largest gap here, so the top three leave it out of ``got``.
+check("a play exactly a year before is looked up, not filtered away (> cutoff, not >=)",
+      "Edge Exact" in set(params), params)
 raw = conn.engine.raw_connection()
 plan = " ".join(r[3] for r in raw.cursor().execute("EXPLAIN QUERY PLAN " + stmt, params))
 raw.close()
