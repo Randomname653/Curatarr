@@ -89,7 +89,6 @@ Plex in turn sees running sessions only through the daily sync; polling
   household when something new lands and it fits the taste profile.
 - **Enrichment vocabulary expansion** — the tag vocabulary is the truth
   layer of search; register cases keep a running fixture list.
-- **German locale** as a global UI/curator language setting.
 - **Movie-night ballot** — household nomination/vote/watch flow
   (SoulSync-inspired), a project of its own.
 - **Tautulli importer** — full historical watch attribution for setups
