@@ -617,7 +617,15 @@ def _comebacks(db, W, user_id, period, types) -> list:
         W.viewed_at >= period.start, W.viewed_at < period.end).group_by(key).all() if k}
     if not inside:
         return []
-    names = list(inside)
+    # A title played inside the year before the latest first play cannot have a
+    # gap that long; one range scan on ix_wh_user_type_viewed drops those, so
+    # the max() look-up below only walks the history of the few that remain
+    # (an artist the member plays all the time has thousands of earlier plays).
+    cutoff = max(inside.values()) - timedelta(days=_COMEBACK_GAP_DAYS)
+    recent = {k for (k,) in db.query(key).filter(
+        W.user_id == user_id, W.media_type.in_(types),
+        W.viewed_at >= cutoff, W.viewed_at < period.start).distinct()}
+    names = [k for k in inside if k not in recent]
     out = []
     for i in range(0, len(names), 500):
         for k, last in db.query(key, func.max(W.viewed_at)).filter(
