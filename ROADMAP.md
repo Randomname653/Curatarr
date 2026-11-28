@@ -1,6 +1,6 @@
 # Curatarr — Roadmap
 
-_Last updated: 2026-11-08. This is the working plan, not a promise — items
+_Last updated: 2026-11-28. This is the working plan, not a promise — items
 move as live usage teaches us things. History lives in [CHANGELOG.md](CHANGELOG.md)._
 
 ---
@@ -57,6 +57,15 @@ Plex in turn sees running sessions only through the daily sync; polling
 
 ## Next
 
+**An ARM image (linux/arm64)**
+- The container image is amd64 only, so an ARM NAS or a Raspberry Pi
+  cannot pull it, even with Ollama on another machine. The base image and
+  the heavy dependencies (ChromaDB, Ollama on the other end) exist for
+  arm64. Plan: build and smoke-test natively on GitHub's arm64 runner,
+  then publish one multi-arch tag with the plain docker CLI, as the amd64
+  build does today. The CI covers building and starting; a real ARM
+  device needs a user who runs one.
+
 **Shoko, phase 2: what AniDB knows per episode**
 - The watched sync already ties each play to its Shoko episode. Shoko keeps
   AniDB's data locally, so reading it costs AniDB nothing: per episode the
@@ -80,7 +89,6 @@ Plex in turn sees running sessions only through the daily sync; polling
   household when something new lands and it fits the taste profile.
 - **Enrichment vocabulary expansion** — the tag vocabulary is the truth
   layer of search; register cases keep a running fixture list.
-- **German locale** as a global UI/curator language setting.
 - **Movie-night ballot** — household nomination/vote/watch flow
   (SoulSync-inspired), a project of its own.
 - **Tautulli importer** — full historical watch attribution for setups
